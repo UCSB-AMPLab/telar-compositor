@@ -18,7 +18,7 @@ export const localeCookieConfig = {
   maxAge: 60 * 60 * 24 * 365, // 1 year
 };
 
-const localeCookie = createCookie("locale", localeCookieConfig);
+export const localeCookie = createCookie("locale", localeCookieConfig);
 
 export const i18nServer = new RemixI18Next({
   detection: {
