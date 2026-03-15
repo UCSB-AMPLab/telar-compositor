@@ -1,0 +1,20 @@
+import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
+
+export default [
+  // Unauthenticated routes
+  layout("routes/_auth.tsx", [
+    route("/signin", "routes/_auth.signin.tsx"),
+    route("/auth/callback", "routes/_auth.callback.tsx"),
+  ]),
+
+  // Authenticated routes (auth middleware applied in _app.tsx)
+  layout("routes/_app.tsx", [
+    index("routes/home.tsx"),
+    route("/dashboard", "routes/_app.dashboard.tsx"),
+    route("/objects", "routes/_app.objects.tsx"),
+    route("/stories", "routes/_app.stories.tsx"),
+    route("/glossary", "routes/_app.glossary.tsx"),
+    route("/config", "routes/_app.config.tsx"),
+    route("/publish", "routes/_app.publish.tsx"),
+  ]),
+] satisfies RouteConfig;
