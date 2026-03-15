@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@import "@fontsource/space-grotesk/400.css";
+@import "@fontsource/space-grotesk/600.css";
+@import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/roboto-condensed/400.css";
+@import "@fontsource/roboto-condensed/500.css";
+
+@theme {
+  /* Trama palette */
+  --color-terracotta: #883C36;
+  --color-lavender: #C6D0F8;
+  --color-cream: #FFF6EF;
+  --color-cream-dark: #F5EDE0;
+
+  /* Compositor UI palette */
+  --color-charcoal: #333333;
+  --color-periwinkle: #C6D0F8;
+  --color-periwinkle-hover: #B5C3F0;
+
+  /* Typography */
+  --font-heading: "Space Grotesk", sans-serif;
+  --font-body: "Roboto Condensed", sans-serif;
+
+  /* Button radius variants */
+  --radius-pill: 9999px;
+  --radius-control: 0.375rem;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-body);
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+}
