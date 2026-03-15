@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telar Compositor — Terms of Service and Privacy Policy</title>
+  <style>
+    body {
+      font-family: 'Roboto Condensed', system-ui, sans-serif;
+      max-width: 640px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+      color: #333;
+      line-height: 1.7;
+    }
+    h1 { font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 1.5rem; margin-bottom: 0.25rem; }
+    h2 { font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 1.1rem; margin-top: 2rem; }
+    p.updated { font-size: 0.85rem; color: #888; margin-bottom: 2rem; }
+    a { color: #333; }
+    ul { padding-left: 1.25rem; }
+    li { margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Telar Compositor — Terms of Service and Privacy Policy</h1>
+  <p class="updated">Last updated: 15 March 2026</p>
+
+  <p>The Telar Compositor is a free, open-source tool developed by the <a href="https://ampl.clair.ucsb.edu">UCSB Archives, Memory, and Preservation Lab</a> and <a href="https://neogranadina.org">Neogranadina</a>. It is provided as-is, for academic and scholarly use.</p>
+
+  <h2>What the Compositor does</h2>
+  <p>The Compositor is a visual editor for building Telar stories. It connects to your GitHub repository via a GitHub App, lets you edit content in a browser, and publishes changes back to your repo as commits attributed to your GitHub account.</p>
+
+  <h2>Your content is yours</h2>
+  <p>Everything you create in the Compositor — stories, object metadata, glossary entries — belongs to you. Published content lives in your own GitHub repository. The Compositor is a tool for editing and publishing, not a hosting platform.</p>
+
+  <h2>What we store</h2>
+  <ul>
+    <li><strong>GitHub tokens</strong>: When you sign in, we store an encrypted access token and refresh token in a Cloudflare D1 database. These are used solely to read and write to repositories you have authorized. Tokens are encrypted at rest using AES-256-GCM.</li>
+    <li><strong>Draft content</strong>: While you are editing, your work-in-progress is stored in D1 as a working copy. This is a temporary workspace — your authoritative content lives in your GitHub repository.</li>
+    <li><strong>Locale preference</strong>: A cookie stores your language preference (English or Spanish). It contains no personal information.</li>
+  </ul>
+
+  <h2>What we do not store or collect</h2>
+  <ul>
+    <li>We do not collect analytics or usage data.</li>
+    <li>We do not use tracking cookies or third-party trackers.</li>
+    <li>We do not store your GitHub password. Authentication is handled entirely by GitHub's OAuth flow.</li>
+    <li>We do not share your data with third parties.</li>
+    <li>We do not access repositories you have not explicitly authorized.</li>
+  </ul>
+
+  <h2>Infrastructure</h2>
+  <p>The Compositor runs on Cloudflare Workers. Data is stored in Cloudflare D1 (SQLite). All connections use HTTPS. The source code is available at <a href="https://github.com/neogranadina/telar-compositor">github.com/neogranadina/telar-compositor</a>.</p>
+
+  <h2>Account and data deletion</h2>
+  <p>You can revoke the Compositor's access to your GitHub repositories at any time via your GitHub settings. To request deletion of your stored data (tokens and draft content), contact <a href="mailto:contacto@neogranadina.org">contacto@neogranadina.org</a>. Your published content in your GitHub repository is unaffected.</p>
+
+  <h2>No warranty</h2>
+  <p>The Compositor is provided "as is", without warranty of any kind. The developers are not liable for any data loss, service interruptions, or damages arising from use of this tool. You are responsible for maintaining your own backups via your GitHub repository.</p>
+
+  <h2>Changes to these terms</h2>
+  <p>We may update these terms from time to time. Changes will be noted on this page with an updated date.</p>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compositor de Telar — Términos de servicio y política de privacidad</title>
+  <style>
+    body {
+      font-family: 'Roboto Condensed', system-ui, sans-serif;
+      max-width: 640px;
+      margin: 2rem auto;
+      padding: 0 1.5rem;
+      color: #333;
+      line-height: 1.7;
+    }
+    h1 { font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 1.5rem; margin-bottom: 0.25rem; }
+    h2 { font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 1.1rem; margin-top: 2rem; }
+    p.updated { font-size: 0.85rem; color: #888; margin-bottom: 2rem; }
+    a { color: #333; }
+    ul { padding-left: 1.25rem; }
+    li { margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Compositor de Telar — Términos de servicio y política de privacidad</h1>
+  <p class="updated">Última actualización: 15 de marzo de 2026</p>
+
+  <p>El Compositor de Telar es una herramienta gratuita y de código abierto desarrollada por el <a href="https://ampl.clair.ucsb.edu">UCSB Archives, Memory, and Preservation Lab</a> y <a href="https://neogranadina.org">Neogranadina</a>. Se ofrece tal cual, para uso académico e investigativo.</p>
+
+  <h2>Qué hace el Compositor</h2>
+  <p>El Compositor es un editor visual para construir historias de Telar. Se conecta a tu repositorio de GitHub a través de una GitHub App, te permite editar contenido en el navegador y publica los cambios en tu repositorio como <em>commits</em> atribuidos a tu cuenta de GitHub.</p>
+
+  <h2>Tu contenido es tuyo</h2>
+  <p>Todo lo que crees en el Compositor — historias, metadatos de objetos, entradas de glosario — te pertenece. El contenido publicado vive en tu propio repositorio de GitHub. El Compositor es una herramienta de edición y publicación, no una plataforma de alojamiento.</p>
+
+  <h2>Qué almacenamos</h2>
+  <ul>
+    <li><strong><em>Tokens</em> de GitHub</strong>: Cuando inicias sesión, almacenamos un <em>token</em> de acceso y un <em>token</em> de actualización cifrados en una base de datos Cloudflare D1. Se usan únicamente para leer y escribir en los repositorios que hayas autorizado. Los <em>tokens</em> se cifran en reposo con AES-256-GCM.</li>
+    <li><strong>Borradores</strong>: Mientras editas, tu trabajo en curso se almacena en D1 como copia de trabajo. Es un espacio temporal — tu contenido definitivo vive en tu repositorio de GitHub.</li>
+    <li><strong>Preferencia de idioma</strong>: Una <em>cookie</em> almacena tu preferencia de idioma (inglés o español). No contiene información personal.</li>
+  </ul>
+
+  <h2>Qué no almacenamos ni recopilamos</h2>
+  <ul>
+    <li>No recopilamos analíticas ni datos de uso.</li>
+    <li>No usamos <em>cookies</em> de rastreo ni rastreadores de terceros.</li>
+    <li>No almacenamos tu contraseña de GitHub. La autenticación se maneja completamente a través del flujo OAuth de GitHub.</li>
+    <li>No compartimos tus datos con terceros.</li>
+    <li>No accedemos a repositorios que no hayas autorizado explícitamente.</li>
+  </ul>
+
+  <h2>Infraestructura</h2>
+  <p>El Compositor funciona sobre Cloudflare Workers. Los datos se almacenan en Cloudflare D1 (SQLite). Todas las conexiones usan HTTPS. El código fuente está disponible en <a href="https://github.com/neogranadina/telar-compositor">github.com/neogranadina/telar-compositor</a>.</p>
+
+  <h2>Eliminación de cuenta y datos</h2>
+  <p>Puedes revocar el acceso del Compositor a tus repositorios de GitHub en cualquier momento desde la configuración de GitHub. Para solicitar la eliminación de tus datos almacenados (<em>tokens</em> y borradores), escribe a <a href="mailto:contacto@neogranadina.org">contacto@neogranadina.org</a>. Tu contenido publicado en tu repositorio de GitHub no se ve afectado.</p>
+
+  <h2>Sin garantía</h2>
+  <p>El Compositor se ofrece "tal cual", sin garantía de ningún tipo. Los desarrolladores no son responsables de pérdida de datos, interrupciones del servicio ni daños derivados del uso de esta herramienta. Eres responsable de mantener tus propias copias de seguridad a través de tu repositorio de GitHub.</p>
+
+  <h2>Cambios en estos términos</h2>
+  <p>Podemos actualizar estos términos periódicamente. Los cambios se indicarán en esta página con la fecha de actualización.</p>
+</body>
+</html>
