@@ -42,9 +42,12 @@ export function Header({ user, className = "" }: HeaderProps) {
       {/* Brand */}
       <Link
         to="/dashboard"
-        className="font-heading font-bold text-sm tracking-widest text-white uppercase hover:opacity-80 transition-opacity"
+        className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
       >
-        Telar: Compositor
+        <img src="/logo-lila-amarillo.svg" alt="Telar" className="h-9 w-auto max-h-9" />
+        <span className="font-heading font-normal text-periwinkle" style={{ fontSize: "24px" }}>
+          Compositor
+        </span>
       </Link>
 
       {/* User menu */}
