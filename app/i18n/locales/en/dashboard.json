@@ -1,5 +1,20 @@
 {
   "title": "Dashboard",
-  "empty_state": "Connect a project to get started",
-  "empty_state_description": "Use the onboarding wizard to connect your first GitHub repository."
+  "empty_state": "No projects yet",
+  "empty_state_description": "Connect a GitHub repository to get started.",
+  "connect_repo": "Connect a Repository",
+  "new_story": "New Story",
+  "status_bar": {
+    "last_published": "Last published",
+    "last_synced": "Last synced",
+    "unpublished_changes": "{{count}} unpublished change",
+    "unpublished_changes_plural": "{{count}} unpublished changes",
+    "never": "Never"
+  },
+  "story_card": {
+    "steps": "{{count}} step",
+    "steps_plural": "{{count}} steps",
+    "edit": "Edit",
+    "updated": "Updated {{date}}"
+  }
 }

@@ -1,0 +1,5 @@
+object_id,title,featured,creator,description,source_url,period,year,object_type,subjects,source,credit,thumbnail
+id_objeto,titulo,destacado,creador,descripcion,url_fuente,periodo,año,tipo_objeto,temas,fuente,credito,miniatura
+# This row is a comment and should be skipped
+painting-001,The Garden,true,Claude Monet,A beautiful garden painting,https://example.com/painting,19th century,1880,painting,nature,Musée d'Orsay,Public Domain,https://example.com/thumb1.jpg
+sculpture-002,Stone Figure,,Unknown Artist,An ancient stone figure,,ancient,500 BCE,sculpture,archaeology,National Museum,,

@@ -1,0 +1,4 @@
+step,object,x,y,zoom,page,question,answer,layer1_button,layer1_content,layer2_button,layer2_content
+paso,objeto,x,y,zoom,pagina,pregunta,respuesta,boton1,contenido1,boton2,contenido2
+1,painting-001,0.5,0.5,1.5,,What do you see?,I see a garden,Look closer,Notice the brushstrokes,,
+2,sculpture-002,0.3,0.7,2.0,about,,,,,,

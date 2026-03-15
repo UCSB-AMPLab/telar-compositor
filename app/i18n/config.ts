@@ -18,6 +18,8 @@ export const namespaces = [
   "editor",
   "objects",
   "publish",
+  "onboarding",
+  "config",
 ] as const;
 
 export type SupportedLanguage = (typeof supportedLanguages)[number];

@@ -84,9 +84,9 @@ describe("en/auth.json", () => {
     expect(signin.title).toBeTruthy();
   });
 
-  it("contains signin.tagline key", () => {
+  it("contains signin.intro key", () => {
     const signin = (enAuth as Record<string, Record<string, unknown>>).signin;
-    expect(signin.tagline).toBeTruthy();
+    expect(signin.intro).toBeTruthy();
   });
 
   it("contains signin.button key", () => {

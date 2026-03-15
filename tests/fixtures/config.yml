@@ -1,0 +1,31 @@
+title: "My Telar Site"
+baseurl: "/my-telar-site"
+url: "https://example.github.io"
+telar_theme: "trama"
+telar_language: "en"
+description: "A digital storytelling project"
+author: "Jane Doe"
+email: "jane@example.com"
+logo: ""
+
+story_interface:
+  show_on_homepage: true
+  show_story_steps: true
+  show_object_credits: true
+  include_demo_content: false
+
+collection_interface:
+  browse_and_search: true
+  show_link_on_homepage: true
+  show_sample_on_homepage: false
+  featured_count: 4
+
+story_key: ""
+
+google_sheets:
+  enabled: false
+  published_url: ""
+
+telar:
+  version: "0.9.3-beta"
+  release_date: "2026-03-14"

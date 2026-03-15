@@ -1,0 +1,4 @@
+order,story_id,title,subtitle,byline,private
+orden,id_historia,titulo,subtitulo,firma,privado
+# This row is a comment
+1,my-story,My Story,A subtitle,By Jane Doe,false

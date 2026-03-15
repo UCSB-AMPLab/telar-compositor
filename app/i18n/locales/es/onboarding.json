@@ -1,0 +1,62 @@
+{
+  "title": "",
+  "progress": {
+    "connect": "",
+    "sync": "",
+    "review": "",
+    "done": ""
+  },
+  "step_connect": {
+    "heading": "",
+    "description": "",
+    "search_placeholder": "",
+    "no_repos": "",
+    "continue": ""
+  },
+  "step_sync": {
+    "heading": "",
+    "validating": "",
+    "importing_config": "",
+    "importing_objects": "",
+    "importing_stories": "",
+    "importing_glossary": "",
+    "scanning_iiif": "",
+    "importing_sheets": "",
+    "error_not_telar": "",
+    "error_empty_repo": "",
+    "error_sheets_access": "",
+    "sheets_url_label": "",
+    "sheets_url_placeholder": "",
+    "sheets_retry": "",
+    "back": ""
+  },
+  "step_review": {
+    "heading": "",
+    "site_settings": "",
+    "objects_title": "",
+    "objects_count": "",
+    "objects_skipped": "",
+    "stories_title": "",
+    "stories_count": "",
+    "glossary_title": "",
+    "glossary_count": "",
+    "no_metadata": "",
+    "sheets_warning": "",
+    "go_to_dashboard": "",
+    "edit_config_first": ""
+  },
+  "step_done": {
+    "heading": "",
+    "description": "",
+    "go_to_dashboard": ""
+  },
+  "inline_config": {
+    "heading": "",
+    "site_title": "",
+    "language": "",
+    "theme": "",
+    "url": "",
+    "baseurl": "",
+    "save": ""
+  }
+}

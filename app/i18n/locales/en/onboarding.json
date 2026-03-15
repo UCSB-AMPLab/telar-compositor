@@ -1,0 +1,62 @@
+{
+  "title": "Connect a Repository",
+  "progress": {
+    "connect": "Connect",
+    "sync": "Sync",
+    "review": "Review",
+    "done": "Done"
+  },
+  "step_connect": {
+    "heading": "Select a Repository",
+    "description": "Choose a repository with an existing Telar site.",
+    "search_placeholder": "Search repositories...",
+    "no_repos": "No repositories found. Make sure the Telar Compositor GitHub App is installed on your account.",
+    "continue": "Continue"
+  },
+  "step_sync": {
+    "heading": "Importing Content",
+    "validating": "Validating Telar site",
+    "importing_config": "Reading site configuration",
+    "importing_objects": "Importing objects",
+    "importing_stories": "Importing stories",
+    "importing_glossary": "Importing glossary",
+    "scanning_iiif": "Scanning IIIF tiles",
+    "importing_sheets": "Importing from Google Sheets",
+    "error_not_telar": "This doesn't appear to be a Telar site.",
+    "error_empty_repo": "This repository is empty. Select one with an existing Telar site.",
+    "error_sheets_access": "Could not access the published Google Sheet. Please provide the correct URL.",
+    "sheets_url_label": "Published Google Sheet URL",
+    "sheets_url_placeholder": "https://docs.google.com/spreadsheets/d/e/.../pubhtml",
+    "sheets_retry": "Retry Import",
+    "back": "Choose another repo"
+  },
+  "step_review": {
+    "heading": "Import Complete",
+    "site_settings": "Site Settings",
+    "objects_title": "Objects",
+    "objects_count": "{{count}} imported",
+    "objects_skipped": "{{count}} skipped",
+    "stories_title": "Stories",
+    "stories_count": "{{count}} imported",
+    "glossary_title": "Glossary",
+    "glossary_count": "{{count}} terms",
+    "no_metadata": "No metadata",
+    "sheets_warning": "Google Sheets was enabled. It has been disabled \u2014 the compositor manages content directly.",
+    "go_to_dashboard": "Go to Dashboard",
+    "edit_config_first": "Edit Config First"
+  },
+  "step_done": {
+    "heading": "You're All Set!",
+    "description": "Your Telar site has been imported successfully.",
+    "go_to_dashboard": "Go to Dashboard"
+  },
+  "inline_config": {
+    "heading": "Essential Settings",
+    "site_title": "Site Title",
+    "language": "Language",
+    "theme": "Theme",
+    "url": "Site URL",
+    "baseurl": "Base URL",
+    "save": "Save & Continue"
+  }
+}

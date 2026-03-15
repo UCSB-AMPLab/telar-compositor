@@ -1,5 +1,20 @@
 {
   "title": "",
   "empty_state": "",
-  "empty_state_description": ""
+  "empty_state_description": "",
+  "connect_repo": "",
+  "new_story": "",
+  "status_bar": {
+    "last_published": "",
+    "last_synced": "",
+    "unpublished_changes": "",
+    "unpublished_changes_plural": "",
+    "never": ""
+  },
+  "story_card": {
+    "steps": "",
+    "steps_plural": "",
+    "edit": "",
+    "updated": ""
+  }
 }
