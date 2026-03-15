@@ -1,15 +1,15 @@
 {
-  "app_name": "",
-  "language_toggle": "",
-  "loading": "",
-  "error": "",
-  "coming_soon": "",
+  "app_name": "Compositor de Telar",
+  "language_toggle": "EN",
+  "loading": "Cargando...",
+  "error": "Algo salió mal",
+  "coming_soon": "Esta sección estará disponible en una próxima actualización.",
   "nav": {
-    "dashboard": "",
-    "objects": "",
-    "stories": "",
-    "glossary": "",
-    "config": "",
-    "publish": ""
+    "dashboard": "Inicio",
+    "objects": "Objetos",
+    "stories": "Historias",
+    "glossary": "Glosario",
+    "config": "Configuración",
+    "publish": "Publicar"
   }
 }
