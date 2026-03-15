@@ -5,7 +5,7 @@
  */
 
 import { useTranslation } from "react-i18next";
-import { BookA } from "lucide-react";
+import { BookText } from "lucide-react";
 
 export const handle = { i18n: ["common"] };
 
@@ -19,7 +19,7 @@ export default function GlossaryPage() {
       </h1>
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="w-14 h-14 rounded-full bg-periwinkle flex items-center justify-center mb-4">
-          <BookA className="w-6 h-6 text-charcoal" />
+          <BookText className="w-6 h-6 text-charcoal" />
         </div>
         <p className="font-body text-sm text-gray-500">{t("coming_soon")}</p>
       </div>
