@@ -1,0 +1,19 @@
+{
+  "name": "telar-compositor",
+  "compatibility_date": "2025-03-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "telar-compositor-db",
+      "database_id": "local-development"
+    }
+  ],
+  // Secrets — set via `wrangler secret put` or .dev.vars for local development:
+  // GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_CALLBACK_URL,
+  // ENCRYPTION_KEY (32-byte hex, generate with: openssl rand -hex 32),
+  // SESSION_SECRET
+  "vars": {
+    "ENVIRONMENT": "development"
+  }
+}
