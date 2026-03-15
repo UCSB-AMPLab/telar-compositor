@@ -1,0 +1,5 @@
+{
+  "title": "Dashboard",
+  "empty_state": "Connect a project to get started",
+  "empty_state_description": "Use the onboarding wizard to connect your first GitHub repository."
+}

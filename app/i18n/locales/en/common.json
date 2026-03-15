@@ -1,0 +1,15 @@
+{
+  "app_name": "Telar Compositor",
+  "language_toggle": "ES",
+  "loading": "Loading...",
+  "error": "Something went wrong",
+  "coming_soon": "This section will be available in a future update.",
+  "nav": {
+    "dashboard": "Dashboard",
+    "objects": "Objects",
+    "stories": "Stories",
+    "glossary": "Glossary",
+    "config": "Config",
+    "publish": "Publish"
+  }
+}
