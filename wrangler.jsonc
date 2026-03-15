@@ -6,7 +6,8 @@
     {
       "binding": "DB",
       "database_name": "telar-compositor-db",
-      "database_id": "local-development"
+      "database_id": "bcd4a579-f19c-41e8-a3c2-5a314d57a358",
+      "migrations_dir": "app/db/migrations"
     }
   ],
   // Secrets — set via `wrangler secret put` or .dev.vars for local development:
