@@ -10,6 +10,9 @@ export default [
     route("/auth/callback", "routes/_auth.callback.tsx"),
   ]),
 
+  // Onboarding wizard — authenticated but no tab nav
+  route("/onboarding", "routes/onboarding.tsx"),
+
   // Authenticated routes (auth middleware applied in _app.tsx)
   layout("routes/_app.tsx", [
     index("routes/home.tsx"),
