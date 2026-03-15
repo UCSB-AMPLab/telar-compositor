@@ -2,6 +2,7 @@
   "name": "telar-compositor",
   "compatibility_date": "2025-03-14",
   "compatibility_flags": ["nodejs_compat"],
+  "main": "./workers/app.ts",
   "d1_databases": [
     {
       "binding": "DB",
