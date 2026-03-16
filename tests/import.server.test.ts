@@ -9,6 +9,7 @@ import {
   mapObjectsCsv,
   mapProjectCsv,
   mapStoryCsv,
+  parseIndexMd,
 } from "~/lib/import.server";
 import { parseYaml } from "~/lib/yaml.server";
 
@@ -17,6 +18,59 @@ const fixturesDir = resolve(__dirname, "fixtures");
 function readFixture(name: string) {
   return readFileSync(resolve(fixturesDir, name), "utf-8");
 }
+
+// ---------------------------------------------------------------------------
+// parseIndexMd
+// ---------------------------------------------------------------------------
+
+describe("parseIndexMd", () => {
+  it("parses full frontmatter + body and returns all 5 fields", () => {
+    const content = `---
+stories_heading: Our Stories
+stories_intro: Explore our narratives
+objects_heading: Objects
+objects_intro: Browse the collection
+---
+Welcome to the site.
+
+This is the second paragraph.`;
+    const result = parseIndexMd(content);
+    expect(result.stories_heading).toBe("Our Stories");
+    expect(result.stories_intro).toBe("Explore our narratives");
+    expect(result.objects_heading).toBe("Objects");
+    expect(result.objects_intro).toBe("Browse the collection");
+    expect(result.welcome_body).toBe("Welcome to the site.\n\nThis is the second paragraph.");
+  });
+
+  it("returns frontmatter fields and undefined welcome_body when no body", () => {
+    const content = `---
+stories_heading: Our Stories
+stories_intro: Explore our narratives
+objects_heading: Objects
+objects_intro: Browse the collection
+---`;
+    const result = parseIndexMd(content);
+    expect(result.stories_heading).toBe("Our Stories");
+    expect(result.stories_intro).toBe("Explore our narratives");
+    expect(result.welcome_body).toBeUndefined();
+  });
+
+  it("returns empty object when no frontmatter delimiters", () => {
+    const content = "Welcome to the site.\n\nThis is the body without frontmatter.";
+    const result = parseIndexMd(content);
+    expect(result).toEqual({});
+  });
+
+  it("returns empty object for empty string", () => {
+    const result = parseIndexMd("");
+    expect(result).toEqual({});
+  });
+
+  it("returns empty object for null/undefined", () => {
+    expect(parseIndexMd(null)).toEqual({});
+    expect(parseIndexMd(undefined)).toEqual({});
+  });
+});
 
 // ---------------------------------------------------------------------------
 // isHeaderRow
@@ -304,12 +358,16 @@ describe("importRepo - sheetsAccessError blocking path", () => {
     const configBinary = Array.from(configBytes).map((b) => String.fromCharCode(b)).join("");
     const configBase64 = btoa(configBinary);
 
+    // index.md response (404 = no index.md in this repo)
+    const indexNotFound = { ok: false, status: 404, json: async () => ({ message: "Not Found" }) };
+
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         json: async () => ({ content: configBase64, encoding: "base64" }),
       })
+      .mockResolvedValueOnce(indexNotFound)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,

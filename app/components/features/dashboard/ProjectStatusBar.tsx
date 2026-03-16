@@ -53,16 +53,21 @@ export function ProjectStatusBar({
 
       <div className="flex items-center gap-6 text-gray-500">
         <div className="flex flex-col items-end sm:flex-row sm:items-center sm:gap-1">
-          <span className="text-xs text-gray-400">{t("status_bar.last_published")}:</span>
-          <span className="text-xs">{formatRelative(lastPublished, neverLabel)}</span>
-        </div>
-        <div className="flex flex-col items-end sm:flex-row sm:items-center sm:gap-1">
           <span className="text-xs text-gray-400">{t("status_bar.last_synced")}:</span>
           <span className="text-xs">{formatRelative(lastSynced, neverLabel)}</span>
+        </div>
+        <div className="flex flex-col items-end sm:flex-row sm:items-center sm:gap-1">
+          <span className="text-xs text-gray-400">{t("status_bar.last_published")}:</span>
+          <span className="text-xs">{formatRelative(lastPublished, neverLabel)}</span>
         </div>
         {unpublishedCount > 0 && (
           <span className="text-xs bg-periwinkle text-charcoal rounded-full px-2 py-0.5">
             {t("status_bar.unpublished_changes", { count: unpublishedCount })}
+          </span>
+        )}
+        {!lastPublished && !lastSynced && (
+          <span className="text-xs text-gray-400 italic">
+            {t("status_bar.never_hint")}
           </span>
         )}
       </div>

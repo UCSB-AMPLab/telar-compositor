@@ -21,6 +21,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const code = url.searchParams.get("code");
   const receivedState = url.searchParams.get("state");
 
+  // GitHub App installation redirects here with setup_action=install but no
+  // OAuth code/state — just redirect to dashboard (or sign-in if not authed).
+  const setupAction = url.searchParams.get("setup_action");
+  if (setupAction === "install") {
+    return redirect("/dashboard");
+  }
+
   // Validate required params
   if (!code || !receivedState) {
     return new Response("Missing code or state", { status: 400 });

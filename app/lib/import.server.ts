@@ -13,6 +13,7 @@
  */
 
 import Papa from "papaparse";
+import { eq, inArray } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { getFileContent, getRepoTree } from "~/lib/github.server";
 import { discoverSheetTabs, fetchSheetCsv } from "~/lib/sheets.server";
@@ -20,6 +21,7 @@ import { parseYaml } from "~/lib/yaml.server";
 import {
   projects,
   project_config,
+  project_landing,
   objects,
   stories,
   steps,
@@ -51,6 +53,10 @@ const KNOWN_BILINGUAL_VALUES = new Set([
   "fuente",
   "credito",
   "miniatura",
+  "medio",
+  "dimensiones",
+  "ubicacion",
+  "ubicación",
   // project.csv bilingual row 1 values
   "orden",
   "id_historia",
@@ -105,6 +111,63 @@ interface ImportParams {
   env: Env;
   /** Override the Google Sheets URL from _config.yml — used on retry when user corrects the URL */
   overrideGoogleSheetsUrl?: string;
+}
+
+// ---------------------------------------------------------------------------
+// index.md parser
+// ---------------------------------------------------------------------------
+
+export interface LandingData {
+  stories_heading?: string;
+  stories_intro?: string;
+  objects_heading?: string;
+  objects_intro?: string;
+  welcome_body?: string;
+}
+
+/**
+ * Parses the content of a Telar `index.md` file and returns the structured
+ * landing page data.
+ *
+ * Extracts four optional frontmatter fields (`stories_heading`,
+ * `stories_intro`, `objects_heading`, `objects_intro`) and the markdown body
+ * (`welcome_body`). Returns an empty object if the content has no frontmatter
+ * delimiters or is null/undefined.
+ */
+export function parseIndexMd(content: string | null | undefined): LandingData {
+  if (!content) return {};
+  const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) return {};
+  const frontmatter = (parseYaml(match[1]) as Record<string, unknown>) ?? {};
+  return {
+    stories_heading: frontmatter.stories_heading as string | undefined,
+    stories_intro: frontmatter.stories_intro as string | undefined,
+    objects_heading: frontmatter.objects_heading as string | undefined,
+    objects_intro: frontmatter.objects_intro as string | undefined,
+    welcome_body: match[2].trim() || undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// D1 batch insert helper
+// ---------------------------------------------------------------------------
+
+/**
+ * D1 limits bound parameters to 100 per statement. This helper chunks
+ * an array of rows into batches that fit within that limit, based on the
+ * number of columns each row produces.
+ *
+ * @param colCount - number of columns in the insert (bound params per row)
+ * @param rows - array of row values to insert
+ * @returns array of row-arrays, each safe for a single D1 insert
+ */
+function chunkForD1<T>(colCount: number, rows: T[]): T[][] {
+  const maxRows = Math.floor(100 / colCount);
+  const chunks: T[][] = [];
+  for (let i = 0; i < rows.length; i += maxRows) {
+    chunks.push(rows.slice(i, i + maxRows));
+  }
+  return chunks;
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +454,13 @@ export async function importRepo({
     "";
 
   // -------------------------------------------------------------------------
+  // Step 2b: Fetch and parse index.md for landing page data
+  // -------------------------------------------------------------------------
+
+  const indexContent = await getFileContent(token, owner, repo, "index.md");
+  const landingData = parseIndexMd(indexContent);
+
+  // -------------------------------------------------------------------------
   // Step 3: Fetch repo tree
   // -------------------------------------------------------------------------
 
@@ -433,6 +503,8 @@ export async function importRepo({
       const publishedId = googleSheetsPublishedUrl.match(/\/d\/e\/([a-zA-Z0-9-_]+)/)?.[1] ?? "";
       const tabs = await discoverSheetTabs(googleSheetsPublishedUrl);
 
+      // First pass: import objects, project, glossary tabs
+      const storyTabs: Array<{ name: string; gid: string }> = [];
       for (const tab of tabs) {
         const csvText = await fetchSheetCsv(publishedId, tab.gid);
         const rows = parseTelarCsv(csvText);
@@ -450,8 +522,28 @@ export async function importRepo({
             title: r.title || undefined,
             definition: r.definition || undefined,
           }));
+        } else {
+          // Candidate story tab — collect for second pass
+          storyTabs.push(tab);
         }
-        // Story tabs (content tabs matching story_ids) are imported separately
+      }
+
+      // Second pass: match remaining tabs to story_ids and import steps/layers
+      const storyIds = new Set(storyRows.map((r) => (r.story_id as string).toLowerCase()));
+      for (const tab of storyTabs) {
+        if (storyIds.has(tab.name.toLowerCase())) {
+          const csvText = await fetchSheetCsv(publishedId, tab.gid);
+          const rows = parseTelarCsv(csvText);
+          const storyIndex = storyRows.findIndex(
+            (r) => (r.story_id as string).toLowerCase() === tab.name.toLowerCase(),
+          );
+          const { steps: mappedSteps, layers: mappedLayers } = mapStoryCsv(
+            rows,
+            -(storyIndex + 1), // placeholder — updated after D1 insert
+          );
+          stepRows.push(...mappedSteps);
+          layerRows.push(...mappedLayers);
+        }
       }
 
       sheetsDisabled = true; // Auto-disable after successful Sheets import
@@ -527,13 +619,14 @@ export async function importRepo({
 
   const db = getDb(env.DB);
 
-  // Insert project record
+  // Insert project record — initial import counts as a sync
   const [projectRecord] = await db
     .insert(projects)
     .values({
       user_id: userId,
       github_repo_full_name: repoFullName,
       installation_id: installationId,
+      last_synced_at: new Date().toISOString(),
     })
     .returning();
 
@@ -549,27 +642,90 @@ export async function importRepo({
     .insert(project_config)
     .values({ ...configFields, project_id: projectId });
 
-  // Batch insert content tables
-  const batchOps = [];
+  // Insert landing page data (null-safe: all fields are optional)
+  await db
+    .insert(project_landing)
+    .values({ project_id: projectId, ...landingData });
 
-  if (objectsWithProjectId.length > 0) {
-    batchOps.push(db.insert(objects).values(objectsWithProjectId));
+  // Insert content tables — chunked to stay within D1's 100-variable limit
+  // objects: 17 cols → max 5 rows; stories: 9 cols → max 11 rows;
+  // glossary: 6 cols → max 16 rows
+  for (const chunk of chunkForD1(17, objectsWithProjectId)) {
+    await db.insert(objects).values(chunk);
+  }
+  for (const chunk of chunkForD1(9, storiesWithProjectId)) {
+    await db.insert(stories).values(chunk);
+  }
+  for (const chunk of chunkForD1(6, glossaryWithProjectId)) {
+    await db.insert(glossary_terms).values(chunk);
   }
 
-  if (storiesWithProjectId.length > 0) {
-    batchOps.push(db.insert(stories).values(storiesWithProjectId));
-  }
+  // Insert steps and layers — requires real story DB IDs
+  if (stepRows.length > 0 && storiesWithProjectId.length > 0) {
+    // Fetch inserted story IDs ordered by the original insert order
+    const insertedStories = await db
+      .select({ id: stories.id, story_id: stories.story_id })
+      .from(stories)
+      .where(eq(stories.project_id, projectId));
 
-  if (glossaryWithProjectId.length > 0) {
-    batchOps.push(db.insert(glossary_terms).values(glossaryWithProjectId));
-  }
+    // Build index from original story order to DB ID
+    const storyDbIdByIndex = new Map<number, number>();
+    for (let i = 0; i < storiesWithProjectId.length; i++) {
+      const storyId = storiesWithProjectId[i].story_id as string;
+      const dbRow = insertedStories.find((s) => s.story_id === storyId);
+      if (dbRow) {
+        storyDbIdByIndex.set(-(i + 1), dbRow.id);
+      }
+    }
 
-  if (batchOps.length > 0) {
-    await db.batch(batchOps as Parameters<typeof db.batch>[0]);
-  }
+    // Update placeholder story_id refs in steps
+    const stepsWithIds = stepRows.map((step) => ({
+      ...step,
+      story_id: storyDbIdByIndex.get(step.story_id as number) ?? step.story_id,
+    }));
 
-  // Steps and layers require inserted story IDs — simplified for Phase 2
-  // (full step/layer import with correct IDs is handled in Phase 3 story editor)
+    // steps table has 11 columns → max 9 rows per insert
+    for (const chunk of chunkForD1(11, stepsWithIds)) {
+      await db.insert(steps).values(chunk);
+    }
+
+    // Insert layers — needs real step IDs
+    if (layerRows.length > 0) {
+      const insertedSteps = await db
+        .select({ id: steps.id, story_id: steps.story_id, step_number: steps.step_number })
+        .from(steps)
+        .where(
+          inArray(
+            steps.story_id,
+            [...storyDbIdByIndex.values()],
+          ),
+        );
+
+      const layersWithIds = layerRows
+        .map((layer) => {
+          // Find the step this layer belongs to via the placeholder mapping
+          const realStoryId = storyDbIdByIndex.get(layer.step_id as number);
+          if (!realStoryId) return null;
+
+          // Match by step index within the story
+          const placeholderIndex = layer.step_id as number; // negative index
+          const stepIndex = Math.abs(placeholderIndex) - 1;
+          const storySteps = insertedSteps
+            .filter((s) => s.story_id === realStoryId)
+            .sort((a, b) => a.step_number - b.step_number);
+          const matchedStep = storySteps[stepIndex];
+          if (!matchedStep) return null;
+
+          return { ...layer, step_id: matchedStep.id };
+        })
+        .filter((l): l is NonNullable<typeof l> => l !== null);
+
+      // layers table has 6 columns → max 16 rows per insert
+      for (const chunk of chunkForD1(6, layersWithIds)) {
+        await db.insert(layers).values(chunk);
+      }
+    }
+  }
 
   return {
     valid: true,
