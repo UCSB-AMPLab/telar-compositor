@@ -35,3 +35,32 @@
     font-family: var(--font-heading);
   }
 }
+
+/* CodeMirror editor */
+.cm-editor { outline: none; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.875rem; color: var(--color-charcoal); background: #ffffff; }
+.cm-editor.cm-focused { outline: none; }
+.cm-content { padding: 8px 12px; min-height: 120px; }
+.cm-line { line-height: 1.6; }
+.cm-scroller { overflow: auto; }
+
+/* Live preview rendered styles */
+.cm-md-h1 { font-family: var(--font-heading); font-size: 1.5rem; font-weight: 700; }
+.cm-md-h2 { font-family: var(--font-heading); font-size: 1.25rem; font-weight: 600; }
+.cm-md-h3 { font-family: var(--font-heading); font-size: 1.1rem; font-weight: 600; }
+.cm-md-strong { font-weight: 700; }
+.cm-md-em { font-style: italic; }
+/* font-size: 0 with zero dimensions hides markers while keeping them in DOM flow
+   for correct cursor positioning — display:none breaks cursor navigation in CodeMirror */
+.cm-md-syntax-hidden { font-size: 0; line-height: 0; overflow: hidden; display: inline-block; width: 0; }
+.cm-md-link { text-decoration: underline; color: var(--color-charcoal); cursor: pointer; }
+.cm-md-link-url { color: #999; font-size: 0.85em; }
+.cm-md-blockquote { border-left: 3px solid var(--color-periwinkle); padding-left: 1em; color: #666; }
+.cm-md-code { background: var(--color-cream-dark); padding: 0.1em 0.3em; border-radius: 0.25rem; font-size: 0.9em; }
+.cm-md-code-block { background: var(--color-cream-dark); display: block; padding: 0.25em 0.5em; }
+.cm-md-hr { display: block; border: none; border-top: 1px solid #ddd; margin: 0.5em 0; }
+.cm-md-image-alt { color: #666; font-style: italic; }
+.cm-md-ul { padding-left: 1.5em; }
+.cm-md-ol { padding-left: 1.5em; }
+.cm-md-ul-mark { font-size: 0; }
+.cm-md-ul-mark::before { content: "• "; font-size: 0.875rem; color: #999; }
+.cm-md-ol-mark { color: #999; }
