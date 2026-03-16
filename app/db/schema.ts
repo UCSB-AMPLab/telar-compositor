@@ -85,6 +85,7 @@ export const stories = sqliteTable("stories", {
   byline: text("byline"),
   order: integer("order").default(0),
   private: integer("private", { mode: "boolean" }).default(false),
+  draft: integer("draft", { mode: "boolean" }).default(false),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -117,5 +118,16 @@ export const glossary_terms = sqliteTable("glossary_terms", {
   term_id: text("term_id").notNull(),
   title: text("title"),
   definition: text("definition"),
+  updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
+});
+
+export const project_landing = sqliteTable("project_landing", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  project_id: integer("project_id").notNull().references(() => projects.id),
+  stories_heading: text("stories_heading"),
+  stories_intro: text("stories_intro"),
+  objects_heading: text("objects_heading"),
+  objects_intro: text("objects_intro"),
+  welcome_body: text("welcome_body"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });

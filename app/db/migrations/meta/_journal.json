@@ -15,6 +15,27 @@
       "when": 1773605591846,
       "tag": "0001_steady_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1773700000000,
+      "tag": "0002_add_stories_unique_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1773800000000,
+      "tag": "0003_add_stories_draft",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1773900000000,
+      "tag": "0004_add_project_landing",
+      "breakpoints": true
     }
   ]
 }
