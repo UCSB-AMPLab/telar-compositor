@@ -1,0 +1,34 @@
+{
+  "toolbar": {
+    "bold": "Bold",
+    "italic": "Italic",
+    "link": "Link",
+    "image": "Image",
+    "heading": "Heading",
+    "heading_level": "Heading {{level}}",
+    "bullet_list": "Bullet list",
+    "ordered_list": "Ordered list",
+    "blockquote": "Blockquote",
+    "indent": "Indent",
+    "outdent": "Outdent",
+    "undo": "Undo",
+    "redo": "Redo"
+  },
+  "link_popover": {
+    "url_placeholder": "Paste or type a URL",
+    "insert": "Insert",
+    "cancel": "Cancel"
+  },
+  "image_dialog": {
+    "title": "Insert Image",
+    "tab_url": "URL",
+    "tab_objects": "Objects",
+    "url_placeholder": "Image URL",
+    "alt_placeholder": "Alt text (describes the image)",
+    "insert": "Insert",
+    "cancel": "Cancel",
+    "no_objects": "No objects imported yet"
+  },
+  "word_count_one": "{{count}} word",
+  "word_count_other": "{{count}} words"
+}

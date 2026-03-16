@@ -1,20 +1,81 @@
 {
-  "title": "",
-  "empty_state": "",
-  "empty_state_description": "",
-  "connect_repo": "",
-  "new_story": "",
+  "title": "Panel",
+  "page_title": "Panel",
+  "empty_state": "Aún no hay proyectos",
+  "empty_state_description": "Conecta un repositorio de GitHub para comenzar.",
+  "connect_repo": "Conectar un repositorio",
+  "new_story": "Nueva historia",
+  "repo_explanation": "Este repositorio ha sido importado al compositor. Si deseas seleccionar uno diferente, haz clic en el botón 'Conectar repositorio' arriba.",
+  "intro_paragraph_1": "Telar es una plataforma de narrativa digital que combina imágenes en alta resolución con narrativas paso a paso. Tu sitio se construye a partir de dos tipos principales de contenido: <strong>objetos</strong> — imágenes servidas a través del <iiifLink>International Image Interoperability Framework (IIIF)</iiifLink>, que pueden ser autoalojadas o provenir de museos y bibliotecas de todo el mundo — y <strong>historias</strong> — narrativas paso a paso que guían a los visitantes a través de esos objetos, combinando vistas detalladas con preguntas, respuestas y capas ampliables de información adicional.",
+  "intro_paragraph_2": "Usa el compositor para gestionar tus objetos e historias, configurar tu sitio y publicar cambios. Puedes aprender más sobre cómo funciona Telar en <telarLink>telar.ucsb.edu</telarLink> y en la <docsLink>documentación</docsLink>.",
+  "workflow": {
+    "title": "Cómo funciona el compositor",
+    "step1_title": "1. Configurar",
+    "step1_desc": "Define el título, la descripción, el idioma y las opciones de visualización de tu sitio.",
+    "step2_title": "2. Objetos",
+    "step2_desc": "Gestiona las imágenes que referencian tus historias — agrega metadatos, verifica los mosaicos IIIF e importa fuentes externas.",
+    "step3_title": "3. Historias",
+    "step3_desc": "Crea y edita narrativas paso a paso con vistas detalladas, anotaciones y capas ampliables de información.",
+    "step4_title": "4. Publicar",
+    "step4_desc": "Revisa tus cambios y publica en tu sitio de GitHub Pages en un solo commit."
+  },
+  "save_publish": "Tus ediciones se guardan automáticamente mientras trabajas. Nada aparece en tu sitio publicado hasta que decidas publicar. Si alguien edita el repositorio directamente en GitHub, deberás resincronizar antes de publicar.",
+  "preview_intro": "A continuación se muestra una vista previa de la página de inicio de tu sitio. Cada sección muestra tu contenido real tal como lo verán los visitantes — haz clic en cualquier sección para editarla directamente. También puedes usar las pestañas de arriba para gestionar tus historias, objetos y configuración del sitio con más detalle.",
+  "preview": {
+    "site_description_heading": "Descripción del sitio",
+    "site_description_explanation": "El título y la descripción de tu sitio, tal como aparecen en la página de inicio y en los resultados de búsqueda.",
+    "welcome_heading": "Mensaje de bienvenida",
+    "welcome_explanation": "El contenido introductorio que ven los visitantes al llegar a tu sitio. Proviene de la página de inicio de tu sitio.",
+    "stories_heading": "Historias",
+    "stories_explanation": "Tu colección de historias tal como aparece en la página de inicio. Arrastra para reordenar — esto controla el orden de visualización en tu sitio publicado.",
+    "stories_manage": "Gestionar →",
+    "objects_heading": "Objetos",
+    "objects_explanation": "Objetos destacados de tu colección, mostrados en la página de inicio."
+  },
+  "inline_edit": {
+    "click_to_edit": "Haz clic para editar",
+    "saving": "Guardando...",
+    "saved": "Guardado"
+  },
   "status_bar": {
-    "last_published": "",
-    "last_synced": "",
-    "unpublished_changes": "",
-    "unpublished_changes_plural": "",
-    "never": ""
+    "last_synced": "Última sincronización (pull) de GitHub",
+    "last_published": "Último envío (push) a GitHub Pages",
+    "unpublished_changes_one": "{{count}} cambio sin publicar",
+    "unpublished_changes_other": "{{count}} cambios sin publicar",
+    "never": "Nunca",
+    "never_hint": "Edita aquí, luego publica en tu sitio cuando quieras"
   },
   "story_card": {
-    "steps": "",
-    "steps_plural": "",
-    "edit": "",
-    "updated": ""
-  }
+    "steps_one": "{{count}} paso",
+    "steps_other": "{{count}} pasos",
+    "edit": "Editar",
+    "updated": "Actualizado {{date}}",
+    "synced": "Sincronizado {{date}}",
+    "make_private": "Hacer privada",
+    "make_public": "Hacer pública",
+    "mark_draft": "Marcar como borrador",
+    "mark_ready": "Marcar como lista",
+    "draft_badge": "Borrador",
+    "private_badge": "Privada"
+  },
+  "hint": "Arrastra para reordenar — esto controla el orden en tu sitio publicado",
+  "new_story_button": "+ Nueva historia",
+  "connect_repo_button": "Repositorio GitHub",
+  "new_story_placeholder": "Título de la historia...",
+  "new_story_subtitle_placeholder": "Subtítulo (opcional)",
+  "new_story_byline_placeholder": "Firma (opcional)",
+  "save": "Guardar",
+  "cancel": "Cancelar",
+  "delete_story": {
+    "title": "Eliminar historia",
+    "body": "¿Eliminar '{{title}}'? Esto eliminará la historia y sus {{count}} pasos del compositor. Tu sitio publicado no cambiará hasta que publiques de nuevo.",
+    "confirm": "Eliminar"
+  },
+  "connect_new_repo": "Conectar nuevo repositorio",
+  "soft_limit": {
+    "stories": "Tienes {{count}} historias. El rendimiento puede verse afectado con más de 10.",
+    "projects": "Tienes {{count}} proyectos. El límite es de 5 repositorios conectados."
+  },
+  "story_editor_placeholder": "Editor de historias — próximamente",
+  "back_to_dashboard": "Volver al panel"
 }

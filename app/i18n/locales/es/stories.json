@@ -1,0 +1,29 @@
+{
+  "title": "Historias",
+  "hint": "Arrastra para reordenar — esto controla el orden en tu sitio publicado",
+  "new_story_button": "+ Nueva historia",
+  "empty_state": "Aún no hay historias",
+  "empty_state_description": "Crea tu primera historia para comenzar a construir narrativas alrededor de tus objetos.",
+  "story_row": {
+    "steps_one": "{{count}} paso",
+    "steps_other": "{{count}} pasos",
+    "edit": "Editar",
+    "updated": "Actualizado {{date}}",
+    "draft": "Borrador",
+    "published": "Publicada",
+    "private": "Privada",
+    "public": "Pública"
+  },
+  "new_story_placeholder": "Título de la historia...",
+  "new_story_subtitle_placeholder": "Subtítulo (opcional)",
+  "new_story_byline_placeholder": "Firma (opcional)",
+  "save": "Guardar",
+  "cancel": "Cancelar",
+  "delete_story": {
+    "title": "Eliminar historia",
+    "body": "¿Eliminar '{{title}}'? Esto eliminará la historia y sus {{count}} pasos del compositor. Tu sitio publicado no cambiará hasta que publiques de nuevo.",
+    "confirm": "Eliminar"
+  },
+  "draft_toggle": "Borrador",
+  "private_toggle": "Privada"
+}

@@ -20,6 +20,7 @@ export const namespaces = [
   "publish",
   "onboarding",
   "config",
+  "stories",
 ] as const;
 
 export type SupportedLanguage = (typeof supportedLanguages)[number];

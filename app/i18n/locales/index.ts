@@ -5,12 +5,16 @@ import enAuth from "./en/auth.json";
 import enConfig from "./en/config.json";
 import enDashboard from "./en/dashboard.json";
 import enOnboarding from "./en/onboarding.json";
+import enEditor from "./en/editor.json";
+import enStories from "./en/stories.json";
 
 import esCommon from "./es/common.json";
 import esAuth from "./es/auth.json";
 import esConfig from "./es/config.json";
 import esDashboard from "./es/dashboard.json";
+import esEditor from "./es/editor.json";
 import esOnboarding from "./es/onboarding.json";
+import esStories from "./es/stories.json";
 
 export default {
   en: {
@@ -18,13 +22,17 @@ export default {
     auth: enAuth,
     config: enConfig,
     dashboard: enDashboard,
+    editor: enEditor,
     onboarding: enOnboarding,
+    stories: enStories,
   },
   es: {
     common: esCommon,
     auth: esAuth,
     config: esConfig,
     dashboard: esDashboard,
+    editor: esEditor,
     onboarding: esOnboarding,
+    stories: esStories,
   },
 } satisfies Resource;

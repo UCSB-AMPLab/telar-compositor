@@ -41,7 +41,7 @@
     "glossary_title": "Glossary",
     "glossary_count": "{{count}} terms",
     "no_metadata": "No metadata",
-    "sheets_warning": "Google Sheets was enabled. It has been disabled \u2014 the compositor manages content directly.",
+    "sheets_warning": "Your site uses Google Sheets as its data source. On your first publish, the compositor will switch to managing content directly and disable the Sheets connection in your site configuration.",
     "go_to_dashboard": "Go to Dashboard",
     "edit_config_first": "Edit Config First"
   },

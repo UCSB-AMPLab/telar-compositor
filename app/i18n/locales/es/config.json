@@ -1,57 +1,57 @@
 {
-  "title": "",
-  "save": "",
-  "saved": "",
+  "title": "Configuración del sitio",
+  "save": "Guardar cambios",
+  "saved": "Cambios guardados",
   "sections": {
     "site_settings": {
-      "title": "",
-      "field_title": "",
-      "field_title_help": "",
-      "field_description": "",
-      "field_description_help": "",
-      "field_author": "",
-      "field_email": "",
-      "field_demo_content": "",
-      "field_demo_content_help": "",
-      "field_theme": "",
-      "field_theme_help": "",
-      "field_logo": "",
-      "field_logo_help": "",
-      "field_language": "",
-      "field_language_help": ""
+      "title": "Configuración general",
+      "field_title": "Título del sitio",
+      "field_title_help": "El nombre de tu sitio, que aparece en la pestaña del navegador y en el encabezado.",
+      "field_description": "Descripción",
+      "field_description_help": "Una descripción breve de tu sitio para motores de búsqueda.",
+      "field_author": "Autor",
+      "field_email": "Correo de contacto",
+      "field_demo_content": "Incluir contenido de ejemplo",
+      "field_demo_content_help": "Mostrar historias y objetos de ejemplo para visitantes nuevos.",
+      "field_theme": "Tema",
+      "field_theme_help": "Elige un tema de color para tu sitio.",
+      "field_logo": "URL del logo",
+      "field_logo_help": "URL de la imagen del logo de tu sitio.",
+      "field_language": "Idioma",
+      "field_language_help": "Idioma principal de la interfaz de tu sitio."
     },
     "hosting": {
-      "title": "",
-      "field_url": "",
-      "field_url_help": "",
-      "field_baseurl": "",
-      "field_baseurl_help": ""
+      "title": "Alojamiento",
+      "field_url": "URL del sitio",
+      "field_url_help": "La URL completa donde se aloja tu sitio (por ejemplo, https://username.github.io).",
+      "field_baseurl": "URL base",
+      "field_baseurl_help": "La ruta después del dominio (por ejemplo, /mi-sitio-telar). Déjalo vacío si está alojado en la raíz."
     },
     "story_interface": {
-      "title": "",
-      "field_show_on_homepage": "",
-      "field_show_story_steps": "",
-      "field_show_story_steps_help": "",
-      "field_show_object_credits": "",
-      "field_show_object_credits_help": ""
+      "title": "Interfaz de historias",
+      "field_show_on_homepage": "Mostrar historias en la página de inicio",
+      "field_show_story_steps": "Mostrar indicador de pasos",
+      "field_show_story_steps_help": "Muestra un indicador de progreso con el paso en el que se encuentra el lector.",
+      "field_show_object_credits": "Mostrar créditos de objetos",
+      "field_show_object_credits_help": "Muestra la fuente y los créditos de los objetos."
     },
     "collection_interface": {
-      "title": "",
-      "field_browse_and_search": "",
-      "field_show_link_on_homepage": "",
-      "field_show_sample_on_homepage": "",
-      "field_featured_count": "",
-      "field_featured_count_help": ""
+      "title": "Interfaz de colección",
+      "field_browse_and_search": "Activar exploración y búsqueda",
+      "field_show_link_on_homepage": "Mostrar enlace a la colección en la página de inicio",
+      "field_show_sample_on_homepage": "Mostrar muestra en la página de inicio",
+      "field_featured_count": "Cantidad de destacados",
+      "field_featured_count_help": "Cantidad de objetos destacados a mostrar."
     },
     "story_protection": {
-      "title": "",
-      "field_story_key": "",
-      "field_story_key_help": ""
+      "title": "Protección de historias",
+      "field_story_key": "Clave de acceso",
+      "field_story_key_help": "Establece una contraseña para restringir el acceso a las historias. Déjalo vacío para acceso público."
     },
     "google_sheets": {
-      "title": "",
-      "disabled_notice": "",
-      "enabled_notice": ""
+      "title": "Integración con Google Sheets",
+      "disabled_notice": "Google Sheets ha sido desactivado. El compositor gestiona tu contenido directamente.",
+      "enabled_notice": "Google Sheets es la fuente de contenido actual. Los cambios hechos aquí se sobrescribirán en la próxima sincronización."
     }
   }
 }

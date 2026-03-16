@@ -1,62 +1,62 @@
 {
-  "title": "",
+  "title": "Conectar un repositorio",
   "progress": {
-    "connect": "",
-    "sync": "",
-    "review": "",
-    "done": ""
+    "connect": "Conectar",
+    "sync": "Sincronizar",
+    "review": "Revisar",
+    "done": "Listo"
   },
   "step_connect": {
-    "heading": "",
-    "description": "",
-    "search_placeholder": "",
-    "no_repos": "",
-    "continue": ""
+    "heading": "Selecciona un repositorio",
+    "description": "Elige un repositorio con un sitio Telar existente.",
+    "search_placeholder": "Buscar repositorios...",
+    "no_repos": "No se encontraron repositorios. Asegúrate de que la aplicación Telar Compositor de GitHub esté instalada en tu cuenta.",
+    "continue": "Continuar"
   },
   "step_sync": {
-    "heading": "",
-    "validating": "",
-    "importing_config": "",
-    "importing_objects": "",
-    "importing_stories": "",
-    "importing_glossary": "",
-    "scanning_iiif": "",
-    "importing_sheets": "",
-    "error_not_telar": "",
-    "error_empty_repo": "",
-    "error_sheets_access": "",
-    "sheets_url_label": "",
-    "sheets_url_placeholder": "",
-    "sheets_retry": "",
-    "back": ""
+    "heading": "Importando contenido",
+    "validating": "Validando sitio Telar",
+    "importing_config": "Leyendo configuración del sitio",
+    "importing_objects": "Importando objetos",
+    "importing_stories": "Importando historias",
+    "importing_glossary": "Importando glosario",
+    "scanning_iiif": "Escaneando mosaicos IIIF",
+    "importing_sheets": "Importando desde Google Sheets",
+    "error_not_telar": "Este no parece ser un sitio Telar.",
+    "error_empty_repo": "Este repositorio está vacío. Selecciona uno con un sitio Telar existente.",
+    "error_sheets_access": "No se pudo acceder a la hoja de Google Sheets publicada. Proporciona la URL correcta.",
+    "sheets_url_label": "URL de la hoja de Google Sheets publicada",
+    "sheets_url_placeholder": "https://docs.google.com/spreadsheets/d/e/.../pubhtml",
+    "sheets_retry": "Reintentar importación",
+    "back": "Elegir otro repositorio"
   },
   "step_review": {
-    "heading": "",
-    "site_settings": "",
-    "objects_title": "",
-    "objects_count": "",
-    "objects_skipped": "",
-    "stories_title": "",
-    "stories_count": "",
-    "glossary_title": "",
-    "glossary_count": "",
-    "no_metadata": "",
-    "sheets_warning": "",
-    "go_to_dashboard": "",
-    "edit_config_first": ""
+    "heading": "Importación completa",
+    "site_settings": "Configuración del sitio",
+    "objects_title": "Objetos",
+    "objects_count": "{{count}} importados",
+    "objects_skipped": "{{count}} omitidos",
+    "stories_title": "Historias",
+    "stories_count": "{{count}} importadas",
+    "glossary_title": "Glosario",
+    "glossary_count": "{{count}} términos",
+    "no_metadata": "Sin metadatos",
+    "sheets_warning": "Tu sitio usa Google Sheets como fuente de datos. En tu primera publicación, el compositor pasará a gestionar el contenido directamente y desactivará la conexión con Sheets en la configuración de tu sitio.",
+    "go_to_dashboard": "Ir al panel",
+    "edit_config_first": "Editar configuración primero"
   },
   "step_done": {
-    "heading": "",
-    "description": "",
-    "go_to_dashboard": ""
+    "heading": "¡Todo listo!",
+    "description": "Tu sitio Telar se importó correctamente.",
+    "go_to_dashboard": "Ir al panel"
   },
   "inline_config": {
-    "heading": "",
-    "site_title": "",
-    "language": "",
-    "theme": "",
-    "url": "",
-    "baseurl": "",
-    "save": ""
+    "heading": "Configuración esencial",
+    "site_title": "Título del sitio",
+    "language": "Idioma",
+    "theme": "Tema",
+    "url": "URL del sitio",
+    "baseurl": "URL base",
+    "save": "Guardar y continuar"
   }
 }

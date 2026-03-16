@@ -1,0 +1,34 @@
+{
+  "toolbar": {
+    "bold": "Negrita",
+    "italic": "Cursiva",
+    "link": "Enlace",
+    "image": "Imagen",
+    "heading": "Encabezado",
+    "heading_level": "Encabezado {{level}}",
+    "bullet_list": "Lista con viñetas",
+    "ordered_list": "Lista numerada",
+    "blockquote": "Cita",
+    "indent": "Sangría",
+    "outdent": "Quitar sangría",
+    "undo": "Deshacer",
+    "redo": "Rehacer"
+  },
+  "link_popover": {
+    "url_placeholder": "Pega o escribe una URL",
+    "insert": "Insertar",
+    "cancel": "Cancelar"
+  },
+  "image_dialog": {
+    "title": "Insertar imagen",
+    "tab_url": "URL",
+    "tab_objects": "Objetos",
+    "url_placeholder": "URL de la imagen",
+    "alt_placeholder": "Texto alternativo (describe la imagen)",
+    "insert": "Insertar",
+    "cancel": "Cancelar",
+    "no_objects": "Aún no hay objetos importados"
+  },
+  "word_count_one": "{{count}} palabra",
+  "word_count_other": "{{count}} palabras"
+}

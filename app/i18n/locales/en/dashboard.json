@@ -1,20 +1,81 @@
 {
   "title": "Dashboard",
+  "page_title": "Dashboard",
   "empty_state": "No projects yet",
   "empty_state_description": "Connect a GitHub repository to get started.",
   "connect_repo": "Connect a Repository",
   "new_story": "New Story",
+  "repo_explanation": "This repository has been imported into the compositor. If you would like to select a different one, click the 'Connect Repo' button above.",
+  "intro_paragraph_1": "Telar is a digital storytelling platform that combines high-resolution images with step-by-step narratives. Your site is built from two main types of content: <strong>objects</strong> — images served via the <iiifLink>International Image Interoperability Framework (IIIF)</iiifLink>, which can be self-hosted or sourced from museums and libraries worldwide — and <strong>stories</strong> — step-by-step narratives that guide visitors through those objects, combining close-up views with questions, answers, and expandable layers of deeper information.",
+  "intro_paragraph_2": "Use the compositor to manage your objects and stories, configure your site, and publish changes. You can learn more about how Telar works at <telarLink>telar.ucsb.edu</telarLink> and in the <docsLink>documentation</docsLink>.",
+  "workflow": {
+    "title": "How the compositor works",
+    "step1_title": "1. Configure",
+    "step1_desc": "Set up your site's title, description, language, and display options.",
+    "step2_title": "2. Objects",
+    "step2_desc": "Manage the images your stories reference — add metadata, check IIIF tiles, and import external sources.",
+    "step3_title": "3. Stories",
+    "step3_desc": "Create and edit step-by-step narratives with close-up views, annotations, and expandable information layers.",
+    "step4_title": "4. Publish",
+    "step4_desc": "Review your changes and publish to your GitHub Pages site in a single commit."
+  },
+  "save_publish": "Your edits are saved automatically as you work. Nothing goes live on your published site until you choose to publish. If someone edits the repository directly on GitHub, you'll need to re-sync before publishing.",
+  "preview_intro": "Below is a preview of your site's landing page. Each section shows your actual content as visitors will see it — click any section to edit it directly. You can also use the tabs above to manage your stories, objects, and site configuration in more detail.",
+  "preview": {
+    "site_description_heading": "Site Description",
+    "site_description_explanation": "Your site's title and description, as they appear on the landing page and in search results.",
+    "welcome_heading": "Welcome Message",
+    "welcome_explanation": "The introductory content visitors see when they arrive at your site. This comes from your site's index page.",
+    "stories_heading": "Stories",
+    "stories_explanation": "Your story collection as it appears on the landing page. Drag to reorder — this controls the display order on your published site.",
+    "stories_manage": "Manage \u2192",
+    "objects_heading": "Objects",
+    "objects_explanation": "Featured objects from your collection, displayed on the landing page."
+  },
+  "inline_edit": {
+    "click_to_edit": "Click to edit",
+    "saving": "Saving...",
+    "saved": "Saved"
+  },
   "status_bar": {
-    "last_published": "Last published",
-    "last_synced": "Last synced",
-    "unpublished_changes": "{{count}} unpublished change",
-    "unpublished_changes_plural": "{{count}} unpublished changes",
-    "never": "Never"
+    "last_synced": "Last synced (pulled) from GitHub",
+    "last_published": "Last sent (pushed) to GitHub Pages",
+    "unpublished_changes_one": "{{count}} unpublished change",
+    "unpublished_changes_other": "{{count}} unpublished changes",
+    "never": "Never",
+    "never_hint": "Edit here, then publish to your site when ready"
   },
   "story_card": {
-    "steps": "{{count}} step",
-    "steps_plural": "{{count}} steps",
+    "steps_one": "{{count}} step",
+    "steps_other": "{{count}} steps",
     "edit": "Edit",
-    "updated": "Updated {{date}}"
-  }
+    "updated": "Updated {{date}}",
+    "synced": "Synced {{date}}",
+    "make_private": "Make private",
+    "make_public": "Make public",
+    "mark_draft": "Mark as draft",
+    "mark_ready": "Mark as ready",
+    "draft_badge": "Draft",
+    "private_badge": "Private"
+  },
+  "hint": "Drag to reorder — this controls the order on your published site",
+  "new_story_button": "+ New Story",
+  "connect_repo_button": "GitHub Repo",
+  "new_story_placeholder": "Story title...",
+  "new_story_subtitle_placeholder": "Subtitle (optional)",
+  "new_story_byline_placeholder": "Byline (optional)",
+  "save": "Save",
+  "cancel": "Cancel",
+  "delete_story": {
+    "title": "Delete story",
+    "body": "Delete '{{title}}'? This will remove the story and its {{count}} steps from the compositor. Your published site won't change until you publish again.",
+    "confirm": "Delete"
+  },
+  "connect_new_repo": "Connect new repo",
+  "soft_limit": {
+    "stories": "You have {{count}} stories. Performance may be affected with more than 10.",
+    "projects": "You have {{count}} projects. The limit is 5 connected repositories."
+  },
+  "story_editor_placeholder": "Story Editor — Coming in Phase 5",
+  "back_to_dashboard": "Back to Dashboard"
 }

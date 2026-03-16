@@ -1,0 +1,29 @@
+{
+  "title": "Stories",
+  "hint": "Drag to reorder — this controls the order on your published site",
+  "new_story_button": "+ New Story",
+  "empty_state": "No stories yet",
+  "empty_state_description": "Create your first story to start building narratives around your objects.",
+  "story_row": {
+    "steps_one": "{{count}} step",
+    "steps_other": "{{count}} steps",
+    "edit": "Edit",
+    "updated": "Updated {{date}}",
+    "draft": "Draft",
+    "published": "Published",
+    "private": "Private",
+    "public": "Public"
+  },
+  "new_story_placeholder": "Story title...",
+  "new_story_subtitle_placeholder": "Subtitle (optional)",
+  "new_story_byline_placeholder": "Byline (optional)",
+  "save": "Save",
+  "cancel": "Cancel",
+  "delete_story": {
+    "title": "Delete story",
+    "body": "Delete '{{title}}'? This will remove the story and its {{count}} steps from the compositor. Your published site won't change until you publish again.",
+    "confirm": "Delete"
+  },
+  "draft_toggle": "Draft",
+  "private_toggle": "Private"
+}
