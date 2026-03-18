@@ -1,0 +1,45 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@id": "https://example.org/manifests/test-object",
+  "@type": "sc:Manifest",
+  "label": "Portrait of Ana de Mendoza",
+  "metadata": [
+    { "label": "Author", "value": "Diego Velázquez" },
+    { "label": "Source", "value": "Museo del Prado" },
+    { "label": "Credit", "value": "Public domain" }
+  ],
+  "thumbnail": {
+    "@id": "https://example.org/images/test-object/full/200,/0/default.jpg",
+    "@type": "dctypes:Image"
+  },
+  "sequences": [
+    {
+      "@type": "sc:Sequence",
+      "canvases": [
+        {
+          "@id": "https://example.org/manifests/test-object/canvas/1",
+          "@type": "sc:Canvas",
+          "label": "p. 1",
+          "width": 2000,
+          "height": 3000,
+          "images": [
+            {
+              "@type": "oa:Annotation",
+              "motivation": "sc:painting",
+              "resource": {
+                "@id": "https://example.org/images/test-object/full/full/0/default.jpg",
+                "@type": "dctypes:Image",
+                "service": {
+                  "@context": "http://iiif.io/api/image/2/context.json",
+                  "@id": "https://example.org/images/test-object",
+                  "profile": "http://iiif.io/api/image/2/level2.json"
+                }
+              },
+              "on": "https://example.org/manifests/test-object/canvas/1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

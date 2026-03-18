@@ -261,6 +261,46 @@ describe("mapObjectsCsv", () => {
     expect(mapped[2].featured).toBe(true);
     expect(mapped[3].featured).toBe(false);
   });
+
+  it("filters out rows where object_id is empty string", () => {
+    const rows = [
+      { object_id: "", title: "No ID", featured: "false", creator: "" },
+      { object_id: "valid-001", title: "Valid", featured: "false", creator: "" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].object_id).toBe("valid-001");
+  });
+
+  it("filters out rows where object_id is whitespace-only", () => {
+    const rows = [
+      { object_id: "   ", title: "Whitespace ID", featured: "false", creator: "" },
+      { object_id: "\t", title: "Tab ID", featured: "false", creator: "" },
+      { object_id: "real-id", title: "Real", featured: "false", creator: "" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].object_id).toBe("real-id");
+  });
+
+  it("filters out rows where object_id key is missing", () => {
+    const rows = [
+      { title: "No object_id key", featured: "false", creator: "" } as Record<string, string>,
+      { object_id: "present-001", title: "Present", featured: "false", creator: "" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].object_id).toBe("present-001");
+  });
+
+  it("returns empty array when all rows have empty object_id", () => {
+    const rows = [
+      { object_id: "", title: "A", featured: "false", creator: "" },
+      { object_id: "  ", title: "B", featured: "false", creator: "" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -308,6 +348,21 @@ describe("mapStoryCsv", () => {
     // Step 1 has layer1 content
     const step1Layers = result.layers.filter((l) => l.layer_number === 1);
     expect(step1Layers.length).toBeGreaterThan(0);
+  });
+
+  it("filters out completely blank rows", () => {
+    const rows = [
+      { step: "1", object: "img-001", x: "", y: "", zoom: "", page: "", question: "Q?", answer: "", layer1_button: "", layer1_content: "", layer2_button: "", layer2_content: "" },
+      { step: "2", object: "", x: "", y: "", zoom: "", page: "", question: "", answer: "", layer1_button: "", layer1_content: "", layer2_button: "", layer2_content: "" },
+      { step: "3", object: "", x: "", y: "", zoom: "", page: "", question: "", answer: "", layer1_button: "", layer1_content: "", layer2_button: "", layer2_content: "" },
+      { step: "4", object: "", x: "", y: "", zoom: "", page: "", question: "", answer: "A!", layer1_button: "", layer1_content: "", layer2_button: "", layer2_content: "" },
+    ];
+    const result = mapStoryCsv(rows, 1);
+
+    // Only rows 1 and 4 have meaningful content
+    expect(result.steps).toHaveLength(2);
+    expect(result.steps[0].object_id).toBe("img-001");
+    expect(result.steps[1].answer).toBe("A!");
   });
 });
 

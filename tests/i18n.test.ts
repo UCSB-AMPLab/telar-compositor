@@ -111,27 +111,13 @@ describe("es/common.json", () => {
 });
 
 describe("es/auth.json", () => {
-  it("has same keys as en/auth.json (values are empty strings)", () => {
+  it("has same keys as en/auth.json", () => {
     const enKeys = flatKeys(enAuth as Record<string, unknown>);
     const esKeys = flatKeys(esAuth as Record<string, unknown>);
 
     for (const key of enKeys) {
       expect(esKeys.has(key), `ES auth missing key: ${key}`).toBe(true);
     }
-  });
-
-  it("all es/auth.json values are empty strings", () => {
-    function allEmpty(obj: Record<string, unknown>): boolean {
-      for (const v of Object.values(obj)) {
-        if (v !== null && typeof v === "object" && !Array.isArray(v)) {
-          if (!allEmpty(v as Record<string, unknown>)) return false;
-        } else if (v !== "") {
-          return false;
-        }
-      }
-      return true;
-    }
-    expect(allEmpty(esAuth as Record<string, unknown>)).toBe(true);
   });
 });
 
