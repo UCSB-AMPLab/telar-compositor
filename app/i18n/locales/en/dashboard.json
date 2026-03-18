@@ -71,7 +71,7 @@
     "body": "Delete '{{title}}'? This will remove the story and its {{count}} steps from the compositor. Your published site won't change until you publish again.",
     "confirm": "Delete"
   },
-  "connect_new_repo": "Connect new repo",
+  "connect_new_repo": "Add or remove a repo",
   "soft_limit": {
     "stories": "You have {{count}} stories. Performance may be affected with more than 10.",
     "projects": "You have {{count}} projects. The limit is 5 connected repositories."

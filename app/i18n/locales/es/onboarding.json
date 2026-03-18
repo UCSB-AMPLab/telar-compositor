@@ -11,7 +11,17 @@
     "description": "Elige un repositorio con un sitio Telar existente.",
     "search_placeholder": "Buscar repositorios...",
     "no_repos": "No se encontraron repositorios. Asegúrate de que la aplicación Telar Compositor de GitHub esté instalada en tu cuenta.",
-    "continue": "Continuar"
+    "continue": "Continuar",
+    "missing_repo_hint": "Si no ves tu repositorio aquí, verifica que la aplicación Telar Compositor tenga acceso en la <installationsLink>configuración de aplicaciones de GitHub</installationsLink>.",
+    "connected_badge": "Conectado",
+    "unlink": "Desvincular",
+    "unlink_title": "Desvincular repositorio",
+    "unlink_body": "Esto eliminará {{repo}} del compositor y borrará todos los datos importados (objetos, historias, glosario, configuración).",
+    "unlink_warning": "Las ediciones no publicadas se perderán. Tu repositorio de GitHub no se verá afectado.",
+    "unlink_cancel": "Cancelar",
+    "unlink_confirm": "Desvincular",
+    "private_repo_warning_title": "Este repositorio es privado",
+    "private_repo_warning_body": "Las cuentas gratuitas de GitHub no pueden publicar sitios web desde repositorios privados. <repoSettings>Cambia este repositorio a público</repoSettings> en la configuración de GitHub, o actualiza a una cuenta de GitHub de pago — si eres estudiante, es posible que califiques para el <studentPack>GitHub Student Developer Pack</studentPack> gratuito. En cualquier caso, tendrás que volver aquí y comenzar el proceso de importación de nuevo."
   },
   "step_sync": {
     "heading": "Importando contenido",
@@ -24,6 +34,7 @@
     "importing_sheets": "Importando desde Google Sheets",
     "error_not_telar": "Este no parece ser un sitio Telar.",
     "error_empty_repo": "Este repositorio está vacío. Selecciona uno con un sitio Telar existente.",
+    "error_already_connected": "Este repositorio ya está conectado. Para reimportarlo, desvincúlalo primero desde la lista de repositorios.",
     "error_sheets_access": "No se pudo acceder a la hoja de Google Sheets publicada. Proporciona la URL correcta.",
     "sheets_url_label": "URL de la hoja de Google Sheets publicada",
     "sheets_url_placeholder": "https://docs.google.com/spreadsheets/d/e/.../pubhtml",
@@ -43,7 +54,9 @@
     "no_metadata": "Sin metadatos",
     "sheets_warning": "Tu sitio usa Google Sheets como fuente de datos. En tu primera publicación, el compositor pasará a gestionar el contenido directamente y desactivará la conexión con Sheets en la configuración de tu sitio.",
     "go_to_dashboard": "Ir al panel",
-    "edit_config_first": "Editar configuración primero"
+    "continue": "Continuar",
+    "edit_config_first": "Editar configuración primero",
+    "config_explanation": "La configuración de tu sitio fue importada desde tu repositorio. Puedes revisar y ajustar los ajustes principales ahora — como el título y la descripción que aparecen en tu página de inicio, el tema de colores, el idioma y la URL donde se publica tu sitio. Si todo se ve bien en el resumen de arriba, puedes omitir este paso — todos los ajustes están disponibles después desde la pestaña de Configuración."
   },
   "step_done": {
     "heading": "¡Todo listo!",
@@ -58,5 +71,28 @@
     "url": "URL del sitio",
     "baseurl": "URL base",
     "save": "Guardar y continuar"
+  },
+  "site_config": {
+    "heading": "Verificando la configuración de tu sitio",
+    "intro": "Vamos a asegurar que todo esté configurado correctamente antes de que empieces a trabajar. No te preocupes — el compositor puede corregir cualquier problema por ti.",
+    "sheets_passed": "Google Sheets está desactivado",
+    "sheets_failed": "Google Sheets necesita desactivarse",
+    "sheets_why": "El compositor gestiona tu contenido directamente. Google Sheets debe desactivarse para que no haya conflictos durante las construcciones. Lo desactivaremos por ti.",
+    "sheets_reversible": "Puedes volver a Google Sheets en cualquier momento configurando enabled: true en google_sheets en el _config.yml de tu sitio.",
+    "pages_passed": "GitHub Pages está habilitado",
+    "pages_failed": "GitHub Pages no está habilitado",
+    "pages_why": "Tu sitio necesita GitHub Pages para publicarse. Sin él, tu sitio no será accesible y no se podrán generar los mosaicos IIIF. Lo activaremos por ti.",
+    "url_passed": "La URL del sitio está configurada correctamente",
+    "url_failed": "La URL del sitio necesita actualizarse",
+    "url_pending": "La URL del sitio aún no se puede verificar",
+    "url_why": "La URL en _config.yml debe coincidir con tu despliegue en GitHub Pages para que los mosaicos IIIF se carguen desde la dirección correcta.",
+    "url_pending_why": "Configuraremos la URL correcta automáticamente cuando habilitemos GitHub Pages. Si hay algún problema lo corregiremos.",
+    "confirm": "Corregir y continuar",
+    "continue": "Continuar",
+    "error_pages_permission_title": "Se necesita permiso",
+    "error_pages_permission": "El compositor necesita permiso para habilitar GitHub Pages en tu repositorio. Acepta los permisos actualizados en la configuración de tu aplicación de GitHub, luego intenta de nuevo.",
+    "error_pages_permission_link": "Revisar permisos en GitHub",
+    "error_generic_title": "Algo salió mal",
+    "error_generic": "No pudimos corregir la configuración. Intenta de nuevo o verifica los permisos de tu aplicación de GitHub."
   }
 }

@@ -4,6 +4,14 @@
   "loading": "Loading...",
   "error": "Something went wrong",
   "coming_soon": "This section will be available in a future update.",
+  "autosave": {
+    "saving": "Saving...",
+    "saved": "Saved",
+    "all_saved": "All changes saved"
+  },
+  "footer": {
+    "attribution": "The Telar Compositor is a project of <neo>Neogranadina</neo> and the UC Santa Barbara <ampl>Archives, Memory, and Preservation Lab</ampl>"
+  },
   "nav": {
     "dashboard": "Dashboard",
     "objects": "Objects",

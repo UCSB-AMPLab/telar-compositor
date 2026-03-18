@@ -11,7 +11,17 @@
     "description": "Choose a repository with an existing Telar site.",
     "search_placeholder": "Search repositories...",
     "no_repos": "No repositories found. Make sure the Telar Compositor GitHub App is installed on your account.",
-    "continue": "Continue"
+    "continue": "Continue",
+    "missing_repo_hint": "If you don't see your repository here, check that the Telar Compositor app has access to it in your <installationsLink>GitHub App settings</installationsLink>.",
+    "connected_badge": "Connected",
+    "unlink": "Unlink",
+    "unlink_title": "Unlink repository",
+    "unlink_body": "This will remove {{repo}} from the compositor and delete all imported data (objects, stories, glossary, configuration).",
+    "unlink_warning": "Any unpublished edits will be lost. Your GitHub repository will not be affected.",
+    "unlink_cancel": "Cancel",
+    "unlink_confirm": "Unlink",
+    "private_repo_warning_title": "This repository is private",
+    "private_repo_warning_body": "Free GitHub accounts can't publish websites from private repositories. <repoSettings>Set this repository to public</repoSettings> in your GitHub settings, or upgrade to a paid GitHub account — if you're a student, you may qualify for the free <studentPack>GitHub Student Developer Pack</studentPack>. Either way, you'll need to come back here and start the import process again."
   },
   "step_sync": {
     "heading": "Importing Content",
@@ -24,6 +34,7 @@
     "importing_sheets": "Importing from Google Sheets",
     "error_not_telar": "This doesn't appear to be a Telar site.",
     "error_empty_repo": "This repository is empty. Select one with an existing Telar site.",
+    "error_already_connected": "This repository is already connected. To re-import it, unlink it first from the repository list.",
     "error_sheets_access": "Could not access the published Google Sheet. Please provide the correct URL.",
     "sheets_url_label": "Published Google Sheet URL",
     "sheets_url_placeholder": "https://docs.google.com/spreadsheets/d/e/.../pubhtml",
@@ -43,7 +54,9 @@
     "no_metadata": "No metadata",
     "sheets_warning": "Your site uses Google Sheets as its data source. On your first publish, the compositor will switch to managing content directly and disable the Sheets connection in your site configuration.",
     "go_to_dashboard": "Go to Dashboard",
-    "edit_config_first": "Edit Config First"
+    "continue": "Continue",
+    "edit_config_first": "Edit Config First",
+    "config_explanation": "Your site's configuration was imported from your repository. You can review and adjust key settings now — such as the site title and description that appear on your landing page, the color theme, the language, and the URL where your site is published. If everything looks right in the summary above, you can skip this step — all settings are available later from the Config tab."
   },
   "step_done": {
     "heading": "You're All Set!",
@@ -58,5 +71,28 @@
     "url": "Site URL",
     "baseurl": "Base URL",
     "save": "Save & Continue"
+  },
+  "site_config": {
+    "heading": "Checking your site configuration",
+    "intro": "Let's make sure everything is set up correctly before you start working. Don't worry — the compositor can fix any issues for you.",
+    "sheets_passed": "Google Sheets is disabled",
+    "sheets_failed": "Google Sheets needs to be disabled",
+    "sheets_why": "The compositor manages your content directly. Google Sheets must be disabled so the two don't conflict during builds. We'll disable it for you.",
+    "sheets_reversible": "You can switch back to Google Sheets at any time by setting enabled: true under google_sheets in your site's _config.yml.",
+    "pages_passed": "GitHub Pages is enabled",
+    "pages_failed": "GitHub Pages is not enabled",
+    "pages_why": "Your site needs GitHub Pages to be published. Without it, your site won't be accessible and IIIF tiles can't be generated. We'll switch it on for you.",
+    "url_passed": "Site URL is configured correctly",
+    "url_failed": "Site URL needs to be updated",
+    "url_pending": "Site URL can't be verified yet",
+    "url_why": "The URL in _config.yml must match your GitHub Pages deployment so IIIF image tiles load from the correct address.",
+    "url_pending_why": "We'll configure the correct URL automatically when we enable GitHub Pages. If there is an issue we'll correct it.",
+    "confirm": "Fix and continue",
+    "continue": "Continue",
+    "error_pages_permission_title": "Permission needed",
+    "error_pages_permission": "The compositor needs permission to enable GitHub Pages on your repository. Accept the updated permissions in your GitHub App settings, then try again.",
+    "error_pages_permission_link": "Review permissions on GitHub",
+    "error_generic_title": "Something went wrong",
+    "error_generic": "We couldn't fix the configuration. Please try again, or check your GitHub App permissions."
   }
 }

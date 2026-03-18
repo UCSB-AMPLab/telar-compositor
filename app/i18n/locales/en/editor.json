@@ -1,4 +1,8 @@
 {
+  "autosave": {
+    "saving": "Saving...",
+    "saved": "Saved"
+  },
   "toolbar": {
     "bold": "Bold",
     "italic": "Italic",
@@ -22,7 +26,7 @@
   "image_dialog": {
     "title": "Insert Image",
     "tab_url": "URL",
-    "tab_objects": "Objects",
+    "tab_objects": "Project Objects",
     "url_placeholder": "Image URL",
     "alt_placeholder": "Alt text (describes the image)",
     "insert": "Insert",
@@ -30,5 +34,75 @@
     "no_objects": "No objects imported yet"
   },
   "word_count_one": "{{count}} word",
-  "word_count_other": "{{count}} words"
+  "word_count_other": "{{count}} words",
+  "breadcrumb": {
+    "dashboard": "Dashboard",
+    "untitled": "Untitled Story"
+  },
+  "title_card": {
+    "title_placeholder": "Story title",
+    "subtitle_placeholder": "Subtitle (optional)",
+    "byline_placeholder": "By..."
+  },
+  "step": {
+    "question_placeholder": "Question",
+    "answer_placeholder": "Answer",
+    "click_to_edit": "Click to edit",
+    "title_card_label": "Title card",
+    "add_step": "+ Add step",
+    "step_label": "Step {{number}}"
+  },
+  "viewer": {
+    "capture_position": "Capture position",
+    "captured": "Captured",
+    "no_position": "No position captured",
+    "reset_position": "Reset",
+    "step_indicator": "Step {{current}} of {{total}}",
+    "title_card_indicator": "Title Card",
+    "change_object": "Change object",
+    "no_object": "No object has been set yet — click here to choose one",
+    "set_object_in_step1": "The viewer object in Step 0 is the same as that for Step 1. Set it there."
+  },
+  "object_picker": {
+    "title": "Choose object",
+    "search_placeholder": "Search objects...",
+    "no_results": "No objects match your search",
+    "no_objects": "No objects imported yet"
+  },
+  "delete_step": {
+    "title": "Delete step",
+    "body": "Delete step {{number}} (\"{{question}}\")? This will remove the step and its layers.",
+    "layer_warning": "This step has {{count}} layer(s) that will also be deleted.",
+    "cancel": "Cancel",
+    "confirm": "Delete"
+  },
+  "save_discard": {
+    "unsaved": "Unsaved changes",
+    "saved": "All changes saved",
+    "save": "Save",
+    "discard": "Discard"
+  },
+  "layer": {
+    "add_panel": "+ Add panel",
+    "add_further_panel": "+ Add further layer panel",
+    "default_label_1": "Learn more",
+    "default_label_2": "Go deeper",
+    "default_title_1": "Learn more",
+    "default_title_2": "Go deeper",
+    "back": "Back",
+    "close_dirty_title": "Unsaved changes",
+    "close_dirty_body": "You have unsaved changes. Discard them?",
+    "close_dirty_discard": "Discard",
+    "close_dirty_cancel": "Keep editing",
+    "delete_title": "Delete panel",
+    "delete_body": "Delete this panel? The content will be lost.",
+    "delete_confirm": "Delete",
+    "delete_cancel": "Cancel",
+    "cannot_delete_has_layer2": "Delete the second panel first",
+    "open_layer2": "Open second panel",
+    "panel_title": "Panel title",
+    "button_label": "Button label",
+    "edit_button_label": "Edit button label",
+    "content_label": "Content"
+  }
 }

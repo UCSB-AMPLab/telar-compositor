@@ -104,10 +104,12 @@ export function toggleBulletList(view: EditorView): void {
   if (line.text.startsWith(marker)) {
     view.dispatch({
       changes: { from: line.from, to: line.from + marker.length, insert: "" },
+      selection: { anchor: Math.max(line.from, head - marker.length) },
     });
   } else {
     view.dispatch({
       changes: { from: line.from, to: line.from, insert: marker },
+      selection: { anchor: head + marker.length },
     });
   }
 
@@ -127,10 +129,13 @@ export function toggleOrderedList(view: EditorView): void {
   if (match) {
     view.dispatch({
       changes: { from: line.from, to: line.from + match[0].length, insert: "" },
+      selection: { anchor: Math.max(line.from, head - match[0].length) },
     });
   } else {
+    const marker = "1. ";
     view.dispatch({
-      changes: { from: line.from, to: line.from, insert: "1. " },
+      changes: { from: line.from, to: line.from, insert: marker },
+      selection: { anchor: head + marker.length },
     });
   }
 
@@ -148,10 +153,12 @@ export function toggleBlockquote(view: EditorView): void {
   if (line.text.startsWith(marker)) {
     view.dispatch({
       changes: { from: line.from, to: line.from + marker.length, insert: "" },
+      selection: { anchor: Math.max(line.from, head - marker.length) },
     });
   } else {
     view.dispatch({
       changes: { from: line.from, to: line.from, insert: marker },
+      selection: { anchor: head + marker.length },
     });
   }
 

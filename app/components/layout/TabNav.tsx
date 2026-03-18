@@ -6,9 +6,8 @@
  * Save indicator at far right: detects in-flight fetchers globally.
  */
 
-import { NavLink, useFetchers } from "react-router";
+import { NavLink } from "react-router";
 import { useTranslation } from "react-i18next";
-import { useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard,
   Image,
@@ -16,9 +15,8 @@ import {
   BookA,
   Settings,
   Upload,
-  Check,
-  Loader2,
 } from "lucide-react";
+import { SaveIndicator } from "~/components/ui/SaveIndicator";
 
 interface Tab {
   key: string;
@@ -36,67 +34,25 @@ const tabs: Tab[] = [
   { key: "publish", to: "/publish", icon: Upload, labelKey: "nav.publish" },
 ];
 
-/** Autosave intents that trigger the save indicator. */
-const SAVE_INTENTS = ["autosave-landing", "autosave-config", "reorder", "toggle-draft", "toggle-private"];
-
-function SaveIndicator() {
-  const { t } = useTranslation("dashboard");
-  const fetchers = useFetchers();
-  const [showSaved, setShowSaved] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Check if any save-related fetcher is in flight
-  const isSaving = fetchers.some(
-    (f) =>
-      f.state === "submitting" &&
-      f.formData &&
-      SAVE_INTENTS.includes(f.formData.get("intent") as string)
-  );
-
-  useEffect(() => {
-    if (isSaving) {
-      // Clear any existing "Saved" timeout
-      if (timerRef.current) clearTimeout(timerRef.current);
-      setShowSaved(false);
-    } else if (!isSaving && showSaved === false) {
-      // When saving finishes, briefly show "Saved"
-      // Only trigger if we were previously saving
-    }
-  }, [isSaving]);
-
-  // Track transitions from saving → idle
-  const wasSavingRef = useRef(false);
-  useEffect(() => {
-    if (isSaving) {
-      wasSavingRef.current = true;
-    } else if (wasSavingRef.current) {
-      wasSavingRef.current = false;
-      setShowSaved(true);
-      timerRef.current = setTimeout(() => setShowSaved(false), 2000);
-    }
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [isSaving]);
-
-  if (!isSaving && !showSaved) return null;
-
-  return (
-    <div className="flex items-center gap-1.5 px-4 py-3 font-body text-xs text-gray-400 whitespace-nowrap">
-      {isSaving ? (
-        <>
-          <Loader2 className="w-3 h-3 animate-spin" />
-          {t("inline_edit.saving")}
-        </>
-      ) : (
-        <>
-          <Check className="w-3 h-3 text-green-500" />
-          {t("inline_edit.saved")}
-        </>
-      )}
-    </div>
-  );
-}
+/** All autosave intents across the app. */
+const ALL_SAVE_INTENTS = [
+  "autosave-landing",
+  "autosave-config",
+  "reorder",
+  "toggle-draft",
+  "toggle-private",
+  "autosave-story-field",
+  "autosave-step-field",
+  "autosave-layer",
+  "capture-position",
+  "change-object",
+  "add-step",
+  "delete-step",
+  "reorder-steps",
+  "create-layer",
+  "save-layer",
+  "delete-layer",
+];
 
 interface TabNavProps {
   className?: string;
@@ -131,7 +87,13 @@ export function TabNav({ className = "" }: TabNavProps) {
             </li>
           ))}
         </ul>
-        <SaveIndicator />
+        <SaveIndicator
+          intents={ALL_SAVE_INTENTS}
+          savingLabel={t("autosave.saving")}
+          savedLabel={t("autosave.saved")}
+          alwaysShow
+          idleLabel={t("autosave.all_saved")}
+        />
       </div>
     </nav>
   );

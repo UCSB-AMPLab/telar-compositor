@@ -1,4 +1,8 @@
 {
+  "autosave": {
+    "saving": "Guardando...",
+    "saved": "Guardado"
+  },
   "toolbar": {
     "bold": "Negrita",
     "italic": "Cursiva",
@@ -22,7 +26,7 @@
   "image_dialog": {
     "title": "Insertar imagen",
     "tab_url": "URL",
-    "tab_objects": "Objetos",
+    "tab_objects": "Objetos del proyecto",
     "url_placeholder": "URL de la imagen",
     "alt_placeholder": "Texto alternativo (describe la imagen)",
     "insert": "Insertar",
@@ -30,5 +34,75 @@
     "no_objects": "Aún no hay objetos importados"
   },
   "word_count_one": "{{count}} palabra",
-  "word_count_other": "{{count}} palabras"
+  "word_count_other": "{{count}} palabras",
+  "breadcrumb": {
+    "dashboard": "Panel",
+    "untitled": "Historia sin título"
+  },
+  "title_card": {
+    "title_placeholder": "Título de la historia",
+    "subtitle_placeholder": "Subtítulo (opcional)",
+    "byline_placeholder": "Por..."
+  },
+  "step": {
+    "question_placeholder": "Pregunta",
+    "answer_placeholder": "Respuesta",
+    "click_to_edit": "Clic para editar",
+    "title_card_label": "Portada",
+    "add_step": "+ Agregar paso",
+    "step_label": "Paso {{number}}"
+  },
+  "viewer": {
+    "capture_position": "Capturar posicion",
+    "captured": "Capturada",
+    "no_position": "Sin posicion capturada",
+    "reset_position": "Restablecer",
+    "step_indicator": "Paso {{current}} de {{total}}",
+    "title_card_indicator": "Portada",
+    "change_object": "Cambiar objeto",
+    "no_object": "No se ha seleccionado un objeto — haz clic aquí para elegir uno",
+    "set_object_in_step1": "El objeto del visor en el Paso 0 es el mismo del Paso 1. Configúralo allí."
+  },
+  "object_picker": {
+    "title": "Elegir objeto",
+    "search_placeholder": "Buscar objetos...",
+    "no_results": "Ningun objeto coincide con tu busqueda",
+    "no_objects": "Aun no hay objetos importados"
+  },
+  "delete_step": {
+    "title": "Eliminar paso",
+    "body": "¿Eliminar el paso {{number}} (\"{{question}}\")? Esto eliminará el paso y sus capas.",
+    "layer_warning": "Este paso tiene {{count}} capa(s) que también se eliminarán.",
+    "cancel": "Cancelar",
+    "confirm": "Eliminar"
+  },
+  "save_discard": {
+    "unsaved": "Cambios sin guardar",
+    "saved": "Cambios guardados",
+    "save": "Guardar",
+    "discard": "Descartar"
+  },
+  "layer": {
+    "add_panel": "+ Agregar panel",
+    "add_further_panel": "+ Agregar otro panel de capas",
+    "default_label_1": "Saber más",
+    "default_label_2": "Profundizar",
+    "default_title_1": "Saber más",
+    "default_title_2": "Profundizar",
+    "back": "Volver",
+    "close_dirty_title": "Cambios sin guardar",
+    "close_dirty_body": "Tienes cambios sin guardar. ¿Deseas descartarlos?",
+    "close_dirty_discard": "Descartar",
+    "close_dirty_cancel": "Seguir editando",
+    "delete_title": "Eliminar panel",
+    "delete_body": "¿Eliminar este panel? El contenido se perderá.",
+    "delete_confirm": "Eliminar",
+    "delete_cancel": "Cancelar",
+    "cannot_delete_has_layer2": "Elimina el segundo panel primero",
+    "open_layer2": "Abrir segundo panel",
+    "panel_title": "Título del panel",
+    "button_label": "Etiqueta del botón",
+    "edit_button_label": "Editar contenido del botón",
+    "content_label": "Contenido"
+  }
 }

@@ -6,8 +6,9 @@
  * - Formatting toolbar (bold, italic, link, image, heading, lists, blockquote, undo, redo)
  * - Keyboard shortcuts: Cmd+B, Cmd+I, Cmd+K, Cmd+Z, Cmd+Shift+Z
  * - Rich paste: HTML from web pages converts to markdown via turndown
- * - Word count displayed when editor is focused
- * - Debounced autosave via useFetcher
+ * - Word count displayed when editor is focused (autosave mode)
+ * - Debounced autosave via useFetcher (autosave mode)
+ * - Save/Discard footer with dirty tracking (save-discard mode)
  * - Link popover: opens near cursor on Cmd+K or toolbar click; inserts markdown link
  * - Image dialog: URL tab and Objects tab for inserting markdown images
  * - Cmd/Ctrl+click on rendered links opens in new tab
@@ -68,12 +69,17 @@ interface MarkdownEditorProps {
   actionUrl?: string;
   debounceMs?: number;
   className?: string;
-  /** API surface for Phase 5 — save-discard not implemented until then */
   mode?: "autosave" | "save-discard";
   onSave?: (markdown: string) => void;
   onDiscard?: () => void;
+  /** Called whenever the dirty state changes — used by LayerPanel for unsaved-changes guard */
+  onDirtyChange?: (dirty: boolean) => void;
   /** Object list for the image picker dialog (Plan 02) */
-  objects?: Array<{ object_id: string; title: string | null; thumbnail: string | null }>;
+  objects?: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
+  /** Make editor background transparent (for coloured panel backgrounds) */
+  transparent?: boolean;
+  /** Use light colours for toolbar/text on dark backgrounds */
+  darkTheme?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +131,12 @@ export function MarkdownEditor({
   debounceMs = 1500,
   className = "",
   mode = "autosave",
+  onSave,
+  onDiscard,
+  onDirtyChange,
   objects,
+  transparent = false,
+  darkTheme = false,
 }: MarkdownEditorProps) {
   const [mounted, setMounted] = useState(false);
   const { t } = useTranslation("editor");
@@ -136,6 +147,7 @@ export function MarkdownEditor({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isFocused, setIsFocused] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
   const [wordCount, setWordCount] = useState(computeWordCount(initialValue));
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [linkPopoverPos, setLinkPopoverPos] = useState<{ top: number; left: number } | null>(null);
@@ -143,6 +155,29 @@ export function MarkdownEditor({
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
   const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
   const headingMenuRef = useRef<HTMLDivElement>(null);
+
+  // Notify parent when dirty state changes
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  // Save-discard handlers
+  function handleSave() {
+    const view = viewRef.current;
+    if (!view) return;
+    onSave?.(view.state.doc.toString());
+    setIsDirty(false);
+  }
+
+  function handleDiscard() {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: initialValue },
+    });
+    setIsDirty(false);
+    onDiscard?.();
+  }
 
   // Close heading menu on outside click
   useEffect(() => {
@@ -223,6 +258,9 @@ export function MarkdownEditor({
             { method: "post", action: actionUrl }
           );
         }, debounceMs);
+      } else {
+        // save-discard mode: track dirty state only, no autosave
+        setIsDirty(doc !== initialValue);
       }
     }
 
@@ -315,11 +353,11 @@ export function MarkdownEditor({
     <>
     <div
       ref={wrapperRef}
-      className={`relative ${className}`}
+      className={`relative ${transparent ? "cm-transparent" : ""} ${darkTheme ? "cm-dark-theme" : ""} ${className}`}
     >
       {/* Toolbar — appears on focus */}
       {isFocused && (
-        <div className="flex items-center gap-0.5 -mx-6 -mt-6 px-4 py-1.5 mb-3 border-b border-gray-100 bg-cream-dark/30">
+        <div className={`flex items-center gap-0.5 px-4 py-1.5 mb-3 border-b bg-black/5 ${transparent ? "mx-0 mt-0 rounded-t-lg border-gray-200/30" : "-mx-6 -mt-6 border-gray-100/30"}`}>
           <ToolbarButton
             icon={Bold}
             tooltip={t("toolbar.bold")}
@@ -415,7 +453,7 @@ export function MarkdownEditor({
       )}
 
       {/* CodeMirror mount point */}
-      <div ref={containerRef} />
+      <div ref={containerRef} className="flex-1 min-h-0 [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto" />
 
       {/* Link popover — shown near cursor when Cmd+K or toolbar Link is triggered */}
       {linkPopoverOpen && linkPopoverPos && (
@@ -430,10 +468,37 @@ export function MarkdownEditor({
         />
       )}
 
-      {/* Word count — shown when focused */}
-      {isFocused && (
-        <div className="text-xs text-gray-400 -mx-6 -mb-6 px-4 py-1.5 text-right mt-3 border-t border-gray-100">
+      {/* Word count — shown when focused (autosave mode only) */}
+      {isFocused && mode === "autosave" && (
+        <div className={`text-xs text-gray-400 px-4 py-1.5 text-right mt-3 border-t ${transparent ? "mx-0 mb-0 border-gray-200/30" : "-mx-6 -mb-6 border-gray-100"}`}>
           {t("word_count", { count: wordCount })}
+        </div>
+      )}
+
+      {/* Save/Discard footer — always shown in save-discard mode */}
+      {mode === "save-discard" && (
+        <div className="flex items-center justify-between -mx-6 -mb-6 px-4 py-2 mt-3 border-t border-gray-200 bg-cream">
+          <span className="text-xs font-body text-gray-400">
+            {isDirty ? t("save_discard.unsaved") : t("save_discard.saved")}
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleDiscard}
+              disabled={!isDirty}
+              className="px-3 py-1 text-xs font-heading font-semibold text-charcoal hover:bg-gray-100 rounded disabled:opacity-40"
+            >
+              {t("save_discard.discard")}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!isDirty}
+              className="px-3 py-1 text-xs font-heading font-semibold text-cream bg-terracotta hover:bg-terracotta/90 rounded-full disabled:opacity-40"
+            >
+              {t("save_discard.save")}
+            </button>
+          </div>
         </div>
       )}
     </div>

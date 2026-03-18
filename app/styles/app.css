@@ -38,6 +38,13 @@
 
 /* CodeMirror editor */
 .cm-editor { outline: none; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.875rem; color: var(--color-charcoal); background: #ffffff; }
+.cm-transparent .cm-editor { background: transparent; }
+.cm-dark-theme .cm-editor { color: var(--color-cream); }
+.cm-dark-theme .cm-cursor { border-left-color: var(--color-cream) !important; }
+.cm-dark-theme button { color: rgba(255, 246, 239, 0.6); }
+.cm-dark-theme button:hover { color: var(--color-cream); background: rgba(255, 255, 255, 0.1); }
+.cm-dark-theme .text-gray-400 { color: rgba(255, 246, 239, 0.5); }
+.cm-dark-theme .border-gray-200\/30 { border-color: rgba(255, 246, 239, 0.15); }
 .cm-editor.cm-focused { outline: none; }
 .cm-content { padding: 8px 12px; min-height: 120px; }
 .cm-line { line-height: 1.6; }

@@ -71,7 +71,7 @@
     "body": "¿Eliminar '{{title}}'? Esto eliminará la historia y sus {{count}} pasos del compositor. Tu sitio publicado no cambiará hasta que publiques de nuevo.",
     "confirm": "Eliminar"
   },
-  "connect_new_repo": "Conectar nuevo repositorio",
+  "connect_new_repo": "Agregar o quitar un repositorio",
   "soft_limit": {
     "stories": "Tienes {{count}} historias. El rendimiento puede verse afectado con más de 10.",
     "projects": "Tienes {{count}} proyectos. El límite es de 5 repositorios conectados."

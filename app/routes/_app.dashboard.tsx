@@ -7,10 +7,10 @@
  *   sections (Site Description, Welcome Message, Stories, Objects).
  */
 
-import { asc, count, desc, eq, and, inArray } from "drizzle-orm";
+import { asc, count, desc, eq, and, gt, inArray } from "drizzle-orm";
 import { Trans, useTranslation } from "react-i18next";
 import { Link, redirect, useFetcher, useLoaderData, useNavigate } from "react-router";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   DndContext,
   closestCenter,
@@ -40,6 +40,8 @@ import { EmptyState } from "~/components/features/dashboard/EmptyState";
 import { DashboardPreviewSection } from "~/components/features/dashboard/DashboardPreviewSection";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
 import { Settings, Image, BookOpen, Upload } from "lucide-react";
+import { InlineTextField } from "~/components/ui/InlineTextField";
+import { InlineTextArea } from "~/components/ui/InlineTextArea";
 
 export const handle = { i18n: ["common", "dashboard", "editor"] };
 
@@ -57,7 +59,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .where(eq(projects.user_id, user.id));
 
   if (allProjects.length === 0) {
-    return { hasProject: false as const, project: null, allProjects: [], stories: [], storyStepCounts: {}, config: null, landing: null, objects: [] };
+    throw redirect("/onboarding");
+  }
+
+  // If any project has incomplete onboarding, redirect to finish it
+  const incompleteProject = allProjects.find((p) => !p.onboarding_completed);
+  if (incompleteProject) {
+    throw redirect("/onboarding");
   }
 
   // Read activeProjectId from session
@@ -76,9 +84,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .orderBy(asc(stories.order));
 
   // Step counts per story
+  // Count only content steps (step_number > 0), excluding title card rows
   const stepCountRows = await db
     .select({ story_id: steps.story_id, count: count() })
     .from(steps)
+    .where(gt(steps.step_number, 0))
     .groupBy(steps.story_id);
 
   const storyStepCounts: Record<number, number> = {};
@@ -197,7 +207,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "autosave-landing": {
       const field = formData.get("field") as string;
       const value = formData.get("value") as string;
-      const projectId = Number(formData.get("projectId"));
+      const projectId = Number(formData.get("entityId"));
       const allowedFields = ["stories_heading", "stories_intro", "objects_heading", "objects_intro", "welcome_body"];
       if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
 
@@ -225,7 +235,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "autosave-config": {
       const field = formData.get("field") as string;
       const value = formData.get("value") as string;
-      const projectId = Number(formData.get("projectId"));
+      const projectId = Number(formData.get("entityId"));
       const allowedFields = ["title", "description"];
       if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
 
@@ -262,116 +272,6 @@ interface ObjectItem {
   source: string | null;
   thumbnail: string | null;
   featured: boolean | null;
-}
-
-/**
- * Inline text input with debounced autosave via fetcher.
- */
-function InlineTextField({
-  initialValue,
-  fieldName,
-  projectId,
-  intent,
-  placeholder,
-  className = "",
-}: {
-  initialValue: string;
-  fieldName: string;
-  projectId: number;
-  intent: string;
-  placeholder?: string;
-  className?: string;
-}) {
-  const fetcher = useFetcher();
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [value, setValue] = useState(initialValue);
-
-  useEffect(() => {
-    setValue(initialValue);
-  }, [initialValue]);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const newValue = e.target.value;
-    setValue(newValue);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      fetcher.submit(
-        { intent, field: fieldName, value: newValue, projectId: String(projectId) },
-        { method: "post" }
-      );
-    }, 1500);
-  }
-
-  return (
-    <input
-      type="text"
-      value={value}
-      onChange={handleChange}
-      placeholder={placeholder}
-      className={`w-full bg-transparent border-b border-transparent hover:border-gray-200 focus:border-periwinkle focus:outline-none font-mono text-sm text-charcoal transition-colors ${className}`}
-    />
-  );
-}
-
-/**
- * Inline textarea with debounced autosave via fetcher.
- */
-function InlineTextArea({
-  initialValue,
-  fieldName,
-  projectId,
-  intent,
-  placeholder,
-  className = "",
-}: {
-  initialValue: string;
-  fieldName: string;
-  projectId: number;
-  intent: string;
-  placeholder?: string;
-  className?: string;
-}) {
-  const fetcher = useFetcher();
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [value, setValue] = useState(initialValue);
-
-  useEffect(() => {
-    setValue(initialValue);
-  }, [initialValue]);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const newValue = e.target.value;
-    setValue(newValue);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      fetcher.submit(
-        { intent, field: fieldName, value: newValue, projectId: String(projectId) },
-        { method: "post" }
-      );
-    }, 1500);
-  }
-
-  return (
-    <textarea
-      value={value}
-      onChange={handleChange}
-      placeholder={placeholder}
-      rows={3}
-      className={`w-full bg-transparent border-b border-transparent hover:border-gray-200 focus:border-periwinkle focus:outline-none font-mono text-sm text-charcoal resize-none transition-colors ${className}`}
-    />
-  );
 }
 
 /** Strip HTML tags from a string for plain-text display. */
@@ -608,7 +508,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
             <InlineTextField
               initialValue={config?.title ?? ""}
               fieldName="title"
-              projectId={project.id}
+              entityId={project.id}
               intent="autosave-config"
               placeholder="Your site title"
               className="font-bold text-xl"
@@ -621,7 +521,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
             <InlineTextArea
               initialValue={stripHtml(config?.description ?? "")}
               fieldName="description"
-              projectId={project.id}
+              entityId={project.id}
               intent="autosave-config"
               placeholder="A brief description of your site"
               className="text-sm text-gray-600"
@@ -660,7 +560,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
             <InlineTextField
               initialValue={landing?.stories_heading ?? ""}
               fieldName="stories_heading"
-              projectId={project.id}
+              entityId={project.id}
               intent="autosave-landing"
               placeholder="Stories"
               className="font-heading font-bold text-xl"

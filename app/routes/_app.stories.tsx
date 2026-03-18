@@ -9,7 +9,7 @@
  *            delete confirmation dialog, and draft/private Switch toggles.
  */
 
-import { asc, count, desc, eq, and, inArray } from "drizzle-orm";
+import { asc, count, desc, eq, and, gt, inArray } from "drizzle-orm";
 import { useTranslation } from "react-i18next";
 import { redirect, useFetcher, useLoaderData } from "react-router";
 import { useState, useEffect } from "react";
@@ -75,9 +75,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .orderBy(asc(stories.order));
 
   // Step counts per story
+  // Count only content steps (step_number > 0), excluding the title card row
   const stepCountRows = await db
     .select({ story_id: steps.story_id, count: count() })
     .from(steps)
+    .where(gt(steps.step_number, 0))
     .groupBy(steps.story_id);
 
   const storyStepCounts: Record<number, number> = {};

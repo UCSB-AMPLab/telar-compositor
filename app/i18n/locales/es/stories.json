@@ -8,7 +8,7 @@
     "steps_one": "{{count}} paso",
     "steps_other": "{{count}} pasos",
     "edit": "Editar",
-    "updated": "Actualizado {{date}}",
+    "updated": "Última edición {{date}}",
     "draft": "Borrador",
     "published": "Publicada",
     "private": "Privada",

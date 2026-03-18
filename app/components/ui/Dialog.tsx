@@ -36,7 +36,7 @@ export function Dialog({ open, onClose, children, className = "" }: DialogProps)
       }}
     >
       <div
-        className={`bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6 ${className}`}
+        className={`bg-white rounded-lg shadow-xl w-full mx-4 ${className.includes("max-w-") ? "" : "max-w-md"} ${className.includes("p-") ? "" : "p-6"} ${className}`}
       >
         {children}
       </div>

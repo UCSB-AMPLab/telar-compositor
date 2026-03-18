@@ -1,21 +1,38 @@
 /**
- * Footer — AMPL / Neogranadina branding.
+ * Footer — project attribution and version.
  *
- * Compact footer matching the approved Figma design.
- * Shows "AMPL · Neogranadina" on the left, "Telar Compositor" on the right.
+ * Charcoal background with cream text. Links to Neogranadina and AMPL.
+ * Version number aligned right. Internationalised.
  */
+
+import { Trans, useTranslation } from "react-i18next";
 
 interface FooterProps {
   className?: string;
 }
 
+const VERSION = "0.1.0-dev";
+
+const linkClass = "text-cream/60 hover:text-cream hover:underline underline-offset-2";
+
 export function Footer({ className = "" }: FooterProps) {
+  useTranslation("common");
+
   return (
     <footer
-      className={`h-12 flex items-center justify-between px-6 text-xs font-body text-gray-400 border-t border-gray-100 ${className}`}
+      className={`h-10 flex items-center justify-between px-6 text-xs font-body text-cream/60 bg-charcoal shrink-0 ${className}`}
     >
-      <span>AMPL · Neogranadina</span>
-      <span>Telar Compositor</span>
+      <span>
+        <Trans
+          i18nKey="footer.attribution"
+          ns="common"
+          components={{
+            neo: <a href="https://neogranadina.org" target="_blank" rel="noopener noreferrer" className={linkClass} />,
+            ampl: <a href="https://ampl.clair.ucsb.edu" target="_blank" rel="noopener noreferrer" className={linkClass} />,
+          }}
+        />
+      </span>
+      <span className="shrink-0 ml-4 text-cream/40">v{VERSION}</span>
     </footer>
   );
 }

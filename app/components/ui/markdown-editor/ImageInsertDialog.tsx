@@ -13,7 +13,7 @@ interface ImageInsertDialogProps {
   open: boolean;
   onClose: () => void;
   onInsert: (url: string, alt: string) => void;
-  objects: Array<{ object_id: string; title: string | null; thumbnail: string | null }>;
+  objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
 }
 
 type ActiveTab = "url" | "objects";
@@ -43,7 +43,7 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects }: ImageIns
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} className="max-w-lg">
+    <Dialog open={open} onClose={handleClose} className="max-w-2xl">
       <h2 className="font-heading font-semibold text-lg text-charcoal mb-4">
         {t("image_dialog.title")}
       </h2>
@@ -119,7 +119,7 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects }: ImageIns
               {t("image_dialog.no_objects")}
             </p>
           ) : (
-            <div className="grid grid-cols-3 gap-3 max-h-60 overflow-y-auto">
+            <div className="grid grid-cols-4 gap-2 max-h-80 overflow-y-auto">
               {objects.map((obj) => (
                 <button
                   key={obj.object_id}
@@ -127,15 +127,15 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects }: ImageIns
                   onClick={() => handleInsertObject(obj)}
                   className="group flex flex-col items-center gap-1 p-1 rounded-md hover:bg-cream-dark transition-colors text-left"
                 >
-                  {obj.thumbnail ? (
+                  {obj.thumbnail && obj.image_available !== false ? (
                     <img
                       src={obj.thumbnail}
                       alt={obj.title ?? obj.object_id}
                       className="w-full aspect-square object-cover rounded"
                     />
                   ) : (
-                    <div className="w-full aspect-square bg-gray-100 rounded flex items-center justify-center text-gray-400 text-xs">
-                      {obj.object_id}
+                    <div className="w-full aspect-square bg-gray-100 rounded flex items-center justify-center text-gray-400 text-xs text-center p-1">
+                      {obj.title ?? obj.object_id}
                     </div>
                   )}
                   <span className="font-body text-xs text-charcoal truncate w-full text-center">
