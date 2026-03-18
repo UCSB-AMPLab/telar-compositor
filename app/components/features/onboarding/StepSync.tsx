@@ -152,7 +152,9 @@ export function StepSync({
             <p className="text-red-700 text-sm font-body">
               {importResult.validationError === "not_telar"
                 ? t("step_sync.error_not_telar")
-                : t("step_sync.error_empty_repo")}
+                : importResult.validationError === "already_connected"
+                  ? t("step_sync.error_already_connected")
+                  : t("step_sync.error_empty_repo")}
             </p>
           </div>
           <button

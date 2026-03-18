@@ -48,14 +48,6 @@ export function StepReview({
         {t("step_review.heading")}
       </h2>
 
-      {/* Google Sheets warning */}
-      {importResult.sheetsDisabled && (
-        <WarningBanner
-          message={t("step_review.sheets_warning")}
-          className="mb-5"
-        />
-      )}
-
       {/* Site settings summary */}
       <section className="bg-cream rounded-lg p-4 mb-4">
         <h3 className="font-heading font-semibold text-sm text-charcoal mb-3">
@@ -158,21 +150,29 @@ export function StepReview({
         <InlineConfig
           configFields={configFields}
           projectId={projectId}
+          themes={importResult.themes.list}
           onSaved={onDone}
         />
       )}
 
       {/* Actions */}
       {!showInlineConfig && (
-        <div className="flex items-center gap-3 justify-end mt-2">
-          <Button variant="control" type="button" onClick={onEditConfig}>
-            {t("step_review.edit_config_first")}
-          </Button>
-          <Link to="/dashboard">
-            <Button variant="primary" type="button">
-              {t("step_review.go_to_dashboard")}
+        <div className="mt-4">
+          <p className="font-body text-xs text-gray-500 mb-4">
+            {t("step_review.config_explanation")}
+          </p>
+          <div className="flex items-center gap-3 justify-end">
+            <button
+              type="button"
+              onClick={onEditConfig}
+              className="inline-flex items-center justify-center border border-gray-200 hover:bg-gray-50 text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-2.5 transition-colors cursor-pointer"
+            >
+              {t("step_review.edit_config_first")}
+            </button>
+            <Button variant="primary" type="button" onClick={onDone}>
+              {t("step_review.continue")}
             </Button>
-          </Link>
+          </div>
         </div>
       )}
     </div>

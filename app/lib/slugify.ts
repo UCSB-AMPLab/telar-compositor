@@ -1,13 +1,14 @@
 /**
- * Slug utility — converts titles to URL-safe story IDs.
+ * Slug utility — converts titles to URL-safe story and object IDs.
  *
  * Exports:
  *   slugify(title) — pure string transformation
- *   generateUniqueSlug(baseSlug, projectId, db) — collision-safe slug for D1
+ *   generateUniqueSlug(baseSlug, projectId, db) — collision-safe slug for stories
+ *   generateUniqueObjectSlug(baseSlug, projectId, db) — collision-safe slug for objects
  */
 
 import { and, eq } from "drizzle-orm";
-import { stories } from "~/db/schema";
+import { stories, objects } from "~/db/schema";
 import type { getDb } from "~/lib/db.server";
 
 /**
@@ -50,6 +51,37 @@ export async function generateUniqueSlug(
     .where(and(eq(stories.project_id, projectId)));
 
   const taken = new Set(existing.map((r) => r.story_id));
+
+  if (!taken.has(baseSlug)) {
+    return baseSlug;
+  }
+
+  let suffix = 2;
+  while (taken.has(`${baseSlug}-${suffix}`)) {
+    suffix++;
+  }
+  return `${baseSlug}-${suffix}`;
+}
+
+/**
+ * Returns a slug that is unique within a project's objects table.
+ *
+ * If the base slug already exists as an object_id in the project, appends
+ * -2, -3, … until a free slot is found. Queries are batched in one round
+ * trip to avoid N+1 calls.
+ */
+export async function generateUniqueObjectSlug(
+  baseSlug: string,
+  projectId: number,
+  db: ReturnType<typeof getDb>
+): Promise<string> {
+  // Fetch all object_ids in this project that could collide
+  const existing = await db
+    .select({ object_id: objects.object_id })
+    .from(objects)
+    .where(and(eq(objects.project_id, projectId)));
+
+  const taken = new Set(existing.map((r) => r.object_id));
 
   if (!taken.has(baseSlug)) {
     return baseSlug;

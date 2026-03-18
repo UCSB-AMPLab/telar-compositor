@@ -43,7 +43,7 @@ export interface TreeEntry {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function githubHeaders(token: string): Record<string, string> {
+export function githubHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
@@ -150,4 +150,41 @@ export async function getFileContent(
     return decodeGitHubContent(data.content);
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// GraphQL helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Executes a GitHub GraphQL API request.
+ *
+ * Throws if the HTTP response is non-OK or if the response body contains a
+ * top-level `errors` array (GraphQL errors are returned with HTTP 200).
+ */
+export async function graphqlGitHub<T = unknown>(
+  token: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  const res = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "User-Agent": "Telar-Compositor/1.0",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub GraphQL error: ${res.status}`);
+  }
+  const json = (await res.json()) as {
+    data?: T;
+    errors?: Array<{ message: string }>;
+  };
+  if (json.errors) {
+    throw new Error(`GraphQL: ${json.errors.map((e) => e.message).join(", ")}`);
+  }
+  return json.data as T;
 }

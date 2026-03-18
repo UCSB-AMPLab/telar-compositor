@@ -18,6 +18,7 @@ export default [
     index("routes/home.tsx"),
     route("/dashboard", "routes/_app.dashboard.tsx"),
     route("/objects", "routes/_app.objects.tsx"),
+    route("/objects/:objectId", "routes/_app.objects.$objectId.tsx"),
     route("/stories", "routes/_app.stories.tsx"),
     route("/stories/:storyId", "routes/_app.stories.$storyId.tsx"),
     route("/glossary", "routes/_app.glossary.tsx"),

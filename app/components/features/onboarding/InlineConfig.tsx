@@ -10,27 +10,22 @@ import { useState } from "react";
 import { useFetcher } from "react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
+import { ThemeSwatches, type ThemeOption } from "~/components/features/config/ThemeSwatches";
 
 interface InlineConfigProps {
   configFields: Record<string, unknown>;
   projectId: number;
+  themes: ThemeOption[];
   onSaved: () => void;
   className?: string;
 }
 
-const THEMES = [
-  { value: "default", label: "Default", color: "#883C36" },
-  { value: "dark", label: "Dark", color: "#1a1a2e" },
-  { value: "light", label: "Light", color: "#f5f5f5" },
-];
-
-export function InlineConfig({ configFields, projectId, onSaved, className = "" }: InlineConfigProps) {
+export function InlineConfig({ configFields, projectId, themes, onSaved, className = "" }: InlineConfigProps) {
   const { t } = useTranslation("onboarding");
   const fetcher = useFetcher<{ saved?: boolean }>();
 
   const [title, setTitle] = useState(String(configFields.title ?? ""));
   const [lang, setLang] = useState(String(configFields.lang ?? "en"));
-  const [theme, setTheme] = useState(String(configFields.theme ?? "default"));
   const [url, setUrl] = useState(String(configFields.url ?? ""));
   const [baseurl, setBaseurl] = useState(String(configFields.baseurl ?? ""));
 
@@ -43,12 +38,11 @@ export function InlineConfig({ configFields, projectId, onSaved, className = "" 
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const formData = new FormData();
+    const formData = new FormData(e.currentTarget);
     formData.set("intent", "save_config");
     formData.set("project_id", String(projectId));
     formData.set("title", title);
     formData.set("lang", lang);
-    formData.set("theme", theme);
     formData.set("url", url);
     formData.set("baseurl", baseurl);
     fetcher.submit(formData, { method: "post", action: "/onboarding" });
@@ -96,28 +90,7 @@ export function InlineConfig({ configFields, projectId, onSaved, className = "" 
             <label className="block text-sm font-body font-medium text-charcoal mb-2">
               {t("inline_config.theme")}
             </label>
-            <div className="flex gap-3">
-              {THEMES.map((t_option) => (
-                <button
-                  key={t_option.value}
-                  type="button"
-                  onClick={() => setTheme(t_option.value)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-body transition-colors ${
-                    theme === t_option.value
-                      ? "border-periwinkle bg-periwinkle/10 text-charcoal"
-                      : "border-gray-200 text-gray-600 hover:bg-gray-50"
-                  }`}
-                  aria-pressed={theme === t_option.value}
-                >
-                  <span
-                    className="w-4 h-4 rounded-full flex-shrink-0 border border-gray-200"
-                    style={{ backgroundColor: t_option.color }}
-                    aria-hidden="true"
-                  />
-                  {t_option.label}
-                </button>
-              ))}
-            </div>
+            <ThemeSwatches name="theme" value={String(configFields.theme ?? "")} themes={themes} />
           </div>
         </div>
 

@@ -13,7 +13,7 @@ import { AlertTriangle, CheckCircle } from "lucide-react";
 import type { Route } from "./+types/_app.config";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, project_config } from "~/db/schema";
+import { projects, project_config, project_themes } from "~/db/schema";
 import { ConfigSection } from "~/components/features/config/ConfigSection";
 import { FieldWithHelp } from "~/components/features/config/FieldWithHelp";
 import { ToggleField } from "~/components/features/config/ToggleField";
@@ -36,17 +36,27 @@ export async function loader({ context }: Route.LoaderArgs) {
     .limit(1);
 
   if (userProjects.length === 0) {
-    return { hasProject: false as const, config: null };
+    return { hasProject: false as const, config: null, themes: [] };
   }
 
   const project = userProjects[0];
-  const configRows = await db
-    .select()
-    .from(project_config)
-    .where(eq(project_config.project_id, project.id))
-    .limit(1);
+  const [configRows, themes] = await Promise.all([
+    db
+      .select()
+      .from(project_config)
+      .where(eq(project_config.project_id, project.id))
+      .limit(1),
+    db
+      .select({
+        theme_id: project_themes.theme_id,
+        name: project_themes.name,
+        swatch_color: project_themes.swatch_color,
+      })
+      .from(project_themes)
+      .where(eq(project_themes.project_id, project.id)),
+  ]);
 
-  return { hasProject: true as const, config: configRows[0] ?? null };
+  return { hasProject: true as const, config: configRows[0] ?? null, themes };
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -117,6 +127,7 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
   }
 
   const config = loaderData.config;
+  const themes = loaderData.themes;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -161,7 +172,7 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
               {t("sections.site_settings.field_theme")}
             </label>
             <p className="text-xs text-gray-400 mb-2">{t("sections.site_settings.field_theme_help")}</p>
-            <ThemeSwatches name="theme" value={config?.theme ?? "trama"} />
+            <ThemeSwatches name="theme" value={config?.theme ?? ""} themes={themes} />
           </div>
           <FieldWithHelp
             label={t("sections.site_settings.field_logo")}

@@ -36,6 +36,20 @@
       "when": 1773900000000,
       "tag": "0004_add_project_landing",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1774000000000,
+      "tag": "0005_add_objects_missing_from_repo",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1774100000000,
+      "tag": "0006_rename_has_iiif_tiles_to_image_available",
+      "breakpoints": true
     }
   ]
 }

@@ -30,6 +30,7 @@ export interface GitHubUser {
   login: string;
   name: string | null;
   email: string | null;
+  plan: string | null;
 }
 
 // 30-minute threshold — refresh if token expires within this window
@@ -194,6 +195,7 @@ export async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> 
     login: string;
     name: string | null;
     email: string | null;
+    plan?: { name: string } | null;
   };
 
   return {
@@ -201,5 +203,6 @@ export async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> 
     login: data.login,
     name: data.name,
     email: data.email,
+    plan: data.plan?.name ?? null,
   };
 }

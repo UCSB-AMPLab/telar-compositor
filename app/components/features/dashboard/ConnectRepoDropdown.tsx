@@ -70,7 +70,7 @@ export function ConnectRepoDropdown({
             <div className="border-t border-gray-200 my-1" />
 
             <Link
-              to="/onboarding?force=true"
+              to="/onboarding?force=1"
               onClick={() => setIsOpen(false)}
               className="block px-4 py-2.5 font-body text-sm text-lavender hover:bg-gray-50 transition-colors"
             >
