@@ -1,0 +1,1 @@
+ALTER TABLE projects ADD COLUMN onboarding_completed integer DEFAULT false;

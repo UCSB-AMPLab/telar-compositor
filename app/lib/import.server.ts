@@ -13,7 +13,7 @@
  */
 
 import Papa from "papaparse";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { getFileContent, getRepoTree } from "~/lib/github.server";
 import { discoverSheetTabs, fetchSheetCsv } from "~/lib/sheets.server";
@@ -22,6 +22,7 @@ import {
   projects,
   project_config,
   project_landing,
+  project_themes,
   objects,
   stories,
   steps,
@@ -88,7 +89,7 @@ const KNOWN_BILINGUAL_VALUES = new Set([
 
 export interface ImportResult {
   valid: boolean;
-  validationError?: "not_telar" | "empty_repo";
+  validationError?: "not_telar" | "empty_repo" | "already_connected";
   sheetsAccessError?: boolean;
   sheetsPublishedUrl?: string;
   telarVersion?: string;
@@ -97,6 +98,10 @@ export interface ImportResult {
   objects: { imported: number; skipped: number; warnings: string[] };
   stories: { imported: number; warnings: string[] };
   glossary: { imported: number };
+  themes: {
+    imported: number;
+    list: Array<{ theme_id: string; name: string | null; swatch_color: string | null }>;
+  };
   sheetsEnabled: boolean;
   sheetsDisabled: boolean;
   iiifObjectIds: string[];
@@ -271,7 +276,7 @@ export function mapObjectsCsv(
   rows: Record<string, string>[],
   projectId?: number,
 ): Array<typeof objects.$inferInsert> {
-  return rows.map((row) => {
+  return rows.filter((row) => (row.object_id ?? "").trim() !== "").map((row) => {
     const featuredRaw = (row.featured ?? "").toLowerCase().trim();
     const featured = featuredRaw === "true" || featuredRaw === "yes" || featuredRaw === "1";
     return {
@@ -289,7 +294,7 @@ export function mapObjectsCsv(
       source: row.source || undefined,
       credit: row.credit || undefined,
       thumbnail: row.thumbnail || undefined,
-      has_iiif_tiles: false,
+      image_available: false,
     };
   });
 }
@@ -325,6 +330,26 @@ export function mapProjectCsv(
  * Note: layers use a placeholder step_id of 0 — the caller must update
  * these after inserting steps and retrieving their assigned IDs.
  */
+
+/**
+ * Extract title from YAML frontmatter and return { title, body }.
+ * Frontmatter is delimited by --- on its own lines at the start of content.
+ */
+export function extractFrontmatterTitle(
+  content: string | undefined
+): { title: string | undefined; body: string | undefined } {
+  if (!content) return { title: undefined, body: undefined };
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return { title: undefined, body: content };
+  const frontmatter = match[1];
+  const body = match[2];
+  const titleMatch = frontmatter.match(/^title:\s*["']?(.+?)["']?\s*$/m);
+  return {
+    title: titleMatch ? titleMatch[1] : undefined,
+    body: body.trim() || undefined,
+  };
+}
+
 export function mapStoryCsv(
   rows: Record<string, string>[],
   storyDbId: number,
@@ -332,7 +357,22 @@ export function mapStoryCsv(
   const stepRows: Array<typeof steps.$inferInsert> = [];
   const layerRows: Array<typeof layers.$inferInsert> = [];
 
-  rows.forEach((row, index) => {
+  // Filter out completely blank rows — rows where all meaningful fields are empty.
+  // Matches the original Telar Python build behaviour (stories.py).
+  const meaningfulFields = [
+    "object",
+    "question",
+    "answer",
+    "layer1_button",
+    "layer1_content",
+    "layer2_button",
+    "layer2_content",
+  ];
+  const nonBlankRows = rows.filter((row) =>
+    meaningfulFields.some((f) => row[f]?.trim()),
+  );
+
+  nonBlankRows.forEach((row, index) => {
     const stepNumber = parseInt(row.step ?? String(index + 1), 10) || index + 1;
     const stepRow: typeof steps.$inferInsert = {
       story_id: storyDbId,
@@ -351,20 +391,24 @@ export function mapStoryCsv(
     const placeholderStepId = -(index + 1);
 
     if (row.layer1_button || row.layer1_content) {
+      const { title, body } = extractFrontmatterTitle(row.layer1_content);
       layerRows.push({
         step_id: placeholderStepId,
         layer_number: 1,
+        title: title,
         button_label: row.layer1_button || undefined,
-        content: row.layer1_content || undefined,
+        content: body,
       });
     }
 
     if (row.layer2_button || row.layer2_content) {
+      const { title, body } = extractFrontmatterTitle(row.layer2_content);
       layerRows.push({
         step_id: placeholderStepId,
         layer_number: 2,
+        title: title,
         button_label: row.layer2_button || undefined,
-        content: row.layer2_content || undefined,
+        content: body,
       });
     }
   });
@@ -415,6 +459,7 @@ export async function importRepo({
       objects: { imported: 0, skipped: 0, warnings: [] },
       stories: { imported: 0, warnings: [] },
       glossary: { imported: 0 },
+      themes: { imported: 0, list: [] },
       sheetsEnabled: false,
       sheetsDisabled: false,
       iiifObjectIds: [],
@@ -435,6 +480,7 @@ export async function importRepo({
       objects: { imported: 0, skipped: 0, warnings: [] },
       stories: { imported: 0, warnings: [] },
       glossary: { imported: 0 },
+      themes: { imported: 0, list: [] },
       sheetsEnabled: false,
       sheetsDisabled: false,
       iiifObjectIds: [],
@@ -474,14 +520,46 @@ export async function importRepo({
   // Step 4: Discover IIIF objects
   // -------------------------------------------------------------------------
 
+  const imageExtensions = new Set(["jpg", "jpeg", "png", "tif", "tiff", "pdf"]);
   const iiifObjectIds = tree
-    .filter(
-      (entry) =>
-        entry.type === "tree" &&
-        entry.path.startsWith("iiif/objects/") &&
-        entry.path.split("/").length === 3,
-    )
-    .map((entry) => entry.path.split("/")[2]);
+    .filter((entry) => {
+      if (entry.type !== "blob") return false;
+      const parts = entry.path.split("/");
+      if (parts.length !== 2 || parts[0] !== "objects") return false;
+      const ext = parts[1].split(".").pop()?.toLowerCase() ?? "";
+      return imageExtensions.has(ext);
+    })
+    .map((entry) => entry.path.split("/")[1].replace(/\.[^.]+$/, ""));
+
+  // -------------------------------------------------------------------------
+  // Step 4b: Discover themes from _data/themes/*.yml
+  // -------------------------------------------------------------------------
+
+  const themeFiles = tree.filter(
+    (entry) =>
+      entry.type === "blob" &&
+      entry.path.startsWith("_data/themes/") &&
+      entry.path.endsWith(".yml"),
+  );
+
+  const themeRows: Array<typeof project_themes.$inferInsert> = [];
+  for (const entry of themeFiles) {
+    const content = await getFileContent(token, owner, repo, entry.path);
+    if (!content) continue;
+    const parsed = parseYaml(content) as Record<string, unknown> | null;
+    if (!parsed) continue;
+    const filename = entry.path.split("/").pop()!.replace(/\.yml$/, "");
+    const colors = parsed.colors as Record<string, Record<string, string>> | undefined;
+    themeRows.push({
+      project_id: 0, // updated after project insert
+      theme_id: filename,
+      name: (parsed.name as string) || filename,
+      description: (parsed.description as string) || undefined,
+      creator: (parsed.creator as string) || undefined,
+      creator_url: (parsed.creator_url as string) || undefined,
+      swatch_color: colors?.text?.heading || undefined,
+    });
+  }
 
   // -------------------------------------------------------------------------
   // Step 5: Import content (Sheets or repo CSVs)
@@ -557,6 +635,7 @@ export async function importRepo({
         objects: { imported: 0, skipped: 0, warnings: [] },
         stories: { imported: 0, warnings: [] },
         glossary: { imported: 0 },
+        themes: { imported: 0, list: [] },
         sheetsEnabled: true,
         sheetsDisabled: false,
         iiifObjectIds,
@@ -565,12 +644,12 @@ export async function importRepo({
     }
   } else {
     // Import from repo CSVs
-    const objectsContent = await getFileContent(token, owner, repo, "objects.csv");
+    const objectsContent = await getFileContent(token, owner, repo, "telar-content/spreadsheets/objects.csv");
     if (objectsContent) {
       objectRows = mapObjectsCsv(parseTelarCsv(objectsContent));
     }
 
-    const projectContent = await getFileContent(token, owner, repo, "project.csv");
+    const projectContent = await getFileContent(token, owner, repo, "telar-content/spreadsheets/project.csv");
     if (projectContent) {
       const projectRows = parseTelarCsv(projectContent);
       storyRows = mapProjectCsv(projectRows);
@@ -580,6 +659,7 @@ export async function importRepo({
       for (const storyRow of storyRows) {
         const storyId = storyRow.story_id as string;
         const storyContent =
+          (await getFileContent(token, owner, repo, `telar-content/spreadsheets/${storyId}.csv`)) ??
           (await getFileContent(token, owner, repo, `_data/${storyId}.csv`)) ??
           (await getFileContent(token, owner, repo, `${storyId}.csv`));
 
@@ -596,7 +676,7 @@ export async function importRepo({
       }
     }
 
-    const glossaryContent = await getFileContent(token, owner, repo, "glossary.csv");
+    const glossaryContent = await getFileContent(token, owner, repo, "telar-content/spreadsheets/glossary.csv");
     if (glossaryContent) {
       glossaryRows = parseTelarCsv(glossaryContent).map((r) => ({
         project_id: 0,
@@ -610,7 +690,7 @@ export async function importRepo({
   // Mark IIIF objects
   objectRows = objectRows.map((obj) => ({
     ...obj,
-    has_iiif_tiles: iiifObjectIds.includes(obj.object_id as string),
+    image_available: iiifObjectIds.includes(obj.object_id as string),
   }));
 
   // -------------------------------------------------------------------------
@@ -618,6 +698,34 @@ export async function importRepo({
   // -------------------------------------------------------------------------
 
   const db = getDb(env.DB);
+
+  // Check for duplicate — don't re-import a repo that's already connected
+  const existingProject = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(
+      and(
+        eq(projects.user_id, userId),
+        eq(projects.github_repo_full_name, repoFullName),
+      ),
+    )
+    .limit(1);
+
+  if (existingProject.length > 0) {
+    return {
+      valid: false,
+      validationError: "already_connected",
+      project: { imported: false, storiesFound: 0 },
+      objects: { imported: 0, skipped: 0, warnings: [] },
+      stories: { imported: 0, warnings: [] },
+      glossary: { imported: 0 },
+      themes: { imported: 0, list: [] },
+      sheetsEnabled: false,
+      sheetsDisabled: false,
+      iiifObjectIds: [],
+      configFields: {},
+    };
+  }
 
   // Insert project record — initial import counts as a sync
   const [projectRecord] = await db
@@ -634,7 +742,9 @@ export async function importRepo({
 
   // Update all rows with the real project ID
   const objectsWithProjectId = objectRows.map((r) => ({ ...r, project_id: projectId }));
-  const storiesWithProjectId = storyRows.map((r) => ({ ...r, project_id: projectId }));
+  const storiesWithProjectId = storyRows
+    .filter((r) => r.story_id && String(r.story_id).trim() !== "")
+    .map((r) => ({ ...r, project_id: projectId }));
   const glossaryWithProjectId = glossaryRows.map((r) => ({ ...r, project_id: projectId }));
 
   // Insert project config
@@ -647,13 +757,22 @@ export async function importRepo({
     .insert(project_landing)
     .values({ project_id: projectId, ...landingData });
 
+  // Insert themes
+  if (themeRows.length > 0) {
+    const themesWithProjectId = themeRows.map((r) => ({ ...r, project_id: projectId }));
+    // project_themes has 8 columns → max 12 rows per insert
+    for (const chunk of chunkForD1(8, themesWithProjectId)) {
+      await db.insert(project_themes).values(chunk);
+    }
+  }
+
   // Insert content tables — chunked to stay within D1's 100-variable limit
-  // objects: 17 cols → max 5 rows; stories: 9 cols → max 11 rows;
+  // objects: 18 cols → max 5 rows; stories: 10 cols → max 10 rows;
   // glossary: 6 cols → max 16 rows
-  for (const chunk of chunkForD1(17, objectsWithProjectId)) {
+  for (const chunk of chunkForD1(18, objectsWithProjectId)) {
     await db.insert(objects).values(chunk);
   }
-  for (const chunk of chunkForD1(9, storiesWithProjectId)) {
+  for (const chunk of chunkForD1(10, storiesWithProjectId)) {
     await db.insert(stories).values(chunk);
   }
   for (const chunk of chunkForD1(6, glossaryWithProjectId)) {
@@ -739,6 +858,14 @@ export async function importRepo({
     },
     stories: { imported: storiesWithProjectId.length, warnings: storyWarnings },
     glossary: { imported: glossaryWithProjectId.length },
+    themes: {
+      imported: themeRows.length,
+      list: themeRows.map((r) => ({
+        theme_id: r.theme_id,
+        name: r.name ?? null,
+        swatch_color: r.swatch_color ?? null,
+      })),
+    },
     sheetsEnabled: googleSheetsEnabled && !sheetsDisabled,
     sheetsDisabled,
     iiifObjectIds,

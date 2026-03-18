@@ -10,6 +10,7 @@ export const users = sqliteTable("users", {
   encrypted_refresh_token: text("encrypted_refresh_token").notNull(),
   access_token_expires_at: text("access_token_expires_at").notNull(), // ISO 8601
   refresh_token_expires_at: text("refresh_token_expires_at").notNull(),
+  github_plan: text("github_plan"),
   language_preference: text("language_preference").default("en"),
   created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
@@ -21,6 +22,7 @@ export const projects = sqliteTable("projects", {
   github_repo_full_name: text("github_repo_full_name").notNull(),
   installation_id: integer("installation_id").notNull(),
   github_pages_url: text("github_pages_url"),
+  onboarding_completed: integer("onboarding_completed", { mode: "boolean" }).default(false),
   head_sha: text("head_sha"),
   published_sha: text("published_sha"),
   last_synced_at: text("last_synced_at"),
@@ -72,7 +74,8 @@ export const objects = sqliteTable("objects", {
   source: text("source"),
   credit: text("credit"),
   thumbnail: text("thumbnail"),
-  has_iiif_tiles: integer("has_iiif_tiles", { mode: "boolean" }).default(false),
+  image_available: integer("image_available", { mode: "boolean" }).default(false),
+  missing_from_repo: integer("missing_from_repo", { mode: "boolean" }).default(false),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -107,6 +110,7 @@ export const layers = sqliteTable("layers", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   step_id: integer("step_id").notNull().references(() => steps.id),
   layer_number: integer("layer_number").notNull(),
+  title: text("title"),
   button_label: text("button_label"),
   content: text("content"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
@@ -119,6 +123,17 @@ export const glossary_terms = sqliteTable("glossary_terms", {
   title: text("title"),
   definition: text("definition"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
+});
+
+export const project_themes = sqliteTable("project_themes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  project_id: integer("project_id").notNull().references(() => projects.id),
+  theme_id: text("theme_id").notNull(),
+  name: text("name"),
+  description: text("description"),
+  creator: text("creator"),
+  creator_url: text("creator_url"),
+  swatch_color: text("swatch_color"),
 });
 
 export const project_landing = sqliteTable("project_landing", {

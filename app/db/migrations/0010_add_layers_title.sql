@@ -1,0 +1,1 @@
+ALTER TABLE layers ADD COLUMN title text;

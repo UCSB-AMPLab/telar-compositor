@@ -1,0 +1,1 @@
+ALTER TABLE objects RENAME COLUMN has_iiif_tiles TO image_available;
