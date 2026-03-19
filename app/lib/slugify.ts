@@ -20,9 +20,13 @@ import type { getDb } from "~/lib/db.server";
  *   3. Strip characters that are neither alphanumeric nor whitespace
  *   4. Replace runs of whitespace with a single hyphen
  *   5. Strip leading and trailing hyphens
+ *   6. Truncate to maxWords (default 3) to keep IDs short
+ *
+ * Collision-safe wrappers (generateUniqueSlug, generateUniqueObjectSlug)
+ * append -2, -3, … when truncation causes duplicates.
  */
-export function slugify(title: string): string {
-  return title
+export function slugify(title: string, maxWords = 3): string {
+  const full = title
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "") // strip diacritics
     .toLowerCase()
@@ -30,6 +34,13 @@ export function slugify(title: string): string {
     .trim()
     .replace(/\s+/g, "-") // collapse whitespace runs → hyphen
     .replace(/^-+|-+$/g, ""); // strip leading/trailing hyphens
+
+  if (maxWords <= 0) return full;
+
+  const words = full.split("-");
+  if (words.length <= maxWords) return full;
+
+  return words.slice(0, maxWords).join("-");
 }
 
 /**
