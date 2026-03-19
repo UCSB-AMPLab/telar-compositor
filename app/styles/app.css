@@ -36,6 +36,21 @@
   }
 }
 
+/* Release notes rendered markdown */
+.release-notes h1 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+.release-notes h2 { font-size: 1rem; font-weight: 600; margin: 1rem 0 0.375rem; color: var(--color-terracotta); }
+.release-notes h3 { font-size: 0.875rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }
+.release-notes p { margin-bottom: 0.5rem; line-height: 1.6; }
+.release-notes ul { list-style: disc; padding-left: 1.25rem; margin-bottom: 0.5rem; }
+.release-notes ol { list-style: decimal; padding-left: 1.25rem; margin-bottom: 0.5rem; }
+.release-notes li { margin-bottom: 0.375rem; line-height: 1.5; }
+.release-notes strong { font-weight: 600; color: var(--color-charcoal); }
+.release-notes a { color: var(--color-terracotta); text-decoration: underline; }
+.release-notes code { font-size: 0.8em; background: var(--color-cream); padding: 0.1em 0.35em; border-radius: 0.25rem; }
+.release-notes pre { background: var(--color-cream); padding: 0.75rem 1rem; border-radius: 0.375rem; font-size: 0.8em; overflow-x: auto; margin-bottom: 0.5rem; }
+.release-notes pre code { background: none; padding: 0; }
+.release-notes hr { border: none; border-top: 1px solid #d4c8b8; margin: 1rem 0; }
+
 /* CodeMirror editor */
 .cm-editor { outline: none; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.875rem; color: var(--color-charcoal); background: #ffffff; }
 .cm-transparent .cm-editor { background: transparent; }

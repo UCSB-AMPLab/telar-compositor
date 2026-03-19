@@ -12,6 +12,7 @@ import type { Route } from "./+types/onboarding";
 import { authMiddleware, userContext } from "~/middleware/auth.server";
 import { decrypt } from "~/lib/crypto.server";
 import { listUserInstallations, listInstallationRepos, getFileContent } from "~/lib/github.server";
+import { checkTelarVersion } from "~/lib/upgrade.server";
 import type { Repository } from "~/lib/github.server";
 import { importRepo } from "~/lib/import.server";
 import { commitFilesToRepo, disableGoogleSheetsInConfig, verifySiteUrl, enableGitHubPages } from "~/lib/commit.server";
@@ -136,6 +137,12 @@ export async function action({ request, context }: Route.ActionArgs) {
         env,
         overrideGoogleSheetsUrl: sheetsUrl || undefined,
       });
+      if (result.valid && result.telarVersion) {
+        const versionCheck = await checkTelarVersion(token, result.telarVersion);
+        if (versionCheck.needsUpgrade) {
+          return redirect("/upgrade?from=/dashboard");
+        }
+      }
       return result;
     }
 
@@ -146,6 +153,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       userId: user.id,
       env,
     });
+    if (result.valid && result.telarVersion) {
+      const versionCheck = await checkTelarVersion(token, result.telarVersion);
+      if (versionCheck.needsUpgrade) {
+        return redirect("/upgrade?from=/dashboard");
+      }
+    }
     return result;
   }
 

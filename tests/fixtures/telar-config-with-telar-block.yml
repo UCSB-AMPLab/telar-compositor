@@ -1,0 +1,33 @@
+# Telar site configuration
+# User-authored config — compositor must preserve all values below
+
+title: "Museo Digital del Pacífico"
+description: "Una colección de historias y objetos del patrimonio del Pacífico colombiano."
+author: "Equipo de investigación"
+email: "contacto@museodelpacífico.org"
+
+url: "https://museodelpacífico.github.io"
+baseurl: "/coleccion"
+
+lang: es
+story_key: "historia"
+
+google_sheets:
+  enabled: false
+  published_url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vABC123/pubhtml"
+
+telar:
+  version: "0.9.0"
+  release_date: "2025-11-01"
+
+story_interface:
+  show_on_homepage: true
+  show_story_steps: true
+  show_object_credits: true
+  include_demo_content: false
+
+collection_interface:
+  browse_and_search: true
+  show_link_on_homepage: true
+  show_sample_on_homepage: true
+  featured_count: 6
