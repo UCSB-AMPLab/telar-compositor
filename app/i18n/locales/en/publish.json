@@ -1,1 +1,83 @@
-{}
+{
+  "title": "Publish",
+  "progress": {
+    "review": "Review",
+    "checks": "Checks",
+    "publish": "Publish"
+  },
+  "review": {
+    "heading": "Review your changes",
+    "description": "Here's what will be published to your site.",
+    "up_to_date": "Everything is up to date",
+    "up_to_date_description": "No changes since your last publish.",
+    "first_publish": "First publish",
+    "first_publish_description": "All your content will be published for the first time."
+  },
+  "summary": {
+    "stories": "Stories",
+    "objects": "Objects",
+    "settings": "Site settings",
+    "landing": "Homepage content",
+    "new": "New",
+    "modified": "Modified",
+    "deleted": "Will be removed",
+    "count_new": "{{count}} new",
+    "count_modified": "{{count}} modified",
+    "count_deleted": "{{count}} to remove"
+  },
+  "education": {
+    "heading": "What does publishing do?",
+    "body": "Publishing saves your changes to GitHub, which is the service that hosts your site. Think of it like saving a document to the cloud — your site will update automatically after publishing.",
+    "learn_more": "Learn more about how this works",
+    "dismiss": "Dismiss",
+    "glossary": {
+      "commit": "A saved snapshot of your changes — like a save point in a video game.",
+      "repository": "The place where all your site's files are stored on GitHub.",
+      "push": "Sending your saved changes from the compositor to GitHub."
+    }
+  },
+  "checks": {
+    "heading": "Pre-publish checks",
+    "all_passed": "All checks passed",
+    "all_passed_description": "Your content is ready to publish.",
+    "blockers_heading": "Must fix before publishing",
+    "warnings_heading": "Suggestions",
+    "stale_head": "Your site's repository has changed since you last synced. Please re-sync before publishing.",
+    "stale_head_action": "Go to Dashboard to re-sync",
+    "object_no_title": "Object \"{{id}}\" has no title",
+    "step_no_position": "A step has no viewer position recorded"
+  },
+  "commit": {
+    "heading": "Write a commit message",
+    "description": "A commit message describes what you changed. It helps you (and others) understand the history of your site.",
+    "label": "Commit message",
+    "placeholder": "Describe your changes...",
+    "footer_note": "This message will appear in your site's history on GitHub.",
+    "publish_button": "Publish to GitHub"
+  },
+  "build": {
+    "publishing": "Saving your changes to GitHub...",
+    "building": "Building your site...",
+    "phase_setup": "Preparing your site for building...",
+    "phase_build_js": "Compiling your site's interactive features...",
+    "phase_process_data": "Processing your stories and objects...",
+    "phase_build_site": "Weaving your stories and objects into web pages...",
+    "phase_iiif": "Creating zoomable image tiles...",
+    "phase_deploy": "Publishing your site to the web...",
+    "success_heading": "Your site is live!",
+    "success_description": "Your changes have been published. If you don't see everything, do a full refresh (Cmd-Shift-R on Mac, Ctrl-Shift-R on Windows) a few times.",
+    "view_site": "View your site",
+    "view_commit": "See full commit on GitHub",
+    "back_to_dashboard": "Back to Dashboard",
+    "failed_heading": "Build failed",
+    "failed_description": "Something went wrong while building your site.",
+    "view_actions": "View build details",
+    "try_again": "Try again",
+    "stale_head_error": "Your repository changed while publishing. Please re-sync and try again."
+  },
+  "nav": {
+    "next_checks": "Next: Run checks",
+    "next_publish": "Next: Publish",
+    "back": "Back"
+  }
+}

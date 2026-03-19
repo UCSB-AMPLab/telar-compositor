@@ -4,16 +4,23 @@
  * Computes a three-way diff between the D1 objects table and the repo's
  * objects.csv, and applies the user's selected changes back to D1.
  *
+ * Extended in Plan 06-03 to cover all content types:
+ *   computeFullSyncDiff — diff for objects, stories, and config
+ *   applyFullSyncChanges — apply for objects, stories, and config
+ *
  * Exports:
  *   computeSyncDiff(projectId, token, owner, repo, db) — diff computation
  *   applySyncChanges(projectId, changes, token, owner, repo, db) — apply
- *   SyncDiff, SyncChanges — types for the diff/apply flow
+ *   computeFullSyncDiff(projectId, token, owner, repo, db, publishSnapshot) — full diff
+ *   applyFullSyncChanges(projectId, changes, token, owner, repo, db) — full apply
+ *   SyncDiff, SyncChanges — types for the objects diff/apply flow
+ *   FullSyncDiff, FullSyncChanges, StorySyncDiff, ConfigSyncDiff — full sync types
  */
 
 import { eq, and } from "drizzle-orm";
-import { objects, steps, stories } from "~/db/schema";
-import { getFileContent, getRepoTree } from "~/lib/github.server";
-import { parseTelarCsv, mapObjectsCsv } from "~/lib/import.server";
+import { objects, steps, stories, project_config } from "~/db/schema";
+import { getFileContent, getRepoTree, getRepoHead } from "~/lib/github.server";
+import { parseTelarCsv, mapObjectsCsv, mapProjectCsv, mapStoryCsv } from "~/lib/import.server";
 import type { getDb } from "~/lib/db.server";
 
 // ---------------------------------------------------------------------------
@@ -478,4 +485,419 @@ export async function applySyncChanges(
   }
 
   return { appliedCount, pendingObjects };
+}
+
+// ===========================================================================
+// Full Sync (Plan 06-03) — stories, steps, and config
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Full Sync Types
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal publish snapshot type — a snapshot of the content state at the time
+ * of the last publish. Used to distinguish "both sides changed" (conflict) from
+ * "only repo changed" (auto-accept). Defined here to avoid a circular dependency
+ * with publish.server.ts (added in Plan 06-01). When Plan 06-01 runs, the
+ * PublishSnapshot type from publish.server.ts can be used as a drop-in
+ * replacement since this interface is structurally compatible.
+ */
+export interface PublishSnapshot {
+  stories: Array<{
+    story_id: string;
+    title: string | null;
+    subtitle: string | null;
+    byline: string | null;
+    order: number;
+    isPrivate: boolean;
+  }>;
+  config: Record<string, string | null>;
+}
+
+export interface StorySyncItem {
+  story_id: string;
+  title: string | null;
+  subtitle: string | null;
+  byline: string | null;
+  order: number;
+  isPrivate: boolean;
+}
+
+export interface StorySyncChangedItem {
+  story_id: string;
+  title: string | null;
+  changedFields: string[];
+  /** True when both repo and D1 changed this story since the publish baseline */
+  isConflict: boolean;
+}
+
+export interface StorySyncDiff {
+  newStories: StorySyncItem[];
+  changedStories: StorySyncChangedItem[];
+  missingStories: Array<{ story_id: string; title: string | null }>;
+}
+
+export interface ConfigSyncDiff {
+  changedFields: Array<{ key: string; d1Value: string | null; repoValue: string | null }>;
+}
+
+export interface FullSyncDiff {
+  objects: SyncDiff;
+  stories: StorySyncDiff;
+  config: ConfigSyncDiff;
+  /** True when at least one story or config field is a conflict (both sides changed) */
+  hasConflicts: boolean;
+}
+
+export interface FullSyncChanges {
+  objects: SyncChanges;
+  /** story_ids where user accepted repo changes (update D1 to repo values) */
+  stories: { accept: string[]; reject: string[]; insertNew: string[] };
+  /** config field keys where user accepted repo changes */
+  config: { accept: string[]; reject: string[] };
+}
+
+// ---------------------------------------------------------------------------
+// Config field extractor
+// ---------------------------------------------------------------------------
+
+/** Managed _config.yml fields synced between repo and D1 */
+const MANAGED_CONFIG_FIELDS = [
+  "title",
+  "lang",
+  "baseurl",
+  "url",
+  "description",
+  "author",
+  "email",
+] as const;
+
+type ManagedConfigField = typeof MANAGED_CONFIG_FIELDS[number];
+
+/**
+ * Extracts managed config field values from a raw _config.yml string using
+ * line-based parsing — same approach as disableGoogleSheetsInConfig to avoid
+ * a js-yaml dependency in sync.server.ts and to preserve multi-line config
+ * files with comments.
+ *
+ * Only extracts top-level scalar keys (the managed set). Complex YAML sub-keys
+ * (e.g. telar.version) are not touched.
+ */
+function extractConfigFields(yamlContent: string): Record<ManagedConfigField, string | null> {
+  const result: Record<string, string | null> = {};
+  for (const key of MANAGED_CONFIG_FIELDS) {
+    const match = yamlContent.match(new RegExp(`^${key}:\\s*["']?([^"'\\n]*)["']?\\s*$`, "m"));
+    result[key] = match ? match[1].trim() || null : null;
+  }
+  return result as Record<ManagedConfigField, string | null>;
+}
+
+// ---------------------------------------------------------------------------
+// computeFullSyncDiff
+// ---------------------------------------------------------------------------
+
+/**
+ * Computes a full three-way diff for objects, stories, and config between
+ * D1 and the repo.
+ *
+ * - Objects: delegates to existing `computeSyncDiff`
+ * - Stories: compares D1 stories table against repo project.csv
+ * - Config: compares D1 project_config against repo _config.yml managed fields
+ *
+ * Conflict detection: when `publishSnapshot` is non-null, a story change is
+ * flagged as a conflict only if BOTH the repo value AND the D1 value differ
+ * from the snapshot baseline. If `publishSnapshot` is null (never published),
+ * all diffs are returned without conflict flags — `hasConflicts` is false.
+ *
+ * D1 wins by default for conflicts — callers must explicitly add conflicting
+ * story_ids to `changes.stories.accept` to apply the repo version.
+ */
+export async function computeFullSyncDiff(
+  projectId: number,
+  token: string,
+  owner: string,
+  repo: string,
+  db: ReturnType<typeof getDb>,
+  publishSnapshot: PublishSnapshot | null,
+): Promise<FullSyncDiff> {
+  // 1. Delegate objects diff to existing function
+  const objectsDiff = await computeSyncDiff(projectId, token, owner, repo, db);
+
+  // 2. Fetch project.csv from repo and parse into story rows
+  const projectCsvContent = await getFileContent(
+    token, owner, repo, "telar-content/spreadsheets/project.csv"
+  );
+  const repoStoryRows = projectCsvContent
+    ? mapProjectCsv(parseTelarCsv(projectCsvContent), projectId)
+    : [];
+  const repoStoryMap = new Map(
+    repoStoryRows.map((r) => [
+      r.story_id as string,
+      {
+        story_id: r.story_id as string,
+        title: (r.title as string | null | undefined) ?? null,
+        subtitle: (r.subtitle as string | null | undefined) ?? null,
+        byline: (r.byline as string | null | undefined) ?? null,
+        order: (r.order as number) ?? 0,
+        isPrivate: Boolean(r.private),
+      } as StorySyncItem,
+    ])
+  );
+
+  // 3. Fetch D1 stories for this project
+  const d1StoryRows = await db
+    .select()
+    .from(stories)
+    .where(eq(stories.project_id, projectId));
+  const d1StoryMap = new Map(d1StoryRows.map((s) => [s.story_id, s]));
+
+  // 4. Build snapshot baseline maps for conflict detection
+  const snapshotStoryMap = publishSnapshot
+    ? new Map(publishSnapshot.stories.map((s) => [s.story_id, s]))
+    : null;
+
+  // 5. Compute story diffs
+  const storyFields: Array<keyof StorySyncItem> = ["title", "subtitle", "byline", "order", "isPrivate"];
+
+  const newStories: StorySyncItem[] = [];
+  const changedStories: StorySyncChangedItem[] = [];
+  const missingStories: Array<{ story_id: string; title: string | null }> = [];
+
+  for (const [storyId, repoRow] of repoStoryMap.entries()) {
+    if (!d1StoryMap.has(storyId)) {
+      newStories.push(repoRow);
+    } else {
+      const d1Row = d1StoryMap.get(storyId)!;
+      const changedFields: string[] = [];
+
+      const d1Item: StorySyncItem = {
+        story_id: storyId,
+        title: d1Row.title ?? null,
+        subtitle: d1Row.subtitle ?? null,
+        byline: d1Row.byline ?? null,
+        order: d1Row.order ?? 0,
+        isPrivate: d1Row.private ?? false,
+      };
+
+      for (const field of storyFields) {
+        const repoVal = String(repoRow[field] ?? "");
+        const d1Val = String(d1Item[field] ?? "");
+        if (repoVal !== d1Val) {
+          changedFields.push(field);
+        }
+      }
+
+      if (changedFields.length > 0) {
+        let isConflict = false;
+        if (snapshotStoryMap) {
+          const baseline = snapshotStoryMap.get(storyId);
+          if (baseline) {
+            // Conflict: both repo and D1 changed relative to baseline
+            const repoChangedFromBaseline = changedFields.some((f) => {
+              const key = f as keyof StorySyncItem;
+              return String(repoRow[key] ?? "") !== String(baseline[key] ?? "");
+            });
+            const d1ChangedFromBaseline = changedFields.some((f) => {
+              const key = f as keyof StorySyncItem;
+              return String(d1Item[key] ?? "") !== String(baseline[key] ?? "");
+            });
+            isConflict = repoChangedFromBaseline && d1ChangedFromBaseline;
+          }
+        }
+
+        changedStories.push({
+          story_id: storyId,
+          title: d1Row.title ?? null,
+          changedFields,
+          isConflict,
+        });
+      }
+    }
+  }
+
+  for (const [storyId, d1Row] of d1StoryMap.entries()) {
+    if (!repoStoryMap.has(storyId)) {
+      missingStories.push({ story_id: storyId, title: d1Row.title ?? null });
+    }
+  }
+
+  // 6. Fetch _config.yml and compare against D1 project_config
+  const configYmlContent = await getFileContent(token, owner, repo, "_config.yml");
+  const repoConfigFields = configYmlContent
+    ? extractConfigFields(configYmlContent)
+    : ({} as Record<ManagedConfigField, string | null>);
+
+  const d1ConfigRows = await db
+    .select()
+    .from(project_config)
+    .where(eq(project_config.project_id, projectId));
+  const d1Config = (d1ConfigRows[0] as unknown as Record<string, string | null | undefined> | undefined) ?? {};
+
+  const configChangedFields: ConfigSyncDiff["changedFields"] = [];
+
+  for (const key of MANAGED_CONFIG_FIELDS) {
+    const repoVal = repoConfigFields[key] ?? null;
+    const d1Val = (d1Config[key] as string | null | undefined) ?? null;
+
+    if (repoVal !== null && repoVal !== d1Val) {
+      configChangedFields.push({ key, d1Value: d1Val, repoValue: repoVal });
+    }
+  }
+
+  // 7. Determine if there are any conflicts
+  const hasConflicts =
+    publishSnapshot !== null && changedStories.some((s) => s.isConflict);
+
+  return {
+    objects: objectsDiff,
+    stories: { newStories, changedStories, missingStories },
+    config: { changedFields: configChangedFields },
+    hasConflicts,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// applyFullSyncChanges
+// ---------------------------------------------------------------------------
+
+/**
+ * Applies the user's selected full sync changes to D1.
+ *
+ * Objects: delegates to existing `applySyncChanges`.
+ * Stories:
+ *   - insertNew: fetch story CSV from repo, insert story row + steps
+ *   - accept: update D1 story fields to repo values
+ *   - reject: no change (D1 wins)
+ * Config:
+ *   - accept: update matching project_config fields
+ *   - reject: no change (D1 wins)
+ * After all changes: fetch current repo HEAD SHA and update projects.head_sha.
+ *
+ * Returns the new HEAD SHA.
+ */
+export async function applyFullSyncChanges(
+  projectId: number,
+  changes: FullSyncChanges,
+  token: string,
+  owner: string,
+  repo: string,
+  db: ReturnType<typeof getDb>,
+): Promise<{ newHeadSha: string }> {
+  const { stories: storyChanges, config: configChanges } = changes;
+
+  // 1. Apply object changes via existing function
+  await applySyncChanges(projectId, changes.objects, token, owner, repo, db);
+
+  const now = new Date().toISOString();
+
+  // 2. Re-fetch project.csv to get current story values from repo
+  const projectCsvContent = await getFileContent(
+    token, owner, repo, "telar-content/spreadsheets/project.csv"
+  );
+  const repoStoryRows = projectCsvContent
+    ? mapProjectCsv(parseTelarCsv(projectCsvContent), projectId)
+    : [];
+  const repoStoryMap = new Map(
+    repoStoryRows.map((r) => [r.story_id as string, r])
+  );
+
+  // 3. Insert new stories (and their steps)
+  const acceptSet = new Set(storyChanges.accept);
+  const insertSet = new Set(storyChanges.insertNew);
+
+  for (const storyId of insertSet) {
+    const repoRow = repoStoryMap.get(storyId);
+    if (!repoRow) continue;
+
+    // Insert story record
+    await db
+      .insert(stories)
+      .values({
+        project_id: projectId,
+        story_id: storyId,
+        title: (repoRow.title as string | undefined) || undefined,
+        subtitle: (repoRow.subtitle as string | undefined) || undefined,
+        byline: (repoRow.byline as string | undefined) || undefined,
+        order: (repoRow.order as number) ?? 0,
+        private: Boolean(repoRow.private),
+      });
+
+    // Fetch and insert story steps
+    const storyCsvContent = await getFileContent(
+      token, owner, repo, `telar-content/spreadsheets/${storyId}.csv`
+    );
+    if (storyCsvContent) {
+      // Get the newly inserted story's DB id
+      const insertedStoryRows = await db
+        .select()
+        .from(stories)
+        .where(and(eq(stories.project_id, projectId), eq(stories.story_id, storyId)));
+
+      if (insertedStoryRows.length > 0) {
+        const storyDbId = insertedStoryRows[0].id;
+        const { steps: stepRows } = mapStoryCsv(
+          parseTelarCsv(storyCsvContent),
+          storyDbId,
+        );
+
+        if (stepRows.length > 0) {
+          const stepsWithId = stepRows.map((s) => ({ ...s, story_id: storyDbId }));
+          // D1: steps has 11 cols → max 9 rows per insert
+          for (let i = 0; i < stepsWithId.length; i += 9) {
+            await db.insert(steps).values(stepsWithId.slice(i, i + 9));
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Update accepted changed stories
+  for (const storyId of acceptSet) {
+    const repoRow = repoStoryMap.get(storyId);
+    if (!repoRow) continue;
+
+    await db
+      .update(stories)
+      .set({
+        title: (repoRow.title as string | undefined) || undefined,
+        subtitle: (repoRow.subtitle as string | undefined) || undefined,
+        byline: (repoRow.byline as string | undefined) || undefined,
+        order: (repoRow.order as number) ?? 0,
+        private: Boolean(repoRow.private),
+        updated_at: now,
+      })
+      .where(and(eq(stories.project_id, projectId), eq(stories.story_id, storyId)));
+  }
+
+  // 5. Apply accepted config changes
+  if (configChanges.accept.length > 0) {
+    const configYmlContent = await getFileContent(token, owner, repo, "_config.yml");
+    if (configYmlContent) {
+      const repoConfigFields = extractConfigFields(configYmlContent);
+      const updatePayload: Record<string, string | null | undefined> = { updated_at: now };
+
+      for (const key of configChanges.accept) {
+        if (MANAGED_CONFIG_FIELDS.includes(key as ManagedConfigField)) {
+          updatePayload[key] = repoConfigFields[key as ManagedConfigField] ?? null;
+        }
+      }
+
+      await db
+        .update(project_config)
+        .set(updatePayload)
+        .where(eq(project_config.project_id, projectId));
+    }
+  }
+
+  // 6. Fetch current repo HEAD and update projects.head_sha
+  const { projects } = await import("~/db/schema");
+  const newHeadSha = await getRepoHead(token, owner, repo);
+
+  await db
+    .update(projects)
+    .set({ head_sha: newHeadSha, last_synced_at: now, updated_at: now })
+    .where(eq(projects.id, projectId));
+
+  return { newHeadSha };
 }

@@ -24,5 +24,6 @@ export default [
     route("/glossary", "routes/_app.glossary.tsx"),
     route("/config", "routes/_app.config.tsx"),
     route("/publish", "routes/_app.publish.tsx"),
+    route("/upgrade", "routes/_app.upgrade.tsx"),
   ]),
 ] satisfies RouteConfig;

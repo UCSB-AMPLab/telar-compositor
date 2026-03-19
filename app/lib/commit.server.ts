@@ -92,6 +92,8 @@ export async function commitFilesToRepo(
   branch: string,
   files: CommitFile[],
   message: string,
+  messageBody?: string,
+  deletions?: string[],
 ): Promise<{ newHeadSha: string }> {
   // 1. Fetch current HEAD OID
   const headData = await graphqlGitHub<HeadOidData>(token, GET_HEAD_OID, {
@@ -112,8 +114,15 @@ export async function commitFilesToRepo(
     const commitData = await graphqlGitHub<CreateCommitData>(token, CREATE_COMMIT, {
       input: {
         branch: { repositoryNameWithOwner: `${owner}/${repo}`, branchName: branch },
-        message: { headline: message },
-        fileChanges: { additions },
+        message: messageBody
+          ? { headline: message, body: messageBody }
+          : { headline: message },
+        fileChanges: {
+          additions,
+          ...(deletions && deletions.length > 0
+            ? { deletions: deletions.map((path) => ({ path })) }
+            : {}),
+        },
         expectedHeadOid,
       },
     });

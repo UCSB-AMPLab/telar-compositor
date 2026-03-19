@@ -19,5 +19,9 @@
     "glossary": "Glosario",
     "config": "Configuración",
     "publish": "Publicar"
+  },
+  "sync_banner": {
+    "message": "Tu sitio fue actualizado fuera del compositor. Sincroniza para obtener los últimos cambios.",
+    "action": "Sincronizar ahora"
   }
 }

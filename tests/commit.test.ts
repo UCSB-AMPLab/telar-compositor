@@ -213,6 +213,43 @@ describe("commitFilesToRepo", () => {
     ).rejects.toBeInstanceOf(StaleHeadError);
   });
 
+  it("Test 9a: mutation input includes fileChanges.deletions when deletions parameter is provided", async () => {
+    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "objects.csv", content: "object_id\nobj-001" }],
+      "upgrade: remove deprecated layout",
+      undefined,
+      ["_layouts/deprecated.html", "_includes/old-nav.html"],
+    );
+
+    const secondBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+    );
+    const fileChanges = secondBody.variables.input.fileChanges;
+    expect(fileChanges.deletions).toBeDefined();
+    expect(fileChanges.deletions).toHaveLength(2);
+    expect(fileChanges.deletions[0]).toEqual({ path: "_layouts/deprecated.html" });
+    expect(fileChanges.deletions[1]).toEqual({ path: "_includes/old-nav.html" });
+  });
+
+  it("Test 9b: mutation input omits fileChanges.deletions when deletions parameter is undefined", async () => {
+    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "objects.csv", content: "object_id\nobj-001" }],
+      "chore: update objects",
+    );
+
+    const secondBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+    );
+    const fileChanges = secondBody.variables.input.fileChanges;
+    expect(fileChanges.deletions).toBeUndefined();
+  });
+
   it("Test 9: supports multiple files in a single commit (2 files in additions array)", async () => {
     globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
 

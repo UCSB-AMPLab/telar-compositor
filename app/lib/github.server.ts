@@ -7,6 +7,7 @@
  *   - GET /user/installations/{id}/repositories
  *   - GET /repos/{owner}/{repo}/git/trees/HEAD?recursive=1
  *   - GET /repos/{owner}/{repo}/contents/{path}
+ *   - GraphQL GetHeadOid (for getRepoHead)
  *
  * API version is pinned to 2022-11-28 via the X-GitHub-Api-Version header.
  */
@@ -150,6 +151,50 @@ export async function getFileContent(
     return decodeGitHubContent(data.content);
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// getRepoHead
+// ---------------------------------------------------------------------------
+
+const GET_HEAD_OID_QUERY = `
+  query GetHeadOid($owner: String!, $repo: String!, $branch: String!) {
+    repository(owner: $owner, name: $repo) {
+      ref(qualifiedName: $branch) {
+        target {
+          oid
+        }
+      }
+    }
+  }
+`;
+
+interface HeadOidData {
+  repository: { ref: { target: { oid: string } } };
+}
+
+/**
+ * Fetches the current HEAD commit SHA (OID) for a repository branch.
+ *
+ * Uses the GitHub GraphQL API — same query as commitFilesToRepo uses
+ * internally, extracted here as a standalone export so other callers
+ * (e.g. _app.tsx loader for HEAD divergence detection) can use it
+ * without importing commit.server.ts.
+ *
+ * Defaults to the "main" branch.
+ */
+export async function getRepoHead(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string = "main",
+): Promise<string> {
+  const data = await graphqlGitHub<HeadOidData>(token, GET_HEAD_OID_QUERY, {
+    owner,
+    repo,
+    branch,
+  });
+  return data.repository.ref.target.oid;
 }
 
 // ---------------------------------------------------------------------------

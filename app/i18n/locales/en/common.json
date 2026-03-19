@@ -19,5 +19,9 @@
     "glossary": "Glossary",
     "config": "Config",
     "publish": "Publish"
+  },
+  "sync_banner": {
+    "message": "Your site has been updated outside the compositor. Please re-sync to get the latest changes.",
+    "action": "Re-sync now"
   }
 }

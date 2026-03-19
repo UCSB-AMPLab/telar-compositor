@@ -21,6 +21,7 @@ export const namespaces = [
   "onboarding",
   "config",
   "stories",
+  "upgrade",
 ] as const;
 
 export type SupportedLanguage = (typeof supportedLanguages)[number];

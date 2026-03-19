@@ -1,1 +1,83 @@
-{}
+{
+  "title": "Publicar",
+  "progress": {
+    "review": "Revisión",
+    "checks": "Verificación",
+    "publish": "Publicar"
+  },
+  "review": {
+    "heading": "Revisa tus cambios",
+    "description": "Esto es lo que se publicará en tu sitio.",
+    "up_to_date": "Todo está al día",
+    "up_to_date_description": "No hay cambios desde tu última publicación.",
+    "first_publish": "Primera publicación",
+    "first_publish_description": "Todo tu contenido se publicará por primera vez."
+  },
+  "summary": {
+    "stories": "Historias",
+    "objects": "Objetos",
+    "settings": "Configuración del sitio",
+    "landing": "Contenido de inicio",
+    "new": "Nuevo",
+    "modified": "Modificado",
+    "deleted": "Se eliminará",
+    "count_new": "{{count}} nuevo",
+    "count_modified": "{{count}} modificado",
+    "count_deleted": "{{count}} por eliminar"
+  },
+  "education": {
+    "heading": "¿Qué hace publicar?",
+    "body": "Publicar guarda tus cambios en GitHub, el servicio que aloja tu sitio. Piénsalo como guardar un documento en la nube — tu sitio se actualizará automáticamente después de publicar.",
+    "learn_more": "Aprende más sobre cómo funciona esto",
+    "dismiss": "Cerrar",
+    "glossary": {
+      "commit": "Un commit es una copia guardada de tus cambios, como un punto de guardado en un videojuego.",
+      "repository": "El repositorio es el lugar donde se almacenan todos los archivos de tu sitio en GitHub.",
+      "push": "Hacer push es enviar tus cambios guardados desde el compositor a GitHub."
+    }
+  },
+  "checks": {
+    "heading": "Verificaciones previas",
+    "all_passed": "Todas las verificaciones pasaron",
+    "all_passed_description": "Tu contenido está listo para publicar.",
+    "blockers_heading": "Debes corregir esto antes de publicar",
+    "warnings_heading": "Sugerencias",
+    "stale_head": "El repositorio de tu sitio cambió desde la última sincronización. Sincroniza de nuevo antes de publicar.",
+    "stale_head_action": "Ir al panel para sincronizar",
+    "object_no_title": "El objeto \"{{id}}\" no tiene título",
+    "step_no_position": "Un paso no tiene posición de vista registrada"
+  },
+  "commit": {
+    "heading": "Escribe un mensaje de commit",
+    "description": "Un mensaje de commit describe qué cambiaste. Te ayuda a ti (y a otros) a entender el historial de tu sitio.",
+    "label": "Mensaje de commit",
+    "placeholder": "Describe tus cambios...",
+    "footer_note": "Este mensaje aparecerá en el historial de tu sitio en GitHub.",
+    "publish_button": "Publicar en GitHub"
+  },
+  "build": {
+    "publishing": "Guardando tus cambios en GitHub...",
+    "building": "Ejecutando el build de tu sitio...",
+    "phase_setup": "Preparando tu sitio para el build...",
+    "phase_build_js": "Compilando las funciones interactivas de tu sitio...",
+    "phase_process_data": "Procesando tus historias y objetos...",
+    "phase_build_site": "Entretejiendo tus historias y objetos en páginas web...",
+    "phase_iiif": "Creando teselas de imagen con zoom...",
+    "phase_deploy": "Publicando tu sitio en la web...",
+    "success_heading": "¡Tu sitio está en línea!",
+    "success_description": "Tus cambios se publicaron. Si no ves todo, recarga la página con Cmd-Shift-R (Mac) o Ctrl-Shift-R (Windows) un par de veces.",
+    "view_site": "Ver tu sitio",
+    "view_commit": "Ver el commit completo en GitHub",
+    "back_to_dashboard": "Volver al panel",
+    "failed_heading": "El build falló",
+    "failed_description": "Algo salió mal al construir tu sitio.",
+    "view_actions": "Ver detalles del build",
+    "try_again": "Intentar de nuevo",
+    "stale_head_error": "El repositorio cambió mientras publicabas. Sincroniza de nuevo e intenta otra vez."
+  },
+  "nav": {
+    "next_checks": "Siguiente: Verificar",
+    "next_publish": "Siguiente: Publicar",
+    "back": "Volver"
+  }
+}

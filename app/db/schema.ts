@@ -27,6 +27,7 @@ export const projects = sqliteTable("projects", {
   published_sha: text("published_sha"),
   last_synced_at: text("last_synced_at"),
   last_published_at: text("last_published_at"),
+  publish_snapshot: text("publish_snapshot"),  // JSON: PublishSnapshot from publish.server.ts
   created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
