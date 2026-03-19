@@ -9,7 +9,7 @@
 
 import { asc, count, desc, eq, and, gt, inArray } from "drizzle-orm";
 import { Trans, useTranslation } from "react-i18next";
-import { Link, redirect, useFetcher, useLoaderData, useNavigate } from "react-router";
+import { Link, redirect, useFetcher, useLoaderData, useNavigate, useRouteLoaderData } from "react-router";
 import React, { useState, useEffect } from "react";
 import {
   DndContext,
@@ -32,14 +32,19 @@ import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { projects, stories, steps, project_config, objects, project_landing } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
+import { decrypt } from "~/lib/crypto.server";
+import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
+import type { FullSyncChanges } from "~/lib/sync.server";
 import { ProjectStatusBar } from "~/components/features/dashboard/ProjectStatusBar";
 import { StoryCard } from "~/components/features/dashboard/StoryCard";
 import { SortableStoryCard } from "~/components/features/dashboard/SortableStoryCard";
 import { ConnectRepoDropdown } from "~/components/features/dashboard/ConnectRepoDropdown";
 import { EmptyState } from "~/components/features/dashboard/EmptyState";
 import { DashboardPreviewSection } from "~/components/features/dashboard/DashboardPreviewSection";
+import { SyncConfirmModal } from "~/components/features/dashboard/SyncConfirmModal";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
-import { Settings, Image, BookOpen, Upload } from "lucide-react";
+import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
+import { RefreshCw, Settings, Image, BookOpen, Upload } from "lucide-react";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
 
@@ -124,16 +129,73 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ).length;
   }
 
+  // Build siteBaseUrl for IIIF thumbnail resolution (same pattern as objects page)
+  const siteBaseUrl = config?.url
+    ? `${config.url}${config.baseurl ?? ""}`
+    : null;
+
+  // Resolve cover thumbnails for stories from their lowest content step's object
+  const storyIds = projectStories.map((s) => s.id);
+  // Get the first content step (lowest step_number > 0) per story via subquery
+  const allContentSteps = storyIds.length > 0
+    ? await db
+        .select({ story_id: steps.story_id, step_number: steps.step_number, object_id: steps.object_id })
+        .from(steps)
+        .where(and(inArray(steps.story_id, storyIds), gt(steps.step_number, 0)))
+        .orderBy(asc(steps.step_number))
+    : [];
+  // Keep only the first step per story
+  const coverSteps: { story_id: number; object_id: string | null }[] = [];
+  const seenStories = new Set<number>();
+  for (const row of allContentSteps) {
+    if (!seenStories.has(row.story_id)) {
+      seenStories.add(row.story_id);
+      coverSteps.push({ story_id: row.story_id, object_id: row.object_id });
+    }
+  }
+
+  // Map story_id -> object_id from step 1
+  const storyCoverObjectIds: Record<number, string> = {};
+  for (const row of coverSteps) {
+    if (row.object_id) storyCoverObjectIds[row.story_id] = row.object_id;
+  }
+
+  // Look up thumbnail + image_available for those objects
+  const coverObjectIdValues = Object.values(storyCoverObjectIds);
+  const coverObjects = coverObjectIdValues.length > 0
+    ? await db
+        .select({ object_id: objects.object_id, thumbnail: objects.thumbnail, image_available: objects.image_available })
+        .from(objects)
+        .where(and(eq(objects.project_id, activeProject.id), inArray(objects.object_id, coverObjectIdValues)))
+    : [];
+
+  const objectThumbnailMap: Record<string, { thumbnail: string | null; image_available: boolean | null }> = {};
+  for (const obj of coverObjects) {
+    objectThumbnailMap[obj.object_id] = { thumbnail: obj.thumbnail, image_available: obj.image_available };
+  }
+
+  // Build story -> cover info map
+  const storyCoverMap: Record<number, { thumbnail: string | null; objectId: string; imageAvailable: boolean | null }> = {};
+  for (const [storyIdStr, objectId] of Object.entries(storyCoverObjectIds)) {
+    const storyId = Number(storyIdStr);
+    const objInfo = objectThumbnailMap[objectId];
+    if (objInfo) {
+      storyCoverMap[storyId] = { thumbnail: objInfo.thumbnail, objectId, imageAvailable: objInfo.image_available };
+    }
+  }
+
   return {
     hasProject: true as const,
     project: activeProject,
     allProjects,
     stories: projectStories,
     storyStepCounts,
+    storyCoverMap,
     config,
     landing,
     objects: projectObjects,
     unpublishedCount,
+    siteBaseUrl,
   };
 }
 
@@ -247,6 +309,97 @@ export async function action({ request, context }: Route.ActionArgs) {
       return { ok: true, intent: "autosave-config" };
     }
 
+    case "compute-full-sync-diff": {
+      // Get active project
+      const sessionStorage2 = createSessionStorage(env.SESSION_SECRET);
+      const session2 = await sessionStorage2.getSession(request.headers.get("Cookie"));
+      const sessionActiveId2 = session2.get("activeProjectId") as number | undefined;
+
+      const allProjects2 = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.user_id, user.id));
+
+      if (allProjects2.length === 0) {
+        return { ok: false, intent: "compute-full-sync-diff", error: "no_project" };
+      }
+
+      const activeProject2 =
+        allProjects2.find((p) => p.id === Number(sessionActiveId2)) ?? allProjects2[0];
+
+      try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject2.github_repo_full_name.split("/");
+        const diff = await computeFullSyncDiff(
+          activeProject2.id,
+          token,
+          owner,
+          repo,
+          db,
+          null,
+        );
+        return { ok: true, intent: "compute-full-sync-diff", diff };
+      } catch (err) {
+        return {
+          ok: false,
+          intent: "compute-full-sync-diff",
+          error: "sync_failed",
+          message: err instanceof Error ? err.message : "Unknown error",
+        };
+      }
+    }
+
+    case "apply-full-sync": {
+      // Get active project
+      const sessionStorage3 = createSessionStorage(env.SESSION_SECRET);
+      const session3 = await sessionStorage3.getSession(request.headers.get("Cookie"));
+      const sessionActiveId3 = session3.get("activeProjectId") as number | undefined;
+
+      const allProjects3 = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.user_id, user.id));
+
+      if (allProjects3.length === 0) {
+        return { ok: false, intent: "apply-full-sync", error: "no_project" };
+      }
+
+      const activeProject3 =
+        allProjects3.find((p) => p.id === Number(sessionActiveId3)) ?? allProjects3[0];
+
+      const changesJson = formData.get("changes") as string;
+      if (!changesJson) {
+        return { ok: false, intent: "apply-full-sync", error: "missing_changes" };
+      }
+
+      let changes: FullSyncChanges;
+      try {
+        changes = JSON.parse(changesJson) as FullSyncChanges;
+      } catch {
+        return { ok: false, intent: "apply-full-sync", error: "invalid_changes" };
+      }
+
+      try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject3.github_repo_full_name.split("/");
+        const result = await applyFullSyncChanges(
+          activeProject3.id,
+          changes,
+          token,
+          owner,
+          repo,
+          db,
+        );
+        return { ok: true, intent: "apply-full-sync", newHeadSha: result.newHeadSha };
+      } catch (err) {
+        return {
+          ok: false,
+          intent: "apply-full-sync",
+          error: err instanceof Error ? err.message : "Unknown error",
+        };
+      }
+    }
+
     default:
       throw new Response("Bad request", { status: 400 });
   }
@@ -271,7 +424,50 @@ interface ObjectItem {
   description: string | null;
   source: string | null;
   thumbnail: string | null;
+  image_available: boolean | null;
   featured: boolean | null;
+}
+
+/** Per-object card that resolves IIIF thumbnails (same pattern as ObjectPickerDialog). */
+function DashboardObjectCard({ obj, siteBaseUrl }: { obj: ObjectItem; siteBaseUrl: string | null }) {
+  // For self-hosted objects without a stored thumbnail, resolve from info.json
+  const needsResolve = !obj.thumbnail && obj.image_available && siteBaseUrl;
+  const infoJsonUrl = needsResolve
+    ? `${siteBaseUrl}/iiif/objects/${obj.object_id}/info.json`
+    : null;
+  const resolvedUrl = useIiifThumbnail(infoJsonUrl, 300);
+
+  // Upscale stored IIIF thumbnails that are too small
+  const storedThumb = obj.thumbnail
+    ? obj.thumbnail.replace(/\/full\/[^/]+\//, "/full/!400,400/")
+    : null;
+  const thumbSrc = storedThumb || resolvedUrl;
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
+      <div className="aspect-square bg-cream-dark">
+        {thumbSrc ? (
+          <img
+            src={thumbSrc}
+            alt={obj.title ?? obj.object_id}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs font-body">
+            No image
+          </div>
+        )}
+      </div>
+      <div className="p-2">
+        <p className="font-body text-xs text-charcoal leading-snug">
+          {obj.title ?? obj.object_id}
+        </p>
+        {obj.creator && (
+          <p className="font-body text-[10px] text-gray-500 mt-0.5">{obj.creator}</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /** Strip HTML tags from a string for plain-text display. */
@@ -284,6 +480,12 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
   const navigate = useNavigate();
   const fetcher = useFetcher();
 
+  // Get headDiverged from parent app layout loader
+  const appLoaderData = useRouteLoaderData("routes/_app") as { headDiverged?: boolean } | undefined;
+  const headDiverged = appLoaderData?.headDiverged ?? false;
+
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+
   if (!loaderData.hasProject) {
     return <EmptyState />;
   }
@@ -293,10 +495,12 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
     allProjects,
     stories: loaderStories,
     storyStepCounts,
+    storyCoverMap,
     unpublishedCount,
     config,
     landing,
     objects: projectObjects,
+    siteBaseUrl,
   } = loaderData;
 
   // DnD order state (optimistic)
@@ -393,12 +597,31 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
           unpublishedCount={unpublishedCount ?? 0}
           className="flex-1"
         />
-        <ConnectRepoDropdown
-          allProjects={allProjects}
-          activeProjectId={project.id}
-          onSwitch={handleSwitchProject}
-        />
+        <div className="flex items-center gap-2">
+          {headDiverged && (
+            <button
+              type="button"
+              onClick={() => setSyncModalOpen(true)}
+              className="inline-flex items-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider bg-amber-500 hover:bg-amber-600 text-white rounded-full px-4 py-2 transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              {t("sync_modal.sync_now")}
+            </button>
+          )}
+          <ConnectRepoDropdown
+            allProjects={allProjects}
+            activeProjectId={project.id}
+            onSwitch={handleSwitchProject}
+          />
+        </div>
       </div>
+
+      {/* Sync confirmation modal */}
+      <SyncConfirmModal
+        open={syncModalOpen}
+        unpublishedCount={unpublishedCount ?? 0}
+        onClose={() => setSyncModalOpen(false)}
+      />
 
       {/* Repo explanation */}
       <p className="font-body text-sm text-gray-500">
@@ -582,6 +805,8 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
                     story={story}
                     stepCount={storyStepCounts[story.id] ?? 0}
                     lastSynced={project.last_synced_at ?? null}
+                    coverInfo={storyCoverMap[story.id]}
+                    siteBaseUrl={siteBaseUrl}
                   />
                 ))}
               </div>
@@ -594,6 +819,8 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
                   stepCount={storyStepCounts[activeStory.id] ?? 0}
                   lastSynced={project.last_synced_at ?? null}
                   isDragOverlay
+                  coverInfo={storyCoverMap[activeStory.id]}
+                  siteBaseUrl={siteBaseUrl}
                 />
               )}
             </DragOverlay>
@@ -628,7 +855,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
           <InlineTextField
             initialValue={landing?.objects_heading ?? ""}
             fieldName="objects_heading"
-            projectId={project.id}
+            entityId={project.id}
             intent="autosave-landing"
             placeholder="Objects"
             className="font-heading font-bold text-xl"
@@ -637,7 +864,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
           <InlineTextArea
             initialValue={landing?.objects_intro ?? ""}
             fieldName="objects_intro"
-            projectId={project.id}
+            entityId={project.id}
             intent="autosave-landing"
             placeholder="Browse the objects in this collection"
             className="text-sm text-gray-600"
@@ -647,29 +874,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
           {displayObjects.length > 0 ? (
             <div className="grid grid-cols-3 md:grid-cols-5 gap-3 pt-2">
               {displayObjects.map((obj) => (
-                <div key={obj.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
-                  <div className="aspect-square bg-cream-dark">
-                    {obj.thumbnail ? (
-                      <img
-                        src={obj.thumbnail}
-                        alt={obj.title ?? obj.object_id}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs font-body">
-                        No image
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-2">
-                    <p className="font-body text-xs text-charcoal leading-snug">
-                      {obj.title ?? obj.object_id}
-                    </p>
-                    {obj.creator && (
-                      <p className="font-body text-[10px] text-gray-500 mt-0.5">{obj.creator}</p>
-                    )}
-                  </div>
-                </div>
+                <DashboardObjectCard key={obj.id} obj={obj} siteBaseUrl={siteBaseUrl} />
               ))}
             </div>
           ) : (

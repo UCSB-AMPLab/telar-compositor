@@ -10,6 +10,7 @@
 import { Lock, LockOpen, PenLine } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
+import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
 
 interface StoryCardStory {
   id: number;
@@ -29,6 +30,8 @@ interface StoryCardProps {
   lastSynced: string | null;
   className?: string;
   isDragOverlay?: boolean;
+  coverInfo?: { thumbnail: string | null; objectId: string; imageAvailable: boolean | null } | null;
+  siteBaseUrl?: string | null;
 }
 
 function formatRelative(isoString: string | null): string {
@@ -47,11 +50,24 @@ function formatRelative(isoString: string | null): string {
   return date.toLocaleDateString();
 }
 
-export function StoryCard({ story, stepCount, lastSynced, className = "", isDragOverlay = false }: StoryCardProps) {
+export function StoryCard({ story, stepCount, lastSynced, className = "", isDragOverlay = false, coverInfo, siteBaseUrl }: StoryCardProps) {
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
   const isPrivate = story.private ?? false;
   const isDraft = story.draft ?? false;
+
+  // Resolve cover thumbnail from step-1 object (same pattern as ObjectPickerDialog)
+  const needsResolve = coverInfo && !coverInfo.thumbnail && coverInfo.imageAvailable && siteBaseUrl;
+  const infoJsonUrl = needsResolve
+    ? `${siteBaseUrl}/iiif/objects/${coverInfo!.objectId}/info.json`
+    : null;
+  const resolvedUrl = useIiifThumbnail(infoJsonUrl, 300);
+
+  // Upscale stored IIIF thumbnails
+  const storedThumb = coverInfo?.thumbnail
+    ? coverInfo.thumbnail.replace(/\/full\/[^/]+\//, "/full/!400,400/")
+    : null;
+  const thumbSrc = story.thumbnail || storedThumb || resolvedUrl;
 
   return (
     <div
@@ -59,9 +75,9 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
     >
       {/* Thumbnail */}
       <div className="aspect-square bg-cream-dark rounded-lg overflow-hidden -mx-4 -mt-4 mb-1">
-        {story.thumbnail ? (
+        {thumbSrc ? (
           <img
-            src={story.thumbnail}
+            src={thumbSrc}
             alt={story.title || story.story_id}
             className="w-full h-full object-cover"
           />

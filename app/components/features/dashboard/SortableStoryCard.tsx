@@ -25,9 +25,11 @@ interface SortableStoryCardProps {
   story: SortableStoryCardStory;
   stepCount: number;
   lastSynced: string | null;
+  coverInfo?: { thumbnail: string | null; objectId: string; imageAvailable: boolean | null } | null;
+  siteBaseUrl?: string | null;
 }
 
-export function SortableStoryCard({ story, stepCount, lastSynced }: SortableStoryCardProps) {
+export function SortableStoryCard({ story, stepCount, lastSynced, coverInfo, siteBaseUrl }: SortableStoryCardProps) {
   const {
     attributes,
     listeners,
@@ -55,6 +57,8 @@ export function SortableStoryCard({ story, stepCount, lastSynced }: SortableStor
         story={story}
         stepCount={stepCount}
         lastSynced={lastSynced}
+        coverInfo={coverInfo}
+        siteBaseUrl={siteBaseUrl}
       />
     </div>
   );

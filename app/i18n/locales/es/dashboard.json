@@ -77,5 +77,27 @@
     "projects": "Tienes {{count}} proyectos. El límite es de 5 repositorios conectados."
   },
   "story_editor_placeholder": "Editor de historias — próximamente",
-  "back_to_dashboard": "Volver al panel"
+  "back_to_dashboard": "Volver al panel",
+  "sync_modal": {
+    "title": "Cambios detectados",
+    "confirm_body": "Tu repositorio tiene cambios nuevos. ¿Quieres ver qué cambió?",
+    "check_changes": "Ver qué cambió",
+    "computing": "Comparando cambios...",
+    "conflict_warning": "Tienes {{count}} cambio(s) sin publicar. Sincronizar reemplazará tus cambios locales con la versión del repositorio.",
+    "sync_anyway": "Sincronizar de todos modos",
+    "publish_first": "Publicar primero",
+    "changes_found": "Cambios encontrados",
+    "no_changes": "No se encontraron diferencias",
+    "objects_category": "Objetos",
+    "stories_category": "Historias",
+    "config_category": "Configuración",
+    "new_items": "{{count}} nuevo(s)",
+    "changed_items": "{{count}} modificado(s)",
+    "removed_items": "{{count}} eliminado(s)",
+    "apply_sync": "Aplicar cambios",
+    "applying": "Aplicando cambios...",
+    "success": "Sincronización completa",
+    "retry": "Intentar de nuevo",
+    "sync_now": "Sincronizar ahora"
+  }
 }

@@ -77,5 +77,27 @@
     "projects": "You have {{count}} projects. The limit is 5 connected repositories."
   },
   "story_editor_placeholder": "Story Editor — Coming in Phase 5",
-  "back_to_dashboard": "Back to Dashboard"
+  "back_to_dashboard": "Back to Dashboard",
+  "sync_modal": {
+    "title": "Changes detected",
+    "confirm_body": "Your repository has new changes. Would you like to see what changed?",
+    "check_changes": "Check what changed",
+    "computing": "Comparing changes...",
+    "conflict_warning": "You have {{count}} unpublished change(s). Syncing will overwrite them with the repository version.",
+    "sync_anyway": "Sync anyway",
+    "publish_first": "Publish first",
+    "changes_found": "Changes found",
+    "no_changes": "No differences found",
+    "objects_category": "Objects",
+    "stories_category": "Stories",
+    "config_category": "Config",
+    "new_items": "{{count}} new",
+    "changed_items": "{{count}} changed",
+    "removed_items": "{{count}} removed",
+    "apply_sync": "Apply changes",
+    "applying": "Applying changes...",
+    "success": "Sync complete",
+    "retry": "Try again",
+    "sync_now": "Sync now"
+  }
 }
