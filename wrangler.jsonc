@@ -7,7 +7,7 @@
     {
       "binding": "DB",
       "database_name": "telar-compositor-db",
-      "database_id": "bcd4a579-f19c-41e8-a3c2-5a314d57a358",
+      "database_id": "local-development",
       "migrations_dir": "app/db/migrations"
     }
   ],
