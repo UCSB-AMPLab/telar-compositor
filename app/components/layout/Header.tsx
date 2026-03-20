@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Form, Link } from "react-router";
-import { ChevronDown, Settings, LogOut } from "lucide-react";
+import { ChevronDown, Settings, LogOut, Github } from "lucide-react";
 import type { AuthenticatedUser } from "~/middleware/auth.server";
 
 interface HeaderProps {
@@ -105,6 +105,18 @@ export function Header({ user, className = "" }: HeaderProps) {
                   </p>
                 )}
               </div>
+
+              {/* GitHub profile */}
+              <a
+                href={`https://github.com/${user.github_login}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setDropdownOpen(false)}
+                className="flex items-center gap-2 px-4 py-2.5 text-sm font-body text-charcoal hover:bg-cream transition-colors"
+              >
+                <Github className="w-4 h-4 text-gray-400" />
+                GitHub
+              </a>
 
               {/* Settings */}
               <Link

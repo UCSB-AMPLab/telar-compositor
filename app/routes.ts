@@ -10,6 +10,9 @@ export default [
     route("/auth/callback", "routes/_auth.callback.tsx"),
   ]),
 
+  // Sign out
+  route("/signout", "routes/signout.tsx"),
+
   // Onboarding wizard — authenticated but no tab nav
   route("/onboarding", "routes/onboarding.tsx"),
 
