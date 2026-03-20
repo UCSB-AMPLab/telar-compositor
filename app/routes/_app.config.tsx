@@ -13,6 +13,7 @@ import { AlertTriangle, CheckCircle } from "lucide-react";
 import type { Route } from "./+types/_app.config";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
+import { createSessionStorage } from "~/lib/session.server";
 import { projects, project_config, project_themes } from "~/db/schema";
 import { ConfigSection } from "~/components/features/config/ConfigSection";
 import { FieldWithHelp } from "~/components/features/config/FieldWithHelp";
@@ -22,24 +23,28 @@ import { Button } from "~/components/ui/Button";
 
 export const handle = { i18n: ["common", "config"] };
 
-export async function loader({ context }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
 
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const userProjects = await db
+  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+  const sessionActiveId = session.get("activeProjectId") as number | undefined;
+
+  const allProjects = await db
     .select()
     .from(projects)
-    .where(eq(projects.user_id, user.id))
-    .limit(1);
+    .where(eq(projects.user_id, user.id));
 
-  if (userProjects.length === 0) {
+  if (allProjects.length === 0) {
     return { hasProject: false as const, config: null, themes: [] };
   }
 
-  const project = userProjects[0];
+  const project =
+    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
   const [configRows, themes] = await Promise.all([
     db
       .select()
@@ -66,17 +71,21 @@ export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const userProjects = await db
+  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+  const sessionActiveId = session.get("activeProjectId") as number | undefined;
+
+  const allProjects = await db
     .select()
     .from(projects)
-    .where(eq(projects.user_id, user.id))
-    .limit(1);
+    .where(eq(projects.user_id, user.id));
 
-  if (userProjects.length === 0) {
+  if (allProjects.length === 0) {
     return { saved: false, error: "No project found" };
   }
 
-  const project = userProjects[0];
+  const project =
+    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
   const formData = await request.formData();
 
   await db
