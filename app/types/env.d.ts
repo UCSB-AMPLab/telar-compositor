@@ -14,6 +14,10 @@ declare interface Env {
   GITHUB_CLIENT_SECRET: string;
   GITHUB_CALLBACK_URL: string;
 
+  /** GitHub App identity (for installation access tokens) */
+  GITHUB_APP_ID: string;
+  GITHUB_PRIVATE_KEY: string;
+
   /** AES-256 key for token encryption (64-char hex, 32 bytes) */
   ENCRYPTION_KEY: string;
 

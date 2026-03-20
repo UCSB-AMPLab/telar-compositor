@@ -33,10 +33,11 @@ interface WizardShellProps {
   repos: RepoWithInstallation[];
   connectedProjects: ConnectedProject[];
   user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email" | "github_plan">;
+  hasInstallations: boolean;
   className?: string;
 }
 
-export function WizardShell({ repos, connectedProjects, user, className = "" }: WizardShellProps) {
+export function WizardShell({ repos, connectedProjects, user, hasInstallations, className = "" }: WizardShellProps) {
   const [step, setStep] = useState<Step>("connect");
   const [selectedRepo, setSelectedRepo] = useState<RepoWithInstallation | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -191,7 +192,7 @@ export function WizardShell({ repos, connectedProjects, user, className = "" }: 
     if (configFixData.ok) {
       markOnboardingComplete();
     } else {
-      setConfigFixError(configFixData.error);
+      setConfigFixError(configFixData.message ? `${configFixData.error}: ${configFixData.message}` : configFixData.error);
       if (!configFixData.ok && configFixData.installationId) {
         setInstallationId(configFixData.installationId);
       }
@@ -221,7 +222,7 @@ export function WizardShell({ repos, connectedProjects, user, className = "" }: 
 
       {/* Step content */}
       {step === "connect" && (
-        <StepConnect repos={repos} connectedProjects={connectedProjects} onSelect={handleSelectRepo} githubPlan={user.github_plan} />
+        <StepConnect repos={repos} connectedProjects={connectedProjects} onSelect={handleSelectRepo} githubPlan={user.github_plan} hasInstallations={hasInstallations} />
       )}
 
       {step === "sync" && (
@@ -252,6 +253,7 @@ export function WizardShell({ repos, connectedProjects, user, className = "" }: 
           error={configFixError}
           installationId={installationId}
           onConfirmed={handleFixConfig}
+          onSkip={markOnboardingComplete}
           isSubmitting={configFixFetcher.state !== "idle"}
         />
       )}

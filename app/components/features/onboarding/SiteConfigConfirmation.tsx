@@ -20,6 +20,7 @@ interface Props {
   error: string | null;
   installationId: number | null;
   onConfirmed: () => void;
+  onSkip: () => void;
   isSubmitting: boolean;
 }
 
@@ -65,6 +66,7 @@ export function SiteConfigConfirmation({
   error,
   installationId,
   onConfirmed,
+  onSkip,
   isSubmitting,
 }: Props) {
   const { t } = useTranslation("onboarding");
@@ -139,6 +141,9 @@ export function SiteConfigConfirmation({
               ? t("site_config.error_pages_permission")
               : t("site_config.error_generic")}
           </p>
+          {error !== "pages_permission_denied" && (
+            <p className="font-mono text-xs text-red-600 mt-2 break-all">{error}</p>
+          )}
           {error === "pages_permission_denied" && installationId && (
             <a
               href={`https://github.com/settings/installations/${installationId}`}
@@ -152,7 +157,7 @@ export function SiteConfigConfirmation({
         </div>
       )}
 
-      <div className="flex items-center mt-6">
+      <div className="flex items-center gap-4 mt-6">
         {allPassed ? (
           <button
             type="button"
@@ -162,15 +167,26 @@ export function SiteConfigConfirmation({
             {t("site_config.continue")}
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={onConfirmed}
-            disabled={isSubmitting}
-            className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-terracotta hover:opacity-90 text-cream uppercase tracking-wider rounded-full px-5 py-2.5 transition-opacity disabled:opacity-50"
-          >
-            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-            {t("site_config.confirm")}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={onConfirmed}
+              disabled={isSubmitting}
+              className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-terracotta hover:opacity-90 text-cream uppercase tracking-wider rounded-full px-5 py-2.5 transition-opacity disabled:opacity-50"
+            >
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              {t("site_config.confirm")}
+            </button>
+            {error && (
+              <button
+                type="button"
+                onClick={onSkip}
+                className="font-heading font-semibold text-sm text-gray-500 hover:text-charcoal underline underline-offset-2 transition-colors"
+              >
+                {t("site_config.skip")}
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

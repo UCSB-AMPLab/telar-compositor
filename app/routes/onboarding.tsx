@@ -16,6 +16,7 @@ import { checkTelarVersion } from "~/lib/upgrade.server";
 import type { Repository } from "~/lib/github.server";
 import { importRepo } from "~/lib/import.server";
 import { commitFilesToRepo, disableGoogleSheetsInConfig, verifySiteUrl, enableGitHubPages } from "~/lib/commit.server";
+import { getInstallationToken } from "~/lib/github-app.server";
 import { getDb } from "~/lib/db.server";
 import {
   projects,
@@ -227,15 +228,17 @@ export async function action({ request, context }: Route.ActionArgs) {
     const [owner, repo] = project.github_repo_full_name.split("/");
 
     // Enable GitHub Pages first if needed (so we have the URL for config fix)
+    // Uses the user's OAuth token — the user is a repo admin, which is
+    // required for POST /repos/{owner}/{repo}/pages. Installation tokens
+    // fail here because the endpoint also requires administration:write.
     if (enablePages) {
       try {
         const result = await enableGitHubPages(token, owner, repo);
         pagesUrl = result.pagesUrl;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("403") || msg.includes("not accessible")) {
-          return { ok: false, intent: "fix-site-config", error: "pages_permission_denied", installationId: project.installation_id };
-        }
+        console.error("enableGitHubPages error:", msg);
+        // Temporarily return the raw error for debugging
         return { ok: false, intent: "fix-site-config", error: "pages_failed", message: msg };
       }
     }
@@ -358,14 +361,14 @@ export async function action({ request, context }: Route.ActionArgs) {
 // ---------------------------------------------------------------------------
 
 export default function OnboardingPage({ loaderData }: Route.ComponentProps) {
-  const { user, repos, connectedProjects } = loaderData;
+  const { user, repos, installations, connectedProjects } = loaderData;
 
   return (
     <div className="min-h-screen flex flex-col bg-cream">
       <Header user={user} />
       <main className="flex-1 flex items-start justify-center pt-10 pb-16 px-4">
         <div className="w-full max-w-2xl">
-          <WizardShell repos={repos} connectedProjects={connectedProjects} user={user} />
+          <WizardShell repos={repos} connectedProjects={connectedProjects} user={user} hasInstallations={installations.length > 0} />
         </div>
       </main>
     </div>

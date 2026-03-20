@@ -24,10 +24,11 @@ interface StepConnectProps {
   connectedProjects: ConnectedProject[];
   onSelect: (repo: RepoWithInstallation) => void;
   githubPlan?: string | null;
+  hasInstallations: boolean;
   className?: string;
 }
 
-export function StepConnect({ repos, connectedProjects, onSelect, githubPlan, className = "" }: StepConnectProps) {
+export function StepConnect({ repos, connectedProjects, onSelect, githubPlan, hasInstallations, className = "" }: StepConnectProps) {
   const { t } = useTranslation("onboarding");
   const [selected, setSelected] = useState<RepoWithInstallation | null>(null);
   const [search, setSearch] = useState("");
@@ -59,6 +60,27 @@ export function StepConnect({ repos, connectedProjects, onSelect, githubPlan, cl
       <p className="font-body text-sm text-gray-500 mb-5">
         {t("step_connect.description")}
       </p>
+
+      {/* Install app prompt — shown when user has no installations */}
+      {!hasInstallations && (
+        <div className="border border-amber-200 bg-amber-50 rounded-lg p-5 mb-6 text-center">
+          <p className="font-body text-sm text-amber-900 mb-3">
+            {t("step_connect.no_installations")}
+          </p>
+          <a
+            href="https://github.com/apps/telar-compositor/installations/new"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider bg-charcoal text-white rounded-full px-5 py-2 hover:opacity-90 transition-opacity"
+          >
+            <GitBranch className="w-4 h-4" />
+            {t("step_connect.install_app")}
+          </a>
+          <p className="font-body text-xs text-amber-700 mt-3">
+            {t("step_connect.install_hint")}
+          </p>
+        </div>
+      )}
 
       {/* Search input */}
       <input
