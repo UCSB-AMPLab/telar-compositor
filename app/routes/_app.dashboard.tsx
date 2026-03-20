@@ -269,7 +269,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "autosave-landing": {
       const field = formData.get("field") as string;
       const value = formData.get("value") as string;
-      const projectId = Number(formData.get("entityId"));
+      const projectId = Number(formData.get("entityId") ?? formData.get("projectId"));
       const allowedFields = ["stories_heading", "stories_intro", "objects_heading", "objects_intro", "welcome_body"];
       if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
 
@@ -297,7 +297,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "autosave-config": {
       const field = formData.get("field") as string;
       const value = formData.get("value") as string;
-      const projectId = Number(formData.get("entityId"));
+      const projectId = Number(formData.get("entityId") ?? formData.get("projectId"));
       const allowedFields = ["title", "description"];
       if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
 
@@ -598,16 +598,18 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
           className="flex-1"
         />
         <div className="flex items-center gap-2">
-          {headDiverged && (
-            <button
-              type="button"
-              onClick={() => setSyncModalOpen(true)}
-              className="inline-flex items-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider bg-amber-500 hover:bg-amber-600 text-white rounded-full px-4 py-2 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              {t("sync_modal.sync_now")}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setSyncModalOpen(true)}
+            className={`inline-flex items-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-4 py-2 transition-colors ${
+              headDiverged
+                ? "bg-amber-500 hover:bg-amber-600 text-white"
+                : "border border-gray-200 text-charcoal hover:bg-cream-dark"
+            }`}
+          >
+            <RefreshCw className="w-4 h-4" />
+            {t("sync_modal.sync_now")}
+          </button>
           <ConnectRepoDropdown
             allProjects={allProjects}
             activeProjectId={project.id}
