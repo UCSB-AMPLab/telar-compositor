@@ -522,7 +522,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         { path: "telar-content/spreadsheets/objects.csv", content: csvContent },
       ];
 
-      const commitParts = ["update objects.csv"];
+      const commitParts = ["Updated objects.csv"];
 
       // Check if _config.yml needs modification (sheets or URL fix)
       if (disableSheets || fixUrl) {
@@ -558,7 +558,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         }
       }
 
-      const commitMessage = `chore: ${commitParts.join(", ")} via Telar Compositor`;
+      const commitMessage = `${commitParts.join(", ")} via Telar Compositor`;
 
       try {
         const result = await commitFilesToRepo(token, owner, repo, "main", files, commitMessage);

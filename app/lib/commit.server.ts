@@ -278,6 +278,19 @@ export async function enableGitHubPages(
     },
   );
 
+  // 409 = Pages already enabled — fetch the existing URL instead
+  if (res.status === 409) {
+    const getRes = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pages`,
+      { headers: githubHeaders(token) },
+    );
+    if (getRes.ok) {
+      const data = (await getRes.json()) as { html_url?: string };
+      const rawUrl = (data.html_url ?? "").replace(/\/+$/, "");
+      return { pagesUrl: rawUrl.replace(/^http:\/\//, "https://") };
+    }
+  }
+
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Failed to enable GitHub Pages: ${res.status} ${body}`);
@@ -294,14 +307,19 @@ export async function enableGitHubPages(
 
 export interface WorkflowRun {
   id: number;
+  name: string;
   status: string;
   conclusion: string | null;
   html_url: string;
 }
 
+/** Workflow names to match for the deploy build (case-insensitive). */
+const DEPLOY_WORKFLOW_NAMES = ["build and deploy telar site", "build and deploy", "build-and-deploy", "deploy"];
+
 /**
- * Returns all workflow runs associated with a specific commit SHA.
- * Treat an empty array as "pending" (GitHub may not register the run yet).
+ * Returns workflow runs associated with a specific commit SHA, filtered to
+ * the deploy workflow. Falls back to all runs if no deploy workflow is found
+ * (so polling still works for repos with non-standard workflow names).
  */
 export async function listWorkflowRunsBySha(
   token: string,
@@ -317,7 +335,10 @@ export async function listWorkflowRunsBySha(
     throw new Error(`GitHub Actions API error: ${res.status}`);
   }
   const data = (await res.json()) as { workflow_runs: WorkflowRun[] };
-  return data.workflow_runs;
+  const deployRuns = data.workflow_runs.filter((r) =>
+    DEPLOY_WORKFLOW_NAMES.includes(r.name.toLowerCase()),
+  );
+  return deployRuns.length > 0 ? deployRuns : data.workflow_runs;
 }
 
 export interface JobStep {

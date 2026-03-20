@@ -149,9 +149,39 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Compute the upgrade diff
     const diff = await computeUpgradeDiff(token, userTree, latestRelease.tagName);
 
-    const needsUpgrade = siteTag
-      ? compareVersions(siteTag, latestRelease.tagName) < 0
+    // Check the actual repo version — D1 may be stale if a previous upgrade
+    // committed successfully but the D1 update failed.
+    let effectiveVersion = siteTag;
+    if (configContent) {
+      const versionMatch = configContent.match(/^\s*version:\s*["']?([^\s"'#]+)/m);
+      if (versionMatch) {
+        const repoVersion = versionMatch[1].startsWith("v") ? versionMatch[1] : `v${versionMatch[1]}`;
+        if (effectiveVersion && compareVersions(repoVersion, effectiveVersion) > 0) {
+          // Repo is ahead of D1 — heal D1 silently
+          effectiveVersion = repoVersion;
+          try {
+            const now = new Date().toISOString();
+            await db
+              .update(project_config)
+              .set({ telar_version: repoVersion, updated_at: now })
+              .where(eq(project_config.project_id, activeProject.id));
+          } catch {
+            // Best-effort D1 heal
+          }
+        }
+      }
+    }
+
+    const needsUpgrade = effectiveVersion
+      ? compareVersions(effectiveVersion, latestRelease.tagName) < 0
       : false;
+
+    // If the repo is already up to date (e.g. D1 was stale), redirect away
+    if (!needsUpgrade && !isBelowMinimum) {
+      const url = new URL(request.url);
+      const from = url.searchParams.get("from");
+      throw redirect(from ?? "/dashboard");
+    }
 
     // Convert markdown release notes to HTML (with heading IDs for anchor links)
     const renderer = new Renderer();
@@ -287,15 +317,23 @@ export async function action({ request, context }: Route.ActionArgs) {
         const now = new Date().toISOString();
 
         // Update D1: telar_version in project_config, head_sha in projects
-        await db
-          .update(project_config)
-          .set({ telar_version: latestRelease.tagName, updated_at: now })
-          .where(eq(project_config.project_id, activeProject.id));
+        // Wrapped separately — the commit already landed on GitHub, so a D1
+        // failure must not report "upgrade_failed" to the user.
+        try {
+          await db
+            .update(project_config)
+            .set({ telar_version: latestRelease.tagName, updated_at: now })
+            .where(eq(project_config.project_id, activeProject.id));
 
-        await db
-          .update(projects)
-          .set({ head_sha: newHeadSha, updated_at: now })
-          .where(eq(projects.id, activeProject.id));
+          await db
+            .update(projects)
+            .set({ head_sha: newHeadSha, updated_at: now })
+            .where(eq(projects.id, activeProject.id));
+        } catch (d1Err) {
+          // D1 is stale but commit succeeded — log and continue.
+          // Next page load will re-sync from the repo.
+          console.error("D1 update after upgrade commit failed:", d1Err);
+        }
 
         return {
           ok: true,
