@@ -34,21 +34,21 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  // Read activeProjectId from session
+  // Read activeProjectId from session, fall back to first project
   const sessionStorage = createSessionStorage(env.SESSION_SECRET);
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const activeProjectId = session.get("activeProjectId") as number | undefined;
+  const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  if (!activeProjectId) throw redirect("/dashboard");
-
-  // Verify the active project belongs to the user
-  const projectRows = await db
+  const allProjects = await db
     .select({ id: projects.id })
     .from(projects)
-    .where(and(eq(projects.id, Number(activeProjectId)), eq(projects.user_id, user.id)))
-    .limit(1);
+    .where(eq(projects.user_id, user.id));
 
-  if (projectRows.length === 0) throw redirect("/dashboard");
+  if (allProjects.length === 0) throw redirect("/dashboard");
+
+  const activeProject =
+    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+  const activeProjectId = activeProject.id;
 
   // Fetch story by story_id slug (URL param is slug, not D1 integer id)
   const storyRows = await db
@@ -591,6 +591,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               }
               onOpenLayer2={() => setLayer2Open(true)}
               objects={editorObjects}
+              siteBaseUrl={siteBaseUrl}
             />
           )}
           {/* Layer 2 panel — stacked on top of layer 1 */}
@@ -604,6 +605,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               canDelete={true}
               hasLayer2={false}
               objects={editorObjects}
+              siteBaseUrl={siteBaseUrl}
             />
           )}
         </ViewerColumn>

@@ -38,6 +38,32 @@ class HrWidget extends WidgetType {
 }
 
 // ---------------------------------------------------------------------------
+// Image preview widget
+// ---------------------------------------------------------------------------
+
+class ImageWidget extends WidgetType {
+  constructor(private url: string, private alt: string) { super(); }
+  toDOM(): HTMLElement {
+    const wrapper = document.createElement("span");
+    wrapper.className = "cm-md-image-preview";
+    const img = document.createElement("img");
+    img.src = this.url;
+    img.alt = this.alt;
+    img.style.maxWidth = "100%";
+    img.style.maxHeight = "200px";
+    img.style.borderRadius = "4px";
+    img.style.display = "block";
+    img.style.margin = "4px 0";
+    wrapper.appendChild(img);
+    return wrapper;
+  }
+  eq(other: ImageWidget): boolean {
+    return this.url === other.url && this.alt === other.alt;
+  }
+  ignoreEvent(): boolean { return false; }
+}
+
+// ---------------------------------------------------------------------------
 // Range collector
 // ---------------------------------------------------------------------------
 
@@ -120,8 +146,22 @@ function buildDecorations(view: EditorView): DecorationSet {
 
         // ----- Images ![alt](url) -----
         case "Image": {
-          // Hide the image syntax, show alt text with an image class
-          ranges.push({ from, to, deco: mark("cm-md-image-alt") });
+          // Extract URL from the image syntax ![alt](url)
+          const imgText = doc.sliceString(from, to);
+          const imgMatch = imgText.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+          if (imgMatch && !onCursorLine) {
+            const [, alt, url] = imgMatch;
+            // Hide the raw syntax
+            ranges.push({ from, to, deco: hidden });
+            // Show inline image preview after the syntax
+            ranges.push({
+              from: to,
+              to,
+              deco: Decoration.widget({ widget: new ImageWidget(url, alt), side: 1 }),
+            });
+          } else {
+            ranges.push({ from, to, deco: mark("cm-md-image-alt") });
+          }
           break;
         }
 

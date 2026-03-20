@@ -39,6 +39,7 @@ interface LayerPanelProps {
   onCreateLayer2?: () => void;
   onOpenLayer2?: () => void;
   objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
+  siteBaseUrl?: string | null;
   actionUrl: string;
 }
 
@@ -58,6 +59,7 @@ export function LayerPanel({
   onCreateLayer2,
   onOpenLayer2,
   objects,
+  siteBaseUrl,
   actionUrl,
 }: LayerPanelProps) {
   const { t } = useTranslation("editor");
@@ -221,6 +223,7 @@ export function LayerPanel({
               actionUrl={actionUrl}
               mode="autosave"
               objects={objects}
+              siteBaseUrl={siteBaseUrl}
               className="h-full flex flex-col"
               transparent
               darkTheme={!isLayer1}

@@ -31,7 +31,8 @@
     "alt_placeholder": "Texto alternativo (describe la imagen)",
     "insert": "Insertar",
     "cancel": "Cancelar",
-    "no_objects": "Aún no hay objetos importados"
+    "no_objects": "Aún no hay objetos importados",
+    "pdf_not_supported": "Los documentos de varias páginas (PDFs) no se pueden insertar como imágenes. Elige un objeto de una sola página."
   },
   "word_count_one": "{{count}} palabra",
   "word_count_other": "{{count}} palabras",

@@ -31,7 +31,8 @@
     "alt_placeholder": "Alt text (describes the image)",
     "insert": "Insert",
     "cancel": "Cancel",
-    "no_objects": "No objects imported yet"
+    "no_objects": "No objects imported yet",
+    "pdf_not_supported": "Multi-page documents (PDFs) can't be inserted as images. Choose a single-page object instead."
   },
   "word_count_one": "{{count}} word",
   "word_count_other": "{{count}} words",

@@ -14,11 +14,12 @@ interface ImageInsertDialogProps {
   onClose: () => void;
   onInsert: (url: string, alt: string) => void;
   objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
+  siteBaseUrl?: string | null;
 }
 
 type ActiveTab = "url" | "objects";
 
-export function ImageInsertDialog({ open, onClose, onInsert, objects }: ImageInsertDialogProps) {
+export function ImageInsertDialog({ open, onClose, onInsert, objects, siteBaseUrl }: ImageInsertDialogProps) {
   const { t } = useTranslation("editor");
   const [activeTab, setActiveTab] = useState<ActiveTab>("url");
   const [url, setUrl] = useState("");
@@ -30,8 +31,45 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects }: ImageIns
     onClose();
   }
 
-  function handleInsertObject(obj: { object_id: string; title: string | null; thumbnail: string | null }) {
-    onInsert(obj.thumbnail ?? "", obj.title ?? obj.object_id);
+  const [insertError, setInsertError] = useState<string | null>(null);
+
+  async function handleInsertObject(obj: { object_id: string; title: string | null; thumbnail: string | null }) {
+    setInsertError(null);
+    if (!siteBaseUrl) {
+      onInsert(obj.thumbnail ?? "", obj.title ?? obj.object_id);
+      onClose();
+      return;
+    }
+    const base = siteBaseUrl.replace(/\/+$/, "");
+    // Fetch the manifest to get the actual image body URL
+    try {
+      const res = await fetch(`${base}/iiif/objects/${obj.object_id}/manifest.json`);
+      if (res.ok) {
+        const manifest = await res.json();
+        // Reject multi-page documents (PDFs) — they can't be inserted as images
+        const pages = manifest?.items ?? [];
+        if (pages.length > 1) {
+          setInsertError(t("image_dialog.pdf_not_supported"));
+          return;
+        }
+        const body = pages[0]?.items?.[0]?.items?.[0]?.body;
+        const format = body?.format ?? "";
+        if (format === "application/pdf") {
+          setInsertError(t("image_dialog.pdf_not_supported"));
+          return;
+        }
+        const bodyId = body?.id;
+        if (bodyId) {
+          onInsert(bodyId, obj.title ?? obj.object_id);
+          onClose();
+          return;
+        }
+      }
+    } catch {
+      // Fall through to default
+    }
+    // Fallback: page-1 pattern
+    onInsert(`${base}/iiif/objects/${obj.object_id}/page-1/full/max/0/default.jpg`, obj.title ?? obj.object_id);
     onClose();
   }
 
@@ -114,6 +152,9 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects }: ImageIns
       {/* Objects tab */}
       {activeTab === "objects" && (
         <div>
+          {insertError && (
+            <p className="font-body text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-3">{insertError}</p>
+          )}
           {objects.length === 0 ? (
             <p className="font-body text-sm text-gray-400 text-center py-8">
               {t("image_dialog.no_objects")}

@@ -76,6 +76,8 @@ interface MarkdownEditorProps {
   onDirtyChange?: (dirty: boolean) => void;
   /** Object list for the image picker dialog (Plan 02) */
   objects?: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
+  /** Site base URL for constructing IIIF image URLs in the image picker */
+  siteBaseUrl?: string | null;
   /** Make editor background transparent (for coloured panel backgrounds) */
   transparent?: boolean;
   /** Use light colours for toolbar/text on dark backgrounds */
@@ -135,6 +137,7 @@ export function MarkdownEditor({
   onDiscard,
   onDirtyChange,
   objects,
+  siteBaseUrl,
   transparent = false,
   darkTheme = false,
 }: MarkdownEditorProps) {
@@ -509,6 +512,7 @@ export function MarkdownEditor({
       onClose={() => setImageDialogOpen(false)}
       onInsert={handleImageInsert}
       objects={objects ?? []}
+      siteBaseUrl={siteBaseUrl}
     />
     </>
   );
