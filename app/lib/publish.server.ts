@@ -126,11 +126,6 @@ export function serializeProjectCsv(storyRows: StoryRow[], existingCsv?: string)
 
   const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
 
-  const bilingualCsv = normalise(Papa.unparse([PROJECT_BILINGUAL_ROW], { columns }))
-    .split("\n")
-    .slice(1)
-    .join("\n");
-
   const commentRows = existingCsv ? extractCommentRows(existingCsv) : [];
 
   // Filter out drafts, sort by order
@@ -152,7 +147,7 @@ export function serializeProjectCsv(storyRows: StoryRow[], existingCsv?: string)
     .slice(1)
     .join("\n");
 
-  return [headerCsv, bilingualCsv, ...commentRows, dataCsv].join("\n");
+  return [headerCsv, ...commentRows, dataCsv].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -236,11 +231,6 @@ export function serializeStoryCsv(
 
   const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
 
-  const bilingualCsv = normalise(Papa.unparse([STORY_BILINGUAL_ROW], { columns }))
-    .split("\n")
-    .slice(1)
-    .join("\n");
-
   const commentRows = existingCsv ? extractCommentRows(existingCsv) : [];
 
   // Track used filenames per story to detect duplicates
@@ -269,7 +259,7 @@ export function serializeStoryCsv(
       x: step.x != null ? String(step.x) : "",
       y: step.y != null ? String(step.y) : "",
       zoom: step.zoom != null ? String(step.zoom) : "",
-      page: step.page ?? "",
+      page: step.page && step.page !== "1" ? step.page : "",
       question: step.question ?? "",
       answer: step.answer ?? "",
       layer1_button: layer1HasContent ? (layer1?.button_label ?? "") : "",
@@ -284,7 +274,7 @@ export function serializeStoryCsv(
     .slice(1)
     .join("\n");
 
-  return [headerCsv, bilingualCsv, ...commentRows, dataCsv].join("\n");
+  return [headerCsv, ...commentRows, dataCsv].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -466,12 +456,16 @@ export function computeChangeSummary(
   const snapshotObjectSet = new Set(snapshot.object_ids);
 
   // Stories: new = in current but not snapshot; deleted = in snapshot but not current
+  // modified = in both (we don't have per-story hashes, so treat all existing as modified)
   const newStories = currentState.stories.filter((s) => !snapshotStorySet.has(s.story_id));
+  const modifiedStories = currentState.stories.filter((s) => snapshotStorySet.has(s.story_id));
   const deletedStoryIds = snapshot.story_ids.filter((id) => !currentStorySet.has(id));
   const deletedStories = deletedStoryIds.map((id) => ({ story_id: id, title: null }));
 
   // Objects: new = in current but not snapshot; deleted = in snapshot but not current
+  // modified = in both (same reasoning as stories)
   const newObjects = currentState.objects.filter((o) => !snapshotObjectSet.has(o.object_id));
+  const modifiedObjects = currentState.objects.filter((o) => snapshotObjectSet.has(o.object_id));
   const deletedObjectIds = snapshot.object_ids.filter((id) => !currentObjectSet.has(id));
   const deletedObjects = deletedObjectIds.map((id) => ({ object_id: id, title: null }));
 
@@ -483,10 +477,15 @@ export function computeChangeSummary(
     ? [{ key: "config", label: "Site settings changed" }]
     : [];
 
+  // Without per-entity hashes, isUpToDate is always false when there are
+  // existing stories or objects (they appear as "modified"). This is
+  // conservative but ensures users can always publish edits.
   const isUpToDate =
     newStories.length === 0 &&
+    modifiedStories.length === 0 &&
     deletedStories.length === 0 &&
     newObjects.length === 0 &&
+    modifiedObjects.length === 0 &&
     deletedObjects.length === 0 &&
     !configChanged &&
     !landingChanged;
@@ -495,12 +494,12 @@ export function computeChangeSummary(
     isUpToDate,
     stories: {
       new: newStories,
-      modified: [],
+      modified: modifiedStories,
       deleted: deletedStories,
     },
     objects: {
       new: newObjects,
-      modified: [],
+      modified: modifiedObjects,
       deleted: deletedObjects,
     },
     settings: { changed: settingsChanged },

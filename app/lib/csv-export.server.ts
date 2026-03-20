@@ -126,12 +126,6 @@ export function serializeObjectsCsv(objectRows: ObjectRow[], existingCsv?: strin
   // Header line only (PapaParse always adds a header when unparsing objects)
   const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
 
-  // Bilingual row (data portion only — skip the header line PapaParse generates)
-  const bilingualCsv = normalise(Papa.unparse([BILINGUAL_ROW], { columns }))
-    .split("\n")
-    .slice(1)
-    .join("\n");
-
   // Preserve comment rows from existing CSV
   const commentRows = existingCsv ? extractCommentRows(existingCsv) : [];
 
@@ -158,6 +152,6 @@ export function serializeObjectsCsv(objectRows: ObjectRow[], existingCsv?: strin
     .slice(1)
     .join("\n");
 
-  const sections = [headerCsv, bilingualCsv, ...commentRows, dataCsv];
+  const sections = [headerCsv, ...commentRows, dataCsv];
   return sections.join("\n");
 }
