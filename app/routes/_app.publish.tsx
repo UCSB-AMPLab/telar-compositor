@@ -293,6 +293,8 @@ export async function action({ request, context }: Route.ActionArgs) {
           env,
         });
 
+        // Publish always triggers a full build — tiles are deployed via GitHub
+        // Pages (artifact upload), so partial workflows can't deploy content.
         const result = await commitFilesToRepo(
           token,
           owner,

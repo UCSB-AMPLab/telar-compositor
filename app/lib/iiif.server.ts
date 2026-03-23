@@ -19,7 +19,6 @@
 // backwards compatibility — server consumers can import from either file)
 // ---------------------------------------------------------------------------
 
-export { deriveStatus } from "./iiif-types";
 export type { IiifMetadata, IiifFetchResult } from "./iiif-types";
 
 import type { IiifMetadata, IiifFetchResult } from "./iiif-types";

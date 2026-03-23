@@ -34,7 +34,7 @@ export function extractPublishedId(url: string): string | null {
 /**
  * Builds the CSV export URL for a specific tab in a published Google Sheet.
  */
-export function sheetsCsvUrl(publishedId: string, gid: string): string {
+function sheetsCsvUrl(publishedId: string, gid: string): string {
   return `https://docs.google.com/spreadsheets/d/e/${publishedId}/pub?gid=${gid}&single=true&output=csv`;
 }
 

@@ -58,6 +58,7 @@ import {
   mapStepsToBuildPhases,
   StaleHeadError,
 } from "~/lib/commit.server";
+import { getInstallationToken } from "~/lib/github-app.server";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
 import { marked, Renderer } from "marked";
 import { Button } from "~/components/ui/Button";
@@ -302,8 +303,14 @@ export async function action({ request, context }: Route.ActionArgs) {
         const commitMessage = `Upgrade Telar from ${oldVersion} to ${latestRelease.tagName}`;
         const commitBody = `Upgraded via Telar Compositor\n\nSee release notes: https://github.com/UCSB-AMPLab/telar/releases/tag/${latestRelease.tagName}`;
 
+        const installToken = await getInstallationToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          activeProject.installation_id,
+        );
+
         const result = await commitFilesToRepo(
-          token,
+          installToken,
           owner,
           repo,
           "main",

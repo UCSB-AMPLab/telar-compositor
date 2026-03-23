@@ -331,7 +331,7 @@ export async function fetchAllReleases(token: string): Promise<TelarRelease[]> {
  * The framework repo has no IIIF tiles, so truncation is not a concern here.
  * The Git Trees API accepts tag names directly as the tree_sha parameter.
  */
-export async function getFrameworkTreeAtTag(
+async function getFrameworkTreeAtTag(
   token: string,
   tagName: string,
 ): Promise<TreeEntry[]> {

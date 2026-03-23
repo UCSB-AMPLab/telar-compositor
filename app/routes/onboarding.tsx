@@ -228,17 +228,21 @@ export async function action({ request, context }: Route.ActionArgs) {
     const [owner, repo] = project.github_repo_full_name.split("/");
 
     // Enable GitHub Pages first if needed (so we have the URL for config fix)
-    // Uses the user's OAuth token — the user is a repo admin, which is
-    // required for POST /repos/{owner}/{repo}/pages. Installation tokens
-    // fail here because the endpoint also requires administration:write.
     if (enablePages) {
       try {
-        const result = await enableGitHubPages(token, owner, repo);
+        const installToken = await getInstallationToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          project.installation_id,
+        );
+        const result = await enableGitHubPages(installToken, owner, repo);
         pagesUrl = result.pagesUrl;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error("enableGitHubPages error:", msg);
-        // Temporarily return the raw error for debugging
+        if (msg === "pages_permission_denied") {
+          return { ok: false, intent: "fix-site-config", error: "pages_permission_denied", installationId: project.installation_id };
+        }
         return { ok: false, intent: "fix-site-config", error: "pages_failed", message: msg };
       }
     }

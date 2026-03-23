@@ -23,6 +23,7 @@ import { projects, project_config } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
+import { computeFullSyncDiff } from "~/lib/sync.server";
 import { checkTelarVersion } from "~/lib/upgrade.server";
 import { Header } from "~/components/layout/Header";
 import { TabNav } from "~/components/layout/TabNav";
@@ -82,7 +83,38 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
         // Fetch current repo HEAD and compare
         const repoHead = await getRepoHead(token, owner, repo);
-        headDiverged = repoHead !== project.head_sha;
+        const shasDiffer = repoHead !== null && repoHead !== project.head_sha;
+
+        if (shasDiffer) {
+          // SHAs differ — check whether compositor-relevant content actually changed.
+          // If not, silently update head_sha and skip the banner.
+          try {
+            const diff = await computeFullSyncDiff(
+              project.id, token, owner, repo, db, null,
+            );
+            const hasRealChanges =
+              (diff.objects?.new?.length ?? 0) > 0 ||
+              (diff.objects?.changed?.length ?? 0) > 0 ||
+              (diff.objects?.removed?.length ?? 0) > 0 ||
+              (diff.stories?.new?.length ?? 0) > 0 ||
+              (diff.stories?.changed?.length ?? 0) > 0 ||
+              (diff.stories?.removed?.length ?? 0) > 0 ||
+              (diff.config?.changed?.length ?? 0) > 0;
+
+            if (hasRealChanges) {
+              headDiverged = true;
+            } else {
+              // No meaningful changes — update head_sha silently
+              await db
+                .update(projects)
+                .set({ head_sha: repoHead, updated_at: new Date().toISOString() })
+                .where(eq(projects.id, project.id));
+            }
+          } catch {
+            // If diff fails, show the banner to be safe
+            headDiverged = true;
+          }
+        }
 
         // Version check — gated routes redirect to /upgrade if outdated
         try {

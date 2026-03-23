@@ -41,7 +41,7 @@ export function FieldWithHelp({
           id={name}
           name={name}
           defaultValue={value as string}
-          rows={3}
+          rows={6}
           className={inputClass}
         />
       ) : type === "select" ? (

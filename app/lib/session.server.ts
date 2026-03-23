@@ -10,7 +10,6 @@
 
 import {
   createCookieSessionStorage,
-  type Session,
 } from "react-router";
 
 /**
@@ -43,4 +42,3 @@ export function createStateCookieStorage(secret: string) {
   });
 }
 
-export type { Session };

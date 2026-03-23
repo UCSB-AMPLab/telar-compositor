@@ -52,6 +52,9 @@ const ALL_SAVE_INTENTS = [
   "create-layer",
   "save-layer",
   "delete-layer",
+  "autosave-object-field",
+  "autosave-object-featured",
+  "toggle-featured",
 ];
 
 interface TabNavProps {

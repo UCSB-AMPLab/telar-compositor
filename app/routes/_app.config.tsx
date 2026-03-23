@@ -7,14 +7,17 @@
  */
 
 import { eq } from "drizzle-orm";
-import { Form, Link } from "react-router";
+import { Form, Link, useFetcher } from "react-router";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, CheckCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
 import type { Route } from "./+types/_app.config";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { projects, project_config, project_themes } from "~/db/schema";
+import { decrypt } from "~/lib/crypto.server";
+import { getRepoTree, getFileContent } from "~/lib/github.server";
+import { parseYaml } from "~/lib/yaml.server";
 import { ConfigSection } from "~/components/features/config/ConfigSection";
 import { FieldWithHelp } from "~/components/features/config/FieldWithHelp";
 import { ToggleField } from "~/components/features/config/ToggleField";
@@ -87,6 +90,49 @@ export async function action({ request, context }: Route.ActionArgs) {
   const project =
     allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
   const formData = await request.formData();
+  const intent = formData.get("intent") as string | null;
+
+  if (intent === "refresh-themes") {
+    try {
+      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      const [owner, repo] = project.github_repo_full_name.split("/");
+      const { tree } = await getRepoTree(token, owner, repo);
+      const themeFiles = tree.filter(
+        (entry) =>
+          entry.type === "blob" &&
+          entry.path.startsWith("_data/themes/") &&
+          entry.path.endsWith(".yml"),
+      );
+      const themeRows: Array<typeof project_themes.$inferInsert> = [];
+      for (const entry of themeFiles) {
+        const content = await getFileContent(token, owner, repo, entry.path);
+        if (!content) continue;
+        const parsed = parseYaml(content) as Record<string, unknown> | null;
+        if (!parsed) continue;
+        const filename = entry.path.split("/").pop()!.replace(/\.yml$/, "");
+        const colors = parsed.colors as Record<string, Record<string, string>> | undefined;
+        themeRows.push({
+          project_id: project.id,
+          theme_id: filename,
+          name: (parsed.name as string) || filename,
+          description: (parsed.description as string) || undefined,
+          creator: (parsed.creator as string) || undefined,
+          creator_url: (parsed.creator_url as string) || undefined,
+          swatch_color: colors?.text?.heading || undefined,
+        });
+      }
+      // Delete existing and re-insert
+      await db.delete(project_themes).where(eq(project_themes.project_id, project.id));
+      if (themeRows.length > 0) {
+        for (const row of themeRows) {
+          await db.insert(project_themes).values(row);
+        }
+      }
+      return { ok: true, intent: "refresh-themes", count: themeRows.length };
+    } catch {
+      return { ok: false, intent: "refresh-themes", error: "fetch_failed" };
+    }
+  }
 
   await db
     .update(project_config)
@@ -118,6 +164,8 @@ export async function action({ request, context }: Route.ActionArgs) {
 
 export default function ConfigPage({ loaderData, actionData }: Route.ComponentProps) {
   const { t } = useTranslation("config");
+  const themeFetcher = useFetcher();
+  const isRefreshingThemes = themeFetcher.state !== "idle";
 
   if (!loaderData.hasProject) {
     return (
@@ -182,6 +230,20 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
             </label>
             <p className="text-xs text-gray-400 mb-2">{t("sections.site_settings.field_theme_help")}</p>
             <ThemeSwatches name="theme" value={config?.theme ?? ""} themes={themes} />
+            <button
+              type="button"
+              onClick={() =>
+                themeFetcher.submit(
+                  { intent: "refresh-themes" },
+                  { method: "post" },
+                )
+              }
+              disabled={isRefreshingThemes}
+              className="inline-flex items-center gap-1.5 mt-2 text-xs font-body text-gray-400 hover:text-charcoal transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingThemes ? "animate-spin" : ""}`} />
+              {t("sections.site_settings.refresh_themes")}
+            </button>
           </div>
           <FieldWithHelp
             label={t("sections.site_settings.field_logo")}
