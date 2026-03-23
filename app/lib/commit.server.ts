@@ -9,6 +9,8 @@
  *   - mapStepsToBuildPhases: maps workflow step names to 6 display phases
  *   - BUILD_PHASES: ordered list of display phase metadata
  *   - StaleHeadError: distinguishable error for stale expectedHeadOid failures
+ *   - dispatchWorkflow: trigger a workflow_dispatch event for a specific workflow
+ *   - getLatestWorkflowRun: fetch the most recently created run for a named workflow
  */
 
 import { graphqlGitHub, githubHeaders } from "~/lib/github.server";
@@ -94,6 +96,7 @@ export async function commitFilesToRepo(
   message: string,
   messageBody?: string,
   deletions?: string[],
+  skipCi?: boolean,
 ): Promise<{ newHeadSha: string }> {
   // 1. Fetch current HEAD OID
   const headData = await graphqlGitHub<HeadOidData>(token, GET_HEAD_OID, {
@@ -110,13 +113,15 @@ export async function commitFilesToRepo(
   }));
 
   // 3. Create the commit
+  const headline = skipCi ? `${message} [skip ci]` : message;
+
   try {
     const commitData = await graphqlGitHub<CreateCommitData>(token, CREATE_COMMIT, {
       input: {
         branch: { repositoryNameWithOwner: `${owner}/${repo}`, branchName: branch },
         message: messageBody
-          ? { headline: message, body: messageBody }
-          : { headline: message },
+          ? { headline, body: messageBody }
+          : { headline },
         fileChanges: {
           additions,
           ...(deletions && deletions.length > 0
@@ -291,6 +296,11 @@ export async function enableGitHubPages(
     }
   }
 
+  // 403 = insufficient permissions — likely missing pages:write on GitHub App
+  if (res.status === 403) {
+    throw new Error("pages_permission_denied");
+  }
+
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Failed to enable GitHub Pages: ${res.status} ${body}`);
@@ -299,6 +309,89 @@ export async function enableGitHubPages(
   const data = (await res.json()) as { html_url?: string };
   const rawUrl = (data.html_url ?? "").replace(/\/+$/, "");
   return { pagesUrl: rawUrl.replace(/^http:\/\//, "https://") };
+}
+
+// ---------------------------------------------------------------------------
+// Workflow dispatch
+// ---------------------------------------------------------------------------
+
+/**
+ * Result returned by dispatchWorkflow when the API supports return_run_details.
+ * When the API responds with 204 (legacy/GHES fallback), runId is 0 and URLs are empty.
+ */
+export interface DispatchResult {
+  runId: number;
+  runUrl: string;
+  htmlUrl: string;
+}
+
+/**
+ * Triggers a workflow_dispatch event for a specific workflow file.
+ * Sends return_run_details: true to request the workflow run ID directly from the
+ * API response (GitHub API enhancement, February 2026). Returns DispatchResult with
+ * the run ID and URLs. Falls back gracefully to { runId: 0, ... } for GHES instances
+ * that respond with 204 No Content.
+ */
+export async function dispatchWorkflow(
+  token: string,
+  owner: string,
+  repo: string,
+  workflowFile: string,
+  inputs?: Record<string, string>,
+): Promise<DispatchResult> {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflowFile}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        ...githubHeaders(token),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ref: "main", inputs: inputs ?? {}, return_run_details: true }),
+    },
+  );
+
+  // 204 No Content — legacy/GHES fallback (return_run_details not supported)
+  if (res.status === 204) {
+    return { runId: 0, runUrl: "", htmlUrl: "" };
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`workflow_dispatch failed (${res.status}): ${body}`);
+  }
+
+  // 200 OK with JSON body — return_run_details supported
+  const data = (await res.json()) as {
+    workflow_run_id: number;
+    run_url: string;
+    html_url: string;
+  };
+  return {
+    runId: data.workflow_run_id,
+    runUrl: data.run_url,
+    htmlUrl: data.html_url,
+  };
+}
+
+/**
+ * Returns the most recently created run for a named workflow file.
+ * Use after dispatchWorkflow() with a short delay (~3s) to find the
+ * dispatched run, then poll getJobSteps() for progress.
+ */
+export async function getLatestWorkflowRun(
+  token: string,
+  owner: string,
+  repo: string,
+  workflowFile: string,
+): Promise<WorkflowRun | null> {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflowFile}/runs?per_page=1`,
+    { headers: githubHeaders(token) },
+  );
+  if (!res.ok) return null;
+  const data = (await res.json()) as { workflow_runs: WorkflowRun[] };
+  return data.workflow_runs[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +506,11 @@ const BUILD_STEP_TO_PHASE: Record<string, string> = {
   "Restore IIIF tiles from cache to _site (when skipping regeneration)": "iiif",
   "Upload artifact": "deploy",
   "Deploy to GitHub Pages": "deploy",
+  // Lightweight workflow step mappings (objects-only, story-only)
+  "Convert story CSV to JSON": "process-data",
+  "Commit updated data files": "deploy",
+  "Generate IIIF tiles": "iiif",
+  "Commit generated tiles": "deploy",
 };
 
 export interface BuildPhaseStatus {

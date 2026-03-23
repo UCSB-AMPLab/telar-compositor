@@ -126,6 +126,11 @@ export function serializeProjectCsv(storyRows: StoryRow[], existingCsv?: string)
 
   const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
 
+  // Bilingual row — Spanish column name equivalents required by Telar's CSV parser
+  const bilingualRow = normalise(
+    Papa.unparse([columns.map((col) => PROJECT_BILINGUAL_ROW[col] ?? col)], { header: false }),
+  );
+
   const commentRows = existingCsv ? extractCommentRows(existingCsv) : [];
 
   // Filter out drafts, sort by order
@@ -147,7 +152,7 @@ export function serializeProjectCsv(storyRows: StoryRow[], existingCsv?: string)
     .slice(1)
     .join("\n");
 
-  return [headerCsv, ...commentRows, dataCsv].join("\n");
+  return [headerCsv, bilingualRow, ...commentRows, dataCsv].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +168,7 @@ const STORY_CSV_COLUMNS = [
   "page",
   "question",
   "answer",
+  "alt_text",
   "layer1_button",
   "layer1_content",
   "layer2_button",
@@ -178,6 +184,7 @@ const STORY_BILINGUAL_ROW: Record<string, string> = {
   page: "pagina",
   question: "pregunta",
   answer: "respuesta",
+  alt_text: "texto_alt",
   layer1_button: "boton1",
   layer1_content: "contenido1",
   layer2_button: "boton2",
@@ -200,6 +207,7 @@ export interface StepWithLayers {
   page: string | null;
   question: string | null;
   answer: string | null;
+  alt_text: string | null;
   layers: LayerData[];
 }
 
@@ -231,6 +239,11 @@ export function serializeStoryCsv(
 
   const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
 
+  // Bilingual row — Spanish column name equivalents required by Telar's CSV parser
+  const bilingualRow = normalise(
+    Papa.unparse([columns.map((col) => STORY_BILINGUAL_ROW[col] ?? col)], { header: false }),
+  );
+
   const commentRows = existingCsv ? extractCommentRows(existingCsv) : [];
 
   // Track used filenames per story to detect duplicates
@@ -256,12 +269,13 @@ export function serializeStoryCsv(
     return {
       step: String(step.step_number),
       object: step.object_id ?? "",
-      x: step.x != null ? String(step.x) : "",
-      y: step.y != null ? String(step.y) : "",
-      zoom: step.zoom != null ? String(step.zoom) : "",
+      x: String(step.x ?? 0.5),
+      y: String(step.y ?? 0.5),
+      zoom: String(step.zoom ?? 1),
       page: step.page && step.page !== "1" ? step.page : "",
       question: step.question ?? "",
       answer: step.answer ?? "",
+      alt_text: step.alt_text ?? "",
       layer1_button: layer1HasContent ? (layer1?.button_label ?? "") : "",
       layer1_content: layer1Filename,
       layer2_button: layer2HasContent ? (layer2?.button_label ?? "") : "",
@@ -274,7 +288,7 @@ export function serializeStoryCsv(
     .slice(1)
     .join("\n");
 
-  return [headerCsv, ...commentRows, dataCsv].join("\n");
+  return [headerCsv, bilingualRow, ...commentRows, dataCsv].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -708,6 +722,7 @@ export async function buildPublishFileSet(
       source: o.source ?? null,
       credit: o.credit ?? null,
       thumbnail: o.thumbnail ?? null,
+      alt_text: o.alt_text ?? null,
     })),
     existingObjectsCsv ?? undefined,
   );
@@ -751,6 +766,7 @@ export async function buildPublishFileSet(
       page: step.page ?? null,
       question: step.question ?? null,
       answer: step.answer ?? null,
+      alt_text: step.alt_text ?? null,
       layers: layerRows
         .filter((l) => l.step_id === step.id)
         .map((l) => ({

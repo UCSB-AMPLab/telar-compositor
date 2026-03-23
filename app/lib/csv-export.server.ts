@@ -33,13 +33,14 @@ export const OBJECTS_CSV_COLUMNS = [
   "source",
   "credit",
   "thumbnail",
+  "alt_text",
 ] as const;
 
 /**
  * Bilingual header row mapping each English column name to its Spanish equivalent.
  * Required by Telar's CSV parser — the second row is the Spanish label row.
  */
-export const BILINGUAL_ROW: Record<string, string> = {
+const BILINGUAL_ROW: Record<string, string> = {
   object_id: "id_objeto",
   title: "titulo",
   featured: "destacado",
@@ -53,6 +54,7 @@ export const BILINGUAL_ROW: Record<string, string> = {
   source: "fuente",
   credit: "credito",
   thumbnail: "miniatura",
+  alt_text: "texto_alt",
 };
 
 // ---------------------------------------------------------------------------
@@ -73,6 +75,7 @@ export interface ObjectRow {
   source: string | null;
   credit: string | null;
   thumbnail: string | null;
+  alt_text: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +129,11 @@ export function serializeObjectsCsv(objectRows: ObjectRow[], existingCsv?: strin
   // Header line only (PapaParse always adds a header when unparsing objects)
   const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
 
+  // Bilingual row — Spanish column name equivalents required by Telar's CSV parser
+  const bilingualRow = normalise(
+    Papa.unparse([columns.map((col) => BILINGUAL_ROW[col] ?? col)], { header: false }),
+  );
+
   // Preserve comment rows from existing CSV
   const commentRows = existingCsv ? extractCommentRows(existingCsv) : [];
 
@@ -144,6 +152,7 @@ export function serializeObjectsCsv(objectRows: ObjectRow[], existingCsv?: strin
     source: obj.source ?? "",
     credit: obj.credit ?? "",
     thumbnail: obj.thumbnail ?? "",
+    alt_text: obj.alt_text ?? "",
   }));
 
   // Data CSV without the header line PapaParse generates
@@ -152,6 +161,6 @@ export function serializeObjectsCsv(objectRows: ObjectRow[], existingCsv?: strin
     .slice(1)
     .join("\n");
 
-  const sections = [headerCsv, ...commentRows, dataCsv];
+  const sections = [headerCsv, bilingualRow, ...commentRows, dataCsv];
   return sections.join("\n");
 }

@@ -269,9 +269,15 @@ export async function computeSyncDiff(
   }
 
   // Compute missing objects (in D1 but not in repo CSV)
+  // Compositor-origin objects are excluded: they were created by the compositor
+  // and their CSV commit may have failed (e.g. StaleHeadError). They are
+  // legitimate objects — warn rather than offering to delete (DATA-03).
   const missingObjects: MissingObject[] = [];
   for (const [objectId, d1Obj] of d1Map.entries()) {
     if (!repoMap.has(objectId)) {
+      if (d1Obj.origin === "compositor") {
+        continue; // skip — compositor-origin objects are not classified as missing
+      }
       missingObjects.push({
         object_id: objectId,
         dbId: d1Obj.id,
@@ -328,7 +334,9 @@ export interface PendingObject {
   source: string | null;
   credit: string | null;
   thumbnail: string | null;
+  alt_text?: string | null;
   image_available: boolean;
+  origin?: string;
 }
 
 export async function applySyncChanges(
@@ -393,7 +401,9 @@ export async function applySyncChanges(
         source: (repoRow.source as string | null) ?? null,
         credit: (repoRow.credit as string | null) ?? null,
         thumbnail: (repoRow.thumbnail as string | null) ?? null,
+        alt_text: (repoRow.alt_text as string | null) ?? null,
         image_available: iiifObjectIds.has(objectId),
+        origin: "repo",
       });
     }
   }
@@ -416,6 +426,7 @@ export async function applySyncChanges(
         credit: null,
         thumbnail: null,
         image_available: true,
+        origin: "repo",
       });
     }
   }
@@ -460,12 +471,16 @@ export async function applySyncChanges(
   }
 
   // 4. Flag missing objects that were NOT removed (immediate)
+  // Compositor-origin objects are skipped — they are not repo objects and
+  // should not be flagged as missing when absent from the repo CSV (DATA-03).
   const allD1ObjectIds = [...d1Map.keys()];
   const removedSet = new Set(removedObjectIds);
   const repoObjectIds = new Set(repoMap.keys());
 
   for (const objectId of allD1ObjectIds) {
     if (!repoObjectIds.has(objectId) && !removedSet.has(objectId)) {
+      const d1Obj = d1Map.get(objectId);
+      if (d1Obj?.origin === "compositor") continue; // don't flag compositor-origin objects
       await db
         .update(objects)
         .set({ missing_from_repo: true, updated_at: now })

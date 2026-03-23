@@ -81,6 +81,8 @@ const KNOWN_BILINGUAL_VALUES = new Set([
   "id_término",
   "definicion",
   "definición",
+  // objects.csv alt text bilingual value
+  "texto_alt",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -294,6 +296,7 @@ export function mapObjectsCsv(
       source: row.source || undefined,
       credit: row.credit || undefined,
       thumbnail: row.thumbnail || undefined,
+      alt_text: row.alt_text || row.title || undefined,
       image_available: false,
     };
   });
@@ -335,7 +338,7 @@ export function mapProjectCsv(
  * Extract title from YAML frontmatter and return { title, body }.
  * Frontmatter is delimited by --- on its own lines at the start of content.
  */
-export function extractFrontmatterTitle(
+function extractFrontmatterTitle(
   content: string | undefined
 ): { title: string | undefined; body: string | undefined } {
   if (!content) return { title: undefined, body: undefined };
@@ -767,9 +770,9 @@ export async function importRepo({
   }
 
   // Insert content tables — chunked to stay within D1's 100-variable limit
-  // objects: 18 cols → max 5 rows; stories: 10 cols → max 10 rows;
+  // objects: 19 cols → max 5 rows; stories: 10 cols → max 10 rows;
   // glossary: 6 cols → max 16 rows
-  for (const chunk of chunkForD1(18, objectsWithProjectId)) {
+  for (const chunk of chunkForD1(19, objectsWithProjectId)) {
     await db.insert(objects).values(chunk);
   }
   for (const chunk of chunkForD1(10, storiesWithProjectId)) {
