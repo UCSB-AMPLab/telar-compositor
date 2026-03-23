@@ -90,6 +90,7 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
       thumbnail: objects.thumbnail,
       image_available: objects.image_available,
       source_url: objects.source_url,
+      alt_text: objects.alt_text,
     })
     .from(objects)
     .where(eq(objects.project_id, Number(activeProjectId)));
@@ -156,7 +157,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       const entityId = Number(formData.get("entityId"));
 
       // Whitelist allowed fields
-      const allowed = ["question", "answer"];
+      const allowed = ["question", "answer", "alt_text"];
       if (!allowed.includes(field)) return { error: "Invalid field" };
 
       await db
@@ -530,6 +531,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     <>
     <EditorShell
       storyTitle={story.title ?? ""}
+      hideViewer={isStepZero}
       sidebar={
         <StepSidebar
           steps={sidebarSteps}
@@ -553,6 +555,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
           }}
           onCreateLayer={handleCreateLayer}
           actionUrl={`/stories/${story.slug}`}
+          isFirstStep={activeStepIndex === 1}
         />
       }
       viewer={

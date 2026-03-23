@@ -44,6 +44,10 @@ interface IiifViewerProps {
   onViewerReady?: (viewer: OpenSeadragon.Viewer, getCurrentPage: () => number) => void;
   /** Hide the built-in zoom/fit controls (e.g. when the parent provides its own overlays) */
   hideZoomControls?: boolean;
+  /** Called when the user clicks "Generate tiles" — parent dispatches the workflow */
+  onGenerateTiles?: () => void;
+  /** Whether tile generation is in progress */
+  isGenerating?: boolean;
 }
 
 export function IiifViewer({
@@ -54,6 +58,8 @@ export function IiifViewer({
   className = "",
   onViewerReady,
   hideZoomControls = false,
+  onGenerateTiles,
+  isGenerating = false,
 }: IiifViewerProps) {
   const { t } = useTranslation("objects");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -203,14 +209,31 @@ export function IiifViewer({
             <p className="font-body text-sm text-gray-500 text-center max-w-xs mb-3">
               {t("viewer_tiles_unavailable")}
             </p>
-            <button
-              type="button"
-              onClick={checkTiles}
-              className="inline-flex items-center gap-2 font-heading font-semibold text-xs uppercase tracking-wider text-charcoal border border-gray-300 rounded-full px-4 py-1.5 hover:bg-gray-50 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              {t("viewer_retry")}
-            </button>
+            <div className="flex items-center gap-2">
+              {onGenerateTiles && (
+                <button
+                  type="button"
+                  onClick={onGenerateTiles}
+                  disabled={isGenerating}
+                  className="inline-flex items-center gap-2 font-heading font-semibold text-xs uppercase tracking-wider text-white bg-terracotta hover:bg-terracotta/90 rounded-full px-4 py-1.5 transition-colors disabled:opacity-50"
+                >
+                  {isGenerating ? (
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  )}
+                  {isGenerating ? t("viewer_generating") : t("viewer_generate_tiles")}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={checkTiles}
+                className="inline-flex items-center gap-2 font-heading font-semibold text-xs uppercase tracking-wider text-charcoal border border-gray-300 rounded-full px-4 py-1.5 hover:bg-gray-50 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                {t("viewer_retry")}
+              </button>
+            </div>
           </>
         )}
       </div>

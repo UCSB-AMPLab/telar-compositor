@@ -32,7 +32,7 @@ interface ObjectRowProps {
   siteBaseUrl: string | null;
 }
 
-function StatusBadge({ status }: { status: ReturnType<typeof deriveStatus> }) {
+function StatusBadge({ status, objectId }: { status: ReturnType<typeof deriveStatus>; objectId?: string }) {
   const { t } = useTranslation("objects");
 
   const config: Record<
@@ -51,8 +51,8 @@ function StatusBadge({ status }: { status: ReturnType<typeof deriveStatus> }) {
     },
     image_missing: {
       label: t("status_image_missing"),
-      dotClass: "bg-gray-400",
-      badgeClass: "bg-gray-100 text-gray-600",
+      dotClass: "bg-amber-400",
+      badgeClass: "bg-amber-50 text-amber-700 hover:bg-amber-100 cursor-pointer",
     },
     missing_from_repo: {
       label: t("status_missing_from_repo"),
@@ -63,12 +63,30 @@ function StatusBadge({ status }: { status: ReturnType<typeof deriveStatus> }) {
 
   const { label, dotClass, badgeClass } = config[status];
 
+  const inner = (
+    <>
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}`} />
+      {label}
+    </>
+  );
+
+  // "Needs tiles" is actionable — link to object detail where Generate tiles lives
+  if (status === "image_missing" && objectId) {
+    return (
+      <Link
+        to={`/objects/${objectId}`}
+        className={`shrink-0 inline-flex items-center gap-1.5 text-xs rounded-full px-2 py-0.5 transition-colors ${badgeClass}`}
+      >
+        {inner}
+      </Link>
+    );
+  }
+
   return (
     <span
       className={`shrink-0 inline-flex items-center gap-1.5 text-xs rounded-full px-2 py-0.5 ${badgeClass}`}
     >
-      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}`} />
-      {label}
+      {inner}
     </span>
   );
 }
@@ -161,7 +179,7 @@ export function ObjectRow({ object, onToggleFeatured, siteBaseUrl }: ObjectRowPr
       <SourceTypeBadge sourceUrl={object.source_url} />
 
       {/* Status badge */}
-      <StatusBadge status={status} />
+      <StatusBadge status={status} objectId={object.object_id} />
 
       {/* Featured star */}
       <button

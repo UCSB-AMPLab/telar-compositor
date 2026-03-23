@@ -30,11 +30,13 @@ interface StepViewProps {
     step_number: number;
     question: string | null;
     answer: string | null;
+    alt_text: string | null;
   };
   layers: LayerData[];
   onOpenLayer: (layer: LayerData) => void;
   onCreateLayer: (stepId: number, layerNumber: number, defaultLabel: string) => void;
   actionUrl: string;
+  isFirstStep?: boolean;
 }
 
 /** Inline editor for a layer button label — appears on pencil click. */
@@ -142,7 +144,7 @@ function LayerButtonWithEdit({
   );
 }
 
-export function StepView({ step, layers, onOpenLayer, onCreateLayer, actionUrl }: StepViewProps) {
+export function StepView({ step, layers, onOpenLayer, onCreateLayer, actionUrl, isFirstStep }: StepViewProps) {
   const { t } = useTranslation("editor");
   const questionRef = useRef<HTMLDivElement>(null);
   const answerRef = useRef<HTMLDivElement>(null);
@@ -158,49 +160,75 @@ export function StepView({ step, layers, onOpenLayer, onCreateLayer, actionUrl }
   return (
     <div className="min-h-full flex flex-col justify-center">
       <div className="px-6 py-8 border-l-4 border-lavender">
-        {/* Question */}
-        <div className="group/field relative mb-6" ref={questionRef}>
-          <button
-            type="button"
-            onClick={() => focusField(questionRef)}
-            className="absolute -top-5 right-0 flex items-center gap-1 cursor-pointer"
-          >
-            <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
-              {t("step.click_to_edit")}
-            </span>
-            <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
-          </button>
-          <InlineTextField
-            initialValue={step.question ?? ""}
-            fieldName="question"
-            entityId={step.id}
-            intent="autosave-step-field"
-            placeholder={t("step.question_placeholder")}
-            inputClassName="font-heading text-xl font-semibold text-charcoal"
-          />
+        {/* Question + Answer card */}
+        <div className="rounded-lg bg-white px-5 py-6 shadow-sm border border-gray-100 min-h-[200px]">
+          {/* Question */}
+          <div className="group/field relative mb-6" ref={questionRef}>
+            <button
+              type="button"
+              onClick={() => focusField(questionRef)}
+              className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
+            >
+              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
+                {t("step.click_to_edit")}
+              </span>
+              <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
+            </button>
+            <InlineTextField
+              initialValue={step.question ?? ""}
+              fieldName="question"
+              entityId={step.id}
+              intent="autosave-step-field"
+              placeholder={t("step.question_placeholder")}
+              inputClassName="font-heading text-xl font-semibold text-charcoal"
+            />
+          </div>
+
+          {/* Answer */}
+          <div className="group/field relative" ref={answerRef}>
+            <button
+              type="button"
+              onClick={() => focusField(answerRef)}
+              className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
+            >
+              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
+                {t("step.click_to_edit")}
+              </span>
+              <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
+            </button>
+            <InlineTextArea
+              initialValue={step.answer ?? ""}
+              fieldName="answer"
+              entityId={step.id}
+              intent="autosave-step-field"
+              placeholder={t("step.answer_placeholder")}
+              inputClassName="font-body text-base text-charcoal"
+              rows={5}
+            />
+          </div>
         </div>
 
-        {/* Answer */}
-        <div className="group/field relative" ref={answerRef}>
-          <button
-            type="button"
-            onClick={() => focusField(answerRef)}
-            className="absolute -top-5 right-0 flex items-center gap-1 cursor-pointer"
-          >
-            <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
-              {t("step.click_to_edit")}
-            </span>
-            <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
-          </button>
-          <InlineTextArea
-            initialValue={step.answer ?? ""}
-            fieldName="answer"
-            entityId={step.id}
-            intent="autosave-step-field"
-            placeholder={t("step.answer_placeholder")}
-            inputClassName="font-body text-base text-charcoal"
-            rows={5}
-          />
+        {/* Accessibility section */}
+        <div className="mt-4">
+          <h4 className="font-heading font-semibold text-sm text-charcoal mb-1">
+            {t("step.alt_text_section")}
+          </h4>
+          {isFirstStep && (
+            <p className="font-body text-xs text-gray-500 mb-3">
+              {t("step.alt_text_help")}
+            </p>
+          )}
+          <div className="group/field relative">
+            <InlineTextArea
+              initialValue={step.alt_text ?? ""}
+              fieldName="alt_text"
+              entityId={step.id}
+              intent="autosave-step-field"
+              placeholder={t("step.alt_text_placeholder")}
+              inputClassName="font-body text-sm text-gray-500"
+              rows={2}
+            />
+          </div>
         </div>
 
         {/* Layer buttons */}

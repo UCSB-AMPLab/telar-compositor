@@ -26,6 +26,7 @@ interface StepData {
   y: number | null;
   zoom: number | null;
   page: string | null;
+  alt_text?: string | null;
 }
 
 interface ObjectInfo {
@@ -33,6 +34,7 @@ interface ObjectInfo {
   title: string | null;
   thumbnail: string | null;
   image_available: boolean | null;
+  alt_text?: string | null;
 }
 
 interface ViewerColumnProps {
@@ -222,7 +224,7 @@ export function ViewerColumn({
         manifestUrl={manifestUrl}
         infoJsonUrl={infoJsonUrl}
         isSelfHosted={isSelfHosted}
-        alt={currentObject?.title ?? "IIIF viewer"}
+        alt={step?.alt_text || currentObject?.alt_text || currentObject?.title || currentObject?.object_id || "IIIF viewer"}
         className="w-full h-full"
         onViewerReady={handleViewerReady}
         hideZoomControls
