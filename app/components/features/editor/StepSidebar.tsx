@@ -62,7 +62,7 @@ export function StepSidebar({
       <button
         type="button"
         onClick={() => onStepSelect(0)}
-        className={`w-full text-left px-3 py-3 border-b border-gray-700 transition-colors ${
+        className={`w-full text-left pl-7 pr-3 py-3 border-b border-gray-700 transition-colors ${
           activeStepIndex === 0 ? "bg-lavender/20" : "hover:bg-gray-700"
         }`}
       >
@@ -99,17 +99,17 @@ export function StepSidebar({
             ))}
           </SortableContext>
         </DndContext>
-      </div>
 
-      {/* Add step button */}
-      <div className="px-3 py-3 border-t border-gray-700">
-        <button
-          type="button"
-          onClick={onAddStep}
-          className="w-full px-4 py-2 font-heading font-semibold text-sm text-charcoal bg-[#DAB95C] hover:bg-yellow-300 rounded-full transition-colors uppercase tracking-wider"
-        >
-          {t("step.add_step")}
-        </button>
+        {/* Add step button */}
+        <div className="pl-7 pr-3 py-3">
+          <button
+            type="button"
+            onClick={onAddStep}
+            className="w-full px-4 py-2 font-heading font-semibold text-sm text-charcoal bg-[#DAB95C] hover:bg-yellow-300 rounded-full transition-colors uppercase tracking-wider"
+          >
+            {t("step.add_step")}
+          </button>
+        </div>
       </div>
     </div>
   );

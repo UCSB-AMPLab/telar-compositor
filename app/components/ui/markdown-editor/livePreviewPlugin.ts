@@ -147,9 +147,9 @@ function buildDecorations(view: EditorView): DecorationSet {
         // ----- Images ![alt](url) -----
         case "Image": {
           // Extract URL from the image syntax ![alt](url)
-          const imgText = doc.sliceString(from, to);
+          const imgText = view.state.doc.sliceString(from, to);
           const imgMatch = imgText.match(/!\[([^\]]*)\]\(([^)]+)\)/);
-          if (imgMatch && !onCursorLine) {
+          if (imgMatch && !onCursorLine(from, to)) {
             const [, alt, url] = imgMatch;
             // Hide the raw syntax
             ranges.push({ from, to, deco: hidden });

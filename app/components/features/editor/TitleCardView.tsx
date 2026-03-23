@@ -17,6 +17,7 @@ interface TitleCardViewProps {
     title: string | null;
     subtitle: string | null;
     byline: string | null;
+    order: number | null;
   };
 }
 
@@ -39,7 +40,7 @@ function EditableField({
       <button
         type="button"
         onClick={focusField}
-        className="absolute -top-5 right-0 flex items-center gap-1 cursor-pointer"
+        className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
       >
         <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
           {label}
@@ -58,43 +59,63 @@ export function TitleCardView({ story }: TitleCardViewProps) {
   const bylineRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="px-8 py-12 flex flex-col items-center justify-center min-h-full border-l-4 border-lavender">
-      <div className="w-full max-w-md space-y-6">
+    <div className="px-8 py-12 flex flex-col items-center justify-center min-h-full">
+      <div className="w-full max-w-lg rounded-lg bg-white px-6 py-8 shadow-sm border border-gray-100 space-y-6">
         {/* Title */}
-        <EditableField containerRef={titleRef} label={t("step.click_to_edit")}>
-          <InlineTextField
-            initialValue={story.title ?? ""}
-            fieldName="title"
-            entityId={story.id}
-            intent="autosave-story-field"
-            placeholder={t("title_card.title_placeholder")}
-            inputClassName="font-heading text-3xl font-semibold text-charcoal"
-          />
-        </EditableField>
+        <div>
+          {story.order != null && (
+            <span className="block font-heading text-sm font-semibold text-gray-400 mb-6">
+              {t("title_card.story_number", { number: story.order + 1 })}
+            </span>
+          )}
+          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
+            {t("title_card.title_label")}
+          </span>
+          <EditableField containerRef={titleRef} label={t("step.click_to_edit")}>
+            <InlineTextField
+              initialValue={story.title ?? ""}
+              fieldName="title"
+              entityId={story.id}
+              intent="autosave-story-field"
+              placeholder={t("title_card.title_placeholder")}
+              inputClassName="font-heading text-3xl font-semibold text-charcoal"
+            />
+          </EditableField>
+        </div>
 
         {/* Subtitle */}
-        <EditableField containerRef={subtitleRef} label={t("step.click_to_edit")}>
-          <InlineTextField
-            initialValue={story.subtitle ?? ""}
-            fieldName="subtitle"
-            entityId={story.id}
-            intent="autosave-story-field"
-            placeholder={t("title_card.subtitle_placeholder")}
-            inputClassName="font-body text-lg text-gray-600"
-          />
-        </EditableField>
+        <div>
+          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
+            {t("title_card.subtitle_label")}
+          </span>
+          <EditableField containerRef={subtitleRef} label={t("step.click_to_edit")}>
+            <InlineTextField
+              initialValue={story.subtitle ?? ""}
+              fieldName="subtitle"
+              entityId={story.id}
+              intent="autosave-story-field"
+              placeholder={t("title_card.subtitle_placeholder")}
+              inputClassName="font-body text-lg text-gray-600"
+            />
+          </EditableField>
+        </div>
 
         {/* Byline */}
-        <EditableField containerRef={bylineRef} label={t("step.click_to_edit")}>
-          <InlineTextField
-            initialValue={story.byline ?? ""}
-            fieldName="byline"
-            entityId={story.id}
-            intent="autosave-story-field"
-            placeholder={t("title_card.byline_placeholder")}
-            inputClassName="font-body text-base text-gray-500"
-          />
-        </EditableField>
+        <div>
+          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
+            {t("title_card.byline_label")}
+          </span>
+          <EditableField containerRef={bylineRef} label={t("step.click_to_edit")}>
+            <InlineTextField
+              initialValue={story.byline ?? ""}
+              fieldName="byline"
+              entityId={story.id}
+              intent="autosave-story-field"
+              placeholder={t("title_card.byline_placeholder")}
+              inputClassName="font-body text-base text-gray-500"
+            />
+          </EditableField>
+        </div>
       </div>
     </div>
   );

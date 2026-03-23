@@ -13,7 +13,7 @@ interface ImageInsertDialogProps {
   open: boolean;
   onClose: () => void;
   onInsert: (url: string, alt: string) => void;
-  objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
+  objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null; alt_text?: string | null }>;
   siteBaseUrl?: string | null;
 }
 
@@ -33,10 +33,11 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects, siteBaseUr
 
   const [insertError, setInsertError] = useState<string | null>(null);
 
-  async function handleInsertObject(obj: { object_id: string; title: string | null; thumbnail: string | null }) {
+  async function handleInsertObject(obj: { object_id: string; title: string | null; thumbnail: string | null; alt_text?: string | null }) {
     setInsertError(null);
+    const altText = obj.alt_text || obj.title || obj.object_id;
     if (!siteBaseUrl) {
-      onInsert(obj.thumbnail ?? "", obj.title ?? obj.object_id);
+      onInsert(obj.thumbnail ?? "", altText);
       onClose();
       return;
     }
@@ -60,7 +61,7 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects, siteBaseUr
         }
         const bodyId = body?.id;
         if (bodyId) {
-          onInsert(bodyId, obj.title ?? obj.object_id);
+          onInsert(bodyId, altText);
           onClose();
           return;
         }
@@ -69,7 +70,7 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects, siteBaseUr
       // Fall through to default
     }
     // Fallback: page-1 pattern
-    onInsert(`${base}/iiif/objects/${obj.object_id}/page-1/full/max/0/default.jpg`, obj.title ?? obj.object_id);
+    onInsert(`${base}/iiif/objects/${obj.object_id}/page-1/full/max/0/default.jpg`, altText);
     onClose();
   }
 

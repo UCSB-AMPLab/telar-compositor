@@ -16,12 +16,14 @@ interface NarrativeColumnProps {
     title: string | null;
     subtitle: string | null;
     byline: string | null;
+    order: number | null;
   };
   activeStep: {
     id: number;
     step_number: number;
     question: string | null;
     answer: string | null;
+    alt_text: string | null;
   } | null;
   layers: Array<{
     id: number;
@@ -40,6 +42,7 @@ interface NarrativeColumnProps {
   }) => void;
   onCreateLayer: (stepId: number, layerNumber: number, defaultLabel: string) => void;
   actionUrl: string;
+  isFirstStep?: boolean;
 }
 
 export function NarrativeColumn({
@@ -50,6 +53,7 @@ export function NarrativeColumn({
   onOpenLayer,
   onCreateLayer,
   actionUrl,
+  isFirstStep,
 }: NarrativeColumnProps) {
   if (activeStepIndex === 0) {
     return <TitleCardView story={story} />;
@@ -64,6 +68,7 @@ export function NarrativeColumn({
       onOpenLayer={onOpenLayer}
       onCreateLayer={onCreateLayer}
       actionUrl={actionUrl}
+      isFirstStep={isFirstStep}
     />
   );
 }

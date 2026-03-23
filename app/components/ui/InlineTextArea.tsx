@@ -5,11 +5,10 @@
  * any other route that needs debounced autosave on a multi-line field.
  *
  * Submits: { intent, field, value, entityId } to the nearest route action.
- * Debounce: 1500ms.
+ * Debounce: 1500ms (via useInlineAutosave hook).
  */
 
-import { useState, useEffect, useRef } from "react";
-import { useFetcher } from "react-router";
+import { useInlineAutosave } from "~/hooks/use-inline-autosave";
 
 export interface InlineTextAreaProps {
   initialValue: string;
@@ -20,6 +19,7 @@ export interface InlineTextAreaProps {
   className?: string;
   inputClassName?: string;
   rows?: number;
+  bordered?: boolean;
 }
 
 export function InlineTextArea({
@@ -31,40 +31,26 @@ export function InlineTextArea({
   className = "",
   inputClassName = "",
   rows = 3,
+  bordered,
 }: InlineTextAreaProps) {
-  const fetcher = useFetcher();
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [value, setValue] = useState(initialValue);
+  const { value, handleChange } = useInlineAutosave({
+    initialValue,
+    fieldName,
+    entityId,
+    intent,
+  });
 
-  useEffect(() => {
-    setValue(initialValue);
-  }, [initialValue]);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const newValue = e.target.value;
-    setValue(newValue);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      fetcher.submit(
-        { intent, field: fieldName, value: newValue, entityId: String(entityId) },
-        { method: "post" }
-      );
-    }, 1500);
-  }
+  const borderClass = bordered
+    ? "rounded-md border border-gray-200 px-3 py-2 bg-white hover:border-gray-300 focus:border-periwinkle focus:ring-1 focus:ring-periwinkle"
+    : "border-b border-transparent hover:border-gray-200 focus:border-periwinkle";
 
   return (
     <textarea
       value={value}
-      onChange={handleChange}
+      onChange={(e) => handleChange(e.target.value)}
       placeholder={placeholder}
       rows={rows}
-      className={`w-full bg-transparent border-b border-transparent hover:border-gray-200 focus:border-periwinkle focus:outline-none resize-none transition-colors ${inputClassName} ${className}`}
+      className={`w-full bg-transparent focus:outline-none resize-none transition-colors ${borderClass} ${inputClassName} ${className}`}
     />
   );
 }
