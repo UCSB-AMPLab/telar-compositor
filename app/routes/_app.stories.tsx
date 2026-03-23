@@ -187,6 +187,13 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "delete-story": {
       const storyDbId = Number(formData.get("storyDbId"));
 
+      // Look up project_id before deleting (needed for renumbering)
+      const [targetStory] = await db
+        .select({ project_id: stories.project_id })
+        .from(stories)
+        .where(eq(stories.id, storyDbId))
+        .limit(1);
+
       // Find all steps for this story
       const storySteps = await db
         .select({ id: steps.id })
@@ -203,6 +210,24 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // Delete the story itself
       await db.delete(stories).where(eq(stories.id, storyDbId));
+
+      // Renumber remaining stories to close any order gaps (DATA-04)
+      if (targetStory) {
+        const remaining = await db
+          .select({ id: stories.id })
+          .from(stories)
+          .where(eq(stories.project_id, targetStory.project_id))
+          .orderBy(asc(stories.order));
+        const now = new Date().toISOString();
+        await Promise.all(
+          remaining.map((s, idx) =>
+            db
+              .update(stories)
+              .set({ order: idx, updated_at: now })
+              .where(eq(stories.id, s.id))
+          )
+        );
+      }
 
       return { ok: true, intent: "delete-story" };
     }

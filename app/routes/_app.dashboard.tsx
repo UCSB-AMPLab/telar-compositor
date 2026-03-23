@@ -9,7 +9,7 @@
 
 import { asc, count, desc, eq, and, gt, inArray } from "drizzle-orm";
 import { Trans, useTranslation } from "react-i18next";
-import { Link, redirect, useFetcher, useLoaderData, useNavigate, useRouteLoaderData } from "react-router";
+import { Link, redirect, useFetcher, useLoaderData, useNavigate, useRouteLoaderData, useSearchParams } from "react-router";
 import React, { useState, useEffect } from "react";
 import {
   DndContext,
@@ -33,18 +33,19 @@ import { getDb } from "~/lib/db.server";
 import { projects, stories, steps, project_config, objects, project_landing } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
+import { getRepoHead } from "~/lib/github.server";
 import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
 import type { FullSyncChanges } from "~/lib/sync.server";
 import { ProjectStatusBar } from "~/components/features/dashboard/ProjectStatusBar";
 import { StoryCard } from "~/components/features/dashboard/StoryCard";
 import { SortableStoryCard } from "~/components/features/dashboard/SortableStoryCard";
-import { ConnectRepoDropdown } from "~/components/features/dashboard/ConnectRepoDropdown";
+// ConnectRepoDropdown merged into ProjectStatusBar
 import { EmptyState } from "~/components/features/dashboard/EmptyState";
 import { DashboardPreviewSection } from "~/components/features/dashboard/DashboardPreviewSection";
 import { SyncConfirmModal } from "~/components/features/dashboard/SyncConfirmModal";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
-import { RefreshCw, Settings, Image, BookOpen, Upload } from "lucide-react";
+import { Settings, Image, BookOpen, Upload } from "lucide-react";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
 
@@ -338,6 +339,28 @@ export async function action({ request, context }: Route.ActionArgs) {
           db,
           null,
         );
+
+        // If no meaningful changes found, update head_sha so the sync banner
+        // doesn't keep showing for inconsequential repo changes.
+        const hasChanges =
+          (diff.objects?.new?.length ?? 0) > 0 ||
+          (diff.objects?.changed?.length ?? 0) > 0 ||
+          (diff.objects?.removed?.length ?? 0) > 0 ||
+          (diff.stories?.new?.length ?? 0) > 0 ||
+          (diff.stories?.changed?.length ?? 0) > 0 ||
+          (diff.stories?.removed?.length ?? 0) > 0 ||
+          (diff.config?.changed?.length ?? 0) > 0;
+
+        if (!hasChanges) {
+          const currentHead = await getRepoHead(token, owner, repo);
+          if (currentHead) {
+            await db
+              .update(projects)
+              .set({ head_sha: currentHead, updated_at: new Date().toISOString() })
+              .where(eq(projects.id, activeProject2.id));
+          }
+        }
+
         return { ok: true, intent: "compute-full-sync-diff", diff };
       } catch (err) {
         return {
@@ -485,6 +508,15 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
   const headDiverged = appLoaderData?.headDiverged ?? false;
 
   const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Auto-open sync modal when ?sync=1 is in URL (from SyncBanner click)
+  useEffect(() => {
+    if (searchParams.get("sync") === "1") {
+      setSyncModalOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   if (!loaderData.hasProject) {
     return <EmptyState />;
@@ -588,35 +620,19 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
         {t("page_title")}
       </h1>
 
-      {/* Project status bar + Connect Repo */}
-      <div className="flex items-start justify-between gap-4">
-        <ProjectStatusBar
-          repoName={project.github_repo_full_name}
-          lastPublished={project.last_published_at ?? null}
-          lastSynced={project.last_synced_at ?? null}
-          unpublishedCount={unpublishedCount ?? 0}
-          className="flex-1"
-        />
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSyncModalOpen(true)}
-            className={`inline-flex items-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-4 py-2 transition-colors ${
-              headDiverged
-                ? "bg-amber-500 hover:bg-amber-600 text-white"
-                : "border border-gray-200 text-charcoal hover:bg-cream-dark"
-            }`}
-          >
-            <RefreshCw className="w-4 h-4" />
-            {t("sync_modal.sync_now")}
-          </button>
-          <ConnectRepoDropdown
-            allProjects={allProjects}
-            activeProjectId={project.id}
-            onSwitch={handleSwitchProject}
-          />
-        </div>
-      </div>
+      {/* Project status bar */}
+      <ProjectStatusBar
+        repoName={project.github_repo_full_name}
+        lastPublished={project.last_published_at ?? null}
+        lastSynced={project.last_synced_at ?? null}
+        unpublishedCount={unpublishedCount ?? 0}
+        headDiverged={headDiverged}
+        allProjects={allProjects}
+        activeProjectId={project.id}
+        onSwitchProject={handleSwitchProject}
+        onSyncClick={() => setSyncModalOpen(true)}
+        pagesUrl={project.github_pages_url ?? null}
+      />
 
       {/* Sync confirmation modal */}
       <SyncConfirmModal
@@ -680,7 +696,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
         <h2 className="font-heading font-semibold text-base text-charcoal mb-3">
           {t("workflow.title")}
         </h2>
-        <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-stretch gap-x-3">
+        <div className="grid grid-cols-2 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-stretch gap-3">
           {([
             { n: 1, icon: Settings, to: "/config" },
             { n: 2, icon: Image, to: "/objects" },

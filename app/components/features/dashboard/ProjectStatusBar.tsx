@@ -1,35 +1,36 @@
 /**
- * ProjectStatusBar — project metadata bar shown above the story grid.
+ * ProjectStatusBar — unified repo status bar with single status indicator,
+ * detailed sync/publish timestamps, and project switcher.
  *
- * Displays: repo name, last published, last synced, unpublished changes.
+ * Layout: [ repo-name | status-chip | synced-timestamp | published-timestamp | switch-repos ▾ ]
+ *
+ * Single status chip priority: out_of_sync (red) > unpublished (amber) > up_to_date (green).
+ * Clicking the chip actions it: out_of_sync opens sync dialog, unpublished links to /publish.
  */
 
-import { Github } from "lucide-react";
+import { useState } from "react";
+import { Link } from "react-router";
+import { Github, ChevronDown, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { formatRelative } from "~/lib/format-relative";
+
+interface Project {
+  id: number;
+  github_repo_full_name: string;
+}
 
 interface ProjectStatusBarProps {
   repoName: string;
   lastPublished: string | null;
   lastSynced: string | null;
   unpublishedCount: number;
+  headDiverged: boolean;
+  allProjects: Project[];
+  activeProjectId: number;
+  onSwitchProject: (projectId: number) => void;
+  onSyncClick: () => void;
+  pagesUrl?: string | null;
   className?: string;
-}
-
-function formatRelative(isoString: string | null, neverLabel: string): string {
-  if (!isoString) return neverLabel;
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSeconds = Math.floor(diffMs / 1000);
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  const diffHours = Math.floor(diffMinutes / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffSeconds < 60) return "Just now";
-  if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes !== 1 ? "s" : ""} ago`;
-  if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
-  if (diffDays < 30) return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
-  return date.toLocaleDateString();
 }
 
 export function ProjectStatusBar({
@@ -37,38 +38,136 @@ export function ProjectStatusBar({
   lastPublished,
   lastSynced,
   unpublishedCount,
+  headDiverged,
+  allProjects,
+  activeProjectId,
+  onSwitchProject,
+  onSyncClick,
+  pagesUrl = null,
   className = "",
 }: ProjectStatusBarProps) {
   const { t } = useTranslation("dashboard");
   const neverLabel = t("status_bar.never");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // Single status: out_of_sync > unpublished > up_to_date
+  const status = headDiverged
+    ? "out_of_sync"
+    : unpublishedCount > 0
+    ? "unpublished"
+    : "up_to_date";
+
+  const statusStyles = {
+    out_of_sync: "bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer",
+    unpublished: "bg-amber-50 text-amber-700 hover:bg-amber-100 cursor-pointer",
+    up_to_date: "bg-green-50 text-green-700",
+  };
+
+  const statusChip = (
+    <span className={`inline-flex items-center gap-1 text-xs font-medium rounded-full px-2.5 py-1 transition-colors shrink-0 ${statusStyles[status]}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${status === "out_of_sync" ? "bg-red-500" : status === "unpublished" ? "bg-amber-500" : "bg-green-500"}`} />
+      {t(`sync_status.${status}`)}
+    </span>
+  );
 
   return (
     <div
-      className={`bg-white rounded-lg border border-gray-100 px-4 py-3 flex items-center justify-between text-sm font-body ${className}`}
+      className={`bg-white rounded-lg border border-gray-100 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-body ${className}`}
     >
-      <div className="flex items-center gap-2 text-charcoal font-medium">
+      {/* Repo name */}
+      <div className="flex items-center gap-2 text-charcoal font-medium shrink-0">
         <Github className="w-4 h-4 text-gray-400" />
         <span>{repoName}</span>
       </div>
 
+      {/* Status chip — clickable when actionable */}
+      {status === "out_of_sync" ? (
+        <button type="button" onClick={onSyncClick}>
+          {statusChip}
+        </button>
+      ) : status === "unpublished" ? (
+        <Link to="/publish">
+          {statusChip}
+        </Link>
+      ) : (
+        statusChip
+      )}
+
+      {/* Timestamps */}
       <div className="flex items-center gap-6 text-gray-500">
-        <div className="flex flex-col items-end sm:flex-row sm:items-center sm:gap-1">
+        <div className="flex flex-col items-start sm:flex-row sm:items-center sm:gap-1">
           <span className="text-xs text-gray-400">{t("status_bar.last_synced")}:</span>
-          <span className="text-xs">{formatRelative(lastSynced, neverLabel)}</span>
+          <span className="text-xs font-medium">{formatRelative(lastSynced, neverLabel)}</span>
         </div>
-        <div className="flex flex-col items-end sm:flex-row sm:items-center sm:gap-1">
+        <div className="flex flex-col items-start sm:flex-row sm:items-center sm:gap-1">
           <span className="text-xs text-gray-400">{t("status_bar.last_published")}:</span>
-          <span className="text-xs">{formatRelative(lastPublished, neverLabel)}</span>
+          <span className="text-xs font-medium">{formatRelative(lastPublished, neverLabel)}</span>
         </div>
-        {unpublishedCount > 0 && (
-          <span className="text-xs bg-periwinkle text-charcoal rounded-full px-2 py-0.5">
-            {t("status_bar.unpublished_changes", { count: unpublishedCount })}
-          </span>
-        )}
-        {!lastPublished && !lastSynced && (
-          <span className="text-xs text-gray-400 italic">
-            {t("status_bar.never_hint")}
-          </span>
+      </div>
+
+      {/* View published site link */}
+      {pagesUrl && (
+        <a
+          href={pagesUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-xs font-body text-periwinkle hover:text-charcoal transition-colors shrink-0"
+        >
+          {t("status_bar.view_site")}
+          <ExternalLink className="w-3 h-3" />
+        </a>
+      )}
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Switch/add/remove repos dropdown */}
+      <div className="relative shrink-0">
+        <button
+          type="button"
+          onClick={() => setDropdownOpen((prev) => !prev)}
+          className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-charcoal transition-colors"
+        >
+          {t("status_bar.manage_repos")}
+          <ChevronDown className="w-3 h-3" />
+        </button>
+
+        {dropdownOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setDropdownOpen(false)}
+            />
+            <div className="absolute top-full right-0 mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg min-w-[240px] overflow-hidden">
+              {allProjects.map((project) => {
+                const isActive = project.id === activeProjectId;
+                return (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      if (!isActive) onSwitchProject(project.id);
+                    }}
+                    className={`w-full px-4 py-2.5 font-body text-sm hover:bg-gray-50 flex items-center justify-between text-left cursor-pointer transition-colors ${isActive ? "text-charcoal font-medium" : "text-gray-600"}`}
+                  >
+                    <span className="truncate">{project.github_repo_full_name}</span>
+                    {isActive && (
+                      <span className="text-xs text-gray-400 ml-2 shrink-0">{t("status_bar.current")}</span>
+                    )}
+                  </button>
+                );
+              })}
+              <div className="border-t border-gray-200 my-1" />
+              <Link
+                to="/onboarding?force=1"
+                onClick={() => setDropdownOpen(false)}
+                className="block px-4 py-2.5 font-body text-sm text-lavender hover:bg-gray-50 transition-colors"
+              >
+                {t("connect_new_repo")}
+              </Link>
+            </div>
+          </>
         )}
       </div>
     </div>

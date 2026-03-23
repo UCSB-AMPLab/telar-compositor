@@ -363,13 +363,11 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       {step === "diffReady" && (
         <div className="p-6">
           <h3 className="font-heading font-semibold text-lg text-charcoal mb-4">
-            {t("sync_modal.changes_found")}
+            {categorySections.length > 0
+              ? t("sync_modal.changes_found")
+              : t("sync_modal.no_changes")}
           </h3>
-          {categorySections.length === 0 ? (
-            <p className="font-body text-sm text-gray-500 mb-6">
-              {t("sync_modal.no_changes")}
-            </p>
-          ) : (
+          {categorySections.length > 0 && (
             <div className="space-y-2 mb-6">
               {categorySections.map((section) => (
                 <CategorySection
@@ -386,7 +384,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
               onClick={onClose}
               className="font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-5 py-2 hover:bg-cream transition-colors"
             >
-              {t("cancel")}
+              {categorySections.length > 0 ? t("cancel") : t("sync_modal.close")}
             </button>
             {categorySections.length > 0 && (
               <button
@@ -395,15 +393,6 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
                 className="font-heading font-semibold text-sm uppercase tracking-wider bg-terracotta hover:bg-terracotta/90 text-cream rounded-full px-5 py-2 transition-colors"
               >
                 {t("sync_modal.apply_sync")}
-              </button>
-            )}
-            {categorySections.length === 0 && (
-              <button
-                type="button"
-                onClick={onClose}
-                className="font-heading font-semibold text-sm uppercase tracking-wider bg-terracotta hover:bg-terracotta/90 text-cream rounded-full px-5 py-2 transition-colors"
-              >
-                {t("cancel")}
               </button>
             )}
           </div>

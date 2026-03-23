@@ -23,7 +23,7 @@ export function SyncBanner() {
         {t("sync_banner.message")}
       </p>
       <Link
-        to="/dashboard"
+        to="/dashboard?sync=1"
         className="font-heading font-semibold text-sm text-amber-900 underline underline-offset-2 hover:text-amber-700 shrink-0"
       >
         {t("sync_banner.action")}
