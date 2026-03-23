@@ -18,8 +18,17 @@ import { objects, project_config, projects, steps, stories } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { deriveStatus } from "~/lib/iiif-types";
 import { Switch } from "~/components/ui/Switch";
-import { Button } from "~/components/ui/Button";
+import { InlineTextField } from "~/components/ui/InlineTextField";
+import { InlineTextArea } from "~/components/ui/InlineTextArea";
 import { IiifViewer } from "~/components/features/objects/IiifViewer";
+import { CommitAndBuildModal } from "~/components/features/objects/CommitAndBuildModal";
+import { decrypt } from "~/lib/crypto.server";
+import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server";
+import { commitFilesToRepo, StaleHeadError, dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
+import type { WorkflowRun } from "~/lib/commit.server";
+import { getInstallationToken } from "~/lib/github-app.server";
+import { serializeObjectsCsv } from "~/lib/csv-export.server";
+import { asc } from "drizzle-orm";
 
 export const handle = { i18n: ["common", "objects"] };
 
@@ -124,7 +133,7 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
 // Action
 // ---------------------------------------------------------------------------
 
-export async function action({ request, context }: Route.ActionArgs) {
+export async function action({ request, params, context }: Route.ActionArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
 
@@ -134,7 +143,53 @@ export async function action({ request, context }: Route.ActionArgs) {
   const intent = formData.get("intent") as string;
 
   switch (intent) {
+    case "autosave-object-field": {
+      const entityId = Number(formData.get("entityId"));
+      const field = formData.get("field") as string;
+      const value = (formData.get("value") as string | null)?.trim() || null;
+
+      const allowedFields = [
+        "title", "creator", "description", "period", "year",
+        "object_type", "subjects", "source", "credit", "alt_text",
+      ];
+
+      if (!allowedFields.includes(field)) {
+        return { ok: false, error: "invalid_field" };
+      }
+
+      // Title is required — don't save empty
+      if (field === "title" && !value) {
+        return { ok: false, error: "title_required" };
+      }
+
+      await db
+        .update(objects)
+        .set({
+          [field]: value,
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(objects.id, entityId));
+
+      return { ok: true, intent: "autosave-object-field" };
+    }
+
+    case "autosave-object-featured": {
+      const entityId = Number(formData.get("entityId"));
+      const featured = formData.get("value") === "true";
+
+      await db
+        .update(objects)
+        .set({
+          featured,
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(objects.id, entityId));
+
+      return { ok: true, intent: "autosave-object-featured" };
+    }
+
     case "update-object": {
+      // Legacy — kept for backward compatibility
       const objectDbId = Number(formData.get("objectDbId"));
       const title = (formData.get("title") as string | null)?.trim() || null;
 
@@ -157,6 +212,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             (formData.get("subjects") as string | null)?.trim() || null,
           source: (formData.get("source") as string | null)?.trim() || null,
           credit: (formData.get("credit") as string | null)?.trim() || null,
+          alt_text: (formData.get("alt_text") as string | null)?.trim() || null,
           featured: formData.get("featured") === "true",
           updated_at: new Date().toISOString(),
         })
@@ -167,8 +223,194 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     case "delete-object": {
       const objectDbId = Number(formData.get("objectDbId"));
+      const fromRepo = formData.get("fromRepo") === "true";
+
+      // Look up the object to get object_id and source_url
+      const [targetObject] = await db
+        .select()
+        .from(objects)
+        .where(eq(objects.id, objectDbId))
+        .limit(1);
+
+      if (!targetObject) throw redirect("/objects");
+
+      if (fromRepo) {
+        // Delete from repo: remove image folder + update objects.csv + commit
+        const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+        const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+        const sessionActiveId = session.get("activeProjectId") as number | undefined;
+
+        const allProjects = await db
+          .select()
+          .from(projects)
+          .where(eq(projects.user_id, user.id));
+
+        const activeProject =
+          allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
+
+        // Find files to delete in the object's folder
+        const objectFolderPath = `telar-content/objects/${targetObject.object_id}`;
+        const deletions: string[] = [];
+
+        try {
+          const { tree } = await getRepoTree(token, owner, repo);
+          for (const item of tree) {
+            if (item.path?.startsWith(objectFolderPath + "/") && item.type === "blob") {
+              deletions.push(item.path);
+            }
+          }
+        } catch {
+          // If tree fetch fails, we'll just update the CSV without deleting files
+        }
+
+        // Build updated objects.csv without this object
+        const remainingObjects = await db
+          .select()
+          .from(objects)
+          .where(and(
+            eq(objects.project_id, activeProject.id),
+            eq(objects.missing_from_repo, false),
+          ))
+          .orderBy(asc(objects.object_id));
+
+        const filteredObjects = remainingObjects.filter(
+          (o) => o.id !== objectDbId
+        );
+
+        const existingCsv = await getFileContent(
+          token, owner, repo, "telar-content/spreadsheets/objects.csv"
+        );
+        const updatedCsv = serializeObjectsCsv(filteredObjects, existingCsv ?? undefined);
+
+        // Commit: updated CSV + deletions
+        try {
+          const result = await commitFilesToRepo(
+            token, owner, repo, "main",
+            [{ path: "telar-content/spreadsheets/objects.csv", content: updatedCsv }],
+            `Remove ${targetObject.object_id} via Telar Compositor`,
+            deletions.length > 0 ? deletions : undefined,
+          );
+
+          // Update head_sha
+          await db
+            .update(projects)
+            .set({ head_sha: result.newHeadSha, updated_at: new Date().toISOString() })
+            .where(eq(projects.id, activeProject.id));
+        } catch (err) {
+          if (err instanceof StaleHeadError) {
+            return { ok: false, error: "stale_head" };
+          }
+          return { ok: false, error: "delete_failed" };
+        }
+      }
+
+      // Delete from D1
       await db.delete(objects).where(eq(objects.id, objectDbId));
       throw redirect("/objects");
+    }
+
+    case "poll-build": {
+      const runIdParam = formData.get("runId") as string | null;
+      if (!runIdParam) {
+        return { ok: false, intent: "poll-build", error: "missing_run_id" };
+      }
+
+      const sessionStoragePoll = createSessionStorage(env.SESSION_SECRET);
+      const sessionPoll = await sessionStoragePoll.getSession(request.headers.get("Cookie"));
+      const sessionActiveIdPoll = sessionPoll.get("activeProjectId") as number | undefined;
+
+      const allProjectsPoll = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.user_id, user.id));
+
+      if (allProjectsPoll.length === 0) {
+        return { ok: false, intent: "poll-build", error: "no_project" };
+      }
+
+      const activeProjectPoll =
+        allProjectsPoll.find((p) => p.id === Number(sessionActiveIdPoll)) ?? allProjectsPoll[0];
+
+      const tokenPoll = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      const [ownerPoll, repoPoll] = activeProjectPoll.github_repo_full_name.split("/");
+
+      try {
+        const runId = Number(runIdParam);
+        const runRes = await fetch(
+          `https://api.github.com/repos/${ownerPoll}/${repoPoll}/actions/runs/${runId}`,
+          { headers: githubHeaders(tokenPoll) },
+        );
+        if (!runRes.ok) {
+          return { ok: false, intent: "poll-build", error: "poll_failed" };
+        }
+        const run = (await runRes.json()) as WorkflowRun;
+        const jobSteps = await getJobSteps(tokenPoll, ownerPoll, repoPoll, runId);
+        const phases = mapStepsToBuildPhases(jobSteps);
+        return {
+          ok: true,
+          intent: "poll-build",
+          buildStatus: run.status,
+          buildConclusion: run.conclusion,
+          buildUrl: run.html_url,
+          runId: run.id,
+          phases,
+        };
+      } catch {
+        return { ok: false, intent: "poll-build", error: "poll_failed" };
+      }
+    }
+
+    case "dispatch-iiif": {
+      // Dispatch full site build to generate tiles (tiles are deployed via Pages, not git)
+      const sessionStorage3 = createSessionStorage(env.SESSION_SECRET);
+      const session3 = await sessionStorage3.getSession(request.headers.get("Cookie"));
+      const sessionActiveId3 = session3.get("activeProjectId") as number | undefined;
+
+      const allProjects3 = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.user_id, user.id));
+
+      if (allProjects3.length === 0) {
+        return { ok: false, intent: "dispatch-iiif", error: "no_project" };
+      }
+
+      const activeProject3 =
+        allProjects3.find((p) => p.id === Number(sessionActiveId3)) ?? allProjects3[0];
+
+      const token3 = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      const [owner3, repo3] = activeProject3.github_repo_full_name.split("/");
+
+      try {
+        let dispatchToken = token3;
+        try {
+          dispatchToken = await getInstallationToken(
+            env.GITHUB_APP_ID,
+            env.GITHUB_PRIVATE_KEY,
+            activeProject3.installation_id,
+          );
+        } catch {
+          // Fall back to user token
+        }
+        const dispatch = await dispatchWorkflow(
+          dispatchToken, owner3, repo3, "build.yml",
+        );
+        return {
+          ok: true,
+          intent: "dispatch-iiif",
+          runId: dispatch.runId || null,
+          htmlUrl: dispatch.htmlUrl || null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          intent: "dispatch-iiif",
+          error: err instanceof Error ? err.message : "dispatch_failed",
+        };
+      }
     }
 
     default:
@@ -184,10 +426,14 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
   const { object, manifestUrl, infoJsonUrl, isExternal, usedInStories } =
     loaderData;
   const { t } = useTranslation("objects");
-  const fetcher = useFetcher();
   const deleteFetcher = useFetcher();
-  const titleInputRef = useRef<HTMLInputElement>(null);
+  const dispatchFetcher = useFetcher();
+  const featuredFetcher = useFetcher();
+  const [featured, setFeatured] = useState(object.featured ?? false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [buildModalOpen, setBuildModalOpen] = useState(false);
+  const [dispatchRunId, setDispatchRunId] = useState<number | null>(null);
+  const [dispatchHtmlUrl, setDispatchHtmlUrl] = useState<string | null>(null);
 
   const status = deriveStatus({
     title: object.title,
@@ -195,30 +441,38 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
     missing_from_repo: object.missing_from_repo,
   });
 
-  const isSaving =
-    fetcher.state !== "idle" &&
-    fetcher.formData?.get("intent") === "update-object";
+  const isDeleting = deleteFetcher.state !== "idle";
 
-  const actionError =
-    fetcher.data &&
-    typeof fetcher.data === "object" &&
-    "error" in fetcher.data
-      ? (fetcher.data as { error: string }).error
-      : null;
+  const isDispatching = dispatchFetcher.state !== "idle";
 
-  const titleError = actionError === "title_required";
+  // Handle dispatch result — open build modal with run ID
+  const dispatchData = dispatchFetcher.data as
+    | { ok: true; intent: "dispatch-iiif"; runId: number | null; htmlUrl: string | null }
+    | { ok: false; intent: "dispatch-iiif"; error: string }
+    | null
+    | undefined;
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const titleValue = (
-      form.elements.namedItem("title") as HTMLInputElement
-    )?.value?.trim();
-    if (!titleValue) {
-      titleInputRef.current?.focus();
-      return;
+  useEffect(() => {
+    if (dispatchData?.ok && dispatchData.intent === "dispatch-iiif") {
+      setDispatchRunId(dispatchData.runId);
+      setDispatchHtmlUrl(dispatchData.htmlUrl);
+      setBuildModalOpen(true);
     }
-    fetcher.submit(new FormData(form), { method: "post" });
+  }, [dispatchData]);
+
+  function handleGenerateTiles() {
+    dispatchFetcher.submit(
+      { intent: "dispatch-iiif" },
+      { method: "post" },
+    );
+  }
+
+  function handleFeaturedToggle(checked: boolean) {
+    setFeatured(checked);
+    featuredFetcher.submit(
+      { intent: "autosave-object-featured", entityId: String(object.id), value: String(checked) },
+      { method: "post" },
+    );
   }
 
   return (
@@ -233,9 +487,17 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
           {t("breadcrumb_objects")}
         </Link>
         <span className="text-gray-300">/</span>
-        <span className="font-heading text-sm font-semibold text-charcoal truncate">
+        <span className="font-heading text-sm font-semibold text-charcoal truncate flex-1">
           {object.title || object.object_id}
         </span>
+        <button
+          type="button"
+          onClick={() => setShowDeleteConfirm(true)}
+          className="p-2 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+          title={t("delete_button")}
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Two-column layout */}
@@ -248,23 +510,19 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
             isSelfHosted={!isExternal}
             alt={object.title ?? object.object_id}
             className="w-full h-full"
+            onGenerateTiles={!isExternal ? handleGenerateTiles : undefined}
+            isGenerating={isDispatching}
           />
         </div>
 
-        {/* Right — metadata form */}
-        <div className="w-2/5 overflow-y-auto bg-white rounded-xl border border-gray-100 flex flex-col">
-          <div className="flex-1 p-6">
-            <fetcher.Form method="post" onSubmit={handleSubmit} id="edit-object-form">
-              <input type="hidden" name="intent" value="update-object" />
-              <input type="hidden" name="objectDbId" value={object.id} />
-
+        {/* Right — metadata editor */}
+        <div className="w-2/5 overflow-y-auto bg-white rounded-xl border border-gray-100">
+          <div className="p-6 space-y-4">
               {/* Status badge */}
-              <div className="mb-4">
-                <StatusBadge status={status} />
-              </div>
+              <StatusBadge status={status} />
 
               {/* Object ID — read-only */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-object-id">Object ID</FieldLabel>
                 <p
                   id="field-object-id"
@@ -276,150 +534,153 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
               </div>
 
               {/* Title */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-title" required>
                   {t("field_title")}
                 </FieldLabel>
-                <input
-                  ref={titleInputRef}
-                  id="field-title"
-                  name="title"
-                  type="text"
-                  required
-                  defaultValue={object.title ?? ""}
-                  className={titleError ? inputError : inputNormal}
-                  key={object.id}
+                <p className="font-body text-xs text-gray-400 mb-1">{t("field_title_help")}</p>
+                <InlineTextField
+                  initialValue={object.title ?? ""}
+                  fieldName="title"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  inputClassName="font-body text-sm text-charcoal"
+                  bordered
                 />
-                {titleError && (
-                  <p className="mt-1 text-xs text-red-500 font-body">
-                    {t("field_title_required")}
-                  </p>
-                )}
               </div>
 
               {/* Description */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-description">
                   {t("field_description")}
                 </FieldLabel>
-                <textarea
-                  id="field-description"
-                  name="description"
+                <p className="font-body text-xs text-gray-400 mb-1">{t("field_description_help")}</p>
+                <InlineTextArea
+                  initialValue={object.description ?? ""}
+                  fieldName="description"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  inputClassName="font-body text-sm text-charcoal"
                   rows={3}
-                  defaultValue={object.description ?? ""}
-                  className={`${inputNormal} resize-none`}
-                  key={object.id}
+                  bordered
                 />
               </div>
 
               {/* Creator */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-creator">
                   {t("field_creator")}
                 </FieldLabel>
-                <input
-                  id="field-creator"
-                  name="creator"
-                  type="text"
-                  defaultValue={object.creator ?? ""}
-                  className={inputNormal}
-                  key={object.id}
+                <p className="font-body text-xs text-gray-400 mb-1">{t("field_creator_help")}</p>
+                <InlineTextField
+                  initialValue={object.creator ?? ""}
+                  fieldName="creator"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  inputClassName="font-body text-sm text-charcoal"
+                  bordered
                 />
               </div>
 
               {/* Period + Year */}
-              <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="grid grid-cols-2 gap-3 items-end">
                 <div>
                   <FieldLabel htmlFor="field-period">
                     {t("field_period")}
                   </FieldLabel>
-                  <input
-                    id="field-period"
-                    name="period"
-                    type="text"
-                    defaultValue={object.period ?? ""}
-                    className={inputNormal}
-                    key={object.id}
+                  <p className="font-body text-xs text-gray-400 mb-1">{t("field_period_help")}</p>
+                  <InlineTextField
+                    initialValue={object.period ?? ""}
+                    fieldName="period"
+                    entityId={object.id}
+                    intent="autosave-object-field"
+                    inputClassName="font-body text-sm text-charcoal"
+                    bordered
                   />
                 </div>
                 <div>
                   <FieldLabel htmlFor="field-year">
                     {t("field_year")}
                   </FieldLabel>
-                  <input
-                    id="field-year"
-                    name="year"
-                    type="text"
-                    defaultValue={object.year ?? ""}
-                    className={inputNormal}
-                    key={object.id}
+                  <p className="font-body text-xs text-gray-400 mb-1">{t("field_year_help")}</p>
+                  <InlineTextField
+                    initialValue={object.year ?? ""}
+                    fieldName="year"
+                    entityId={object.id}
+                    intent="autosave-object-field"
+                    inputClassName="font-body text-sm text-charcoal"
+                    bordered
                   />
                 </div>
               </div>
 
               {/* Object Type */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-object-type">
                   {t("field_object_type")}
                 </FieldLabel>
-                <input
-                  id="field-object-type"
-                  name="object_type"
-                  type="text"
-                  defaultValue={object.object_type ?? ""}
-                  className={inputNormal}
-                  key={object.id}
+                <p className="font-body text-xs text-gray-400 mb-1">{t("field_object_type_help")}</p>
+                <InlineTextField
+                  initialValue={object.object_type ?? ""}
+                  fieldName="object_type"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  inputClassName="font-body text-sm text-charcoal"
+                  bordered
                 />
               </div>
 
               {/* Subjects */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-subjects">
                   {t("field_subjects")}
                 </FieldLabel>
-                <input
-                  id="field-subjects"
-                  name="subjects"
-                  type="text"
-                  defaultValue={object.subjects ?? ""}
-                  className={inputNormal}
-                  key={object.id}
+                <p className="font-body text-xs text-gray-400 mb-1">{t("field_subjects_help")}</p>
+                <InlineTextField
+                  initialValue={object.subjects ?? ""}
+                  fieldName="subjects"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  inputClassName="font-body text-sm text-charcoal"
+                  bordered
                 />
               </div>
 
               {/* Source */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-source">
                   {t("field_source")}
                 </FieldLabel>
-                <input
-                  id="field-source"
-                  name="source"
-                  type="text"
-                  defaultValue={object.source ?? ""}
-                  className={inputNormal}
-                  key={object.id}
+                <p className="font-body text-xs text-gray-400 mb-1">{t("field_source_help")}</p>
+                <InlineTextField
+                  initialValue={object.source ?? ""}
+                  fieldName="source"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  inputClassName="font-body text-sm text-charcoal"
+                  bordered
                 />
               </div>
 
               {/* Credit */}
-              <div className="mb-4">
+              <div>
                 <FieldLabel htmlFor="field-credit">
                   {t("field_credit")}
                 </FieldLabel>
-                <input
-                  id="field-credit"
-                  name="credit"
-                  type="text"
-                  defaultValue={object.credit ?? ""}
-                  className={inputNormal}
-                  key={object.id}
+                <p className="font-body text-xs text-gray-400 mb-1">{t("field_credit_help")}</p>
+                <InlineTextField
+                  initialValue={object.credit ?? ""}
+                  fieldName="credit"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  inputClassName="font-body text-sm text-charcoal"
+                  bordered
                 />
               </div>
 
               {/* Source URL — read-only */}
               {object.source_url && (
-                <div className="mb-4">
+                <div>
                   <FieldLabel htmlFor="field-source-url">
                     {t("field_source_url")}
                   </FieldLabel>
@@ -434,19 +695,48 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
               )}
 
               {/* Featured toggle */}
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between">
                 <FieldLabel htmlFor="field-featured">
                   {t("field_featured")}
                 </FieldLabel>
-                <FeaturedToggle defaultChecked={object.featured ?? false} />
+                <Switch
+                  checked={featured}
+                  onChange={handleFeaturedToggle}
+                  label={t("mark_featured")}
+                />
+              </div>
+
+              {/* Accessibility section */}
+              <hr className="border-gray-100 my-4" />
+              <h3 className="font-heading font-semibold text-sm text-charcoal mb-1">
+                {t("section_accessibility")}
+              </h3>
+              <p className="font-body text-xs text-gray-500 mb-3">
+                {t("field_alt_text_help")}
+              </p>
+              <div>
+                <FieldLabel htmlFor="field-alt-text">
+                  {t("field_alt_text")}
+                </FieldLabel>
+                <InlineTextArea
+                  initialValue={object.alt_text ?? ""}
+                  fieldName="alt_text"
+                  entityId={object.id}
+                  intent="autosave-object-field"
+                  placeholder={t("field_alt_text_placeholder")}
+                  inputClassName="font-body text-sm text-gray-500"
+                  rows={3}
+                  bordered
+                />
               </div>
 
               {/* Story usage */}
               {usedInStories.length > 0 && (
-                <div className="mb-4">
-                  <p className="font-body text-xs font-medium text-gray-600 mb-1">
+                <div>
+                  <hr className="border-gray-100 my-4" />
+                  <h3 className="font-heading font-semibold text-sm text-charcoal mb-1">
                     {t("used_in_stories")}
-                  </p>
+                  </h3>
                   <ul className="space-y-1">
                     {usedInStories.map((ref: { storyTitle: string | null; stepNumber: number }, i: number) => (
                       <li
@@ -459,39 +749,6 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                   </ul>
                 </div>
               )}
-            </fetcher.Form>
-          </div>
-
-          {/* Sticky action bar */}
-          <div className="sticky bottom-0 bg-white border-t border-gray-100 px-6 py-3 flex gap-3 shrink-0">
-            <Button
-              type="submit"
-              form="edit-object-form"
-              variant="primary"
-              loading={isSaving}
-              disabled={isSaving}
-              className="flex-1"
-            >
-              {t("save_button")}
-            </Button>
-            <Link
-              to="/objects"
-              className="
-                flex-1 text-center font-heading font-semibold text-sm uppercase tracking-wider
-                border border-gray-200 text-charcoal rounded-full px-6 py-2.5
-                hover:bg-cream transition-colors
-              "
-            >
-              {t("discard_button")}
-            </Link>
-            <button
-              type="button"
-              onClick={() => setShowDeleteConfirm(true)}
-              className="p-2.5 rounded-full border border-red-200 text-red-500 hover:bg-red-50 transition-colors"
-              title={t("delete_button")}
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
           </div>
 
           {/* Delete confirmation modal */}
@@ -504,30 +761,72 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-sm text-gray-600 mb-5">
                   {t("delete_description", { title: object.title || object.object_id })}
                 </p>
-                <div className="flex gap-3 justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-6 py-2.5 hover:bg-cream transition-colors"
-                  >
-                    {t("delete_cancel")}
-                  </button>
+                <div className="flex flex-col gap-2">
+                  {/* Remove from compositor only */}
                   <deleteFetcher.Form method="post">
                     <input type="hidden" name="intent" value="delete-object" />
                     <input type="hidden" name="objectDbId" value={object.id} />
                     <button
                       type="submit"
-                      className="font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors"
+                      disabled={isDeleting}
+                      className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-red-300 text-red-700 rounded-full px-6 py-2.5 hover:bg-red-50 transition-colors disabled:opacity-50"
                     >
-                      {t("delete_confirm")}
+                      {t("delete_remove_compositor")}
                     </button>
                   </deleteFetcher.Form>
+                  {/* Delete from repo — only for self-hosted objects */}
+                  {!isExternal && (
+                    <deleteFetcher.Form method="post">
+                      <input type="hidden" name="intent" value="delete-object" />
+                      <input type="hidden" name="objectDbId" value={object.id} />
+                      <input type="hidden" name="fromRepo" value="true" />
+                      <button
+                        type="submit"
+                        disabled={isDeleting}
+                        className="w-full font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors disabled:opacity-50"
+                      >
+                        {t("delete_remove_repo")}
+                      </button>
+                    </deleteFetcher.Form>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    disabled={isDeleting}
+                    className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-6 py-2.5 hover:bg-cream transition-colors disabled:opacity-50"
+                  >
+                    {t("delete_cancel")}
+                  </button>
                 </div>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Build progress modal (tile generation) */}
+      <CommitAndBuildModal
+        open={buildModalOpen}
+        sheetsEnabled={false}
+        urlMismatch={null}
+        pendingObjects={[]}
+        skipCommit={true}
+        dispatchRunId={dispatchRunId}
+        dispatchHtmlUrl={dispatchHtmlUrl}
+        onClose={() => setBuildModalOpen(false)}
+        onBuildSuccess={() => {
+          setBuildModalOpen(false);
+          setDispatchRunId(null);
+          setDispatchHtmlUrl(null);
+          // Reload to pick up tile availability
+          window.location.reload();
+        }}
+        onBuildFailed={() => {
+          setBuildModalOpen(false);
+          setDispatchRunId(null);
+          setDispatchHtmlUrl(null);
+        }}
+      />
     </div>
   );
 }
@@ -536,10 +835,6 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
 // Helpers (local to this route)
 // ---------------------------------------------------------------------------
 
-const inputBase =
-  "w-full font-body text-sm text-charcoal border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-periwinkle focus:border-transparent transition-colors";
-const inputNormal = `${inputBase} border-gray-200`;
-const inputError = `${inputBase} border-red-400 ring-1 ring-red-400`;
 
 function FieldLabel({
   htmlFor,
@@ -606,22 +901,3 @@ function StatusBadge({
   );
 }
 
-function FeaturedToggle({ defaultChecked }: { defaultChecked: boolean }) {
-  const { t } = useTranslation("objects");
-  const [checked, setChecked] = useState(defaultChecked);
-
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="hidden"
-        name="featured"
-        value={checked ? "true" : "false"}
-      />
-      <Switch
-        checked={checked}
-        onChange={setChecked}
-        label={checked ? t("unmark_featured") : t("mark_featured")}
-      />
-    </div>
-  );
-}

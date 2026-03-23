@@ -62,6 +62,10 @@ interface Props {
   onClose: () => void;
   onBuildSuccess: () => void;
   onBuildFailed: () => void;
+  // For the upload flow: skip commit step, poll by run ID directly
+  skipCommit?: boolean;
+  dispatchRunId?: number | null;
+  dispatchHtmlUrl?: string | null;
 }
 
 type CommitData =
@@ -137,7 +141,7 @@ function connectorClass(phase: BuildPhaseStatus): string {
 // Component
 // ---------------------------------------------------------------------------
 
-export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingObjects, onClose, onBuildSuccess, onBuildFailed }: Props) {
+export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingObjects, onClose, onBuildSuccess, onBuildFailed, skipCommit, dispatchRunId, dispatchHtmlUrl }: Props) {
   const { t } = useTranslation("objects");
   const commitFetcher = useFetcher();
   const pollFetcher = useFetcher();
@@ -151,6 +155,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   const [runId, setRunId] = useState<number | null>(null);
   const [phases, setPhases] = useState<BuildPhaseStatus[] | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
+  const [buildSkipped, setBuildSkipped] = useState(false);
 
   const commitData = commitFetcher.data as CommitData;
   const pollData = pollFetcher.data as PollData;
@@ -158,14 +163,36 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   // Reset state when modal opens
   useEffect(() => {
     if (open) {
-      setStep("confirm");
-      setCommitSha(null);
       setBuildConclusion(null);
-      setBuildUrl(null);
-      setRunId(null);
       setPhases(null);
       setCommitError(null);
+      setBuildSkipped(false);
+
+      if (skipCommit) {
+        // Upload flow: image already committed, workflow already dispatched.
+        // If we have a run ID, jump straight to building and initialise run state.
+        // If dispatch failed (no run ID), jump to inserting to persist the pending object.
+        setCommitSha(null);
+        if (dispatchRunId) {
+          setStep("building");
+          setRunId(dispatchRunId);
+          setBuildUrl(dispatchHtmlUrl ?? null);
+        } else {
+          // Dispatch failed but commit succeeded — skip build tracking, insert directly.
+          setBuildSkipped(true);
+          setStep("inserting");
+          setRunId(null);
+          setBuildUrl(null);
+        }
+      } else {
+        // Normal commit flow: start at confirm step
+        setStep("confirm");
+        setCommitSha(null);
+        setBuildUrl(null);
+        setRunId(null);
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Process commit result
@@ -187,14 +214,27 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
     if (pollData.runId != null) setRunId(pollData.runId);
     if (pollData.phases) setPhases(pollData.phases);
     if (pollData.buildStatus === "completed") {
+      // Mark any still-queued phases as skipped — they weren't part of this workflow
+      if (pollData.phases) {
+        setPhases(pollData.phases.map((p) =>
+          p.status === "queued"
+            ? { ...p, status: "completed" as const, conclusion: "skipped" }
+            : p
+        ));
+      }
       setBuildConclusion(pollData.buildConclusion);
       if (pollData.buildConclusion === "success") {
-        // Build succeeded — insert pending objects into D1
-        setStep("inserting");
-        insertFetcher.submit(
-          { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
-          { method: "post" }
-        );
+        if (pendingObjects.length > 0) {
+          // Build succeeded — insert pending objects into D1
+          setStep("inserting");
+          insertFetcher.submit(
+            { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
+            { method: "post" }
+          );
+        } else {
+          // No pending objects (e.g. tile generation only) — go straight to success
+          setStep("success");
+        }
       } else {
         setStep("failed");
       }
@@ -210,17 +250,48 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
     }
   }, [insertFetcher.data]);
 
-  // Set up polling when building
+  // When skipCommit and dispatch failed (step jumps directly to inserting on open),
+  // trigger D1 insert immediately so pending objects are persisted even without a build.
+  const hasTriggeredInsertRef = useRef(false);
   useEffect(() => {
-    if (step !== "building" || !commitSha) {
+    if (step === "inserting" && skipCommit && !dispatchRunId && !hasTriggeredInsertRef.current) {
+      hasTriggeredInsertRef.current = true;
+      insertFetcher.submit(
+        { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
+        { method: "post" }
+      );
+    }
+    if (!open) {
+      hasTriggeredInsertRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, open]);
+
+  // Set up polling when building.
+  // In the normal flow, polling requires commitSha (for SHA-based run discovery).
+  // In the upload flow (skipCommit), polling uses dispatchRunId directly — no SHA needed.
+  useEffect(() => {
+    const canPollBySha = step === "building" && !!commitSha;
+    const canPollByRunId = step === "building" && !!skipCommit && !!runId;
+
+    if (!canPollBySha && !canPollByRunId) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       return;
     }
 
     function doPoll() {
-      const formData: Record<string, string> = { intent: "poll-build", sha: commitSha! };
-      if (runId != null) formData.runId = String(runId);
-      pollFetcher.submit(formData, { method: "post" });
+      if (skipCommit && runId != null) {
+        // Upload flow: poll by run ID directly — no SHA needed
+        pollFetcher.submit(
+          { intent: "poll-build", runId: String(runId) },
+          { method: "post" }
+        );
+      } else {
+        // Normal commit flow: poll by SHA, optionally with known run ID
+        const formData: Record<string, string> = { intent: "poll-build", sha: commitSha! };
+        if (runId != null) formData.runId = String(runId);
+        pollFetcher.submit(formData, { method: "post" });
+      }
     }
 
     // Fire immediately
@@ -233,7 +304,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, commitSha, runId]);
+  }, [step, commitSha, runId, skipCommit]);
 
   // Clean up interval on unmount
   useEffect(() => {
@@ -403,8 +474,13 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
             <div className="flex flex-col items-center gap-3 py-4 mb-4">
               <CheckCircle2 className="w-12 h-12 text-green-500" />
               <h3 className="font-heading font-semibold text-lg text-charcoal">
-                {t("buildSuccess")}
+                {buildSkipped ? t("objectSaved") : t("buildSuccess")}
               </h3>
+              {buildSkipped && (
+                <p className="font-body text-sm text-gray-500 text-center">
+                  {t("objectSavedHint")}
+                </p>
+              )}
             </div>
 
             <div className="flex items-center justify-between">
