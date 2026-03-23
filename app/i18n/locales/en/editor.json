@@ -41,13 +41,21 @@
     "untitled": "Untitled Story"
   },
   "title_card": {
+    "title_label": "Story title",
     "title_placeholder": "Story title",
+    "subtitle_label": "Subtitle",
     "subtitle_placeholder": "Subtitle (optional)",
-    "byline_placeholder": "By..."
+    "byline_label": "Byline (optional)",
+    "byline_placeholder": "By...",
+    "story_number": "Story {{number}}"
   },
   "step": {
     "question_placeholder": "Question",
     "answer_placeholder": "Answer",
+    "alt_text_label": "Image description",
+    "alt_text_placeholder": "Describe what is visible in this zoomed view...",
+    "alt_text_section": "Accessibility",
+    "alt_text_help": "Describe what this specific view of your object shows for visitors using screen readers. Good descriptions mention the subject, action, and important details. For example: \"Close-up of the river delta showing trade route annotations and settlement markers.\"",
     "click_to_edit": "Click to edit",
     "title_card_label": "Title card",
     "add_step": "+ Add step",

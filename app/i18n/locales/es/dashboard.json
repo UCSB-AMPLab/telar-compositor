@@ -40,10 +40,15 @@
   "status_bar": {
     "last_synced": "Última sincronización (pull) de GitHub",
     "last_published": "Último envío (push) a GitHub Pages",
+    "synced_short": "Sincronizado",
+    "published_short": "Publicado",
     "unpublished_changes_one": "{{count}} cambio sin publicar",
     "unpublished_changes_other": "{{count}} cambios sin publicar",
     "never": "Nunca",
-    "never_hint": "Edita aquí, luego publica en tu sitio cuando quieras"
+    "never_hint": "Edita aquí, luego publica en tu sitio cuando quieras",
+    "manage_repos": "Cambiar, agregar o eliminar repositorios",
+    "current": "actual",
+    "view_site": "Ver sitio"
   },
   "story_card": {
     "steps_one": "{{count}} paso",
@@ -61,6 +66,12 @@
   "hint": "Arrastra para reordenar — esto controla el orden en tu sitio publicado",
   "new_story_button": "+ Nueva historia",
   "connect_repo_button": "Repositorio GitHub",
+  "sync_status": {
+    "up_to_date": "Al día",
+    "unpublished": "Cambios sin publicar",
+    "out_of_sync": "Desincronizado",
+    "published": "Publicado"
+  },
   "new_story_placeholder": "Título de la historia...",
   "new_story_subtitle_placeholder": "Subtítulo (opcional)",
   "new_story_byline_placeholder": "Firma (opcional)",
@@ -79,9 +90,9 @@
   "story_editor_placeholder": "Editor de historias — próximamente",
   "back_to_dashboard": "Volver al panel",
   "sync_modal": {
-    "title": "Cambios detectados",
-    "confirm_body": "Tu repositorio tiene cambios nuevos. ¿Quieres ver qué cambió?",
-    "check_changes": "Ver qué cambió",
+    "title": "El repositorio ha cambiado",
+    "confirm_body": "Tu repositorio en GitHub se ha actualizado desde la última vez que se sincronizó con el compositor. Revisa los cambios para asegurarte de que nuestra copia de trabajo esté al día con el sitio publicado.",
+    "check_changes": "Revisar cambios",
     "computing": "Comparando cambios...",
     "conflict_warning": "Tienes {{count}} cambio(s) sin publicar. Sincronizar reemplazará tus cambios locales con la versión del repositorio.",
     "sync_anyway": "Sincronizar de todos modos",
@@ -98,6 +109,7 @@
     "applying": "Aplicando cambios...",
     "success": "Sincronización completa",
     "retry": "Intentar de nuevo",
-    "sync_now": "Sincronizar ahora"
+    "sync_now": "Sincronizar ahora",
+    "close": "Cerrar"
   }
 }

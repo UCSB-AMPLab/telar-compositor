@@ -86,3 +86,5 @@
 .cm-md-ul-mark { font-size: 0; }
 .cm-md-ul-mark::before { content: "• "; font-size: 0.875rem; color: #999; }
 .cm-md-ol-mark { color: #999; }
+.cm-md-ul .cm-line,
+.cm-md-ol .cm-line { margin-bottom: 0.125em; }

@@ -41,22 +41,30 @@
     "untitled": "Historia sin título"
   },
   "title_card": {
+    "title_label": "Título de la historia",
     "title_placeholder": "Título de la historia",
+    "subtitle_label": "Subtítulo",
     "subtitle_placeholder": "Subtítulo (opcional)",
-    "byline_placeholder": "Por..."
+    "byline_label": "Firma (opcional)",
+    "byline_placeholder": "Por...",
+    "story_number": "Historia {{number}}"
   },
   "step": {
     "question_placeholder": "Pregunta",
     "answer_placeholder": "Respuesta",
+    "alt_text_label": "Descripción de la imagen",
+    "alt_text_placeholder": "Describe lo que se ve en esta vista ampliada...",
+    "alt_text_section": "Accesibilidad",
+    "alt_text_help": "Describe lo que muestra esta vista específica de tu objeto para quienes usan lectores de pantalla. Una buena descripción menciona el sujeto, la acción y los detalles importantes. Por ejemplo: \"Primer plano del delta del río mostrando anotaciones de rutas comerciales y marcadores de asentamientos.\"",
     "click_to_edit": "Clic para editar",
     "title_card_label": "Portada",
     "add_step": "+ Agregar paso",
     "step_label": "Paso {{number}}"
   },
   "viewer": {
-    "capture_position": "Capturar posicion",
+    "capture_position": "Capturar posición",
     "captured": "Capturada",
-    "no_position": "Sin posicion capturada",
+    "no_position": "Sin posición capturada",
     "reset_position": "Restablecer",
     "step_indicator": "Paso {{current}} de {{total}}",
     "title_card_indicator": "Portada",
@@ -67,8 +75,8 @@
   "object_picker": {
     "title": "Elegir objeto",
     "search_placeholder": "Buscar objetos...",
-    "no_results": "Ningun objeto coincide con tu busqueda",
-    "no_objects": "Aun no hay objetos importados"
+    "no_results": "Ningún objeto coincide con tu búsqueda",
+    "no_objects": "Aún no hay objetos importados"
   },
   "delete_step": {
     "title": "Eliminar paso",

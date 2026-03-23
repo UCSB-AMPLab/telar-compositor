@@ -24,4 +24,3 @@ export const namespaces = [
   "upgrade",
 ] as const;
 
-export type SupportedLanguage = (typeof supportedLanguages)[number];

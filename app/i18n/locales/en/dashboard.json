@@ -40,10 +40,15 @@
   "status_bar": {
     "last_synced": "Last synced (pulled) from GitHub",
     "last_published": "Last sent (pushed) to GitHub Pages",
+    "synced_short": "Synced",
+    "published_short": "Published",
     "unpublished_changes_one": "{{count}} unpublished change",
     "unpublished_changes_other": "{{count}} unpublished changes",
     "never": "Never",
-    "never_hint": "Edit here, then publish to your site when ready"
+    "never_hint": "Edit here, then publish to your site when ready",
+    "manage_repos": "Switch, add, or remove GitHub Repos",
+    "current": "current",
+    "view_site": "View site"
   },
   "story_card": {
     "steps_one": "{{count}} step",
@@ -61,6 +66,11 @@
   "hint": "Drag to reorder — this controls the order on your published site",
   "new_story_button": "+ New Story",
   "connect_repo_button": "GitHub Repo",
+  "sync_status": {
+    "up_to_date": "Up to date",
+    "unpublished": "Unpublished changes",
+    "out_of_sync": "Out of sync"
+  },
   "new_story_placeholder": "Story title...",
   "new_story_subtitle_placeholder": "Subtitle (optional)",
   "new_story_byline_placeholder": "Byline (optional)",
@@ -79,9 +89,9 @@
   "story_editor_placeholder": "Story Editor — Coming in Phase 5",
   "back_to_dashboard": "Back to Dashboard",
   "sync_modal": {
-    "title": "Changes detected",
-    "confirm_body": "Your repository has new changes. Would you like to see what changed?",
-    "check_changes": "Check what changed",
+    "title": "Repository has changed",
+    "confirm_body": "Your GitHub repository has been updated since the last time it was synced with the compositor. Review what changed to make sure our working copy stays in sync with the published site.",
+    "check_changes": "Review changes",
     "computing": "Comparing changes...",
     "conflict_warning": "You have {{count}} unpublished change(s). Syncing will overwrite them with the repository version.",
     "sync_anyway": "Sync anyway",
@@ -98,6 +108,7 @@
     "applying": "Applying changes...",
     "success": "Sync complete",
     "retry": "Try again",
-    "sync_now": "Sync now"
+    "sync_now": "Sync now",
+    "close": "Close"
   }
 }

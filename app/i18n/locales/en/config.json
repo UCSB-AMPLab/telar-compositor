@@ -15,7 +15,8 @@
       "field_demo_content_help": "Show sample stories and objects for first-time visitors.",
       "field_theme": "Theme",
       "field_theme_help": "Choose a color theme for your site.",
-      "field_logo": "Logo URL",
+      "refresh_themes": "Refresh themes from repository",
+      "field_logo": "Logo URL (optional)",
       "field_logo_help": "URL to your site logo image.",
       "field_language": "Language",
       "field_language_help": "Primary language for your site interface."

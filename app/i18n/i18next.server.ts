@@ -20,7 +20,7 @@ export const localeCookieConfig = {
 
 export const localeCookie = createCookie("locale", localeCookieConfig);
 
-export const i18nServer = new RemixI18Next({
+const i18nServer = new RemixI18Next({
   detection: {
     supportedLanguages: [...supportedLanguages],
     fallbackLanguage,

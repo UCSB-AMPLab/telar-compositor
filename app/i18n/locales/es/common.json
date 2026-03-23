@@ -21,7 +21,7 @@
     "publish": "Publicar"
   },
   "sync_banner": {
-    "message": "Tu sitio fue actualizado fuera del compositor. Sincroniza para obtener los últimos cambios.",
-    "action": "Sincronizar ahora"
+    "message": "Tu repositorio en GitHub ha cambiado desde la última sincronización. Revisa los cambios para mantener actualizada la copia de trabajo del compositor.",
+    "action": "Revisar cambios"
   }
 }
