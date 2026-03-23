@@ -1,7 +1,8 @@
 /**
- * Button component — primary and control variants.
+ * Button component — primary, secondary, and control variants.
  *
  * Primary: periwinkle pill button for main CTAs.
+ * Secondary: outlined pill button for back/cancel actions.
  * Control: bordered control button for editor toolbar actions.
  */
 
@@ -9,7 +10,7 @@ import { Loader2 } from "lucide-react";
 import type { ButtonHTMLAttributes } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "control";
+  variant?: "primary" | "secondary" | "control";
   loading?: boolean;
   className?: string;
 }
@@ -28,6 +29,8 @@ export function Button({
   const variants: Record<string, string> = {
     primary:
       "bg-periwinkle hover:bg-periwinkle-hover text-charcoal uppercase tracking-wider rounded-full px-6 py-2.5 text-sm",
+    secondary:
+      "bg-white border border-gray-200 text-charcoal uppercase tracking-wider rounded-full px-6 py-2.5 text-sm hover:bg-cream",
     control:
       "bg-white border border-gray-200 text-charcoal text-sm rounded-[0.375rem] px-3 py-1.5 hover:bg-cream",
   };
