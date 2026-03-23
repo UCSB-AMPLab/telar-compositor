@@ -77,6 +77,8 @@ export const objects = sqliteTable("objects", {
   thumbnail: text("thumbnail"),
   image_available: integer("image_available", { mode: "boolean" }).default(false),
   missing_from_repo: integer("missing_from_repo", { mode: "boolean" }).default(false),
+  origin: text("origin").default("repo"),
+  alt_text: text("alt_text"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -104,6 +106,7 @@ export const steps = sqliteTable("steps", {
   page: text("page"),
   question: text("question"),
   answer: text("answer"),
+  alt_text: text("alt_text"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
