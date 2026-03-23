@@ -63,9 +63,7 @@ export function ValidationChecks({ validation, className = "" }: ValidationCheck
                 <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
                 <div>
                   <p className="font-body text-sm text-red-900">
-                    {blocker.code === "stale_head"
-                      ? t("checks.stale_head")
-                      : blocker.message}
+                    {t(`checks.${blocker.code}`, blocker.params ?? {})}
                   </p>
                   {blocker.code === "stale_head" && (
                     <Link
@@ -94,7 +92,9 @@ export function ValidationChecks({ validation, className = "" }: ValidationCheck
                 className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3"
               >
                 <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                <p className="font-body text-sm text-amber-900">{warning.message}</p>
+                <p className="font-body text-sm text-amber-900">
+                  {t(`checks.${warning.code}`, warning.params ?? {})}
+                </p>
               </div>
             ))}
           </div>

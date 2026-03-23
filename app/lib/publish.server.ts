@@ -60,9 +60,16 @@ export interface ChangeSummary {
   landing: { changed: boolean };
 }
 
+export interface ValidationItem {
+  code: string;
+  message: string;
+  entityId?: string;
+  params?: Record<string, string>;
+}
+
 export interface ValidationResult {
-  blockers: { code: string; message: string }[];
-  warnings: { code: string; message: string; entityId?: string }[];
+  blockers: ValidationItem[];
+  warnings: ValidationItem[];
 }
 
 /** Input state used for computing change summaries */
@@ -571,8 +578,7 @@ export function runPrePublishValidation(params: {
   if (params.headSha !== params.currentRepoHead) {
     blockers.push({
       code: "stale_head",
-      message:
-        "The repository has changed since your last sync. Re-sync before publishing.",
+      message: "stale_head",
     });
   }
 
@@ -581,8 +587,9 @@ export function runPrePublishValidation(params: {
     if (!obj.title || obj.title.trim() === "") {
       warnings.push({
         code: "object_no_title",
-        message: `Object "${obj.object_id}" has no title.`,
+        message: "object_no_title",
         entityId: obj.object_id,
+        params: { id: obj.object_id },
       });
     }
   }
@@ -600,8 +607,9 @@ export function runPrePublishValidation(params: {
     if (step.object_id && step.x == null && step.y == null && step.zoom == null) {
       warnings.push({
         code: "step_no_position",
-        message: `Step ${step.step_number} has an object but no viewer position.`,
+        message: "step_no_position",
         entityId: String(step.id),
+        params: { number: String(step.step_number) },
       });
     }
   }

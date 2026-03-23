@@ -45,7 +45,25 @@
     "stale_head": "Your site's repository has changed since you last synced. Please re-sync before publishing.",
     "stale_head_action": "Go to Dashboard to re-sync",
     "object_no_title": "Object \"{{id}}\" has no title",
-    "step_no_position": "A step has no viewer position recorded"
+    "step_no_position": "Step {{number}} has no viewer position — the published site will show 100% of the image."
+  },
+  "auto_commit": {
+    "add_stories_one": "add {{count}} story",
+    "add_stories_other": "add {{count}} stories",
+    "remove_stories_one": "remove {{count}} story",
+    "remove_stories_other": "remove {{count}} stories",
+    "add_objects_one": "add {{count}} object",
+    "add_objects_other": "add {{count}} objects",
+    "remove_objects_one": "remove {{count}} object",
+    "remove_objects_other": "remove {{count}} objects",
+    "update_settings": "update site settings",
+    "update_homepage": "update homepage",
+    "default_headline": "Publish site",
+    "new_story": "+ Story: {{title}}",
+    "deleted_story": "- Story: {{title}}",
+    "new_object": "+ Object: {{title}}",
+    "deleted_object": "- Object: {{title}}",
+    "footer": "Published via Telar Compositor"
   },
   "commit": {
     "heading": "Write a commit message",

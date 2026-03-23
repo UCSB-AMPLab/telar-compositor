@@ -45,7 +45,25 @@
     "stale_head": "El repositorio de tu sitio cambió desde la última sincronización. Sincroniza de nuevo antes de publicar.",
     "stale_head_action": "Ir al panel para sincronizar",
     "object_no_title": "El objeto \"{{id}}\" no tiene título",
-    "step_no_position": "Un paso no tiene posición de vista registrada"
+    "step_no_position": "El paso {{number}} no tiene posición de vista — el sitio publicado mostrará el 100% de la imagen."
+  },
+  "auto_commit": {
+    "add_stories_one": "agregar {{count}} historia",
+    "add_stories_other": "agregar {{count}} historias",
+    "remove_stories_one": "eliminar {{count}} historia",
+    "remove_stories_other": "eliminar {{count}} historias",
+    "add_objects_one": "agregar {{count}} objeto",
+    "add_objects_other": "agregar {{count}} objetos",
+    "remove_objects_one": "eliminar {{count}} objeto",
+    "remove_objects_other": "eliminar {{count}} objetos",
+    "update_settings": "actualizar configuración del sitio",
+    "update_homepage": "actualizar página de inicio",
+    "default_headline": "Publicar sitio",
+    "new_story": "+ Historia: {{title}}",
+    "deleted_story": "- Historia: {{title}}",
+    "new_object": "+ Objeto: {{title}}",
+    "deleted_object": "- Objeto: {{title}}",
+    "footer": "Publicado con Telar Compositor"
   },
   "commit": {
     "heading": "Escribe un mensaje de commit",
