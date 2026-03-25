@@ -24,6 +24,8 @@ import { ViewerColumn } from "~/components/features/editor/ViewerColumn";
 import { LayerPanel } from "~/components/features/editor/LayerPanel";
 import { DeleteStepDialog } from "~/components/features/editor/DeleteStepDialog";
 import { useTranslation } from "react-i18next";
+import { detectMediaType } from "~/lib/media-type";
+import type { MediaType } from "~/lib/media-type";
 
 export const handle = { i18n: ["editor", "common"] };
 
@@ -40,7 +42,7 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
   const allProjects = await db
-    .select({ id: projects.id })
+    .select({ id: projects.id, github_repo_full_name: projects.github_repo_full_name })
     .from(projects)
     .where(eq(projects.user_id, user.id));
 
@@ -112,6 +114,7 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
     layers: storyLayers,
     objects: projectObjects,
     siteBaseUrl,
+    repoFullName: activeProject.github_repo_full_name,
   };
 }
 
@@ -157,7 +160,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       const entityId = Number(formData.get("entityId"));
 
       // Whitelist allowed fields
-      const allowed = ["question", "answer", "alt_text"];
+      const allowed = ["question", "answer", "alt_text", "clip_start", "clip_end", "loop"];
       if (!allowed.includes(field)) return { error: "Invalid field" };
 
       await db
@@ -352,7 +355,7 @@ function resolveIiifUrls(
 // ---------------------------------------------------------------------------
 
 export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
-  const { story, steps: storySteps, layers: storyLayers, objects: projectObjects, siteBaseUrl } =
+  const { story, steps: storySteps, layers: storyLayers, objects: projectObjects, siteBaseUrl, repoFullName } =
     loaderData;
   const { t } = useTranslation("editor");
 
@@ -373,6 +376,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   const deleteStepFetcher = useFetcher();
   const reorderFetcher = useFetcher();
   const layerFetcher = useFetcher();
+  const clipFetcher = useFetcher();
 
   // activeStepIndex 0 = title card; 1+ = storySteps[activeStepIndex - 1]
   // storySteps includes step 0 from DB — we only pass steps with step_number > 0
@@ -407,6 +411,27 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     thumbnail: o.thumbnail as string | null,
     image_available: o.image_available as boolean | null,
   }));
+
+  // ViewerObjects includes source_url so ViewerColumn can detect media type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const viewerObjects = (projectObjects as any[]).map((o) => ({
+    object_id: o.object_id as string,
+    title: o.title as string | null,
+    thumbnail: o.thumbnail as string | null,
+    image_available: o.image_available as boolean | null,
+    source_url: o.source_url as string | null,
+    alt_text: o.alt_text as string | null,
+  }));
+
+  // Pre-compute media type per object for StepSidebar badges
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const objectsByType: Record<string, MediaType> = {};
+  for (const obj of (projectObjects as any[])) {
+    objectsByType[obj.object_id as string] = detectMediaType(
+      obj.source_url as string | null,
+      obj.object_id as string
+    );
+  }
 
   function handleAddStep() {
     addStepFetcher.submit(
@@ -454,6 +479,22 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     if (!targetStep) return;
     changeObjectFetcher.submit(
       { intent: "change-object", stepId: String(targetStep.id), objectId },
+      { method: "post" }
+    );
+  }
+
+  function handleCaptureClip(field: "clip_start" | "clip_end", value: string) {
+    if (!activeStep) return;
+    clipFetcher.submit(
+      { intent: "autosave-step-field", field, value, entityId: String(activeStep.id) },
+      { method: "post" }
+    );
+  }
+
+  function handleToggleLoop(value: string) {
+    if (!activeStep) return;
+    clipFetcher.submit(
+      { intent: "autosave-step-field", field: "loop", value, entityId: String(activeStep.id) },
       { method: "post" }
     );
   }
@@ -541,6 +582,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
           onReorderSteps={handleReorderSteps}
           onAddStep={handleAddStep}
           onDeleteStep={setDeletingStep}
+          objectsByType={objectsByType}
         />
       }
       narrative={
@@ -564,13 +606,16 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
           isStepZero={isStepZero}
           stepDisplayNumber={activeStepIndex}
           totalSteps={totalSteps}
-          objects={pickerObjects}
+          objects={viewerObjects}
           manifestUrl={manifestUrl}
           infoJsonUrl={infoJsonUrl}
           isSelfHosted={isSelfHosted}
           siteBaseUrl={siteBaseUrl}
           onCapturePosition={handleCapturePosition}
           onChangeObject={handleChangeObject}
+          onCaptureClip={handleCaptureClip}
+          onToggleLoop={handleToggleLoop}
+          repoFullName={repoFullName}
         >
           {/* Layer 1 panel */}
           {activeLayer1 && (
