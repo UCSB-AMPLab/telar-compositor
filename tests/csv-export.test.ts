@@ -8,10 +8,10 @@ import {
 import { mapObjectsCsv } from "~/lib/import.server";
 
 const EXPECTED_HEADER =
-  "object_id,title,featured,creator,description,source_url,period,year,object_type,subjects,source,credit,thumbnail";
+  "object_id,title,featured,creator,description,source_url,period,year,medium_genre,subjects,source,credit,thumbnail,alt_text";
 
 const EXPECTED_BILINGUAL_ROW =
-  "id_objeto,titulo,destacado,creador,descripcion,url_fuente,periodo,año,tipo_objeto,temas,fuente,credito,miniatura";
+  "id_objeto,titulo,destacado,creador,descripcion,url_fuente,periodo,año,medio_genero,temas,fuente,credito,miniatura,texto_alt";
 
 function makeObject(overrides: Partial<{
   object_id: string;
@@ -22,11 +22,12 @@ function makeObject(overrides: Partial<{
   source_url: string | null;
   period: string | null;
   year: string | null;
-  object_type: string | null;
+  medium_genre: string | null;
   subjects: string | null;
   source: string | null;
   credit: string | null;
   thumbnail: string | null;
+  alt_text: string | null;
 }> = {}) {
   return {
     object_id: "obj-001",
@@ -37,11 +38,12 @@ function makeObject(overrides: Partial<{
     source_url: null,
     period: null,
     year: null,
-    object_type: null,
+    medium_genre: null,
     subjects: null,
     source: null,
     credit: null,
     thumbnail: null,
+    alt_text: null,
     ...overrides,
   };
 }
@@ -92,8 +94,8 @@ describe("extractCommentRows", () => {
 
   it("preserves comment rows through serializeObjectsCsv round-trip when existingCsv provided", () => {
     const existingCsv = [
-      "object_id,title,featured,creator,description,source_url,period,year,object_type,subjects,source,credit,thumbnail",
-      "id_objeto,titulo,destacado,creador,descripcion,url_fuente,periodo,año,tipo_objeto,temas,fuente,credito,miniatura",
+      "object_id,title,featured,creator,description,source_url,period,year,medium_genre,subjects,source,credit,thumbnail",
+      "id_objeto,titulo,destacado,creador,descripcion,url_fuente,periodo,año,medio_genero,temas,fuente,credito,miniatura",
       "# Example: obj-001",
       "obj-001,Test Object,,,,,,,,,,,",
     ].join("\n");
@@ -108,11 +110,12 @@ describe("extractCommentRows", () => {
         source_url: null,
         period: null,
         year: null,
-        object_type: null,
+        medium_genre: null,
         subjects: null,
         source: null,
         credit: null,
         thumbnail: null,
+        alt_text: null,
       },
     ];
 
@@ -133,11 +136,12 @@ describe("OBJECTS_CSV_COLUMNS", () => {
       "source_url",
       "period",
       "year",
-      "object_type",
+      "medium_genre",
       "subjects",
       "source",
       "credit",
       "thumbnail",
+      "alt_text",
     ]);
   });
 });
@@ -214,7 +218,7 @@ describe("serializeObjectsCsv", () => {
         creator: "Artesano desconocido",
         period: "Período colonial",
         year: "1750",
-        object_type: "Cerámica",
+        medium_genre: "Cerámica",
         subjects: "Arqueología; Época colonial",
         source: "Colección Muñoz",
         credit: "Donado por la familia Peñalosa",
@@ -230,6 +234,41 @@ describe("serializeObjectsCsv", () => {
     expect(dataRow.creator).toBe("Artesano desconocido");
     expect(dataRow.subjects).toBe("Arqueología; Época colonial");
     expect(dataRow.source).toBe("Colección Muñoz");
+  });
+
+  it("Test alt_text: includes alt_text column value", () => {
+    const csv = serializeObjectsCsv([makeObject({ alt_text: "A weaving loom" })]);
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.alt_text).toBe("A weaving loom");
+  });
+
+  it("Test alt_text null: emits empty string for null alt_text", () => {
+    const csv = serializeObjectsCsv([makeObject({ alt_text: null })]);
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.alt_text).toBe("");
+  });
+
+  it("header contains medium_genre (not object_type)", () => {
+    const csv = serializeObjectsCsv([makeObject()]);
+    const header = csv.split("\n")[0];
+    expect(header).toContain("medium_genre");
+    expect(header).not.toContain("object_type");
+  });
+
+  it("bilingual row contains medio_genero (not tipo_objeto)", () => {
+    const csv = serializeObjectsCsv([makeObject()]);
+    const bilingual = csv.split("\n")[1];
+    expect(bilingual).toContain("medio_genero");
+    expect(bilingual).not.toContain("tipo_objeto");
+  });
+
+  it("object row with medium_genre outputs value in medium_genre column", () => {
+    const csv = serializeObjectsCsv([makeObject({ medium_genre: "Photograph" })]);
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.medium_genre).toBe("Photograph");
   });
 
   it("Test 7: descriptions with embedded commas and newlines are properly quoted by PapaParse", () => {

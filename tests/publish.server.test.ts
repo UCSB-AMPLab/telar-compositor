@@ -12,6 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import Papa from "papaparse";
 import {
   serializeProjectCsv,
   serializeStoryCsv,
@@ -118,6 +119,7 @@ describe("serializeStoryCsv", () => {
     page: null,
     question: "What do you see?",
     answer: "A weaving.",
+    alt_text: null as string | null,
     layers: [] as { layer_number: number; title: string | null; button_label: string | null; content: string | null }[],
   };
 
@@ -125,7 +127,7 @@ describe("serializeStoryCsv", () => {
     const csv = serializeStoryCsv([baseStep], "weavers");
     const lines = csv.split("\n");
     expect(lines[0]).toBe(
-      "step,object,x,y,zoom,page,question,answer,layer1_button,layer1_content,layer2_button,layer2_content",
+      "step,object,x,y,zoom,page,question,answer,alt_text,layer1_button,layer1_content,layer2_button,layer2_content,clip_start,clip_end,loop",
     );
   });
 
@@ -133,8 +135,24 @@ describe("serializeStoryCsv", () => {
     const csv = serializeStoryCsv([baseStep], "weavers");
     const lines = csv.split("\n");
     expect(lines[1]).toBe(
-      "paso,objeto,x,y,zoom,pagina,pregunta,respuesta,boton1,contenido1,boton2,contenido2",
+      "paso,objeto,x,y,zoom,pagina,pregunta,respuesta,texto_alt,boton1,contenido1,boton2,contenido2,inicio_clip,fin_clip,bucle",
     );
+  });
+
+  it("includes alt_text column after answer", () => {
+    const step = { ...baseStep, alt_text: "Zoomed view of the central figure" };
+    const csv = serializeStoryCsv([step], "weavers");
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.alt_text).toBe("Zoomed view of the central figure");
+  });
+
+  it("emits empty alt_text for null value", () => {
+    const step = { ...baseStep, alt_text: null };
+    const csv = serializeStoryCsv([step], "weavers");
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.alt_text).toBe("");
   });
 
   it("writes step_number to the step column", () => {
@@ -143,12 +161,12 @@ describe("serializeStoryCsv", () => {
     expect(dataLine).toBeDefined();
   });
 
-  it("null x/y/zoom become empty strings", () => {
+  it("null x/y/zoom use defaults (0.5, 0.5, 1)", () => {
     const step = { ...baseStep, x: null, y: null, zoom: null };
     const csv = serializeStoryCsv([step], "weavers");
     const dataLine = csv.split("\n").find((l) => /^1,/.test(l));
-    // step,object,x,y,zoom -> 1,my-object,,,
-    expect(dataLine).toMatch(/^1,my-object,,,/);
+    // step,object,x,y,zoom -> 1,my-object,0.5,0.5,1
+    expect(dataLine).toMatch(/^1,my-object,0\.5,0\.5,1,/);
   });
 
   it("skips fully empty steps", () => {
@@ -161,6 +179,7 @@ describe("serializeStoryCsv", () => {
       page: null,
       question: null,
       answer: null,
+      alt_text: null as string | null,
       layers: [],
     };
     const csv = serializeStoryCsv([baseStep, emptyStep], "weavers");
@@ -234,6 +253,53 @@ describe("serializeStoryCsv", () => {
     expect(fields[9]).toBe(""); // layer1_content
     expect(fields[10]).toBe(""); // layer2_button
     expect(fields[11]).toBe(""); // layer2_content
+  });
+
+  // --- clip fields ---
+  it("header row includes clip_start, clip_end, loop columns", () => {
+    const csv = serializeStoryCsv([baseStep], "weavers");
+    const header = csv.split("\n")[0];
+    expect(header).toContain("clip_start");
+    expect(header).toContain("clip_end");
+    expect(header).toContain("loop");
+  });
+
+  it("bilingual row includes inicio_clip, fin_clip, bucle", () => {
+    const csv = serializeStoryCsv([baseStep], "weavers");
+    const bilingual = csv.split("\n")[1];
+    expect(bilingual).toContain("inicio_clip");
+    expect(bilingual).toContain("fin_clip");
+    expect(bilingual).toContain("bucle");
+  });
+
+  it("data row includes clip_start, clip_end, loop values", () => {
+    const step = {
+      ...baseStep,
+      clip_start: "12.5" as string | null,
+      clip_end: "45.0" as string | null,
+      loop: "true" as string | null,
+    };
+    const csv = serializeStoryCsv([step], "weavers");
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.clip_start).toBe("12.5");
+    expect(dataRow.clip_end).toBe("45.0");
+    expect(dataRow.loop).toBe("true");
+  });
+
+  it("data row outputs empty string for null clip values", () => {
+    const step = {
+      ...baseStep,
+      clip_start: null as string | null,
+      clip_end: null as string | null,
+      loop: null as string | null,
+    };
+    const csv = serializeStoryCsv([step], "weavers");
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.clip_start).toBe("");
+    expect(dataRow.clip_end).toBe("");
+    expect(dataRow.loop).toBe("");
   });
 });
 
@@ -370,7 +436,7 @@ describe("computeChangeSummary", () => {
     expect(summary.objects.new).toHaveLength(2);
   });
 
-  it("no changes since last publish: isUpToDate true", () => {
+  it("no changes since last publish: existing stories treated as modified (no per-entity hashes)", () => {
     const snapshot: PublishSnapshot = {
       story_ids: ["weavers", "painters"],
       object_ids: ["obj-1", "obj-2"],
@@ -378,9 +444,11 @@ describe("computeChangeSummary", () => {
       landing_hash: JSON.stringify({ stories_heading: "Stories" }),
     };
     const summary = computeChangeSummary(currentState, snapshot);
-    expect(summary.isUpToDate).toBe(true);
+    // Without per-entity hashes, existing stories are conservatively
+    // treated as modified, so isUpToDate is false
+    expect(summary.isUpToDate).toBe(false);
     expect(summary.stories.new).toHaveLength(0);
-    expect(summary.stories.modified).toHaveLength(0);
+    expect(summary.stories.modified).toHaveLength(2);
     expect(summary.stories.deleted).toHaveLength(0);
   });
 

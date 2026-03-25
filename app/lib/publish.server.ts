@@ -180,6 +180,9 @@ const STORY_CSV_COLUMNS = [
   "layer1_content",
   "layer2_button",
   "layer2_content",
+  "clip_start",
+  "clip_end",
+  "loop",
 ] as const;
 
 const STORY_BILINGUAL_ROW: Record<string, string> = {
@@ -196,6 +199,9 @@ const STORY_BILINGUAL_ROW: Record<string, string> = {
   layer1_content: "contenido1",
   layer2_button: "boton2",
   layer2_content: "contenido2",
+  clip_start: "inicio_clip",
+  clip_end: "fin_clip",
+  loop: "bucle",
 };
 
 export interface LayerData {
@@ -215,6 +221,9 @@ export interface StepWithLayers {
   question: string | null;
   answer: string | null;
   alt_text: string | null;
+  clip_start: string | null;
+  clip_end: string | null;
+  loop: string | null;
   layers: LayerData[];
 }
 
@@ -287,6 +296,9 @@ export function serializeStoryCsv(
       layer1_content: layer1Filename,
       layer2_button: layer2HasContent ? (layer2?.button_label ?? "") : "",
       layer2_content: layer2Filename,
+      clip_start: step.clip_start ?? "",
+      clip_end: step.clip_end ?? "",
+      loop: step.loop ?? "",
     };
   });
 
@@ -725,7 +737,7 @@ export async function buildPublishFileSet(
       source_url: o.source_url ?? null,
       period: o.period ?? null,
       year: o.year ?? null,
-      object_type: o.object_type ?? null,
+      medium_genre: o.object_type ?? null, // D1 stores as object_type; CSV exports as medium_genre (v1.0.0)
       subjects: o.subjects ?? null,
       source: o.source ?? null,
       credit: o.credit ?? null,
@@ -775,6 +787,9 @@ export async function buildPublishFileSet(
       question: step.question ?? null,
       answer: step.answer ?? null,
       alt_text: step.alt_text ?? null,
+      clip_start: step.clip_start ?? null,
+      clip_end: step.clip_end ?? null,
+      loop: step.loop ?? null,
       layers: layerRows
         .filter((l) => l.step_id === step.id)
         .map((l) => ({

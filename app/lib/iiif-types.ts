@@ -31,6 +31,8 @@ interface ObjectStatusInput {
   title: string | null | undefined;
   image_available: boolean | null | undefined;
   missing_from_repo: boolean | null | undefined;
+  /** When true, skip the image_available check (video/audio don't need tiles) */
+  skipImageCheck?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +45,7 @@ interface ObjectStatusInput {
  * Priority order:
  *   1. missing_from_repo → "missing_from_repo"
  *   2. title absent      → "no_metadata"
- *   3. image absent      → "image_missing"
+ *   3. image absent (IIIF only) → "image_missing"
  *   4. all present       → "ready"
  */
 export function deriveStatus(
@@ -51,6 +53,6 @@ export function deriveStatus(
 ): "ready" | "no_metadata" | "image_missing" | "missing_from_repo" {
   if (obj.missing_from_repo) return "missing_from_repo";
   if (!obj.title) return "no_metadata";
-  if (!obj.image_available) return "image_missing";
+  if (!obj.skipImageCheck && !obj.image_available) return "image_missing";
   return "ready";
 }

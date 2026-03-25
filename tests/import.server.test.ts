@@ -364,6 +364,57 @@ describe("mapStoryCsv", () => {
     expect(result.steps[0].object_id).toBe("img-001");
     expect(result.steps[1].answer).toBe("A!");
   });
+
+  // --- clip fields ---
+  it("reads clip_start, clip_end, loop from CSV row and includes them in step insert", () => {
+    const rows = [
+      { step: "1", object: "img-001", x: "0.5", y: "0.5", zoom: "1.0", page: "", question: "Q?", answer: "", layer1_button: "", layer1_content: "", layer2_button: "", layer2_content: "", clip_start: "12.5", clip_end: "45.0", loop: "true" },
+    ];
+    const result = mapStoryCsv(rows, 1);
+    expect(result.steps[0].clip_start).toBe("12.5");
+    expect(result.steps[0].clip_end).toBe("45.0");
+    expect(result.steps[0].loop).toBe("true");
+  });
+
+  it("produces undefined clip fields when clip columns are absent from CSV row", () => {
+    const rows = [
+      { step: "1", object: "img-001", x: "0.5", y: "0.5", zoom: "1.0", page: "", question: "Q?", answer: "", layer1_button: "", layer1_content: "", layer2_button: "", layer2_content: "" },
+    ];
+    const result = mapStoryCsv(rows, 1);
+    expect(result.steps[0].clip_start).toBeUndefined();
+    expect(result.steps[0].clip_end).toBeUndefined();
+    expect(result.steps[0].loop).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mapObjectsCsv - medium_genre backwards compatibility
+// ---------------------------------------------------------------------------
+
+describe("mapObjectsCsv - medium_genre backwards compatibility", () => {
+  it("reads medium_genre column and maps to object_type in D1 insert", () => {
+    const rows: Record<string, string>[] = [
+      { object_id: "obj-001", title: "A Photo", featured: "false", medium_genre: "Photograph" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped[0].object_type).toBe("Photograph");
+  });
+
+  it("reads legacy object_type column and maps to object_type in D1 insert", () => {
+    const rows: Record<string, string>[] = [
+      { object_id: "obj-001", title: "A Photo", featured: "false", object_type: "Photograph" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped[0].object_type).toBe("Photograph");
+  });
+
+  it("prefers medium_genre over legacy object_type when both are present", () => {
+    const rows: Record<string, string>[] = [
+      { object_id: "obj-001", title: "A Photo", featured: "false", medium_genre: "Watercolor", object_type: "Painting" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped[0].object_type).toBe("Watercolor");
+  });
 });
 
 // ---------------------------------------------------------------------------

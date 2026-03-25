@@ -1,0 +1,3 @@
+ALTER TABLE steps ADD COLUMN clip_start TEXT;
+ALTER TABLE steps ADD COLUMN clip_end TEXT;
+ALTER TABLE steps ADD COLUMN loop TEXT;

@@ -1,12 +1,12 @@
 /**
  * CSV serialisation utilities for Telar Compositor.
  *
- * Serialises D1 object rows back to the v0.9.0 objects.csv format used by
- * Telar sites. The output includes the standard header row, the bilingual row
- * (required by Telar's CSV parser), and one data row per object.
+ * Serialises D1 object rows back to the framework v1.0.0 objects.csv format
+ * used by Telar sites. The output includes the standard header row, the
+ * bilingual row (required by Telar's CSV parser), and one data row per object.
  *
- * Column set is the v0.9.0 authoritative list derived from mapObjectsCsv in
- * import.server.ts.
+ * Column set is the v1.0.0 authoritative list — object_type column renamed to
+ * medium_genre (matching framework v1.0.0 CSV schema change).
  */
 
 import Papa from "papaparse";
@@ -16,8 +16,9 @@ import Papa from "papaparse";
 // ---------------------------------------------------------------------------
 
 /**
- * Authoritative v0.9.0 objects.csv column order.
+ * Authoritative v1.0.0 objects.csv column order.
  * Must stay in sync with mapObjectsCsv in import.server.ts.
+ * Note: object_type renamed to medium_genre in framework v1.0.0.
  */
 export const OBJECTS_CSV_COLUMNS = [
   "object_id",
@@ -28,7 +29,7 @@ export const OBJECTS_CSV_COLUMNS = [
   "source_url",
   "period",
   "year",
-  "object_type",
+  "medium_genre",
   "subjects",
   "source",
   "credit",
@@ -49,7 +50,7 @@ const BILINGUAL_ROW: Record<string, string> = {
   source_url: "url_fuente",
   period: "periodo",
   year: "año",
-  object_type: "tipo_objeto",
+  medium_genre: "medio_genero",
   subjects: "temas",
   source: "fuente",
   credit: "credito",
@@ -70,7 +71,7 @@ export interface ObjectRow {
   source_url: string | null;
   period: string | null;
   year: string | null;
-  object_type: string | null;
+  medium_genre: string | null;
   subjects: string | null;
   source: string | null;
   credit: string | null;
@@ -147,7 +148,7 @@ export function serializeObjectsCsv(objectRows: ObjectRow[], existingCsv?: strin
     source_url: obj.source_url ?? "",
     period: obj.period ?? "",
     year: obj.year ?? "",
-    object_type: obj.object_type ?? "",
+    medium_genre: obj.medium_genre ?? "",
     subjects: obj.subjects ?? "",
     source: obj.source ?? "",
     credit: obj.credit ?? "",

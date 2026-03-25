@@ -16,5 +16,5 @@ import { load } from "js-yaml";
  * the input is not valid YAML.
  */
 export function parseYaml(yamlString: string): Record<string, unknown> {
-  return load(yamlString) as Record<string, unknown>;
+  return load(yamlString, { json: true }) as Record<string, unknown>;
 }

@@ -83,6 +83,12 @@ const KNOWN_BILINGUAL_VALUES = new Set([
   "definición",
   // objects.csv alt text bilingual value
   "texto_alt",
+  // story CSV clip field bilingual values (v1.0.0)
+  "inicio_clip",
+  "fin_clip",
+  "bucle",
+  // objects.csv medium_genre bilingual value (v1.0.0 column rename)
+  "medio_genero",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -107,6 +113,8 @@ export interface ImportResult {
   sheetsEnabled: boolean;
   sheetsDisabled: boolean;
   iiifObjectIds: string[];
+  audioObjectIds: string[];
+  videoObjectCount: number;
   configFields: Record<string, unknown>;
 }
 
@@ -214,6 +222,8 @@ export function parseTelarCsv(csvText: string): Record<string, string>[] {
   const result = Papa.parse<Record<string, string>>(csvText, {
     header: true,
     skipEmptyLines: true,
+    transformHeader: (h) => h.trim(),
+    transform: (v) => v.trim(),
   });
   return result.data.filter((row) => !isHeaderRow(row) && !isCommentRow(row));
 }
@@ -291,7 +301,7 @@ export function mapObjectsCsv(
       source_url: row.source_url || undefined,
       period: row.period || undefined,
       year: row.year || undefined,
-      object_type: row.object_type || undefined,
+      object_type: row.medium_genre || row.object_type || undefined, // v1.0.0: medium_genre replaces object_type; legacy fallback preserved
       subjects: row.subjects || undefined,
       source: row.source || undefined,
       credit: row.credit || undefined,
@@ -387,6 +397,9 @@ export function mapStoryCsv(
       page: row.page || undefined,
       question: row.question || undefined,
       answer: row.answer || undefined,
+      clip_start: row.clip_start || undefined,
+      clip_end: row.clip_end || undefined,
+      loop: row.loop || undefined,
     };
     stepRows.push(stepRow);
 
@@ -466,6 +479,8 @@ export async function importRepo({
       sheetsEnabled: false,
       sheetsDisabled: false,
       iiifObjectIds: [],
+      audioObjectIds: [],
+      videoObjectCount: 0,
       configFields: {},
     };
   }
@@ -487,6 +502,8 @@ export async function importRepo({
       sheetsEnabled: false,
       sheetsDisabled: false,
       iiifObjectIds: [],
+      audioObjectIds: [],
+      videoObjectCount: 0,
       configFields: {},
     };
   }
@@ -523,16 +540,13 @@ export async function importRepo({
   // Step 4: Discover IIIF objects
   // -------------------------------------------------------------------------
 
-  const imageExtensions = new Set(["jpg", "jpeg", "png", "tif", "tiff", "pdf"]);
-  const iiifObjectIds = tree
-    .filter((entry) => {
-      if (entry.type !== "blob") return false;
-      const parts = entry.path.split("/");
-      if (parts.length !== 2 || parts[0] !== "objects") return false;
-      const ext = parts[1].split(".").pop()?.toLowerCase() ?? "";
-      return imageExtensions.has(ext);
-    })
-    .map((entry) => entry.path.split("/")[1].replace(/\.[^.]+$/, ""));
+  // IIIF and audio detection happens after objectRows are populated (Step 4c below).
+  const siteBase = configFields.url
+    ? `${configFields.url}${configFields.baseurl ?? ""}`
+    : null;
+  let iiifObjectIds: string[] = [];
+  const audioExtensions = ["mp3", "ogg", "m4a"];
+  const audioObjectFiles = new Map<string, string>(); // objectId → filename
 
   // -------------------------------------------------------------------------
   // Step 4b: Discover themes from _data/themes/*.yml
@@ -642,6 +656,8 @@ export async function importRepo({
         sheetsEnabled: true,
         sheetsDisabled: false,
         iiifObjectIds,
+        audioObjectIds: [...audioObjectFiles.keys()],
+        videoObjectCount: 0,
         configFields,
       };
     }
@@ -690,11 +706,62 @@ export async function importRepo({
     }
   }
 
-  // Mark IIIF objects
-  objectRows = objectRows.map((obj) => ({
-    ...obj,
-    image_available: iiifObjectIds.includes(obj.object_id as string),
-  }));
+  // -------------------------------------------------------------------------
+  // Step 4c: Detect IIIF tiles and audio files from the PUBLISHED site
+  // -------------------------------------------------------------------------
+  // Tiles and large media files are generated/deployed by GitHub Actions to
+  // GitHub Pages — they are NOT stored in the repo. We probe the live site.
+  if (siteBase) {
+    const selfHostedIds = objectRows
+      .filter((o) => {
+        const src = o.source_url as string | null;
+        return !src || (!src.startsWith("http://") && !src.startsWith("https://"));
+      })
+      .map((o) => o.object_id as string);
+
+    const probeResults = await Promise.allSettled(
+      selfHostedIds.map(async (objectId) => {
+        // Check IIIF tiles
+        try {
+          const tileRes = await fetch(`${siteBase}/iiif/objects/${objectId}/info.json`, { method: "HEAD" });
+          if (tileRes.ok) return { objectId, type: "iiif" as const };
+        } catch { /* site unreachable */ }
+
+        // Check audio files
+        for (const ext of audioExtensions) {
+          try {
+            const audioRes = await fetch(`${siteBase}/telar-content/objects/${objectId}.${ext}`, { method: "HEAD" });
+            if (audioRes.ok) return { objectId, type: "audio" as const, filename: `${objectId}.${ext}` };
+          } catch { /* site unreachable */ }
+        }
+
+        return { objectId, type: "unknown" as const };
+      }),
+    );
+
+    for (const result of probeResults) {
+      if (result.status !== "fulfilled") continue;
+      const { objectId, type } = result.value;
+      if (type === "iiif") iiifObjectIds.push(objectId);
+      if (type === "audio") audioObjectFiles.set(objectId, (result.value as { filename: string }).filename);
+    }
+  }
+
+  // Mark image availability and media type hints
+  objectRows = objectRows.map((obj) => {
+    const objectId = obj.object_id as string;
+    const hasSelfHostedTiles = iiifObjectIds.includes(objectId);
+    const hasExternalManifest = !!(obj.source_url && /manifest/.test(obj.source_url as string));
+    const audioFilename = audioObjectFiles.get(objectId);
+    return {
+      ...obj,
+      // For audio objects without a source_url, store the filename so
+      // detectMediaType can identify the media type from the extension.
+      // Use empty string fallback (not undefined) to ensure Drizzle writes it.
+      source_url: (obj.source_url as string) || (audioFilename ?? null),
+      image_available: hasSelfHostedTiles || hasExternalManifest || !!audioFilename,
+    };
+  });
 
   // -------------------------------------------------------------------------
   // Step 6: Write to D1
@@ -726,6 +793,8 @@ export async function importRepo({
       sheetsEnabled: false,
       sheetsDisabled: false,
       iiifObjectIds: [],
+      audioObjectIds: [],
+      videoObjectCount: 0,
       configFields: {},
     };
   }
@@ -743,6 +812,7 @@ export async function importRepo({
 
   const projectId = projectRecord.id;
 
+  try {
   // Update all rows with the real project ID
   const objectsWithProjectId = objectRows.map((r) => ({ ...r, project_id: projectId }));
   const storiesWithProjectId = storyRows
@@ -806,8 +876,8 @@ export async function importRepo({
       story_id: storyDbIdByIndex.get(step.story_id as number) ?? step.story_id,
     }));
 
-    // steps table has 11 columns → max 9 rows per insert
-    for (const chunk of chunkForD1(11, stepsWithIds)) {
+    // steps table has 14 columns (added clip_start, clip_end, loop) → max 7 rows per insert
+    for (const chunk of chunkForD1(14, stepsWithIds)) {
       await db.insert(steps).values(chunk);
     }
 
@@ -849,18 +919,44 @@ export async function importRepo({
     }
   }
 
+  } catch (importError) {
+    // Clean up partial data — delete project and all child records
+    await db.delete(layers).where(
+      inArray(layers.step_id,
+        db.select({ id: steps.id }).from(steps).where(
+          inArray(steps.story_id,
+            db.select({ id: stories.id }).from(stories).where(eq(stories.project_id, projectId))
+          )
+        )
+      )
+    );
+    await db.delete(steps).where(
+      inArray(steps.story_id,
+        db.select({ id: stories.id }).from(stories).where(eq(stories.project_id, projectId))
+      )
+    );
+    await db.delete(glossary_terms).where(eq(glossary_terms.project_id, projectId));
+    await db.delete(stories).where(eq(stories.project_id, projectId));
+    await db.delete(objects).where(eq(objects.project_id, projectId));
+    await db.delete(project_themes).where(eq(project_themes.project_id, projectId));
+    await db.delete(project_landing).where(eq(project_landing.project_id, projectId));
+    await db.delete(project_config).where(eq(project_config.project_id, projectId));
+    await db.delete(projects).where(eq(projects.id, projectId));
+    throw importError;
+  }
+
   return {
     valid: true,
     telarVersion,
     projectId,
     project: { imported: true, storiesFound },
     objects: {
-      imported: objectsWithProjectId.length,
+      imported: objectRows.length,
       skipped: 0,
       warnings: objectWarnings,
     },
-    stories: { imported: storiesWithProjectId.length, warnings: storyWarnings },
-    glossary: { imported: glossaryWithProjectId.length },
+    stories: { imported: storyRows.filter((r) => r.story_id && String(r.story_id).trim() !== "").length, warnings: storyWarnings },
+    glossary: { imported: glossaryRows.length },
     themes: {
       imported: themeRows.length,
       list: themeRows.map((r) => ({
@@ -872,6 +968,11 @@ export async function importRepo({
     sheetsEnabled: googleSheetsEnabled && !sheetsDisabled,
     sheetsDisabled,
     iiifObjectIds,
+    audioObjectIds: [...audioObjectFiles.keys()],
+    videoObjectCount: objectRows.filter((o) => {
+      const src = o.source_url as string | null;
+      return src && (/youtube|youtu\.be/.test(src) || /vimeo/.test(src) || /drive\.google/.test(src));
+    }).length,
     configFields,
   };
 }

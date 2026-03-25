@@ -107,6 +107,9 @@ export const steps = sqliteTable("steps", {
   question: text("question"),
   answer: text("answer"),
   alt_text: text("alt_text"),
+  clip_start: text("clip_start"),
+  clip_end: text("clip_end"),
+  loop: text("loop"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
