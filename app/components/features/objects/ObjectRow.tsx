@@ -7,12 +7,13 @@
  * button that opens the side panel.
  */
 
-import { Package, Server, Star } from "lucide-react";
+import { Package, Server, Star, Video, Music } from "lucide-react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { deriveStatus } from "~/lib/iiif-types";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
 import { IiifLogo } from "~/components/ui/IiifLogo";
+import { detectMediaType } from "~/lib/media-type";
 
 export interface ObjectRowObject {
   id: number;
@@ -91,8 +92,28 @@ function StatusBadge({ status, objectId }: { status: ReturnType<typeof deriveSta
   );
 }
 
-function SourceTypeBadge({ sourceUrl }: { sourceUrl: string | null }) {
+function SourceTypeBadge({ sourceUrl, objectId }: { sourceUrl: string | null; objectId: string }) {
   const { t } = useTranslation("objects");
+  const mediaType = detectMediaType(sourceUrl, objectId);
+
+  if (mediaType === "youtube" || mediaType === "vimeo" || mediaType === "google-drive") {
+    return (
+      <span className="shrink-0 inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-600 rounded-full px-2 py-0.5">
+        <Video className="w-3 h-3" />
+        {t("type_video")}
+      </span>
+    );
+  }
+
+  if (mediaType === "audio") {
+    return (
+      <span className="shrink-0 inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-600 rounded-full px-2 py-0.5">
+        <Music className="w-3 h-3" />
+        {t("type_audio")}
+      </span>
+    );
+  }
+
   const isExternal =
     sourceUrl !== null &&
     (sourceUrl.startsWith("http://") || sourceUrl.startsWith("https://"));
@@ -117,10 +138,14 @@ function SourceTypeBadge({ sourceUrl }: { sourceUrl: string | null }) {
 export function ObjectRow({ object, onToggleFeatured, siteBaseUrl }: ObjectRowProps) {
   const { t } = useTranslation("objects");
   const isFeatured = object.featured ?? false;
+  const mediaType = detectMediaType(object.source_url, object.object_id);
+  const isMedia = mediaType === "youtube" || mediaType === "vimeo" || mediaType === "google-drive" || mediaType === "audio";
+  const hasExternalManifest = !!(object.source_url && /manifest/.test(object.source_url));
   const status = deriveStatus({
     title: object.title,
-    image_available: object.image_available,
+    image_available: object.image_available || hasExternalManifest,
     missing_from_repo: object.missing_from_repo,
+    skipImageCheck: isMedia,
   });
 
   // Resolve thumbnail: stored URL for external IIIF, or fetch from
@@ -144,8 +169,14 @@ export function ObjectRow({ object, onToggleFeatured, siteBaseUrl }: ObjectRowPr
   return (
     <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white hover:bg-gray-50 transition-colors">
       {/* Thumbnail */}
-      <div className="shrink-0 w-12 h-12 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center">
-        {thumbnailUrl ? (
+      <div className={`shrink-0 w-12 h-12 rounded-lg overflow-hidden flex items-center justify-center ${isMedia ? "bg-periwinkle" : "bg-gray-100"}`}>
+        {isMedia ? (
+          mediaType === "audio" ? (
+            <Music className="w-5 h-5 text-charcoal/60" />
+          ) : (
+            <Video className="w-5 h-5 text-charcoal/60" />
+          )
+        ) : thumbnailUrl ? (
           <img
             src={thumbnailUrl}
             alt={object.title ?? object.object_id}
@@ -176,7 +207,7 @@ export function ObjectRow({ object, onToggleFeatured, siteBaseUrl }: ObjectRowPr
       </div>
 
       {/* Source type badge */}
-      <SourceTypeBadge sourceUrl={object.source_url} />
+      <SourceTypeBadge sourceUrl={object.source_url} objectId={object.object_id} />
 
       {/* Status badge */}
       <StatusBadge status={status} objectId={object.object_id} />

@@ -10,7 +10,7 @@ import { eq, and } from "drizzle-orm";
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useFetcher, redirect } from "react-router";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, Trash2, Video, Music } from "lucide-react";
 import type { Route } from "./+types/_app.objects.$objectId";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
@@ -21,6 +21,9 @@ import { Switch } from "~/components/ui/Switch";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
 import { IiifViewer } from "~/components/features/objects/IiifViewer";
+import { detectMediaType, extractVideoId } from "~/lib/media-type";
+import { VideoEmbed } from "~/components/features/editor/VideoEmbed";
+import { AudioPlayer } from "~/components/features/editor/AudioPlayer";
 import { CommitAndBuildModal } from "~/components/features/objects/CommitAndBuildModal";
 import { decrypt } from "~/lib/crypto.server";
 import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server";
@@ -79,7 +82,11 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
     .where(eq(project_config.project_id, activeProject.id))
     .limit(1);
 
-  // Construct IIIF URLs for self-hosted objects
+  // Construct IIIF URLs — skip for video/audio objects (they don't have tiles)
+  const loaderMediaType = detectMediaType(object.source_url, object.object_id);
+  const isMediaObject = loaderMediaType === "youtube" || loaderMediaType === "vimeo"
+    || loaderMediaType === "google-drive" || loaderMediaType === "audio";
+
   const isExternal =
     object.source_url !== null &&
     (object.source_url.startsWith("http://") ||
@@ -88,12 +95,14 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
   let manifestUrl: string | null = null;
   let infoJsonUrl: string | null = null;
 
-  if (isExternal) {
-    manifestUrl = object.source_url;
-  } else if (config?.url) {
-    const base = `${config.url}${config.baseurl ?? ""}`;
-    manifestUrl = `${base}/iiif/objects/${object.object_id}/manifest.json`;
-    infoJsonUrl = `${base}/iiif/objects/${object.object_id}/info.json`;
+  if (!isMediaObject) {
+    if (isExternal) {
+      manifestUrl = object.source_url;
+    } else if (config?.url) {
+      const base = `${config.url}${config.baseurl ?? ""}`;
+      manifestUrl = `${base}/iiif/objects/${object.object_id}/manifest.json`;
+      infoJsonUrl = `${base}/iiif/objects/${object.object_id}/info.json`;
+    }
   }
 
   // Fetch story usage for this object
@@ -120,12 +129,18 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
     stepNumber: ref.step_number,
   }));
 
+  // Construct site base URL for audio file access
+  const siteBase = config?.url
+    ? `${config.url}${config.baseurl ?? ""}`
+    : null;
+
   return {
     object,
     manifestUrl,
     infoJsonUrl,
     isExternal,
     usedInStories,
+    siteBase,
   };
 }
 
@@ -423,7 +438,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 // ---------------------------------------------------------------------------
 
 export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
-  const { object, manifestUrl, infoJsonUrl, isExternal, usedInStories } =
+  const { object, manifestUrl, infoJsonUrl, isExternal, usedInStories, siteBase } =
     loaderData;
   const { t } = useTranslation("objects");
   const deleteFetcher = useFetcher();
@@ -435,10 +450,14 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
   const [dispatchRunId, setDispatchRunId] = useState<number | null>(null);
   const [dispatchHtmlUrl, setDispatchHtmlUrl] = useState<string | null>(null);
 
+  const mediaType = detectMediaType(object.source_url, object.object_id);
+  const isMedia = mediaType === "youtube" || mediaType === "vimeo" || mediaType === "google-drive" || mediaType === "audio";
+  const hasExternalManifest = !!(object.source_url && /manifest/.test(object.source_url));
   const status = deriveStatus({
     title: object.title,
-    image_available: object.image_available,
+    image_available: object.image_available || hasExternalManifest,
     missing_from_repo: object.missing_from_repo,
+    skipImageCheck: isMedia,
   });
 
   const isDeleting = deleteFetcher.state !== "idle";
@@ -500,24 +519,51 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
         </button>
       </div>
 
-      {/* Two-column layout */}
-      <div className="flex gap-6 flex-1 min-h-0">
-        {/* Left — IIIF viewer */}
-        <div className="w-3/5 shrink-0">
-          <IiifViewer
-            manifestUrl={manifestUrl}
-            infoJsonUrl={infoJsonUrl}
-            isSelfHosted={!isExternal}
-            alt={object.title ?? object.object_id}
-            className="w-full h-full"
-            onGenerateTiles={!isExternal ? handleGenerateTiles : undefined}
-            isGenerating={isDispatching}
-          />
+      {/* Audio: stacked layout (player top, metadata below) */}
+      {isMedia && mediaType === "audio" && (
+        <div className="shrink-0 mb-4">
+          {siteBase && object.source_url ? (
+            <AudioPlayer
+              audioUrl={`${siteBase}/telar-content/objects/${object.source_url}`}
+            />
+          ) : (
+            <div className="w-full rounded-lg bg-periwinkle p-6 flex flex-col items-center justify-center gap-2 text-charcoal/50">
+              <Music className="w-10 h-10" />
+              <p className="font-body text-sm">{t("type_audio")}</p>
+            </div>
+          )}
         </div>
+      )}
 
-        {/* Right — metadata editor */}
-        <div className="w-2/5 overflow-y-auto bg-white rounded-xl border border-gray-100">
-          <div className="p-6 space-y-4">
+      {/* Layout: side-by-side for IIIF/video, full-width for audio */}
+      <div className={`flex gap-6 flex-1 min-h-0 ${mediaType === "audio" ? "flex-col" : ""}`}>
+        {/* Viewer — hidden for audio (shown above), shown for IIIF/video */}
+        {mediaType !== "audio" && (
+        <div className="w-3/5 shrink-0">
+          {isMedia && (mediaType === "youtube" || mediaType === "vimeo" || mediaType === "google-drive") && object.source_url ? (
+            <div className="w-full h-full rounded-xl bg-cream-dark flex items-center justify-center p-4">
+              <VideoEmbed
+                type={mediaType}
+                videoId={extractVideoId(mediaType, object.source_url) ?? ""}
+              />
+            </div>
+          ) : (
+            <IiifViewer
+              manifestUrl={manifestUrl}
+              infoJsonUrl={infoJsonUrl}
+              isSelfHosted={!isExternal}
+              alt={object.title ?? object.object_id}
+              className="w-full h-full"
+              onGenerateTiles={!isExternal ? handleGenerateTiles : undefined}
+              isGenerating={isDispatching}
+            />
+          )}
+        </div>
+        )}
+
+        {/* Metadata editor */}
+        <div className={`overflow-y-auto bg-white rounded-xl border border-gray-100 ${mediaType === "audio" ? "w-full" : "w-2/5"}`}>
+          <div className={`p-6 space-y-4 ${mediaType === "audio" ? "columns-2 gap-8 [&>*]:break-inside-avoid [&>hr]:break-after-column" : ""}`}>
               {/* Status badge */}
               <StatusBadge status={status} />
 

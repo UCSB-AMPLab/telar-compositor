@@ -5,6 +5,9 @@
  * (1-N) in a dnd-kit SortableContext for drag-to-reorder. Each step row is
  * a SortableStepItem with a GripVertical handle and a Trash2 delete button.
  * "+ Add step" button at the bottom appends a new step via onAddStep.
+ *
+ * When objectsByType is provided, SortableStepItem shows a media type badge
+ * (Video/Music/Text icon) for non-image steps.
  */
 
 import { useTranslation } from "react-i18next";
@@ -22,15 +25,18 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { SortableStepItem } from "~/components/features/editor/SortableStepItem";
+import type { MediaType } from "~/lib/media-type";
 
 interface StepSidebarProps {
-  steps: Array<{ id: number; step_number: number; question: string | null }>;
+  steps: Array<{ id: number; step_number: number; question: string | null; object_id?: string | null }>;
   storyTitle: string | null;
   activeStepIndex: number;
   onStepSelect: (index: number) => void;
   onReorderSteps: (orderedIds: number[]) => void;
   onAddStep: () => void;
   onDeleteStep: (step: { id: number; step_number: number; question: string | null }) => void;
+  /** Pre-computed map from object_id to MediaType for media type badges */
+  objectsByType?: Record<string, MediaType>;
 }
 
 export function StepSidebar({
@@ -41,6 +47,7 @@ export function StepSidebar({
   onReorderSteps,
   onAddStep,
   onDeleteStep,
+  objectsByType,
 }: StepSidebarProps) {
   const { t } = useTranslation("editor");
   const sensors = useSensors(
@@ -95,6 +102,7 @@ export function StepSidebar({
                 isActive={activeStepIndex === idx + 1}
                 onClick={() => onStepSelect(idx + 1)}
                 onDelete={() => onDeleteStep(step)}
+                objectsByType={objectsByType}
               />
             ))}
           </SortableContext>
