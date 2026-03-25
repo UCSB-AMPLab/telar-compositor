@@ -91,6 +91,26 @@
     "save": "Save",
     "discard": "Discard"
   },
+  "media": {
+    "capture_clip_start": "Capture start",
+    "capture_clip_end": "Capture end",
+    "clip_start_label": "Clip start",
+    "clip_end_label": "Clip end",
+    "loop": "Loop",
+    "loop_on": "on",
+    "loop_off": "off",
+    "media_type_image": "Image",
+    "media_type_video": "Video",
+    "media_type_audio": "Audio",
+    "media_type_text": "Text",
+    "media_preview_unavailable": "Preview not available for this media type",
+    "audio_loading": "Loading audio...",
+    "audio_play": "Play",
+    "audio_pause": "Pause",
+    "clip_capture_fallback": "Enter time manually (MM:SS)",
+    "no_clip_set": "No clip set",
+    "clip_capture_error": "Could not read playback time from player. Enter the time manually (MM:SS)."
+  },
   "layer": {
     "add_panel": "+ Add panel",
     "add_further_panel": "+ Add further layer panel",

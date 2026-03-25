@@ -91,6 +91,26 @@
     "save": "Guardar",
     "discard": "Descartar"
   },
+  "media": {
+    "capture_clip_start": "Marcar inicio",
+    "capture_clip_end": "Marcar fin",
+    "clip_start_label": "Inicio del clip",
+    "clip_end_label": "Fin del clip",
+    "loop": "Repetir",
+    "loop_on": "si",
+    "loop_off": "no",
+    "media_type_image": "Imagen",
+    "media_type_video": "Video",
+    "media_type_audio": "Audio",
+    "media_type_text": "Texto",
+    "media_preview_unavailable": "Vista previa no disponible para este tipo de medio",
+    "audio_loading": "Cargando audio...",
+    "audio_play": "Reproducir",
+    "audio_pause": "Pausar",
+    "clip_capture_fallback": "Ingresar tiempo manualmente (MM:SS)",
+    "no_clip_set": "Sin clip definido",
+    "clip_capture_error": "No se pudo leer el tiempo de reproduccion. Ingresa el tiempo manualmente (MM:SS)."
+  },
   "layer": {
     "add_panel": "+ Agregar panel",
     "add_further_panel": "+ Agregar otro panel de capas",

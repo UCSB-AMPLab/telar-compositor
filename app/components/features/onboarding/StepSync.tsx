@@ -9,7 +9,7 @@
  * Auto-advances to Review after 1.5s when import succeeds.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle, XCircle, Circle, Loader2, ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
@@ -44,14 +44,6 @@ export function StepSync({
 }: StepSyncProps) {
   const { t } = useTranslation("onboarding");
   const [sheetsUrl, setSheetsUrl] = useState("");
-  const hasAutoAdvanced = useRef(false);
-
-  // Reset auto-advance flag when a new import starts
-  useEffect(() => {
-    if (isImporting) {
-      hasAutoAdvanced.current = false;
-    }
-  }, [isImporting]);
 
   // Pre-fill Sheets URL from importResult on error
   useEffect(() => {
@@ -60,16 +52,7 @@ export function StepSync({
     }
   }, [importResult?.sheetsAccessError, importResult?.sheetsPublishedUrl]);
 
-  // Auto-advance to Review after 1.5s on success
-  useEffect(() => {
-    if (importResult?.valid && !hasAutoAdvanced.current) {
-      hasAutoAdvanced.current = true;
-      const timer = setTimeout(() => {
-        onContinue();
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [importResult?.valid, onContinue]);
+  // No auto-advance — user clicks Continue after reviewing import results
 
   // Build checklist items
   const items = buildChecklistItems(importResult, isImporting);
@@ -103,6 +86,18 @@ export function StepSync({
           </li>
         ))}
       </ul>
+
+      {/* Success — Cancel + Continue buttons */}
+      {importResult?.valid && !isImporting && (
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" onClick={onBack}>
+            {t("step_sync.cancel")}
+          </Button>
+          <Button variant="primary" onClick={onContinue}>
+            {t("step_sync.continue")}
+          </Button>
+        </div>
+      )}
 
       {/* Sheets access error */}
       {isSheetsError && (
@@ -242,6 +237,15 @@ function buildChecklistItems(
   }
 
   // Success — all items done with counts
+  const audioCount = result.audioObjectIds?.length ?? 0;
+  const videoCount = result.videoObjectCount ?? 0;
+  const imageCount = result.objects.imported - audioCount - videoCount;
+  const objectBreakdown = [
+    imageCount > 0 ? `${imageCount} images` : null,
+    audioCount > 0 ? `${audioCount} audio` : null,
+    videoCount > 0 ? `${videoCount} videos` : null,
+  ].filter(Boolean).join(", ");
+
   const items: ChecklistItem[] = [
     { key: "validating", i18nKey: "step_sync.validating", state: "done" },
     { key: "config", i18nKey: "step_sync.importing_config", state: "done" },
@@ -249,7 +253,7 @@ function buildChecklistItems(
       key: "objects",
       i18nKey: "step_sync.importing_objects",
       state: "done",
-      detail: `(${result.objects.imported})`,
+      detail: `(${result.objects.imported})${objectBreakdown ? ` — ${objectBreakdown}` : ""}`,
     },
     {
       key: "stories",
@@ -259,7 +263,7 @@ function buildChecklistItems(
     },
     {
       key: "glossary",
-      i18nKey: "step_sync.importing_glossary",
+      i18nKey: "step_sync.importing_glossary_entries",
       state: "done",
       detail: `(${result.glossary.imported})`,
     },
