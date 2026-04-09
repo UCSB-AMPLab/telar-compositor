@@ -17,6 +17,7 @@ import type { Repository } from "~/lib/github.server";
 import { importRepo } from "~/lib/import.server";
 import { commitFilesToRepo, disableGoogleSheetsInConfig, verifySiteUrl, enableGitHubPages } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
+import { handleCreateSiteIntents } from "~/lib/onboarding-create-site.server";
 import { getDb } from "~/lib/db.server";
 import {
   projects,
@@ -89,6 +90,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const repos = reposByInstallation.flat();
 
+  // Phase 21 Plan 03 (D-20): orphan-repo detection. "App can see it AND no D1
+  // row" — used by StepConnect to render a "New — connect to continue" badge
+  // next to repos that were likely created via the compositor but never
+  // completed the import flow. Heuristic may false-positive on unrelated repos
+  // the App can see; import flow rejects non-Telar repos cleanly.
+  const connectedFullNames = new Set(
+    existingProjects.map((p) => p.github_repo_full_name),
+  );
+  const orphanRepoNames = repos
+    .map((r) => r.full_name)
+    .filter((name) => !connectedFullNames.has(name));
+
   return {
     user: {
       github_id: user.github_id,
@@ -100,6 +113,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     repos,
     installations,
     connectedProjects: existingProjects,
+    orphanRepoNames,
   };
 }
 
@@ -161,6 +175,14 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
     }
     return result;
+  }
+
+  if (
+    intent === "check-repo-name" ||
+    intent === "create-site" ||
+    intent === "check-installation-scope"
+  ) {
+    return handleCreateSiteIntents(intent, formData, token, env);
   }
 
   if (intent === "save_config") {
@@ -365,14 +387,14 @@ export async function action({ request, context }: Route.ActionArgs) {
 // ---------------------------------------------------------------------------
 
 export default function OnboardingPage({ loaderData }: Route.ComponentProps) {
-  const { user, repos, installations, connectedProjects } = loaderData;
+  const { user, repos, installations, connectedProjects, orphanRepoNames } = loaderData;
 
   return (
     <div className="min-h-screen flex flex-col bg-cream">
       <Header user={user} />
       <main className="flex-1 flex items-start justify-center pt-10 pb-16 px-4">
         <div className="w-full max-w-2xl">
-          <WizardShell repos={repos} connectedProjects={connectedProjects} user={user} hasInstallations={installations.length > 0} />
+          <WizardShell repos={repos} installations={installations} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} user={user} hasInstallations={installations.length > 0} />
         </div>
       </main>
     </div>

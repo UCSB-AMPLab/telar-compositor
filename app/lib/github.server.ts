@@ -21,6 +21,7 @@ const GITHUB_API = "https://api.github.com";
 export interface Installation {
   id: number;
   account: { login: string; avatar_url: string };
+  target_type: "User" | "Organization";
 }
 
 export interface Repository {
