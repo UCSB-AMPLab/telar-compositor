@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import type { ImportResult } from "~/lib/import.server";
 import type { RepoWithInstallation } from "~/routes/onboarding";
+import type { Installation } from "~/lib/github.server";
 import type { AuthenticatedUser } from "~/middleware/auth.server";
 import { ProgressBar } from "./ProgressBar";
 import { StepConnect } from "./StepConnect";
@@ -31,13 +32,15 @@ interface ConnectedProject {
 
 interface WizardShellProps {
   repos: RepoWithInstallation[];
+  installations: Installation[];
   connectedProjects: ConnectedProject[];
   user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email" | "github_plan">;
   hasInstallations: boolean;
+  orphanRepoNames?: string[];
   className?: string;
 }
 
-export function WizardShell({ repos, connectedProjects, user, hasInstallations, className = "" }: WizardShellProps) {
+export function WizardShell({ repos, installations, connectedProjects, user, hasInstallations, orphanRepoNames = [], className = "" }: WizardShellProps) {
   const [step, setStep] = useState<Step>("connect");
   const [selectedRepo, setSelectedRepo] = useState<RepoWithInstallation | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -222,7 +225,7 @@ export function WizardShell({ repos, connectedProjects, user, hasInstallations, 
 
       {/* Step content */}
       {step === "connect" && (
-        <StepConnect repos={repos} connectedProjects={connectedProjects} onSelect={handleSelectRepo} githubPlan={user.github_plan} hasInstallations={hasInstallations} />
+        <StepConnect repos={repos} installations={installations} userLogin={user.github_login} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} onSelect={handleSelectRepo} githubPlan={user.github_plan} hasInstallations={hasInstallations} />
       )}
 
       {step === "sync" && (
