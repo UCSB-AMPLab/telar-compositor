@@ -217,7 +217,7 @@ export function BuildTracker({ sha, commitUrl, pagesUrl, onRetry, className = ""
           <p className="font-body text-sm text-gray-600 mb-6">
             {t("build.success_description")}
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <div className="flex flex-col items-center justify-center gap-3">
             {pagesUrl && (
               <a
                 href={pagesUrl}

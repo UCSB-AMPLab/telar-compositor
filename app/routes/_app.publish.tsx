@@ -651,7 +651,20 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
         <BuildTracker
           sha={publishResult.newHeadSha}
           commitUrl={publishResult.commitUrl}
-          pagesUrl={project.github_pages_url}
+          // Fall back to the default GitHub Pages URL pattern when the
+          // project doesn't have github_pages_url persisted yet (older
+          // imports, sites that never went through configure-site, etc.).
+          // Phase 22 will populate this field reliably for newly-created
+          // sites; until then, the default pattern is always correct for
+          // project Pages sites and gives users a working "View site"
+          // button immediately after a successful build.
+          pagesUrl={
+            project.github_pages_url ??
+            (() => {
+              const [owner, repo] = project.github_repo_full_name.split("/");
+              return `https://${owner.toLowerCase()}.github.io/${repo}`;
+            })()
+          }
           onRetry={handleRetry}
           className="py-4"
         />
