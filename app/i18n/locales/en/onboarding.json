@@ -17,6 +17,7 @@
     "continue": "Continue",
     "missing_repo_hint": "If you don't see your repository here, check that the Telar Compositor app has access to it in your <installationsLink>GitHub App settings</installationsLink>.",
     "connected_badge": "Connected",
+    "new_repo_badge": "New — connect to continue",
     "unlink": "Unlink",
     "unlink_title": "Unlink repository",
     "unlink_body": "This will remove {{repo}} from the compositor and delete all imported data (objects, stories, glossary, configuration).",
@@ -101,5 +102,46 @@
     "error_pages_permission_link": "Review permissions on GitHub",
     "error_generic_title": "Something went wrong",
     "error_generic": "We couldn't fix the configuration. Please try again, or check your GitHub App permissions."
+  },
+  "create_site": {
+    "form": {
+      "title": "Create a new Telar site",
+      "name_label": "Repository name",
+      "name_placeholder": "my-telar-site",
+      "name_hint": "Letters, numbers, dots, hyphens, and underscores. Must not start with a dot or hyphen.",
+      "owner_label": "GitHub account",
+      "submit": "Create site"
+    },
+    "errors": {
+      "repo_name_taken": "A repository with this name already exists on your account. Choose a different name.",
+      "permission_denied": "The Telar Compositor GitHub App needs permission to create repositories. Update the app's permissions in your GitHub settings and try again.",
+      "repo_not_ready": "Your new repository is still being set up. This usually takes a few seconds — reload the page and try again.",
+      "github_error": "Something went wrong talking to GitHub. Please try again in a moment.",
+      "invalid_name": "This name isn't valid. Use letters, numbers, dots, hyphens, and underscores. It must not start with a dot or hyphen.",
+      "name_exists": "A repository with this name already exists on your account."
+    },
+    "progress": {
+      "creating": "Creating your new site...",
+      "still_setting_up": "Your site is still being set up. Reload the page to continue.",
+      "success": "Your new Telar site is ready."
+    },
+    "installation_scope": {
+      "title": "Grant access to your new site",
+      "body": "The Telar Compositor GitHub App needs permission to see your new repository before you can start editing. Click the button below to update the app's access on GitHub, then come back to this page.",
+      "grant_button": "Grant access on GitHub",
+      "waiting": "Waiting for access to your new repository..."
+    },
+    "account_picker": {
+      "creating_in": "Creating in",
+      "your_account": "your account",
+      "change": "Change"
+    },
+    "account_modal": {
+      "title": "Choose where to create your site",
+      "description": "Pick the account or organisation where the new repository should live.",
+      "your_account_label": "Your personal account",
+      "organization_label": "Organisation",
+      "cancel": "Cancel"
+    }
   }
 }
