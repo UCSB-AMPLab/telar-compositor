@@ -23,5 +23,9 @@
   "sync_banner": {
     "message": "Tu repositorio en GitHub ha cambiado desde la última sincronización. Revisa los cambios para mantener actualizada la copia de trabajo del compositor.",
     "action": "Revisar cambios"
+  },
+  "dialog": {
+    "dismiss_cancel": "Volver",
+    "dismiss_confirm": "Cerrar"
   }
 }

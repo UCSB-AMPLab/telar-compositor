@@ -199,6 +199,7 @@ export function UploadImageDialog({
     <Dialog
       open={open}
       onClose={onClose}
+      dismissConfirm={t("upload_dismiss_confirm")}
       className="max-w-lg w-full mx-4 p-0 overflow-hidden"
     >
       {/* Header */}

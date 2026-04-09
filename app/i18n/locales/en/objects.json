@@ -168,5 +168,6 @@
   "upload_error_size": "File must be 25 MB or smaller",
   "upload_error_generic": "Upload failed. Check your connection and try again.",
   "upload_error_stale": "The repo has changed. Sync and try again.",
-  "upload_error_payload": "File too large for GitHub. Try a smaller image."
+  "upload_error_payload": "File too large for GitHub. Try a smaller image.",
+  "upload_dismiss_confirm": "You have unsaved changes. Are you sure you want to close?"
 }

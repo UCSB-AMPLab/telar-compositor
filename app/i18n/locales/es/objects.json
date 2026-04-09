@@ -168,5 +168,6 @@
   "upload_error_size": "El archivo debe pesar 25 MB o menos",
   "upload_error_generic": "Error al subir. Verifica tu conexi\u00f3n e intenta de nuevo.",
   "upload_error_stale": "El repositorio cambi\u00f3. Sincroniza e intenta de nuevo.",
-  "upload_error_payload": "El archivo es demasiado grande para GitHub. Prueba con una imagen m\u00e1s peque\u00f1a."
+  "upload_error_payload": "El archivo es demasiado grande para GitHub. Prueba con una imagen m\u00e1s peque\u00f1a.",
+  "upload_dismiss_confirm": "Tienes cambios sin guardar. \u00bfSeguro que quieres cerrar?"
 }

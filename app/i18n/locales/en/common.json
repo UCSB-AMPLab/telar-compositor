@@ -23,5 +23,9 @@
   "sync_banner": {
     "message": "Your GitHub repository has changed since the last sync. Review the changes to keep the compositor's working copy up to date.",
     "action": "Review changes"
+  },
+  "dialog": {
+    "dismiss_cancel": "Go back",
+    "dismiss_confirm": "Close"
   }
 }
