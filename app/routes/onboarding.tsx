@@ -114,6 +114,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     installations,
     connectedProjects: existingProjects,
     orphanRepoNames,
+    githubAppSlug: env.GITHUB_APP_SLUG,
   };
 }
 
@@ -387,14 +388,14 @@ export async function action({ request, context }: Route.ActionArgs) {
 // ---------------------------------------------------------------------------
 
 export default function OnboardingPage({ loaderData }: Route.ComponentProps) {
-  const { user, repos, installations, connectedProjects, orphanRepoNames } = loaderData;
+  const { user, repos, installations, connectedProjects, orphanRepoNames, githubAppSlug } = loaderData;
 
   return (
     <div className="min-h-screen flex flex-col bg-cream">
       <Header user={user} />
       <main className="flex-1 flex items-start justify-center pt-10 pb-16 px-4">
         <div className="w-full max-w-2xl">
-          <WizardShell repos={repos} installations={installations} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} user={user} hasInstallations={installations.length > 0} />
+          <WizardShell repos={repos} installations={installations} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} user={user} hasInstallations={installations.length > 0} githubAppSlug={githubAppSlug} />
         </div>
       </main>
     </div>

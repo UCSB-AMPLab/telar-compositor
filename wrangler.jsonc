@@ -16,6 +16,7 @@
   // ENCRYPTION_KEY (32-byte hex, generate with: openssl rand -hex 32),
   // SESSION_SECRET
   "vars": {
-    "ENVIRONMENT": "development"
+    "ENVIRONMENT": "development",
+    "GITHUB_APP_SLUG": "telar-compositor"
   }
 }

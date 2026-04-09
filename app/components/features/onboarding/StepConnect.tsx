@@ -31,6 +31,7 @@ interface StepConnectProps {
   onSelect: (repo: RepoWithInstallation) => void;
   githubPlan?: string | null;
   hasInstallations: boolean;
+  githubAppSlug: string;
   className?: string;
 }
 
@@ -41,7 +42,7 @@ interface InstallationOption {
   isOwnAccount: boolean;
 }
 
-export function StepConnect({ repos, installations, userLogin, connectedProjects, orphanRepoNames = [], onSelect, githubPlan, hasInstallations, className = "" }: StepConnectProps) {
+export function StepConnect({ repos, installations, userLogin, connectedProjects, orphanRepoNames = [], onSelect, githubPlan, hasInstallations, githubAppSlug, className = "" }: StepConnectProps) {
   const { t } = useTranslation("onboarding");
   const [selected, setSelected] = useState<RepoWithInstallation | null>(null);
   const [search, setSearch] = useState("");
@@ -247,7 +248,7 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
             {t("step_connect.no_installations")}
           </p>
           <a
-            href="https://github.com/apps/telar-compositor/installations/new"
+            href={`https://github.com/apps/${githubAppSlug}/installations/new`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider bg-charcoal text-white rounded-full px-5 py-2 hover:opacity-90 transition-opacity"

@@ -37,10 +37,11 @@ interface WizardShellProps {
   user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email" | "github_plan">;
   hasInstallations: boolean;
   orphanRepoNames?: string[];
+  githubAppSlug: string;
   className?: string;
 }
 
-export function WizardShell({ repos, installations, connectedProjects, user, hasInstallations, orphanRepoNames = [], className = "" }: WizardShellProps) {
+export function WizardShell({ repos, installations, connectedProjects, user, hasInstallations, orphanRepoNames = [], githubAppSlug, className = "" }: WizardShellProps) {
   const [step, setStep] = useState<Step>("connect");
   const [selectedRepo, setSelectedRepo] = useState<RepoWithInstallation | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -225,7 +226,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
 
       {/* Step content */}
       {step === "connect" && (
-        <StepConnect repos={repos} installations={installations} userLogin={user.github_login} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} onSelect={handleSelectRepo} githubPlan={user.github_plan} hasInstallations={hasInstallations} />
+        <StepConnect repos={repos} installations={installations} userLogin={user.github_login} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} onSelect={handleSelectRepo} githubPlan={user.github_plan} hasInstallations={hasInstallations} githubAppSlug={githubAppSlug} />
       )}
 
       {step === "sync" && (
