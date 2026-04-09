@@ -47,8 +47,12 @@ describe("isValidRepoName", () => {
   it("accepts simple valid name", () => {
     expect(isValidRepoName("my-site")).toBe(true);
   });
-  it("accepts underscores, dots, hyphens, mixed case, digits", () => {
-    expect(isValidRepoName("My_Site.1-x")).toBe(true);
+  it("accepts underscores, dots, hyphens, digits", () => {
+    expect(isValidRepoName("my_site.1-x")).toBe(true);
+  });
+  it("rejects uppercase letters", () => {
+    expect(isValidRepoName("My-Site")).toBe(false);
+    expect(isValidRepoName("ALLCAPS")).toBe(false);
   });
   it("accepts single character name (1 char minimum)", () => {
     expect(isValidRepoName("a")).toBe(true);

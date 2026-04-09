@@ -94,7 +94,7 @@ export function isValidRepoName(name: string): boolean {
   if (name.length < 1 || name.length > 100) return false;
   if (name === "." || name === "..") return false;
   if (name.startsWith(".") || name.startsWith("-")) return false;
-  return /^[A-Za-z0-9._-]+$/.test(name);
+  return /^[a-z0-9._-]+$/.test(name);
 }
 
 // Async stubs filled in by subsequent plans (19-02, 19-03, 19-04)

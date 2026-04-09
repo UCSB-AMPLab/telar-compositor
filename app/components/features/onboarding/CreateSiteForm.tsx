@@ -49,7 +49,7 @@ export function isValidRepoName(name: string): boolean {
   if (name.length > 100) return false;
   if (name === "." || name === "..") return false;
   if (name.startsWith(".") || name.startsWith("-")) return false;
-  return /^[A-Za-z0-9._-]+$/.test(name);
+  return /^[a-z0-9._-]+$/.test(name);
 }
 
 type AvailabilityData =
@@ -370,7 +370,7 @@ export function CreateSiteForm({
             id="create-site-name"
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => setName(e.target.value.toLowerCase())}
             placeholder={t("create_site.form.name_placeholder") as string}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle"
           />
