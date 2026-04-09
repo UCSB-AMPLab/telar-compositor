@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.0-beta (2026-04-09)
+
+Create new site flow — users can generate a fresh Telar site from the repo template without leaving the compositor.
+
+### New features
+
+- **Create new site from template** — Single-field form generates a brand-new Telar site via GitHub's repo template API. Defaults to your personal account; creating in an organisation requires an explicit account picker. Includes debounced name-availability checking and an inline progress view
+- **Installation scope prompt** — Reusable component guides users through granting the GitHub App access to a specific repo when the site they selected is outside the App's current scope
+- **Orphan repo badge** — Repos that exist in the user's GitHub account but aren't yet visible to the compositor now display a "New — connect to continue" badge in the repo list
+- **Connect flow view-mode toggle** — The connect step surfaces a "Create new site" CTA alongside the existing repo picker, with a single toggle between the two modes
+
+### Bug fixes
+
+- The "View site" button at the end of the publish sequence now always renders, falling back to the default GitHub Pages URL pattern when the project's stored Pages URL is not populated, and is stacked on its own line above the View commit link
+
 ## v0.2.0-beta (2026-03-24)
 
 Framework v1.0.0 compatibility — video/audio story steps, clip capture, and media type detection.
