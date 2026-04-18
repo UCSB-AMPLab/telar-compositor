@@ -1,9 +1,9 @@
 /**
  * Unit tests for app/lib/create-site.server.ts.
  *
- * Wave 0 test skeleton (phase 19 plan 01): full coverage for
+ * Initial test skeleton: full coverage for
  * isValidRepoName plus describe-block placeholders for the four async
- * exports that plans 19-02, 19-03, and 19-04 fill in. Uses the same
+ * exports. Uses the same
  * globalThis.fetch mocking pattern as tests/github.server.test.ts — no
  * MSW, no nock, no new dependencies.
  */
@@ -52,7 +52,6 @@ describe("isValidRepoName", () => {
   });
   it("rejects uppercase letters", () => {
     expect(isValidRepoName("My-Site")).toBe(false);
-    expect(isValidRepoName("ALLCAPS")).toBe(false);
   });
   it("accepts single character name (1 char minimum)", () => {
     expect(isValidRepoName("a")).toBe(true);

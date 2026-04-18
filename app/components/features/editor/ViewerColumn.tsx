@@ -10,7 +10,7 @@
  *   - IIIF: x/y/zoom coordinate display + Capture Position button
  *   - Video/audio: clip start/end display in MM:SS + Capture Start/End buttons + Loop toggle
  *
- * Also accepts a `children` slot for the layer panel overlay (Plan 04).
+ * Also accepts a `children` slot for the layer panel overlay.
  */
 
 import { useRef, useState, useEffect, useCallback } from "react";
@@ -67,7 +67,7 @@ interface ViewerColumnProps {
   onToggleLoop?: (value: string) => void;
   /** GitHub repo full name (e.g. "owner/repo") for constructing raw audio URLs */
   repoFullName?: string;
-  /** Slot for layer panel overlay (Plan 04) */
+  /** Slot for layer panel overlay */
   children?: ReactNode;
 }
 
@@ -281,7 +281,7 @@ export function ViewerColumn({
         const seconds = await getTime();
         onCaptureClip?.(field, String(seconds));
       } catch {
-        // If API fails, user sees no response — plan D-06 describes manual fallback
+        // If API fails, user sees no response — manual fallback applies
         // handled by the inline input rendered when getCurrentTimeRef.current is null
       }
     }
@@ -432,7 +432,7 @@ export function ViewerColumn({
             type="button"
             onClick={() => viewerRef.current?.viewport.zoomBy(1.5)}
             className="w-8 h-8 bg-black/60 hover:bg-black/80 rounded flex items-center justify-center text-cream/70 hover:text-cream transition-colors"
-            aria-label="Zoom in"
+            aria-label={t("viewer.zoom_in_aria")}
           >
             <ZoomIn className="w-4 h-4" />
           </button>
@@ -440,7 +440,7 @@ export function ViewerColumn({
             type="button"
             onClick={() => viewerRef.current?.viewport.zoomBy(0.67)}
             className="w-8 h-8 bg-black/60 hover:bg-black/80 rounded flex items-center justify-center text-cream/70 hover:text-cream transition-colors"
-            aria-label="Zoom out"
+            aria-label={t("viewer.zoom_out_aria")}
           >
             <ZoomOut className="w-4 h-4" />
           </button>
@@ -448,7 +448,7 @@ export function ViewerColumn({
             type="button"
             onClick={() => viewerRef.current?.viewport.goHome()}
             className="w-8 h-8 bg-black/60 hover:bg-black/80 rounded flex items-center justify-center text-cream/70 hover:text-cream transition-colors"
-            aria-label="Reset view"
+            aria-label={t("viewer.reset_aria")}
           >
             <Home className="w-4 h-4" />
           </button>
@@ -556,7 +556,7 @@ export function ViewerColumn({
                   <span>{secondsToMmss(clipEndSeconds ?? 0)}</span>
                 </>
               ) : mediaType === "google-drive" ? (
-                <span className="opacity-70">Google Drive does not support clipping</span>
+                <span className="opacity-70">{t("media.google_drive_no_clip")}</span>
               ) : (
                 <span className="opacity-70">{t("media.no_clip_set")}</span>
               )}
@@ -576,7 +576,7 @@ export function ViewerColumn({
         </div>
       )}
 
-      {/* Layer panel slot (Plan 04) */}
+      {/* Layer panel slot */}
       {children}
 
       {/* Object picker dialog */}

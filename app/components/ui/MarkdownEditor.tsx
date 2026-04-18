@@ -7,12 +7,14 @@
  * - Keyboard shortcuts: Cmd+B, Cmd+I, Cmd+K, Cmd+Z, Cmd+Shift+Z
  * - Rich paste: HTML from web pages converts to markdown via turndown
  * - Word count displayed when editor is focused (autosave mode)
- * - Debounced autosave via useFetcher (autosave mode)
+ * - Debounced autosave via useFetcher (autosave mode, non-collaborative fallback)
  * - Save/Discard footer with dirty tracking (save-discard mode)
  * - Link popover: opens near cursor on Cmd+K or toolbar click; inserts markdown link
  * - Image dialog: URL tab and Objects tab for inserting markdown images
  * - Cmd/Ctrl+click on rendered links opens in new tab
  * - SSR guard: returns null during server-side render
+ * - Collaborative mode: when yText is provided, yCollab replaces autosave; Y.UndoManager
+ *   replaces CodeMirror history(); publish-lock via EditorState.readOnly compartment
  * - Placed in app/components/ui/ as a shared primitive for dashboard and story editor
  */
 
@@ -36,10 +38,14 @@ import {
 } from "lucide-react";
 
 // CodeMirror imports — all browser-only; SSR guard prevents server execution
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, undo, redo, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+
+// Collaborative editing — yCollab binds Y.Text to CodeMirror 6
+import { yCollab } from "y-codemirror.next";
+import * as Y from "yjs";
 
 import { livePreviewPlugin } from "~/components/ui/markdown-editor/livePreviewPlugin";
 import { richPasteExtension } from "~/components/ui/markdown-editor/richPaste";
@@ -56,6 +62,8 @@ import {
 } from "~/components/ui/markdown-editor/commands";
 import { LinkPopover } from "~/components/ui/markdown-editor/LinkPopover";
 import { ImageInsertDialog } from "~/components/ui/markdown-editor/ImageInsertDialog";
+import { GlossaryLinkButton } from "~/components/ui/markdown-editor/GlossaryLinkButton";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -74,7 +82,7 @@ interface MarkdownEditorProps {
   onDiscard?: () => void;
   /** Called whenever the dirty state changes — used by LayerPanel for unsaved-changes guard */
   onDirtyChange?: (dirty: boolean) => void;
-  /** Object list for the image picker dialog (Plan 02) */
+  /** Object list for the image picker dialog */
   objects?: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
   /** Site base URL for constructing IIIF image URLs in the image picker */
   siteBaseUrl?: string | null;
@@ -82,6 +90,21 @@ interface MarkdownEditorProps {
   transparent?: boolean;
   /** Use light colours for toolbar/text on dark backgrounds */
   darkTheme?: boolean;
+  /**
+   * Yjs shared text instance for collaborative mode.
+   * When provided, yCollab replaces the autosave updateListener and history().
+   * When null/undefined, the editor falls back to the standard autosave + history() behaviour.
+   */
+  yText?: Y.Text | null;
+  /** Show toolbar even when the editor is not focused */
+  alwaysShowToolbar?: boolean;
+  /**
+   * When true, a glossary link button is shown in the toolbar.
+   * Available for content that goes through generate_collections.py:
+   * story layers, pages, and glossary definitions.
+   * Not available in config fields or metadata.
+   */
+  enableGlossaryLinks?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +163,9 @@ export function MarkdownEditor({
   siteBaseUrl,
   transparent = false,
   darkTheme = false,
+  yText = null,
+  alwaysShowToolbar = false,
+  enableGlossaryLinks = false,
 }: MarkdownEditorProps) {
   const [mounted, setMounted] = useState(false);
   const { t } = useTranslation("editor");
@@ -148,6 +174,9 @@ export function MarkdownEditor({
   const viewRef = useRef<EditorView | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Compartment for toggling readOnly during publish lock
+  const readOnlyCompartment = useRef(new Compartment());
 
   const [isFocused, setIsFocused] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -158,6 +187,12 @@ export function MarkdownEditor({
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
   const [headingMenuOpen, setHeadingMenuOpen] = useState(false);
   const headingMenuRef = useRef<HTMLDivElement>(null);
+
+  // Collaboration context — provider.awareness for cursor sync; isPublishing for publish lock;
+  // undoManager is the shared doc-level Y.UndoManager so that undo/redo spans text edits and
+  // structural operations alike. In non-collaborative mode (no yText), CodeMirror's
+  // built-in history() is used instead.
+  const { provider, isPublishing, undoManager } = useCollaborationContext();
 
   // Notify parent when dirty state changes
   useEffect(() => {
@@ -242,10 +277,100 @@ export function MarkdownEditor({
     };
   }, []);
 
-  // EditorView lifecycle — mount once client is ready
+  // EditorView lifecycle — recreated when mounted or yText instance changes
   useEffect(() => {
     if (!mounted || !containerRef.current) return;
 
+    // Collaborative mode: build extensions with yCollab; remove history() and autosave.
+    // The shared doc-level UndoManager from CollaborationContext is passed to yCollab so
+    // that undo/redo for text edits in this editor is interleaved with structural ops on
+    // the same history stack. Per-editor UndoManagers were removed.
+    if (yText) {
+      const view = new EditorView({
+        state: EditorState.create({
+          doc: yText.toString(),
+          extensions: [
+            // history() and historyKeymap intentionally omitted — Y.UndoManager replaces them
+            // (Anti-pattern: keeping historyKeymap without history() crashes on undo keypress)
+            keymap.of([
+              ...defaultKeymap,
+              // historyKeymap intentionally omitted — Y.UndoManager replaces CodeMirror history
+              indentWithTab,
+              {
+                key: "Mod-b",
+                run: (v) => {
+                  insertMarkdownWrap(v, "**");
+                  return true;
+                },
+              },
+              {
+                key: "Mod-i",
+                run: (v) => {
+                  insertMarkdownWrap(v, "_");
+                  return true;
+                },
+              },
+              {
+                key: "Mod-k",
+                run: () => {
+                  openLinkPopover();
+                  return true;
+                },
+              },
+            ]),
+            markdown(),
+            EditorView.lineWrapping,
+            livePreviewPlugin,
+            richPasteExtension,
+            // Publish-lock compartment — reconfigured by isPublishing effect below
+            readOnlyCompartment.current.of(EditorState.readOnly.of(false)),
+            // yCollab binds Y.Text to CodeMirror; awareness enables cursor sync.
+            // undoManager is the shared doc-level manager from CollaborationContext — yCollab
+            // tracks the origin of changes so structural ops and text edits share one stack.
+            // yCollab's option accepts UndoManager | false (pass false to disable yCollab's
+            // internal undo wiring); use false as the pre-sync placeholder.
+            yCollab(yText, provider?.awareness ?? null, { undoManager: undoManager ?? false }),
+            EditorView.updateListener.of((update) => {
+              if (update.docChanged) {
+                setWordCount(computeWordCount(update.state.doc.toString()));
+              }
+            }),
+            EditorView.domEventHandlers({
+              focus: () => {
+                setIsFocused(true);
+                return false;
+              },
+              blur: (event) => {
+                const relatedTarget = event.relatedTarget as Node | null;
+                if (!wrapperRef.current?.contains(relatedTarget)) {
+                  setIsFocused(false);
+                }
+                return false;
+              },
+              click(event) {
+                const target = event.target as HTMLElement;
+                if (target.tagName === "A" && (event.metaKey || event.ctrlKey)) {
+                  return false;
+                }
+                if (target.tagName === "A") {
+                  event.preventDefault();
+                  return true;
+                }
+                return false;
+              },
+            }),
+          ],
+        }),
+        parent: containerRef.current,
+      });
+
+      viewRef.current = view;
+      return () => {
+        view.destroy();
+      };
+    }
+
+    // Non-collaborative fallback: autosave + history() unchanged
     function handleContentChange(doc: string) {
       setWordCount(computeWordCount(doc));
       if (mode === "autosave") {
@@ -342,7 +467,18 @@ export function MarkdownEditor({
     viewRef.current = view;
     return () => view.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted]);
+  }, [mounted, yText]);
+
+  // Publish-lock: reconfigure the readOnly compartment when isPublishing changes
+  // Only active in collaborative mode (yText provided) — non-collaborative editors are not locked
+  useEffect(() => {
+    if (!yText || !viewRef.current) return;
+    viewRef.current.dispatch({
+      effects: readOnlyCompartment.current.reconfigure(
+        EditorState.readOnly.of(isPublishing)
+      ),
+    });
+  }, [isPublishing, yText]);
 
   if (!mounted) {
     return (
@@ -356,10 +492,10 @@ export function MarkdownEditor({
     <>
     <div
       ref={wrapperRef}
-      className={`relative ${transparent ? "cm-transparent" : ""} ${darkTheme ? "cm-dark-theme" : ""} ${className}`}
+      className={`relative ${transparent ? "cm-transparent" : ""} ${darkTheme ? "cm-dark-theme" : ""} ${isPublishing && yText ? "opacity-50" : ""} ${className}`}
     >
-      {/* Toolbar — appears on focus */}
-      {isFocused && (
+      {/* Toolbar — appears on focus (or always if alwaysShowToolbar) */}
+      {(isFocused || alwaysShowToolbar) && (
         <div className={`flex items-center gap-0.5 px-4 py-1.5 mb-3 border-b bg-black/5 ${transparent ? "mx-0 mt-0 rounded-t-lg border-gray-200/30" : "-mx-6 -mt-6 border-gray-100/30"}`}>
           <ToolbarButton
             icon={Bold}
@@ -381,6 +517,9 @@ export function MarkdownEditor({
             tooltip={t("toolbar.image")}
             onAction={() => setImageDialogOpen(true)}
           />
+          {enableGlossaryLinks && (
+            <GlossaryLinkButton editorView={viewRef.current} />
+          )}
           <span className="w-px h-4 bg-gray-200 mx-1" />
           {/* Heading dropdown */}
           <div ref={headingMenuRef} className="relative">
@@ -445,12 +584,27 @@ export function MarkdownEditor({
           <ToolbarButton
             icon={Undo}
             tooltip={t("toolbar.undo")}
-            onAction={() => viewRef.current && undo(viewRef.current)}
+            onAction={() => {
+              if (yText) {
+                // Shared doc-level manager — also reverses structural ops.
+                // In collaborative mode, the global TabNav undo/redo buttons and
+                // Ctrl+Z shortcut also drive this same manager.
+                undoManager?.undo();
+              } else if (viewRef.current) {
+                undo(viewRef.current);
+              }
+            }}
           />
           <ToolbarButton
             icon={Redo}
             tooltip={t("toolbar.redo")}
-            onAction={() => viewRef.current && redo(viewRef.current)}
+            onAction={() => {
+              if (yText) {
+                undoManager?.redo();
+              } else if (viewRef.current) {
+                redo(viewRef.current);
+              }
+            }}
           />
         </div>
       )}

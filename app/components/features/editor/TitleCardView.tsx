@@ -1,14 +1,17 @@
 /**
  * TitleCardView — editor panel for step 0 (the title card).
  *
- * Renders inline-editable title, subtitle, and byline fields
- * that autosave to the stories table via the "autosave-story-field" intent.
+ * Renders inline-editable title, subtitle, and byline fields that write
+ * directly to Yjs Y.Text instances via InlineTextField. Falls back to
+ * initialValue (from D1 SSR render) when yText is null (pre-connection).
+ *
  * Each field has a pencil icon that darkens on hover with "Click to edit" text.
  */
 
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { PencilLine } from "lucide-react";
+import * as Y from "yjs";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 
 interface TitleCardViewProps {
@@ -19,6 +22,10 @@ interface TitleCardViewProps {
     byline: string | null;
     order: number | null;
   };
+  storyId: string;
+  titleYText: Y.Text | null;
+  subtitleYText: Y.Text | null;
+  bylineYText: Y.Text | null;
 }
 
 function EditableField({
@@ -52,7 +59,7 @@ function EditableField({
   );
 }
 
-export function TitleCardView({ story }: TitleCardViewProps) {
+export function TitleCardView({ story, storyId, titleYText, subtitleYText, bylineYText }: TitleCardViewProps) {
   const { t } = useTranslation("editor");
   const titleRef = useRef<HTMLDivElement>(null);
   const subtitleRef = useRef<HTMLDivElement>(null);
@@ -74,11 +81,10 @@ export function TitleCardView({ story }: TitleCardViewProps) {
           <EditableField containerRef={titleRef} label={t("step.click_to_edit")}>
             <InlineTextField
               initialValue={story.title ?? ""}
-              fieldName="title"
-              entityId={story.id}
-              intent="autosave-story-field"
+              yText={titleYText}
               placeholder={t("title_card.title_placeholder")}
               inputClassName="font-heading text-3xl font-semibold text-charcoal"
+              fieldKey={`story-${storyId}-title`}
             />
           </EditableField>
         </div>
@@ -91,11 +97,10 @@ export function TitleCardView({ story }: TitleCardViewProps) {
           <EditableField containerRef={subtitleRef} label={t("step.click_to_edit")}>
             <InlineTextField
               initialValue={story.subtitle ?? ""}
-              fieldName="subtitle"
-              entityId={story.id}
-              intent="autosave-story-field"
+              yText={subtitleYText}
               placeholder={t("title_card.subtitle_placeholder")}
               inputClassName="font-body text-lg text-gray-600"
+              fieldKey={`story-${storyId}-subtitle`}
             />
           </EditableField>
         </div>
@@ -108,11 +113,10 @@ export function TitleCardView({ story }: TitleCardViewProps) {
           <EditableField containerRef={bylineRef} label={t("step.click_to_edit")}>
             <InlineTextField
               initialValue={story.byline ?? ""}
-              fieldName="byline"
-              entityId={story.id}
-              intent="autosave-story-field"
+              yText={bylineYText}
               placeholder={t("title_card.byline_placeholder")}
               inputClassName="font-body text-base text-gray-500"
+              fieldKey={`story-${storyId}-byline`}
             />
           </EditableField>
         </div>

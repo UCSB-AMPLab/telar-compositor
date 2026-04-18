@@ -1,0 +1,128 @@
+# Telar - Digital Storytelling Framework
+# https://telar.org
+
+# Site Settings
+title: "Group 9 Telar"
+description: ""
+url: "https://gabioliva129.github.io"
+baseurl: "/group_9_project"
+author: "Gabrielle Oliva"
+telar_theme: "austin" # Options: paisajes, neogranadina, santa-barbara, austin, trama, or custom
+logo: ""
+telar_language: "en"
+
+# Google Sheets Integration
+# See https://telar.org/docs/your-data/google-sheets/ for detailed setup instructions.
+google_sheets:
+  enabled: true
+  published_url: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRLjpXK62iFU5OIuRfpF6KIcj2-W7xpZ4AgWjd6tT_WiNQ-wDW8BxbS4WzmYySynsV61owa2kbYgREl/pubhtml"
+
+# Story Interface Settings
+story_interface:
+  show_on_homepage: true
+  show_story_steps: true
+  show_object_credits: true
+  include_demo_content: true # Fetch demo stories from content.telar.org. Switch this off to hide demo stories and their content.
+
+# Collection Interface Settings
+collection_interface:
+  browse_and_search: true
+  show_link_on_homepage: true
+  show_sample_on_homepage: true
+  featured_count: 4
+
+# Story Protection (optional)
+# story_key: ""
+
+#
+#
+#
+# PLEASE DO NOT EDIT BELOW THIS LINE UNLESS YOU KNOW WHAT YOU ARE DOING
+#
+#
+#
+
+# Collections
+collections:
+  stories:
+    output: true
+    permalink: /stories/:name/
+  objects:
+    output: true
+    permalink: /objects/:name/
+  glossary:
+    output: true
+    permalink: /glossary/:name/
+  pages:
+    output: true
+    permalink: /:name/
+
+# Collections Directory
+collections_dir: _jekyll-files
+
+# Build Settings
+markdown: kramdown
+permalink: pretty
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - .github
+  - README.md
+  - docs/
+  - scripts/
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+      type: "stories"
+    values:
+      layout: "story"
+  - scope:
+      path: ""
+      type: "objects"
+    values:
+      layout: "object"
+  - scope:
+      path: ""
+      type: "glossary"
+    values:
+      layout: "glossary"
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "user-page"
+
+# Tell Jekyll not to expect dates for these collections
+future: true
+show_drafts: false
+
+# Telar Settings (version information)
+telar:
+  version: "0.9.2-beta"
+  release_date: "2026-03-06"
+
+# Plugins
+plugins:
+  - jekyll-seo-tag
+
+# WEBrick server configuration for development (enables CORS for IIIF)
+webrick:
+  headers:
+    Access-Control-Allow-Origin: "*"
+    Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+    Access-Control-Allow-Headers: "Content-Type"
+
+# Development & Testing
+development-features:
+  christmas_tree_mode: false
+  viewer_preloading:
+    max_viewer_cards: 10
+    preload_steps: 6
+    loading_threshold: 5
+    min_ready_viewers: 3
+  skip_stories: false
+  skip_collections: false

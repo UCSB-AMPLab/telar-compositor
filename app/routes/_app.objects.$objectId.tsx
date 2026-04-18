@@ -16,10 +16,14 @@ import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { objects, project_config, projects, steps, stories } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
+import { resolveActiveProject } from "~/lib/membership.server";
 import { deriveStatus } from "~/lib/iiif-types";
 import { Switch } from "~/components/ui/Switch";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { findYMapById, getYText } from "~/lib/yjs-helpers";
+import * as Y from "yjs";
 import { IiifViewer } from "~/components/features/objects/IiifViewer";
 import { detectMediaType, extractVideoId } from "~/lib/media-type";
 import { VideoEmbed } from "~/components/features/editor/VideoEmbed";
@@ -30,7 +34,7 @@ import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server"
 import { commitFilesToRepo, StaleHeadError, dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
 import type { WorkflowRun } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
-import { serializeObjectsCsv } from "~/lib/csv-export.server";
+import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import { asc } from "drizzle-orm";
 
 export const handle = { i18n: ["common", "objects"] };
@@ -51,15 +55,9 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  const allProjects = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.user_id, user.id));
-
-  if (allProjects.length === 0) throw redirect("/onboarding");
-
-  const activeProject =
-    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  if (!resolved) throw redirect("/onboarding");
+  const { project: activeProject } = resolved;
 
   // Fetch the object
   const [object] = await db
@@ -298,7 +296,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         const existingCsv = await getFileContent(
           token, owner, repo, "telar-content/spreadsheets/objects.csv"
         );
-        const updatedCsv = serializeObjectsCsv(filteredObjects, existingCsv ?? undefined);
+        const updatedCsv = serializeObjectsCsv(filteredObjects.map(dbObjectToCsvRow), existingCsv ?? undefined);
 
         // Commit: updated CSV + deletions
         try {
@@ -306,6 +304,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
             token, owner, repo, "main",
             [{ path: "telar-content/spreadsheets/objects.csv", content: updatedCsv }],
             `Remove ${targetObject.object_id} via Telar Compositor`,
+            undefined,
             deletions.length > 0 ? deletions : undefined,
           );
 
@@ -450,6 +449,22 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
   const [dispatchRunId, setDispatchRunId] = useState<number | null>(null);
   const [dispatchHtmlUrl, setDispatchHtmlUrl] = useState<string | null>(null);
 
+  const { ydoc } = useCollaborationContext();
+
+  // Resolve Y.Text instances for each editable object field from the Yjs doc
+  const objectsArray = ydoc?.getArray<Y.Map<unknown>>("objects") ?? null;
+  const objectYMap = objectsArray ? findYMapById(objectsArray, object.id) : null;
+  const titleYText = getYText(objectYMap, "title");
+  const descriptionYText = getYText(objectYMap, "description");
+  const creatorYText = getYText(objectYMap, "creator");
+  const periodYText = getYText(objectYMap, "period");
+  const yearYText = getYText(objectYMap, "year");
+  const objectTypeYText = getYText(objectYMap, "object_type");
+  const subjectsYText = getYText(objectYMap, "subjects");
+  const sourceYText = getYText(objectYMap, "source");
+  const creditYText = getYText(objectYMap, "credit");
+  const altTextYText = getYText(objectYMap, "alt_text");
+
   const mediaType = detectMediaType(object.source_url, object.object_id);
   const isMedia = mediaType === "youtube" || mediaType === "vimeo" || mediaType === "google-drive" || mediaType === "audio";
   const hasExternalManifest = !!(object.source_url && /manifest/.test(object.source_url));
@@ -587,11 +602,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-xs text-gray-400 mb-1">{t("field_title_help")}</p>
                 <InlineTextField
                   initialValue={object.title ?? ""}
-                  fieldName="title"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={titleYText}
                   inputClassName="font-body text-sm text-charcoal"
                   bordered
+                  fieldKey={`object-${object.object_id}-title`}
                 />
               </div>
 
@@ -603,12 +617,11 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-xs text-gray-400 mb-1">{t("field_description_help")}</p>
                 <InlineTextArea
                   initialValue={object.description ?? ""}
-                  fieldName="description"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={descriptionYText}
                   inputClassName="font-body text-sm text-charcoal"
                   rows={3}
                   bordered
+                  fieldKey={`object-${object.object_id}-description`}
                 />
               </div>
 
@@ -620,11 +633,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-xs text-gray-400 mb-1">{t("field_creator_help")}</p>
                 <InlineTextField
                   initialValue={object.creator ?? ""}
-                  fieldName="creator"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={creatorYText}
                   inputClassName="font-body text-sm text-charcoal"
                   bordered
+                  fieldKey={`object-${object.object_id}-creator`}
                 />
               </div>
 
@@ -637,11 +649,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                   <p className="font-body text-xs text-gray-400 mb-1">{t("field_period_help")}</p>
                   <InlineTextField
                     initialValue={object.period ?? ""}
-                    fieldName="period"
-                    entityId={object.id}
-                    intent="autosave-object-field"
+                    yText={periodYText}
                     inputClassName="font-body text-sm text-charcoal"
                     bordered
+                    fieldKey={`object-${object.object_id}-period`}
                   />
                 </div>
                 <div>
@@ -651,11 +662,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                   <p className="font-body text-xs text-gray-400 mb-1">{t("field_year_help")}</p>
                   <InlineTextField
                     initialValue={object.year ?? ""}
-                    fieldName="year"
-                    entityId={object.id}
-                    intent="autosave-object-field"
+                    yText={yearYText}
                     inputClassName="font-body text-sm text-charcoal"
                     bordered
+                    fieldKey={`object-${object.object_id}-year`}
                   />
                 </div>
               </div>
@@ -668,11 +678,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-xs text-gray-400 mb-1">{t("field_object_type_help")}</p>
                 <InlineTextField
                   initialValue={object.object_type ?? ""}
-                  fieldName="object_type"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={objectTypeYText}
                   inputClassName="font-body text-sm text-charcoal"
                   bordered
+                  fieldKey={`object-${object.object_id}-object_type`}
                 />
               </div>
 
@@ -684,11 +693,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-xs text-gray-400 mb-1">{t("field_subjects_help")}</p>
                 <InlineTextField
                   initialValue={object.subjects ?? ""}
-                  fieldName="subjects"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={subjectsYText}
                   inputClassName="font-body text-sm text-charcoal"
                   bordered
+                  fieldKey={`object-${object.object_id}-subjects`}
                 />
               </div>
 
@@ -700,11 +708,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-xs text-gray-400 mb-1">{t("field_source_help")}</p>
                 <InlineTextField
                   initialValue={object.source ?? ""}
-                  fieldName="source"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={sourceYText}
                   inputClassName="font-body text-sm text-charcoal"
                   bordered
+                  fieldKey={`object-${object.object_id}-source`}
                 />
               </div>
 
@@ -716,11 +723,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-xs text-gray-400 mb-1">{t("field_credit_help")}</p>
                 <InlineTextField
                   initialValue={object.credit ?? ""}
-                  fieldName="credit"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={creditYText}
                   inputClassName="font-body text-sm text-charcoal"
                   bordered
+                  fieldKey={`object-${object.object_id}-credit`}
                 />
               </div>
 
@@ -766,13 +772,12 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 </FieldLabel>
                 <InlineTextArea
                   initialValue={object.alt_text ?? ""}
-                  fieldName="alt_text"
-                  entityId={object.id}
-                  intent="autosave-object-field"
+                  yText={altTextYText}
                   placeholder={t("field_alt_text_placeholder")}
                   inputClassName="font-body text-sm text-gray-500"
                   rows={3}
                   bordered
+                  fieldKey={`object-${object.object_id}-alt_text`}
                 />
               </div>
 

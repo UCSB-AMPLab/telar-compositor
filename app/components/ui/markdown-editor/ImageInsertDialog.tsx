@@ -46,7 +46,8 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects, siteBaseUr
     try {
       const res = await fetch(`${base}/iiif/objects/${obj.object_id}/manifest.json`);
       if (res.ok) {
-        const manifest = await res.json();
+        type IiifManifestPage = { items?: Array<{ items?: Array<{ body?: { id?: string; format?: string } }> }> };
+        const manifest = await res.json() as { items?: IiifManifestPage[] };
         // Reject multi-page documents (PDFs) — they can't be inserted as images
         const pages = manifest?.items ?? [];
         if (pages.length > 1) {

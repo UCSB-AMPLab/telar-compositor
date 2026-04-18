@@ -9,7 +9,7 @@
  *   - Pre-publish validation (stale HEAD, missing titles, missing positions)
  *   - Full publish file set assembly (buildPublishFileSet)
  *
- * Called by the Publish route (Plan 02) — no UI logic lives here.
+ * Called by the Publish route — no UI logic lives here.
  */
 
 import Papa from "papaparse";
@@ -17,7 +17,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { getFileContent } from "~/lib/github.server";
 import { slugify } from "~/lib/slugify";
-import { extractCommentRows, serializeObjectsCsv } from "~/lib/csv-export.server";
+import { extractCommentRows, serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import type { CommitFile } from "~/lib/commit.server";
 import {
   projects,
@@ -27,6 +27,8 @@ import {
   steps,
   layers,
   objects,
+  glossary_terms,
+  project_pages,
 } from "~/db/schema";
 
 // ---------------------------------------------------------------------------
@@ -363,7 +365,7 @@ export function layerFileContent(
   if (!title || title.trim() === "") {
     return content;
   }
-  return `---\ntitle: "${title}"\n---\n\n${content}`;
+  return `---\ntitle: ${yamlQuote(title)}\n---\n\n${content}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -696,13 +698,13 @@ export async function buildPublishFileSet(
   // --- _config.yml ---
   if (existingConfigYml && config) {
     const managedFields: Record<string, string> = {};
-    if (config.title != null) managedFields["title"] = `"${config.title}"`;
-    if (config.url != null) managedFields["url"] = `"${config.url}"`;
-    if (config.baseurl != null) managedFields["baseurl"] = `"${config.baseurl}"`;
-    if (config.description != null) managedFields["description"] = `"${config.description}"`;
-    if (config.author != null) managedFields["author"] = `"${config.author}"`;
-    if (config.email != null) managedFields["email"] = `"${config.email}"`;
-    if (config.logo != null) managedFields["logo"] = `"${config.logo}"`;
+    if (config.title != null) managedFields["title"] = yamlQuote(config.title);
+    if (config.url != null) managedFields["url"] = yamlQuote(config.url);
+    if (config.baseurl != null) managedFields["baseurl"] = yamlQuote(config.baseurl);
+    if (config.description != null) managedFields["description"] = yamlQuote(config.description);
+    if (config.author != null) managedFields["author"] = yamlQuote(config.author);
+    if (config.email != null) managedFields["email"] = yamlQuote(config.email);
+    if (config.logo != null) managedFields["logo"] = yamlQuote(config.logo);
     if (config.story_key != null) managedFields["story_key"] = config.story_key;
 
     const updatedConfig = updateConfigFields(existingConfigYml, managedFields);
@@ -728,22 +730,7 @@ export async function buildPublishFileSet(
 
   // --- objects.csv ---
   const objectsCsvContent = serializeObjectsCsv(
-    objectRows.map((o) => ({
-      object_id: o.object_id,
-      title: o.title ?? null,
-      featured: o.featured ?? null,
-      creator: o.creator ?? null,
-      description: o.description ?? null,
-      source_url: o.source_url ?? null,
-      period: o.period ?? null,
-      year: o.year ?? null,
-      medium_genre: o.object_type ?? null, // D1 stores as object_type; CSV exports as medium_genre (v1.0.0)
-      subjects: o.subjects ?? null,
-      source: o.source ?? null,
-      credit: o.credit ?? null,
-      thumbnail: o.thumbnail ?? null,
-      alt_text: o.alt_text ?? null,
-    })),
+    objectRows.map(dbObjectToCsvRow),
     existingObjectsCsv ?? undefined,
   );
   files.push({
@@ -854,13 +841,13 @@ export async function buildPublishFileSet(
 
         const managedLines: string[] = [];
         if (landing.stories_heading)
-          managedLines.push(`stories_heading: "${landing.stories_heading}"`);
+          managedLines.push(`stories_heading: ${yamlQuote(landing.stories_heading)}`);
         if (landing.stories_intro)
-          managedLines.push(`stories_intro: "${landing.stories_intro}"`);
+          managedLines.push(`stories_intro: ${yamlQuote(landing.stories_intro)}`);
         if (landing.objects_heading)
-          managedLines.push(`objects_heading: "${landing.objects_heading}"`);
+          managedLines.push(`objects_heading: ${yamlQuote(landing.objects_heading)}`);
         if (landing.objects_intro)
-          managedLines.push(`objects_intro: "${landing.objects_intro}"`);
+          managedLines.push(`objects_intro: ${yamlQuote(landing.objects_intro)}`);
 
         const allFrontmatterLines = [...preservedLines, ...managedLines].filter(
           (l) => l.trim() !== "",
@@ -879,7 +866,138 @@ export async function buildPublishFileSet(
     files.push({ path: "index.md", content: indexContent });
   }
 
+  // --- navigation.yml ---
+  const configForNav = await db
+    .select({ navigation_json: project_config.navigation_json })
+    .from(project_config)
+    .where(eq(project_config.project_id, projectId))
+    .limit(1);
+  const navJson = configForNav[0]?.navigation_json ?? null;
+  if (navJson) {
+    try {
+      const navItems = JSON.parse(navJson) as NavItem[];
+      if (navItems.length > 0) {
+        files.push({ path: "_data/navigation.yml", content: buildNavigationYml(navItems) });
+      }
+    } catch {
+      // Malformed navigation JSON — skip nav file generation
+    }
+  }
+
+  // --- glossary.csv ---
+  const glossaryRows = await db
+    .select({ term_id: glossary_terms.term_id, title: glossary_terms.title, definition: glossary_terms.definition })
+    .from(glossary_terms)
+    .where(eq(glossary_terms.project_id, projectId));
+  if (glossaryRows.length > 0) {
+    files.push({
+      path: "telar-content/spreadsheets/glossary.csv",
+      content: serializeGlossaryCsv(glossaryRows),
+    });
+  }
+
+  // --- page markdown files ---
+  const pageRows = await db
+    .select({ title: project_pages.title, slug: project_pages.slug, body: project_pages.body })
+    .from(project_pages)
+    .where(eq(project_pages.project_id, projectId));
+  for (const page of pageRows) {
+    files.push({
+      path: `telar-content/texts/pages/${page.slug}.md`,
+      content: serializePageMarkdown(page.title, page.body ?? ""),
+    });
+  }
+
   return files;
+}
+
+// ---------------------------------------------------------------------------
+// Navigation YAML serializer
+// ---------------------------------------------------------------------------
+
+interface NavItem {
+  type: string;
+  slug?: string;
+  key?: string;
+  url?: string;
+  label: string;
+  visible?: boolean;
+}
+
+/**
+ * Serialises a navigation items array to a Telar-compatible navigation.yml string.
+ *
+ * Writes both `title_en` and `titulo_es` with the same label value for
+ * monolingual sites. Hidden items (visible: false) are excluded.
+ */
+export function buildNavigationYml(navItems: NavItem[]): string {
+  const visible = navItems.filter((i) => i.visible !== false);
+  const lines = ["menu:"];
+  for (const item of visible) {
+    const label = yamlQuote(item.label ?? "");
+    if (item.type === "page") {
+      lines.push(`  - title_en: ${label}`);
+      lines.push(`    titulo_es: ${label}`);
+      lines.push(`    url: /${item.slug}/`);
+    } else if (item.type === "builtin" && item.key === "glossary") {
+      lines.push(`  - title_en: ${label}`);
+      lines.push(`    titulo_es: ${label}`);
+      lines.push(`    url: /glossary/`);
+    } else if (item.type === "builtin" && item.key === "collection") {
+      lines.push(`  - title_en: ${label}`);
+      lines.push(`    titulo_es: ${label}`);
+      lines.push(`    url: /objects/`);
+    } else if (item.type === "external") {
+      lines.push(`  - title_en: ${label}`);
+      lines.push(`    url: ${yamlQuote(item.url ?? "")}`);
+      lines.push(`    external: true`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+// ---------------------------------------------------------------------------
+// Glossary CSV serializer
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialises glossary terms to a CSV string suitable for glossary.csv.
+ *
+ * Double-quotes within values are escaped by doubling them per RFC 4180.
+ */
+export function serializeGlossaryCsv(
+  terms: Array<{ term_id: string; title: string | null; definition: string | null }>,
+): string {
+  const header = "term_id,title,definition";
+  const rows = terms.map((t) => {
+    const def = (t.definition ?? "").replace(/"/g, '""');
+    const title = (t.title ?? "").replace(/"/g, '""');
+    return `${t.term_id},"${title}","${def}"`;
+  });
+  return [header, ...rows].join("\n") + "\n";
+}
+
+// ---------------------------------------------------------------------------
+// Page markdown serializer
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialises a page title and body to a Telar-compatible markdown file string.
+ *
+ * Output format:
+ * ---
+ * title: Title
+ * ---
+ *
+ * Body content
+ */
+/** Quote a value for safe YAML output — double-quote and escape inner quotes/newlines. */
+function yamlQuote(val: string): string {
+  return `"${val.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+}
+
+export function serializePageMarkdown(title: string, body: string): string {
+  return `---\ntitle: ${yamlQuote(title)}\n---\n\n${body}\n`;
 }
 
 function buildIndexMd(
@@ -892,10 +1010,10 @@ function buildIndexMd(
   },
 ): string {
   const lines: string[] = [];
-  if (landing.stories_heading) lines.push(`stories_heading: "${landing.stories_heading}"`);
-  if (landing.stories_intro) lines.push(`stories_intro: "${landing.stories_intro}"`);
-  if (landing.objects_heading) lines.push(`objects_heading: "${landing.objects_heading}"`);
-  if (landing.objects_intro) lines.push(`objects_intro: "${landing.objects_intro}"`);
+  if (landing.stories_heading) lines.push(`stories_heading: ${yamlQuote(landing.stories_heading)}`);
+  if (landing.stories_intro) lines.push(`stories_intro: ${yamlQuote(landing.stories_intro)}`);
+  if (landing.objects_heading) lines.push(`objects_heading: ${yamlQuote(landing.objects_heading)}`);
+  if (landing.objects_intro) lines.push(`objects_intro: ${yamlQuote(landing.objects_intro)}`);
 
   const frontmatter = lines.length > 0 ? `---\n${lines.join("\n")}\n---\n\n` : "";
   return `${frontmatter}${landing.welcome_body ?? ""}`;

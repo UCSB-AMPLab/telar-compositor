@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useFetcher } from "react-router";
+import { useFetcher, useSearchParams } from "react-router";
 import type { ImportResult } from "~/lib/import.server";
 import type { RepoWithInstallation } from "~/routes/onboarding";
 import type { Installation } from "~/lib/github.server";
@@ -60,12 +60,19 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   const completeFetcher = useFetcher();
   const isImporting = fetcher.state !== "idle";
   const resumeChecked = useRef(false);
+  const [searchParams] = useSearchParams();
 
-  // Auto-resume: if there's an incomplete project, jump to config check
+  // Auto-resume: if there's an incomplete project, jump to config check.
+  // Prefer ?resume=<id> when present (explicit Resume click on the connected
+  // list); otherwise fall back to the first incomplete project found.
   useEffect(() => {
     if (resumeChecked.current) return;
     resumeChecked.current = true;
-    const incomplete = connectedProjects.find((p) => !p.onboarding_completed);
+    const requestedId = Number(searchParams.get("resume"));
+    const incomplete =
+      (requestedId
+        ? connectedProjects.find((p) => p.id === requestedId && !p.onboarding_completed)
+        : null) ?? connectedProjects.find((p) => !p.onboarding_completed);
     if (incomplete) {
       setProjectId(incomplete.id);
       configCheckFetcher.submit(

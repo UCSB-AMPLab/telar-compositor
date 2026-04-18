@@ -36,6 +36,14 @@ export async function action({ request, context }: Route.ActionArgs) {
   const stateSession = await stateCookieStorage.getSession();
   stateSession.set("oauth_state", state);
 
+  // Store a post-OAuth returnTo destination if present in the query string.
+  // The callback handler reads this and redirects accordingly.
+  const url = new URL(request.url);
+  const returnTo = url.searchParams.get("returnTo");
+  if (returnTo && returnTo.startsWith("/") && !returnTo.includes("//")) {
+    stateSession.set("returnTo", returnTo);
+  }
+
   const params = new URLSearchParams({
     client_id: env.GITHUB_CLIENT_ID,
     redirect_uri: env.GITHUB_CALLBACK_URL,

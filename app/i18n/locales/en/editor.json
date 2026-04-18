@@ -37,7 +37,7 @@
   "word_count_one": "{{count}} word",
   "word_count_other": "{{count}} words",
   "breadcrumb": {
-    "dashboard": "Dashboard",
+    "dashboard": "Start",
     "untitled": "Untitled Story"
   },
   "title_card": {
@@ -59,7 +59,12 @@
     "click_to_edit": "Click to edit",
     "title_card_label": "Title card",
     "add_step": "+ Add step",
-    "step_label": "Step {{number}}"
+    "step_label": "Step {{number}}",
+    "no_question_yet": "No question yet",
+    "delete_aria": "Delete step",
+    "save_label_aria": "Save label",
+    "cancel_editing_aria": "Cancel editing",
+    "edit_button_label_aria": "Edit button label"
   },
   "viewer": {
     "capture_position": "Capture position",
@@ -70,7 +75,10 @@
     "title_card_indicator": "Title Card",
     "change_object": "Change object",
     "no_object": "No object has been set yet — click here to choose one",
-    "set_object_in_step1": "The viewer object in Step 0 is the same as that for Step 1. Set it there."
+    "set_object_in_step1": "The viewer object in Step 0 is the same as that for Step 1. Set it there.",
+    "zoom_in_aria": "Zoom in",
+    "zoom_out_aria": "Zoom out",
+    "reset_aria": "Reset view"
   },
   "object_picker": {
     "title": "Choose object",
@@ -109,7 +117,13 @@
     "audio_pause": "Pause",
     "clip_capture_fallback": "Enter time manually (MM:SS)",
     "no_clip_set": "No clip set",
-    "clip_capture_error": "Could not read playback time from player. Enter the time manually (MM:SS)."
+    "clip_capture_error": "Could not read playback time from player. Enter the time manually (MM:SS).",
+    "google_drive_no_clip": "Google Drive does not support clipping",
+    "play_aria": "Play",
+    "pause_aria": "Pause",
+    "restart_clip_aria": "Restart from clip start",
+    "mute_aria": "Mute",
+    "unmute_aria": "Unmute"
   },
   "layer": {
     "add_panel": "+ Add panel",
@@ -132,6 +146,10 @@
     "panel_title": "Panel title",
     "button_label": "Button label",
     "edit_button_label": "Edit button label",
-    "content_label": "Content"
+    "content_label": "Content",
+    "close_panel_aria": "Close panel",
+    "panel_title_aria": "Panel title",
+    "save_label_aria": "Save label",
+    "edit_button_label_aria": "Edit button label"
   }
 }

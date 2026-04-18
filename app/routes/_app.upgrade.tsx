@@ -13,10 +13,11 @@
  * Component: 4-stage state machine — review | upgrading | building | done.
  */
 
-import { redirect, useFetcher } from "react-router";
+import { redirect, useFetcher, useRouteLoaderData } from "react-router";
 import { eq } from "drizzle-orm";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
@@ -39,7 +40,9 @@ import { getDb } from "~/lib/db.server";
 import { projects, project_config } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
-import { getRepoTree, getFileContent } from "~/lib/github.server";
+import { getRepoTree, getRepoHead, getFileContent } from "~/lib/github.server";
+import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
 import {
   fetchLatestRelease,
   fetchAllReleases,
@@ -49,8 +52,13 @@ import {
   checkTelarVersion,
   MIN_SUPPORTED_VERSION,
   categorizeFrameworkPath,
+  loadManifestChain,
+  collectFilesReferencedByChain,
 } from "~/lib/upgrade.server";
 import type { UpgradeDiff, TelarRelease, UpgradeSummary } from "~/lib/upgrade.server";
+import { applyManifestChain } from "~/lib/manifest-runner.server";
+import type { ManifestApplyResult } from "~/lib/manifest-runner.server";
+import type { Manifest, ManualStep } from "~/lib/manifest-schema.server";
 import {
   commitFilesToRepo,
   listWorkflowRunsBySha,
@@ -63,20 +71,22 @@ import type { BuildPhaseStatus } from "~/lib/commit.server";
 import { marked, Renderer } from "marked";
 import { Button } from "~/components/ui/Button";
 
-export const handle = { i18n: ["common", "upgrade"] };
+export const handle = { i18n: ["common", "upgrade", "team"] };
 
 // ---------------------------------------------------------------------------
 // Build phases — mirrors commit.server.ts BUILD_PHASES (no server import)
 // ---------------------------------------------------------------------------
 
-const BUILD_PHASES = [
-  { id: "setup", label: "Setup" },
-  { id: "build-js", label: "Build JS" },
-  { id: "process-data", label: "Process data" },
-  { id: "build-site", label: "Build site" },
-  { id: "iiif", label: "IIIF tiles" },
-  { id: "deploy", label: "Deploy" },
+const BUILD_PHASE_IDS = [
+  "setup",
+  "build-js",
+  "process-data",
+  "build-site",
+  "iiif",
+  "deploy",
 ] as const;
+
+type BuildPhaseId = typeof BUILD_PHASE_IDS[number];
 
 // ---------------------------------------------------------------------------
 // Loader
@@ -93,17 +103,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  const allProjects = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.user_id, user.id));
-
-  if (allProjects.length === 0) {
+  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  if (!resolved) {
     throw redirect("/dashboard");
   }
-
-  const activeProject =
-    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+  const { project: activeProject } = resolved;
 
   const configRows = await db
     .select()
@@ -125,14 +129,37 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     : false;
 
   try {
-    const latestRelease = await fetchLatestRelease(token);
+    // The three independent GitHub calls (latest release, user's repo tree,
+    // user's _config.yml) fan out in parallel. Previously these were
+    // sequential, which pushed cold page loads past 5 seconds and users
+    // perceived the page as frozen. Promise.all cuts the cold load to
+    // roughly the slowest single call (~2-3s for getRepoTree on large repos).
+    const [latestRelease, treeResult, configContent] = await Promise.all([
+      fetchLatestRelease(token),
+      getRepoTree(token, owner, repo),
+      getFileContent(token, owner, repo, "_config.yml"),
+    ]);
+    const { tree: userTree } = treeResult;
 
-    // Fetch release notes for all versions newer than current site version
+    // Fetch release notes for all versions newer than current site version.
+    // Runs in parallel with computeUpgradeDiff because they share no state.
+    //
+    // computeUpgradeDiff is called with fetchContent:false — the review page
+    // only needs paths and categories. Content for the commit is fetched
+    // later inside runUpgradePrepare when the user clicks Upgrade. Skipping
+    // content here avoids N sequential GitHub API calls (50-100+ on a full
+    // framework upgrade) that previously dominated page load time.
+    const [allReleasesData, diff] = await Promise.all([
+      siteTag && compareVersions(siteTag, latestRelease.tagName) < 0
+        ? fetchAllReleases(token)
+        : Promise.resolve(null),
+      computeUpgradeDiff(token, userTree, latestRelease.tagName, { fetchContent: false }),
+    ]);
+
     let releaseNotes: string = latestRelease.body;
     let releaseCount = 1;
-    if (siteTag && compareVersions(siteTag, latestRelease.tagName) < 0) {
-      const allReleases = await fetchAllReleases(token);
-      const newerReleases = allReleases.filter(
+    if (allReleasesData) {
+      const newerReleases = allReleasesData.filter(
         (r) => siteTag ? compareVersions(r.tagName, siteTag) > 0 : true,
       );
       releaseCount = newerReleases.length;
@@ -142,13 +169,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           .join("\n\n---\n\n");
       }
     }
-
-    // Fetch the user's repo tree and _config.yml
-    const { tree: userTree } = await getRepoTree(token, owner, repo);
-    const configContent = await getFileContent(token, owner, repo, "_config.yml");
-
-    // Compute the upgrade diff
-    const diff = await computeUpgradeDiff(token, userTree, latestRelease.tagName);
 
     // Check the actual repo version — D1 may be stale if a previous upgrade
     // committed successfully but the D1 update failed.
@@ -164,7 +184,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
             const now = new Date().toISOString();
             await db
               .update(project_config)
-              .set({ telar_version: repoVersion, updated_at: now })
+              .set({ telar_version: repoVersion.replace(/^v/, ""), updated_at: now })
               .where(eq(project_config.project_id, activeProject.id));
           } catch {
             // Best-effort D1 heal
@@ -212,14 +232,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       configContent: configContent ?? "",
       isBelowMinimum,
       needsUpgrade,
+      googleSheetsEnabled: Boolean(config?.google_sheets_enabled),
       project: {
         id: activeProject.id,
         github_pages_url: activeProject.github_pages_url,
         github_repo_full_name: activeProject.github_repo_full_name,
       },
     };
-  } catch {
+  } catch (err) {
     // GitHub API unavailable — show minimal page
+    console.error("Upgrade loader error:", err);
     return {
       siteVersion,
       latestRelease: null,
@@ -229,6 +251,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       configContent: "",
       isBelowMinimum,
       needsUpgrade: false,
+      googleSheetsEnabled: Boolean(config?.google_sheets_enabled),
       project: {
         id: activeProject.id,
         github_pages_url: activeProject.github_pages_url,
@@ -255,112 +278,278 @@ export async function action({ request, context }: Route.ActionArgs) {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  const allProjects = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.user_id, user.id));
-
-  if (allProjects.length === 0) {
+  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  if (!resolved) {
     return { ok: false, intent, error: "no_project" };
   }
+  const { project: activeProject } = resolved;
 
-  const activeProject =
-    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+  // Guard: only owners may upgrade
+  await requireOwner(db, activeProject.id, user.id);
 
   const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
   const [owner, repo] = activeProject.github_repo_full_name.split("/");
 
-  switch (intent) {
-    case "upgrade": {
-      try {
-        // Fetch latest release and user tree fresh for this commit
-        const latestRelease = await fetchLatestRelease(token);
-        const { tree: userTree } = await getRepoTree(token, owner, repo);
-        const diff = await computeUpgradeDiff(token, userTree, latestRelease.tagName);
+  // runUpgradePrepare — collects everything needed to commit the upgrade:
+  // framework tree-diff, manifest chain, referenced file contents, and the
+  // expected HEAD OID. All network I/O happens here; the returned prepared
+  // state is safe to round-trip through the client (owners could always edit
+  // their own repos anyway, so no tamper risk model is violated).
+  async function runUpgradePrepare(): Promise<
+    | { ok: true; prepared: PreparedUpgrade }
+    | { ok: false; error: string; message?: string }
+  > {
+    try {
+      const latestRelease = await fetchLatestRelease(token);
+      const { tree: userTree } = await getRepoTree(token, owner, repo);
+      // capture HEAD OID here; pass to commitFilesToRepo below to
+      // prevent a second upgrade path (e.g. GitHub Actions, another client)
+      // from racing this commit.
+      const expectedHeadOid = await getRepoHead(token, owner, repo, "main");
+      const diff = await computeUpgradeDiff(token, userTree, latestRelease.tagName);
 
-        // Build additions list: start with framework files from diff
-        const additions = [...diff.additions];
-
-        // Apply config patch to _config.yml
-        const configContent = await getFileContent(token, owner, repo, "_config.yml");
-        if (configContent && diff.configPatch) {
-          const releaseDate = latestRelease.publishedAt.slice(0, 10);
-          const patchedConfig = updateTelarVersionInConfig(
-            configContent,
-            latestRelease.tagName,
-            releaseDate,
-          );
-          additions.push({ path: "_config.yml", content: patchedConfig });
-        }
-
-        const configRows = await db
-          .select({ telar_version: project_config.telar_version })
-          .from(project_config)
-          .where(eq(project_config.project_id, activeProject.id))
-          .limit(1);
-        const oldVersion = configRows[0]?.telar_version ?? "unknown";
-
-        const commitMessage = `Upgrade Telar from ${oldVersion} to ${latestRelease.tagName}`;
-        const commitBody = `Upgraded via Telar Compositor\n\nSee release notes: https://github.com/UCSB-AMPLab/telar/releases/tag/${latestRelease.tagName}`;
-
-        const installToken = await getInstallationToken(
-          env.GITHUB_APP_ID,
-          env.GITHUB_PRIVATE_KEY,
-          activeProject.installation_id,
-        );
-
-        const result = await commitFilesToRepo(
-          installToken,
-          owner,
-          repo,
-          "main",
-          additions,
-          commitMessage,
-          commitBody,
-          diff.deletions,
-        );
-
-        const newHeadSha = result.newHeadSha;
-        const now = new Date().toISOString();
-
-        // Update D1: telar_version in project_config, head_sha in projects
-        // Wrapped separately — the commit already landed on GitHub, so a D1
-        // failure must not report "upgrade_failed" to the user.
-        try {
-          await db
-            .update(project_config)
-            .set({ telar_version: latestRelease.tagName, updated_at: now })
-            .where(eq(project_config.project_id, activeProject.id));
-
-          await db
-            .update(projects)
-            .set({ head_sha: newHeadSha, updated_at: now })
-            .where(eq(projects.id, activeProject.id));
-        } catch (d1Err) {
-          // D1 is stale but commit succeeded — log and continue.
-          // Next page load will re-sync from the repo.
-          console.error("D1 update after upgrade commit failed:", d1Err);
-        }
-
-        return {
-          ok: true,
-          intent: "upgrade",
-          newHeadSha,
-          newVersion: latestRelease.tagName,
-          owner,
-          repo,
-        };
-      } catch (err) {
-        if (err instanceof StaleHeadError) {
-          return { ok: false, intent: "upgrade", error: "stale_head" };
-        }
+      const configContent = await getFileContent(token, owner, repo, "_config.yml");
+      if (!configContent) {
         return {
           ok: false,
-          intent: "upgrade",
           error: "upgrade_failed",
-          message: err instanceof Error ? err.message : "Unknown error",
+          message:
+            "_config.yml not found — upgrade requires a valid site configuration.",
         };
       }
+
+      const releaseDate = latestRelease.publishedAt.slice(0, 10);
+      // The framework's _config.yml convention is `version: "X.Y.Z"` without
+      // the "v" prefix — matches historical migration.json from/to values, D1
+      // storage, and the manual scripts/upgrade.py writer. latestRelease.tagName
+      // carries the GitHub tag format ("v1.2.0"); strip the leading v before
+      // writing into the telar block. (Previous behaviour wrote "v1.2.0"
+      // into _config.yml, diverging from the convention.)
+      const patchedConfig = updateTelarVersionInConfig(
+        configContent,
+        latestRelease.tagName.replace(/^v/, ""),
+        releaseDate,
+      );
+
+      const configRows = await db
+        .select({ telar_version: project_config.telar_version })
+        .from(project_config)
+        .where(eq(project_config.project_id, activeProject.id))
+        .limit(1);
+      const oldVersion = configRows[0]?.telar_version ?? "unknown";
+
+      // Pitfall 1: exact-string-equality chain discovery — normalise both sides.
+      const fromVersion = (oldVersion ?? "").replace(/^v/, "");
+      const toVersion = latestRelease.tagName.replace(/^v/, "");
+
+      let manifestChain: Manifest[];
+      try {
+        manifestChain = await loadManifestChain(token, fromVersion, toVersion);
+      } catch (err) {
+        // Pitfall 6: missing release-asset manifest — fail closed, no commit.
+        console.error(
+          `[runUpgradePrepare] loadManifestChain failed (${fromVersion} -> ${toVersion}):`,
+          err,
+        );
+        return {
+          ok: false,
+          error: "missing_manifest",
+          message: err instanceof Error ? err.message : "Missing migration manifest",
+        };
+      }
+
+      const langMatch = patchedConfig.match(/^\s*telar_language:\s*["']?([a-z]{2})/m);
+      const language: "en" | "es" = langMatch?.[1] === "es" ? "es" : "en";
+
+      // BLOCKER fix: seed _config.yml with patchedConfig (version-bumped),
+      // NOT configContent (pre-upgrade). The manifest runner's output therefore
+      // carries BOTH the telar.version bump AND the DSL transforms.
+      const manifestFiles = new Map<string, string>();
+      manifestFiles.set("_config.yml", patchedConfig);
+
+      const referenced = collectFilesReferencedByChain(manifestChain);
+      for (const path of referenced) {
+        if (manifestFiles.has(path)) continue;
+        const content = await getFileContent(token, owner, repo, path);
+        if (content !== null) manifestFiles.set(path, content);
+      }
+
+      let manifestResult: ManifestApplyResult;
+      try {
+        manifestResult = applyManifestChain(manifestChain, manifestFiles, language);
+      } catch (err) {
+        // runner scope allowlist or other runtime error — fail closed.
+        console.error(
+          `[runUpgradePrepare] applyManifestChain failed (${fromVersion} -> ${toVersion}):`,
+          err,
+        );
+        return {
+          ok: false,
+          error: "manifest_failed",
+          message: err instanceof Error ? err.message : "Manifest application failed",
+        };
+      }
+
+      // Merge additions: framework tree-diff first, then manifest-runner output
+      // overwrites on path conflict (version-bumped _config.yml is preserved).
+      const additionsMap = new Map<string, string>();
+      for (const add of diff.additions) additionsMap.set(add.path, add.content);
+      for (const [path, content] of manifestResult.files.entries()) {
+        additionsMap.set(path, content);
+      }
+      const mergedAdditions = Array.from(additionsMap.entries()).map(
+        ([path, content]) => ({ path, content }),
+      );
+
+      const mergedDeletions = Array.from(
+        new Set([...(diff.deletions ?? []), ...manifestResult.deletions]),
+      );
+
+      return {
+        ok: true,
+        prepared: {
+          additions: mergedAdditions,
+          deletions: mergedDeletions,
+          expectedHeadOid,
+          commitMessage: `Upgrade Telar from ${oldVersion} to ${toVersion}`,
+          commitBody: `Upgraded via Telar Compositor\n\nSee release notes: https://github.com/UCSB-AMPLab/telar/releases/tag/${latestRelease.tagName}`,
+          newVersion: latestRelease.tagName,
+          toVersion,
+          manualSteps: manifestResult.manualSteps,
+          installationId: activeProject.installation_id,
+        },
+      };
+    } catch (err) {
+      console.error("[runUpgradePrepare] unhandled error:", err);
+      return {
+        ok: false,
+        error: "upgrade_failed",
+        message: err instanceof Error ? err.message : "Unknown error",
+      };
+    }
+  }
+
+  // runUpgradeCommit — takes a prepared upgrade payload and performs the
+  // installation-token commit + D1 updates. StaleHeadError surfaces as a
+  // typed error so the client can offer re-sync.
+  async function runUpgradeCommit(prepared: PreparedUpgrade): Promise<
+    | {
+        ok: true;
+        newHeadSha: string;
+        newVersion: string;
+        owner: string;
+        repo: string;
+        manualSteps: ManualStep[];
+      }
+    | { ok: false; error: string; message?: string; reauthUrl?: string }
+  > {
+    try {
+      const installToken = await getInstallationToken(
+        env.GITHUB_APP_ID,
+        env.GITHUB_PRIVATE_KEY,
+        prepared.installationId,
+      );
+
+      const result = await commitFilesToRepo(
+        installToken,
+        owner,
+        repo,
+        "main",
+        prepared.additions,
+        prepared.commitMessage,
+        prepared.commitBody,
+        prepared.deletions,
+        undefined, // skipCi
+        prepared.expectedHeadOid,
+      );
+
+      const newHeadSha = result.newHeadSha;
+      const now = new Date().toISOString();
+
+      // Commit already landed; D1 failure must not report upgrade_failed.
+      try {
+        await db
+          .update(project_config)
+          .set({ telar_version: prepared.toVersion, updated_at: now })
+          .where(eq(project_config.project_id, activeProject.id));
+        await db
+          .update(projects)
+          .set({ head_sha: newHeadSha, updated_at: now })
+          .where(eq(projects.id, activeProject.id));
+      } catch (d1Err) {
+        console.error("D1 update after upgrade commit failed:", d1Err);
+      }
+
+      return {
+        ok: true,
+        newHeadSha,
+        newVersion: prepared.newVersion,
+        owner,
+        repo,
+        manualSteps: prepared.manualSteps,
+      };
+    } catch (err) {
+      if (err instanceof StaleHeadError) {
+        console.error("[runUpgradeCommit] stale head:", err.message);
+        return { ok: false, error: "stale_head" };
+      }
+      const message = err instanceof Error ? err.message : "Unknown error";
+      // GitHub returns "Resource not accessible by integration" when the App
+      // lacks a permission required for the commit (e.g. workflows: write).
+      // Surface a targeted error with a per-install re-auth URL so the client
+      // can route the user to the permissions review screen instead of a
+      // generic failure.
+      if (message.includes("Resource not accessible by integration")) {
+        return {
+          ok: false,
+          error: "insufficient_permissions",
+          reauthUrl: `https://github.com/settings/installations/${prepared.installationId}/permissions`,
+        };
+      }
+      console.error("[runUpgradeCommit] unhandled error:", err);
+      return {
+        ok: false,
+        error: "upgrade_failed",
+        message,
+      };
+    }
+  }
+
+  // owner gate — enforced above via requireOwner(). No spoofable path.
+  switch (intent) {
+    case "upgrade-prepare": {
+      const res = await runUpgradePrepare();
+      if (!res.ok) return { ok: false, intent: "upgrade-prepare", error: res.error, message: res.message };
+      return { ok: true, intent: "upgrade-prepare", prepared: res.prepared };
+    }
+
+    case "upgrade-commit": {
+      const preparedJson = formData.get("preparedState") as string | null;
+      if (!preparedJson) {
+        return { ok: false, intent: "upgrade-commit", error: "missing_prepared_state" };
+      }
+      let prepared: PreparedUpgrade;
+      try {
+        prepared = JSON.parse(preparedJson) as PreparedUpgrade;
+      } catch {
+        return { ok: false, intent: "upgrade-commit", error: "invalid_prepared_state" };
+      }
+      const res = await runUpgradeCommit(prepared);
+      if (!res.ok) return { ok: false, intent: "upgrade-commit", error: res.error, message: res.message, reauthUrl: res.reauthUrl };
+      const { newHeadSha, newVersion, manualSteps } = res;
+      return { ok: true, intent: "upgrade-commit", newHeadSha, newVersion, owner, repo, manualSteps };
+    }
+
+    // Legacy single-shot upgrade — preserved so existing tests still exercise
+    // the full pipeline through one intent. The client uses the split pair
+    // (upgrade-prepare + upgrade-commit) to drive the two-step progress UI.
+    case "upgrade": {
+      const prep = await runUpgradePrepare();
+      if (!prep.ok) return { ok: false, intent: "upgrade", error: prep.error, message: prep.message };
+      const res = await runUpgradeCommit(prep.prepared);
+      if (!res.ok) return { ok: false, intent: "upgrade", error: res.error, message: res.message, reauthUrl: res.reauthUrl };
+      const { newHeadSha, newVersion, manualSteps } = res;
+      return { ok: true, intent: "upgrade", newHeadSha, newVersion, owner, repo, manualSteps };
     }
 
     case "poll-build": {
@@ -447,9 +636,25 @@ export async function action({ request, context }: Route.ActionArgs) {
 // Types
 // ---------------------------------------------------------------------------
 
+interface PreparedUpgrade {
+  additions: Array<{ path: string; content: string }>;
+  deletions: string[];
+  expectedHeadOid: string;
+  commitMessage: string;
+  commitBody: string;
+  newVersion: string;
+  toVersion: string;
+  manualSteps: ManualStep[];
+  installationId: number;
+}
+
 type UpgradeActionData =
-  | { ok: true; intent: "upgrade"; newHeadSha: string; newVersion: string; owner: string; repo: string }
-  | { ok: false; intent: "upgrade"; error: string; message?: string }
+  | { ok: true; intent: "upgrade"; newHeadSha: string; newVersion: string; owner: string; repo: string; manualSteps: ManualStep[] }
+  | { ok: false; intent: "upgrade"; error: string; message?: string; reauthUrl?: string }
+  | { ok: true; intent: "upgrade-prepare"; prepared: PreparedUpgrade }
+  | { ok: false; intent: "upgrade-prepare"; error: string; message?: string }
+  | { ok: true; intent: "upgrade-commit"; newHeadSha: string; newVersion: string; owner: string; repo: string; manualSteps: ManualStep[] }
+  | { ok: false; intent: "upgrade-commit"; error: string; message?: string; reauthUrl?: string }
   | { ok: true; intent: "poll-build"; buildStatus: string; buildConclusion: string | null; buildUrl: string | null; runId: number | null; phases: BuildPhaseStatus[] | null }
   | { ok: false; intent: "poll-build"; error: string; message?: string }
   | { ok: true; intent: "compute-diff"; diff: UpgradeDiff; latestRelease: TelarRelease }
@@ -459,6 +664,7 @@ type UpgradeActionData =
   | undefined;
 
 type UpgradeStage = "review" | "upgrading" | "building" | "done";
+type UpgradeSubStage = "preparing" | "committing";
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -514,7 +720,7 @@ function PhaseCircle({ phase }: { phase: BuildPhaseStatus }) {
   return (
     <div className="w-8 h-8 rounded-full flex items-center justify-center bg-gray-100">
       <span className="font-heading font-semibold text-xs text-gray-400">
-        {BUILD_PHASES.findIndex((p) => p.id === phase.id) + 1}
+        {BUILD_PHASE_IDS.findIndex((id) => id === phase.id) + 1}
       </span>
     </div>
   );
@@ -618,8 +824,12 @@ function HintBox({ title, body }: { title: string; body: string }) {
 
 export default function UpgradePage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("upgrade");
+  const { t: tTeam } = useTranslation("team");
   const [searchParams] = useSearchParams();
   const fromPath = searchParams.get("from");
+
+  const appData = useRouteLoaderData("routes/_app") as { userRole?: string } | null;
+  const isCollaborator = appData?.userRole === "collaborator";
 
   const {
     siteVersion,
@@ -630,14 +840,39 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     filesByCategory,
     isBelowMinimum,
     needsUpgrade,
+    googleSheetsEnabled,
     project,
   } = loaderData;
+
+  // Filter post-upgrade manual steps to those relevant for compositor users.
+  // Rules:
+  //   - no audience / "all"          → show
+  //   - "compositor"                  → show
+  //   - "google-sheets"               → show only if the site has GS enabled
+  //   - "local"                       → hide (covered automatically by compositor)
+  function isStepVisible(step: ManualStep): boolean {
+    const a = step.audience;
+    if (!a || a === "all" || a === "compositor") return true;
+    if (a === "google-sheets") return googleSheetsEnabled;
+    return false; // "local"
+  }
+
+  if (isCollaborator) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        <RestrictionBanner message={tTeam("restriction_upgrade")} />
+      </div>
+    );
+  }
+
+  const { provider } = useCollaborationContext();
 
   const upgradeFetcher = useFetcher();
   const pollFetcher = useFetcher();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [stage, setStage] = useState<UpgradeStage>("review");
+  const [upgradeSubStage, setUpgradeSubStage] = useState<UpgradeSubStage | null>(null);
   const [upgradeSha, setUpgradeSha] = useState<string | null>(null);
   const [newVersion, setNewVersion] = useState<string | null>(null);
   const [buildConclusion, setBuildConclusion] = useState<string | null>(null);
@@ -645,23 +880,68 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
   const [runId, setRunId] = useState<number | null>(null);
   const [phases, setPhases] = useState<BuildPhaseStatus[] | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const [reauthUrl, setReauthUrl] = useState<string | null>(null);
+  const [manualSteps, setManualSteps] = useState<ManualStep[]>([]);
 
   const upgradeData = upgradeFetcher.data as UpgradeActionData;
   const pollData = pollFetcher.data as UpgradeActionData;
 
-  // Handle upgrade response
+  // Handle upgrade response: two-step flow — prepare response triggers commit,
+  // commit response advances to the building stage. Legacy "upgrade" intent
+  // (tests) still short-circuits straight to building.
   useEffect(() => {
     if (!upgradeData) return;
-    if (upgradeData.ok && upgradeData.intent === "upgrade") {
+
+    if (upgradeData.ok && upgradeData.intent === "upgrade-prepare") {
+      setUpgradeSubStage("committing");
+      upgradeFetcher.submit(
+        {
+          intent: "upgrade-commit",
+          preparedState: JSON.stringify(upgradeData.prepared),
+        },
+        { method: "post" },
+      );
+      return;
+    }
+
+    if (
+      upgradeData.ok &&
+      (upgradeData.intent === "upgrade-commit" || upgradeData.intent === "upgrade")
+    ) {
       setUpgradeSha(upgradeData.newHeadSha);
       setNewVersion(upgradeData.newVersion);
-      setStage("building");
-    } else if (!upgradeData.ok && upgradeData.intent === "upgrade") {
-      setStage("review");
-      setUpgradeError(
-        upgradeData.error === "stale_head" ? "stale_head" : "upgrade_failed",
+      setManualSteps(
+        Array.isArray(upgradeData.manualSteps) ? upgradeData.manualSteps : [],
       );
+      setUpgradeSubStage(null);
+      setStage("building");
+      return;
     }
+
+    if (
+      !upgradeData.ok &&
+      (upgradeData.intent === "upgrade-prepare" ||
+        upgradeData.intent === "upgrade-commit" ||
+        upgradeData.intent === "upgrade")
+    ) {
+      setStage("review");
+      setUpgradeSubStage(null);
+      if (upgradeData.error === "stale_head") {
+        setUpgradeError("stale_head");
+        setReauthUrl(null);
+      } else if (upgradeData.error === "insufficient_permissions") {
+        setUpgradeError("insufficient_permissions");
+        setReauthUrl(
+          "reauthUrl" in upgradeData && upgradeData.reauthUrl
+            ? upgradeData.reauthUrl
+            : null,
+        );
+      } else {
+        setUpgradeError("upgrade_failed");
+        setReauthUrl(null);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upgradeData]);
 
   // Handle poll responses
@@ -706,15 +986,39 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     };
   }, []);
 
+  // Broadcast upgrade state to all connected clients via Yjs
+  // awareness. Collaborators see a freeze modal driven by state.upgrading;
+  // error state surfaces a dismissable error modal.
+  //
+  // This broadcast is owner-only in practice because the upgrade
+  // route loader already redirects non-convenors (RestrictionBanner path).
+  // Even if a collaborator spoofed upgrading=true elsewhere, the commit itself
+  // is server-gated by the role check in this route's action.
+  useEffect(() => {
+    if (!provider) return;
+    const isActive = stage === "upgrading" || stage === "building";
+    provider.awareness.setLocalStateField("upgrading", isActive);
+    provider.awareness.setLocalStateField("upgradeError", upgradeError !== null);
+    return () => {
+      // Clear fields on unmount so an aborted upgrade does not leave the modal
+      // stuck for peers.
+      provider.awareness.setLocalStateField("upgrading", false);
+      provider.awareness.setLocalStateField("upgradeError", false);
+    };
+  }, [stage, upgradeError, provider]);
+
   function handleUpgrade() {
     setUpgradeError(null);
+    setReauthUrl(null);
     setStage("upgrading");
-    upgradeFetcher.submit({ intent: "upgrade" }, { method: "post" });
+    setUpgradeSubStage("preparing");
+    upgradeFetcher.submit({ intent: "upgrade-prepare" }, { method: "post" });
   }
 
   function handleRetry() {
     setStage("review");
     setUpgradeError(null);
+    setReauthUrl(null);
     setUpgradeSha(null);
     setNewVersion(null);
     setBuildConclusion(null);
@@ -723,12 +1027,22 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     setPhases(null);
   }
 
+  // Build phase labels (i18n)
+  const phaseLabels: Record<BuildPhaseId, string> = {
+    "setup": t("phase_label_setup"),
+    "build-js": t("phase_label_build_js"),
+    "process-data": t("phase_label_process_data"),
+    "build-site": t("phase_label_build_site"),
+    "iiif": t("phase_label_iiif_tiles"),
+    "deploy": t("phase_label_deploy"),
+  };
+
   // Build phase display
   const displayPhases: BuildPhaseStatus[] =
     phases ??
-    BUILD_PHASES.map((p) => ({
-      id: p.id,
-      label: p.label,
+    BUILD_PHASE_IDS.map((id) => ({
+      id,
+      label: phaseLabels[id],
       status: "queued" as const,
       conclusion: null,
     }));
@@ -779,6 +1093,21 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
               >
                 {t("resync")}
               </Link>
+            </div>
+          )}
+
+          {/* Missing GitHub App permission (e.g. workflows: write) */}
+          {upgradeError === "insufficient_permissions" && reauthUrl && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 flex items-start gap-3">
+              <p className="font-body text-sm text-amber-900 flex-1">{t("insufficientPermissions")}</p>
+              <a
+                href={reauthUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-heading font-semibold text-sm text-amber-900 underline underline-offset-2 hover:opacity-80 shrink-0"
+              >
+                {t("reviewPermissions")}
+              </a>
             </div>
           )}
 
@@ -928,12 +1257,46 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
       )}
 
       {/* ------------------------------------------------------------------ */}
-      {/* UPGRADING STAGE                                                     */}
+      {/* UPGRADING STAGE — two-step progress: prepare, then commit           */}
       {/* ------------------------------------------------------------------ */}
       {stage === "upgrading" && (
-        <div className="bg-white rounded-xl border border-gray-200 p-12 flex flex-col items-center gap-4">
-          <Loader2 className="w-10 h-10 text-terracotta animate-spin" />
-          <p className="font-heading font-semibold text-lg text-charcoal">{t("upgrading")}</p>
+        <div className="bg-white rounded-xl border border-gray-200 p-8">
+          <h2 className="font-heading font-semibold text-lg text-charcoal mb-6 text-center">
+            {t("upgrading")}
+          </h2>
+          <ol className="flex flex-col gap-4 max-w-sm mx-auto">
+            {(["preparing", "committing"] as const).map((step) => {
+              const isActive = upgradeSubStage === step;
+              const isDone =
+                (step === "preparing" && upgradeSubStage === "committing") ||
+                upgradeSubStage === null;
+              return (
+                <li key={step} className="flex items-center gap-3">
+                  {isActive ? (
+                    <Loader2 className="w-5 h-5 text-terracotta animate-spin shrink-0" aria-hidden="true" />
+                  ) : isDone ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full border-2 border-gray-200 shrink-0" aria-hidden="true" />
+                  )}
+                  <span
+                    className={`font-body text-sm ${
+                      isActive
+                        ? "text-charcoal font-semibold"
+                        : isDone
+                          ? "text-gray-500"
+                          : "text-gray-400"
+                    }`}
+                  >
+                    {t(`upgrading_step_${step}`)}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+          <p className="font-body text-xs text-gray-500 mt-6 text-center">
+            {t("upgrading_hint")}
+          </p>
         </div>
       )}
 
@@ -1014,13 +1377,54 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
                 )}
               </div>
 
-              {/* Post-upgrade checklist */}
-              <div className="bg-cream-dark rounded-lg p-4 mb-6">
-                <h3 className="font-heading font-semibold text-sm text-charcoal mb-1">
-                  {t("postUpgradeChecklist")}
+              {/* Post-upgrade manual steps (from manifest chain) */}
+              <section className="bg-cream-dark rounded-lg p-4 mb-6">
+                <h3 className="font-heading font-semibold text-sm text-charcoal mb-2">
+                  {t("manualStepsHeading")}
                 </h3>
-                <p className="font-body text-xs text-gray-600">{t("noChecklist")}</p>
-              </div>
+                {(() => {
+                  const visibleSteps = manualSteps.filter(isStepVisible);
+                  if (visibleSteps.length === 0) {
+                    return (
+                      <p className="font-body text-xs text-gray-600">
+                        {t("manualStepsEmpty")}
+                      </p>
+                    );
+                  }
+                  return (
+                    <>
+                      <p className="font-body text-sm text-charcoal mb-3">
+                        {t("manualStepsIntro")}
+                      </p>
+                      <ol className="list-decimal pl-6 space-y-3">
+                        {visibleSteps.map((step, i) => (
+                          <li key={i} className="font-body text-sm text-charcoal">
+                            <div
+                              dangerouslySetInnerHTML={{
+                                __html: marked.parse(step.description, {
+                                  async: false,
+                                  gfm: true,
+                                }) as string,
+                              }}
+                            />
+                            {step.doc_url && (
+                              <a
+                                href={step.doc_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 font-body text-xs text-blue-600 hover:underline"
+                              >
+                                {t("manualStepsDocLink")}
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                    </>
+                  );
+                })()}
+              </section>
 
               <div className="flex flex-wrap gap-3 justify-end">
                 {project.github_pages_url && (

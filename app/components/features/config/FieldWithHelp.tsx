@@ -2,7 +2,11 @@
  * FieldWithHelp — labelled form field with optional help text.
  *
  * Supports text, textarea, number, and select input types.
+ * Optional onChange callback fires on blur (text/textarea/number) or
+ * on change (select) for auto-save integration.
  */
+
+import { useEffect, useState } from "react";
 
 interface SelectOption {
   value: string;
@@ -17,6 +21,7 @@ interface FieldWithHelpProps {
   help?: string;
   options?: SelectOption[];
   className?: string;
+  onChange?: (name: string, value: string) => void;
 }
 
 const inputClass =
@@ -30,6 +35,7 @@ export function FieldWithHelp({
   help,
   options = [],
   className = "",
+  onChange,
 }: FieldWithHelpProps) {
   return (
     <div className={`mb-4 ${className}`}>
@@ -43,15 +49,17 @@ export function FieldWithHelp({
           defaultValue={value as string}
           rows={6}
           className={inputClass}
+          onBlur={(e) => onChange?.(name, e.target.value)}
         />
       ) : type === "select" ? (
-        <select id={name} name={name} defaultValue={value as string} className={inputClass}>
-          {options.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        <ControlledSelect
+          id={name}
+          name={name}
+          value={value as string}
+          options={options}
+          className={inputClass}
+          onChange={(v) => onChange?.(name, v)}
+        />
       ) : (
         <input
           id={name}
@@ -59,9 +67,48 @@ export function FieldWithHelp({
           type={type}
           defaultValue={value as string | number}
           className={inputClass}
+          onBlur={(e) => onChange?.(name, e.target.value)}
         />
       )}
       {help && <p className="text-xs text-gray-400 mt-1">{help}</p>}
     </div>
+  );
+}
+
+function ControlledSelect({
+  id,
+  name,
+  value: propValue,
+  options,
+  className,
+  onChange,
+}: {
+  id: string;
+  name: string;
+  value: string;
+  options: SelectOption[];
+  className: string;
+  onChange?: (value: string) => void;
+}) {
+  const [selected, setSelected] = useState(propValue);
+  useEffect(() => { setSelected(propValue); }, [propValue]);
+
+  return (
+    <select
+      id={id}
+      name={name}
+      value={selected}
+      onChange={(e) => {
+        setSelected(e.target.value);
+        onChange?.(e.target.value);
+      }}
+      className={className}
+    >
+      {options.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
   );
 }

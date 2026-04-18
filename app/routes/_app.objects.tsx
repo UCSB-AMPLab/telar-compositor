@@ -11,14 +11,37 @@
  */
 
 import { and, asc, count, eq, inArray } from "drizzle-orm";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { redirect, useFetcher } from "react-router";
+import * as Y from "yjs";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical, Trash2 } from "lucide-react";
 import type { Route } from "./+types/_app.objects";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, objects, steps, project_config } from "~/db/schema";
+import { projects, objects, steps, project_config, project_members, users } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
+import { resolveActiveProject } from "~/lib/membership.server";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { useStructuralOps } from "~/hooks/use-structural-ops";
+import { useToast } from "~/hooks/use-toast";
+import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { fetchAndParseManifest } from "~/lib/iiif.server";
 import { deriveStatus } from "~/lib/iiif-types";
 import type { IiifFetchResult } from "~/lib/iiif-types";
@@ -40,7 +63,7 @@ import {
 import type { BuildPhaseStatus, WorkflowRun } from "~/lib/commit.server";
 import { githubHeaders } from "~/lib/github.server";
 import { getInstallationToken } from "~/lib/github-app.server";
-import { serializeObjectsCsv } from "~/lib/csv-export.server";
+import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import { ObjectRow } from "~/components/features/objects/ObjectRow";
 import { ObjectsEmptyState } from "~/components/features/objects/ObjectsEmptyState";
 import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
@@ -51,10 +74,10 @@ import type { ObjectRowObject } from "~/components/features/objects/ObjectRow";
 import type { SyncDiff, SyncChanges, PendingObject } from "~/lib/sync.server";
 import type { AddIiifConfirmPayload } from "~/components/features/objects/AddIiifDialog";
 import type { UploadImageConfirmPayload } from "~/components/features/objects/UploadImageDialog";
-import { commitBinaryFileWithCsv, arrayBufferToBase64, validateUploadFile } from "~/lib/upload.server";
+import { commitMultipleBinaryFilesWithCsv, arrayBufferToBase64, validateUploadFile } from "~/lib/upload.server";
 import type { SyncApplyPayload } from "~/components/features/objects/SyncDiffDialog";
 
-export const handle = { i18n: ["common", "objects"] };
+export const handle = { i18n: ["common", "objects", "structural"] };
 
 // ---------------------------------------------------------------------------
 // Loader
@@ -71,24 +94,37 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  const allProjects = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.user_id, user.id));
-
-  if (allProjects.length === 0) {
+  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  if (!resolved) {
     return redirect("/dashboard");
   }
+  const { project: activeProject, userRole } = resolved;
 
-  const activeProject =
-    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-
-  // Fetch all objects ordered by title ASC
+  // Fetch all objects ordered by `order` ASC — legacy rows may all
+  // default to 0, which still sorts consistently before newly-ordered items.
   const projectObjects = await db
     .select()
     .from(objects)
     .where(eq(objects.project_id, activeProject.id))
-    .orderBy(asc(objects.title));
+    .orderBy(asc(objects.order));
+
+  // Team members for the delete confirmation contributor warning.
+  const memberRows = await db
+    .select({
+      userId: project_members.user_id,
+      name: users.github_name,
+      login: users.github_login,
+      contributions: project_members.contributions,
+    })
+    .from(project_members)
+    .innerJoin(users, eq(project_members.user_id, users.id))
+    .where(eq(project_members.project_id, activeProject.id));
+
+  const members = memberRows.map((m) => ({
+    userId: m.userId,
+    name: m.name || m.login,
+    contributions: m.contributions ? JSON.parse(m.contributions) : null,
+  }));
 
   // Lazy-enrich objects that haven't been checked yet.
   // External IIIF (has source_url): fetch manifest for thumbnail; always
@@ -206,7 +242,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ? `${config.url}${config.baseurl ?? ""}`
     : null;
 
-  return { project: activeProject, objects: projectObjects, objectStepCounts, siteBaseUrl };
+  return {
+    project: activeProject,
+    objects: projectObjects,
+    objectStepCounts,
+    siteBaseUrl,
+    members,
+    currentUserId: user.id,
+    userRole,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -369,136 +413,69 @@ export async function action({ request, context }: Route.ActionArgs) {
       return { ok: true, intent: "fetch-iiif-preview", result };
     }
 
-    case "add-iiif-object": {
-      const title = (formData.get("title") as string | null)?.trim();
-      if (!title) {
-        return { ok: false, intent: "add-iiif-object", error: "title_required" };
+    // add-iiif-object migrated to Yjs. IIIF objects
+    // now flow through ops.addIiifObject → Y.Array with _validation_state.
+    // The snapshotToD1 cycle INSERTs them once validation succeeds. Any
+    // clients on old code that still submit this intent hit the 400 default
+    // below. Self-hosted uploads continue to use upload-image.
+
+    case "delete-object": {
+      // Convenor-only deletion of self-hosted objects requiring repo cleanup.
+      // IIIF / external objects are deleted client-side via the Y.Array only
+      // ; snapshotToD1 handles the D1 row removal on the next cycle.
+      const objectDbId = Number(formData.get("objectDbId"));
+      if (!objectDbId) {
+        return { ok: false, intent: "delete-object", error: "missing_id" };
       }
 
-      // Get active project
+      // Verify ownership + project scope.
       const sessionStorage = createSessionStorage(env.SESSION_SECRET);
       const session = await sessionStorage.getSession(request.headers.get("Cookie"));
       const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-      const allProjects = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects.length === 0) {
-        return { ok: false, intent: "add-iiif-object", error: "no_project" };
+      const resolvedDel = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolvedDel) {
+        return { ok: false, intent: "delete-object", error: "no_project" };
       }
-
-      const activeProject =
-        allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-
-      // Validate and generate unique object_id
-      const requestedSlug = (formData.get("object_id") as string | null)?.trim() || slugify(title);
-      const objectId = await generateUniqueObjectSlug(requestedSlug, activeProject.id, db);
-
-      const hasIiifTiles = formData.get("image_available") === "true";
-      const sourceUrl = (formData.get("source_url") as string | null)?.trim() || null;
-      const isExternalManifest = sourceUrl?.startsWith("http://") || sourceUrl?.startsWith("https://");
-      const addNow = new Date().toISOString();
-
-      // External IIIF objects (manifest hosted elsewhere, no tile build needed):
-      // save directly to D1 with origin="compositor" and immediately commit
-      // objects.csv with [skip ci] so the object survives re-sync (DATA-03).
-      if (isExternalManifest) {
-        await db.insert(objects).values({
-          project_id: activeProject.id,
-          object_id: objectId,
-          title,
-          featured: false,
-          creator: (formData.get("creator") as string | null)?.trim() || null,
-          description: (formData.get("description") as string | null)?.trim() || null,
-          source_url: sourceUrl,
-          period: null,
-          year: null,
-          object_type: null,
-          subjects: null,
-          source: (formData.get("source") as string | null)?.trim() || null,
-          credit: (formData.get("credit") as string | null)?.trim() || null,
-          thumbnail: (formData.get("thumbnail") as string | null)?.trim() || null,
-          alt_text: title,
-          image_available: hasIiifTiles,
-          origin: "compositor",
-          updated_at: addNow,
-        });
-
-        // Commit objects.csv immediately with [skip ci] so the object is in
-        // the repo CSV before the next re-sync runs (DATA-03).
-        try {
-          const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-          const [owner, repo] = activeProject.github_repo_full_name.split("/");
-          const existingCsv = await getFileContent(token, owner, repo, "telar-content/spreadsheets/objects.csv");
-          const allObjects = await db
-            .select()
-            .from(objects)
-            .where(and(eq(objects.project_id, activeProject.id), eq(objects.missing_from_repo, false)));
-          const csvContent = serializeObjectsCsv(allObjects, existingCsv ?? undefined);
-          const commitResult = await commitFilesToRepo(
-            token, owner, repo, "main",
-            [{ path: "telar-content/spreadsheets/objects.csv", content: csvContent }],
-            "Update objects.csv via Telar Compositor",
-            undefined, undefined,
-            true, // skipCi
-          );
-          await db.update(projects)
-            .set({ head_sha: commitResult.newHeadSha, updated_at: new Date().toISOString() })
-            .where(eq(projects.id, activeProject.id));
-          return { ok: true, intent: "add-iiif-object", savedDirectly: true };
-        } catch (err) {
-          // Object is in D1; CSV commit failed — warn but don't fail the user action
-          const isStale = err instanceof StaleHeadError;
-          return {
-            ok: true,
-            intent: "add-iiif-object",
-            savedDirectly: true,
-            csvCommitFailed: true,
-            stale: isStale,
-          };
-        }
+      if (resolvedDel.userRole !== "convenor") {
+        return { ok: false, intent: "delete-object", error: "forbidden" };
       }
+      const delActiveProject = resolvedDel.project;
 
-      // Self-hosted objects: return as pending for commit + build flow
-      const pendingObject: PendingObject = {
-        object_id: objectId,
-        title,
-        featured: false,
-        creator: (formData.get("creator") as string | null)?.trim() || null,
-        description: (formData.get("description") as string | null)?.trim() || null,
-        source_url: sourceUrl,
-        period: null,
-        year: null,
-        object_type: null,
-        subjects: null,
-        source: (formData.get("source") as string | null)?.trim() || null,
-        credit: (formData.get("credit") as string | null)?.trim() || null,
-        alt_text: title,
-        thumbnail: (formData.get("thumbnail") as string | null)?.trim() || null,
-        image_available: hasIiifTiles,
-      };
+      // Remove the row; the repo-side cleanup (folder removal + CSV update)
+      // happens lazily on the next publish cycle — we keep this action light
+      // so the Y.Array removal on the client remains the primary signal.
+      await db
+        .delete(objects)
+        .where(and(eq(objects.id, objectDbId), eq(objects.project_id, delActiveProject.id)));
 
-      return { ok: true, intent: "add-iiif-object", pendingObject };
+      return { ok: true, intent: "delete-object", deleted: true };
     }
 
     case "upload-image": {
-      // 1. Parse multipart form data (native CF Workers)
-      const imageFile = formData.get("imageFile") as File;
-      const metadataJson = formData.get("metadata") as string;
+      // 1. Parse multipart form data — supports multiple image files (multi-image batch)
+      const imageFiles = formData.getAll("imageFile") as File[];
+      const metadataArrayJson = formData.get("metadataArray") as string | null;
 
-      if (!imageFile || !metadataJson) {
+      if (!imageFiles.length || !metadataArrayJson) {
         return { ok: false, intent: "upload-image", error: "missing_data" };
       }
 
-      // 2. Server-side validation (redundant with client, but necessary)
-      const uploadValidationError = validateUploadFile(imageFile);
-      if (uploadValidationError) {
-        return { ok: false, intent: "upload-image", error: uploadValidationError };
+      // Cap batch size to prevent excessive API calls and memory usage
+      const MAX_BATCH = 10;
+      if (imageFiles.length > MAX_BATCH) {
+        return { ok: false, intent: "upload-image", error: "batch_too_large" };
       }
 
-      const metadata = JSON.parse(metadataJson) as {
+      // 2. Server-side validation for each file (validate all before processing)
+      for (const imageFile of imageFiles) {
+        const uploadValidationError = validateUploadFile(imageFile);
+        if (uploadValidationError) {
+          return { ok: false, intent: "upload-image", error: uploadValidationError };
+        }
+      }
+
+      let metadataArray: Array<{
         objectId: string;
         title: string;
         creator: string;
@@ -508,10 +485,28 @@ export async function action({ request, context }: Route.ActionArgs) {
         period: string;
         year: string;
         altText: string;
-      };
+      }>;
+      try {
+        const parsed = JSON.parse(metadataArrayJson);
+        if (!Array.isArray(parsed)) {
+          return { ok: false, intent: "upload-image", error: "missing_data" };
+        }
+        metadataArray = parsed;
+      } catch {
+        return { ok: false, intent: "upload-image", error: "missing_data" };
+      }
 
-      if (!metadata.title.trim()) {
-        return { ok: false, intent: "upload-image", error: "title_required" };
+      if (metadataArray.length !== imageFiles.length) {
+        return { ok: false, intent: "upload-image", error: "missing_data" };
+      }
+
+      for (const metadata of metadataArray) {
+        if (!metadata || typeof metadata !== "object") {
+          return { ok: false, intent: "upload-image", error: "missing_data" };
+        }
+        if (!metadata.title?.trim()) {
+          return { ok: false, intent: "upload-image", error: "title_required" };
+        }
       }
 
       // 3. Get active project (same pattern as add-iiif-object)
@@ -525,45 +520,63 @@ export async function action({ request, context }: Route.ActionArgs) {
       const uploadActiveProject =
         uploadAllProjects.find((p) => p.id === Number(uploadSessionActiveId)) ?? uploadAllProjects[0];
 
-      // 4. Generate unique object ID
-      const requestedSlug = metadata.objectId.trim() || slugify(metadata.title);
-      const uploadObjectId = await generateUniqueObjectSlug(requestedSlug, uploadActiveProject.id, db);
-
-      // 5. Determine file extension from original filename
-      const originalName = imageFile.name;
-      const ext = originalName.includes(".") ? originalName.split(".").pop()!.toLowerCase() : "jpg";
-      const imagePath = `telar-content/objects/${uploadObjectId}.${ext}`;
-
-      // 6. Read binary and encode to base64
-      const arrayBuffer = await imageFile.arrayBuffer();
-      const imageBase64 = arrayBufferToBase64(arrayBuffer);
-
-      // 7. Build the pending object (D-13: NOT inserted to D1 yet)
-      //    image_available = false until tiles are actually generated by a build.
-      //    The upload commits the source image; tile generation is a separate step.
-      const uploadPendingObject: PendingObject = {
-        object_id: uploadObjectId,
-        title: metadata.title.trim(),
-        featured: false,
-        creator: metadata.creator.trim() || null,
-        description: metadata.description.trim() || null,
-        source_url: null,
-        period: metadata.period.trim() || null,
-        year: metadata.year.trim() || null,
-        object_type: null,
-        subjects: null,
-        source: metadata.source.trim() || null,
-        credit: metadata.credit.trim() || null,
-        thumbnail: null,
-        alt_text: metadata.altText.trim() || metadata.title.trim(),
-        image_available: false,
-      };
-
-      // 8. Serialise objects.csv, merging existing D1 objects with the pending object
-      //    (same pattern as commit-objects action: pending objects are merged for CSV
-      //    but NOT in D1 yet)
       const uploadToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
       const [uploadOwner, uploadRepo] = uploadActiveProject.github_repo_full_name.split("/");
+
+      // 4. Generate unique object IDs for each image and build pending objects
+      const uploadPendingObjects: PendingObject[] = [];
+      const imagePayloads: Array<{ imagePath: string; imageBase64: string }> = [];
+
+      for (let i = 0; i < imageFiles.length; i++) {
+        const imageFile = imageFiles[i];
+        const metadata = metadataArray[i];
+
+        // Generate unique slug (each call sees previously generated IDs via DB)
+        const requestedSlug = metadata.objectId.trim() || slugify(metadata.title);
+        const uploadObjectId = await generateUniqueObjectSlug(requestedSlug, uploadActiveProject.id, db);
+
+        // Validate slug is path-safe (no traversal, only lowercase alphanumeric + hyphens)
+        const safeSlugPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+        if (!safeSlugPattern.test(uploadObjectId)) {
+          return { ok: false, intent: "upload-image", error: "invalid_object_id" };
+        }
+
+        // 5. Derive file extension from MIME type (not filename) to prevent extension spoofing
+        const mimeToExt: Record<string, string> = {
+          "image/jpeg": "jpg",
+          "image/png": "png",
+          "image/tiff": "tif",
+        };
+        const ext = mimeToExt[imageFile.type] ?? "jpg";
+        const imagePath = `telar-content/objects/${uploadObjectId}.${ext}`;
+
+        // 6. Read binary and encode to base64
+        const arrayBuffer = await imageFile.arrayBuffer();
+        const imageBase64 = arrayBufferToBase64(arrayBuffer);
+
+        imagePayloads.push({ imagePath, imageBase64 });
+
+        // 7. Build pending object (NOT inserted to D1 yet)
+        uploadPendingObjects.push({
+          object_id: uploadObjectId,
+          title: metadata.title.trim(),
+          featured: false,
+          creator: metadata.creator.trim() || null,
+          description: metadata.description.trim() || null,
+          source_url: null,
+          period: metadata.period.trim() || null,
+          year: metadata.year.trim() || null,
+          object_type: null,
+          subjects: null,
+          source: metadata.source.trim() || null,
+          credit: metadata.credit.trim() || null,
+          thumbnail: null,
+          alt_text: metadata.altText.trim() || metadata.title.trim(),
+          image_available: false,
+        });
+      }
+
+      // 8. Serialise objects.csv — merge ALL new objects in a single pass (Pitfall 4)
       const uploadExistingCsv = await getFileContent(uploadToken, uploadOwner, uploadRepo, "telar-content/spreadsheets/objects.csv");
 
       const uploadProjectObjects = await db.select().from(objects)
@@ -571,29 +584,28 @@ export async function action({ request, context }: Route.ActionArgs) {
         .orderBy(asc(objects.object_id));
       const uploadExportableObjects = uploadProjectObjects.filter((o) => !o.missing_from_repo);
 
-      // Merge D1 objects + pending object for CSV (same as commit-objects pattern)
       const uploadAllObjectsForCsv = [
         ...uploadExportableObjects,
-        ...([uploadPendingObject].map((p) => ({
+        ...uploadPendingObjects.map((p) => ({
           ...p,
           alt_text: p.alt_text ?? null,
           missing_from_repo: false,
-        }))),
+        })),
       ].sort((a, b) => a.object_id.localeCompare(b.object_id));
 
-      const uploadCsvContent = serializeObjectsCsv(uploadAllObjectsForCsv, uploadExistingCsv ?? undefined);
+      const uploadCsvContent = serializeObjectsCsv(uploadAllObjectsForCsv.map(dbObjectToCsvRow), uploadExistingCsv ?? undefined);
 
-      // 9. Commit image + CSV atomically via Git Data API
+      // 9. Commit all images + CSV atomically in a single Git commit
+      const commitLabel = uploadPendingObjects.map((p) => p.object_id).join(", ");
       try {
-        const uploadCommitResult = await commitBinaryFileWithCsv({
+        const uploadCommitResult = await commitMultipleBinaryFilesWithCsv({
           token: uploadToken,
           owner: uploadOwner,
           repo: uploadRepo,
           branch: "main",
-          imagePath,
-          imageBase64,
+          images: imagePayloads,
           csvContent: uploadCsvContent,
-          commitMessage: `Add ${uploadObjectId} image via Telar Compositor`,
+          commitMessage: `Add ${commitLabel} via Telar Compositor`,
         });
 
         // 10. Update project head_sha
@@ -605,8 +617,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         let dispatchRunId: number | null = null;
         let dispatchHtmlUrl: string | null = null;
         try {
-          // Prefer installation token for dispatch (user OAuth gets 403).
-          // Falls back gracefully if GITHUB_APP_ID / GITHUB_PRIVATE_KEY not set (local dev).
           let dispatchToken = uploadToken;
           try {
             dispatchToken = await getInstallationToken(
@@ -624,18 +634,20 @@ export async function action({ request, context }: Route.ActionArgs) {
           // Non-fatal: tiles will generate on next full build
         }
 
-        // 12. Return pending object and dispatch info for CommitAndBuildModal
+        // 12. Return the first pending object for CommitAndBuildModal
+        //     (multi-object insert is handled by insert-pending-objects with the full array)
         return {
           ok: true,
           intent: "upload-image",
-          objectId: uploadObjectId,
+          objectId: uploadPendingObjects[0].object_id,
           newHeadSha: uploadCommitResult.newHeadSha,
-          pendingObject: uploadPendingObject,
+          pendingObject: uploadPendingObjects[0],
+          pendingObjects: uploadPendingObjects,
           dispatchRunId,
           dispatchHtmlUrl,
         };
       } catch (err) {
-        // No D1 rollback needed — nothing was inserted (D-13 pattern)
+        // No D1 rollback needed — nothing was inserted
         if (err instanceof StaleHeadError) {
           return { ok: false, intent: "upload-image", error: "stale_head" };
         }
@@ -727,7 +739,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // Read existing CSV to preserve comment/instruction rows
       const existingCsv = await getFileContent(token, owner, repo, "telar-content/spreadsheets/objects.csv");
-      const csvContent = serializeObjectsCsv(allObjectsForCsv, existingCsv ?? undefined);
+      const csvContent = serializeObjectsCsv(allObjectsForCsv.map(dbObjectToCsvRow), existingCsv ?? undefined);
 
       const files: Array<{ path: string; content: string }> = [
         { path: "telar-content/spreadsheets/objects.csv", content: csvContent },
@@ -980,13 +992,28 @@ export async function action({ request, context }: Route.ActionArgs) {
         alt_text: (p as any).alt_text ?? null,
       }));
 
-      // D1 batch limit: 100 bindings per INSERT, 18 columns → max 5 rows
+      // D1 batch limit: 100 bindings per INSERT, 18 columns → max 5 rows.
+      // Collect inserted rows so the client can mirror them into the Yjs
+      // Y.Array with canonical D1 ids — self-hosted objects appear in
+      // the shared doc only after the repo build succeeds and D1 INSERT
+      // completes; the snapshot writes them as UPDATEs on the next cycle).
       const maxRows = Math.floor(100 / 18);
+      type InsertedRow = { id: number; object_id: string };
+      const inserted: InsertedRow[] = [];
       for (let i = 0; i < rows.length; i += maxRows) {
-        await db.insert(objects).values(rows.slice(i, i + maxRows));
+        const chunk = await db
+          .insert(objects)
+          .values(rows.slice(i, i + maxRows))
+          .returning({ id: objects.id, object_id: objects.object_id });
+        for (const row of chunk) inserted.push(row);
       }
 
-      return { ok: true, intent: "insert-pending-objects", insertedCount: rows.length };
+      return {
+        ok: true,
+        intent: "insert-pending-objects",
+        insertedCount: rows.length,
+        inserted,
+      };
     }
 
     default:
@@ -1038,12 +1065,219 @@ function filterObjects(
 }
 
 // ---------------------------------------------------------------------------
+// SortableObjectRow — dnd-kit sortable wrapper around ObjectRow for the Yjs
+// collaborative mode. Adds a grip handle for reorder, a delete button
+// (visible-but-disabled when canDelete is false), and a
+// validation-state badge for pending / invalid IIIF manifests.
+// ---------------------------------------------------------------------------
+
+interface SortableObjectRowProps {
+  sortableId: string | number;
+  object: ObjectRowObject;
+  canDelete: boolean;
+  deleteTooltip: string;
+  onDelete: () => void;
+  onToggleFeatured: (o: ObjectRowObject) => void;
+  siteBaseUrl: string | null;
+  validationState: "pending" | "valid" | "error" | null;
+  validationLabels: { pending: string; error: string };
+}
+
+function SortableObjectRow({
+  sortableId,
+  object,
+  canDelete,
+  deleteTooltip,
+  onDelete,
+  onToggleFeatured,
+  siteBaseUrl,
+  validationState,
+  validationLabels,
+}: SortableObjectRowProps) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id: sortableId });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      className="flex items-stretch border-b border-gray-100 last:border-b-0"
+    >
+      {/* Object row body (flex-1 so ObjectRow lays out naturally) */}
+      <div className="flex-1 min-w-0">
+        <ObjectRow
+          object={object}
+          onToggleFeatured={onToggleFeatured}
+          siteBaseUrl={siteBaseUrl}
+        />
+        {validationState === "pending" && (
+          <p className="font-body text-xs text-gray-500 px-4 pb-2 -mt-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-gray-300 animate-pulse mr-2" />
+            {validationLabels.pending}
+          </p>
+        )}
+        {validationState === "error" && (
+          <p className="font-body text-xs text-red-600 px-4 pb-2 -mt-1">
+            {validationLabels.error}
+          </p>
+        )}
+      </div>
+
+      {/* Delete button (visible-but-disabled) */}
+      <div className="shrink-0 px-2 flex items-center">
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={!canDelete}
+          title={!canDelete ? deleteTooltip : undefined}
+          aria-label="Delete object"
+          className="text-terracotta hover:text-terracotta/80 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IIIF manifest validation — client-side fetch that marks the
+// Y.Map's _validation_state as "valid" or "error" so all connected users see
+// the outcome via Yjs sync. Runs outside React so it survives rerenders.
+// ---------------------------------------------------------------------------
+
+function validateManifestOnYMap(
+  objYMap: Y.Map<unknown>,
+  manifestUrl: string
+): void {
+  if (!manifestUrl) {
+    objYMap.doc?.transact(() => {
+      objYMap.set("_validation_state", "error");
+      objYMap.set("_validation_error", "missing_url");
+    });
+    return;
+  }
+  fetch(manifestUrl)
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      let manifest: Record<string, unknown>;
+      try {
+        manifest = (await response.json()) as Record<string, unknown>;
+      } catch {
+        throw new Error("parse_failed");
+      }
+      const isManifest =
+        "@context" in manifest || "id" in manifest || "@id" in manifest;
+      objYMap.doc?.transact(() => {
+        if (isManifest) {
+          objYMap.set("_validation_state", "valid");
+          objYMap.set("_validation_error", null);
+        } else {
+          objYMap.set("_validation_state", "error");
+          objYMap.set("_validation_error", "invalid_manifest");
+        }
+      });
+    })
+    .catch(() => {
+      objYMap.doc?.transact(() => {
+        objYMap.set("_validation_state", "error");
+        objYMap.set("_validation_error", "fetch_failed");
+      });
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Y.Map → ObjectRowObject transform (Yjs mode)
+// ---------------------------------------------------------------------------
+
+function readScalarFromYMap(yMap: Y.Map<unknown>, key: string): string | null {
+  const val = yMap.get(key);
+  if (val === null || val === undefined) return null;
+  if (val instanceof Y.Text) {
+    const s = val.toString();
+    return s.length === 0 ? null : s;
+  }
+  if (typeof val === "string") return val.length === 0 ? null : val;
+  return null;
+}
+
+interface YjsObjectRow extends ObjectRowObject {
+  _tempId?: string | null;
+  _createdBy?: number | null;
+  _yIndex?: number;
+  _yMap?: Y.Map<unknown> | null;
+  _validationState?: "pending" | "valid" | "error" | null;
+  _validationError?: string | null;
+  /** origin: "iiif" (added via Yjs) vs "repo" (self-hosted upload). */
+  _origin?: string | null;
+}
+
+interface ObjectsMember {
+  userId: number;
+  name: string;
+  contributions: {
+    stories_edited?: number[];
+    objects_edited?: number[];
+    fields_edited?: number;
+    sessions?: number;
+  } | null;
+}
+
+function yMapToObjectRow(yMap: Y.Map<unknown>, yIndex: number): YjsObjectRow {
+  const id = (yMap.get("_id") as number | null) ?? 0;
+  const tempId = (yMap.get("_temp_id") as string | null) ?? null;
+  const createdBy = (yMap.get("created_by") as number | null) ?? null;
+  const origin = (yMap.get("origin") as string | null) ?? null;
+  const validationState =
+    (yMap.get("_validation_state") as "pending" | "valid" | "error" | null) ??
+    null;
+  const validationError =
+    (yMap.get("_validation_error") as string | null) ?? null;
+
+  return {
+    id,
+    object_id: (yMap.get("object_id") as string) ?? "",
+    title: readScalarFromYMap(yMap, "title"),
+    featured: Boolean(yMap.get("featured") ?? false),
+    source_url: (yMap.get("source_url") as string | null) ?? null,
+    thumbnail: (yMap.get("thumbnail") as string | null) ?? null,
+    image_available: Boolean(yMap.get("image_available") ?? false),
+    missing_from_repo: Boolean(yMap.get("missing_from_repo") ?? false),
+    _tempId: tempId,
+    _createdBy: createdBy,
+    _yIndex: yIndex,
+    _yMap: yMap,
+    _validationState: validationState,
+    _validationError: validationError,
+    _origin: origin,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("objects");
-  const { project, objects: loaderObjects, siteBaseUrl } = loaderData;
+  const { t: tStructural } = useTranslation("structural");
+  const {
+    project,
+    objects: loaderObjects,
+    siteBaseUrl,
+    members,
+    currentUserId,
+    userRole,
+  } = loaderData;
+
+  const { ydoc, remoteCollaborators } = useCollaborationContext();
+  const ops = useStructuralOps(currentUserId, userRole);
+  const { showToast } = useToast();
 
   const [sortBy, setSortBy] = useState<SortBy>("title");
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
@@ -1093,8 +1327,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
 
   const iiifFetcherData = iiifFetcher.data as
     | { ok: true; intent: "fetch-iiif-preview"; result: IiifFetchResult }
-    | { ok: true; intent: "add-iiif-object"; pendingObject: PendingObject; savedDirectly?: never }
-    | { ok: true; intent: "add-iiif-object"; savedDirectly: true; pendingObject?: never }
     | { ok: false; intent: string; error: string }
     | null
     | undefined;
@@ -1105,7 +1337,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     | undefined;
 
   const uploadFetcherData = uploadFetcher.data as
-    | { ok: true; intent: "upload-image"; objectId: string; newHeadSha: string; pendingObject: PendingObject; dispatchRunId?: number | null; dispatchHtmlUrl?: string | null }
+    | { ok: true; intent: "upload-image"; objectId: string; newHeadSha: string; pendingObject: PendingObject; pendingObjects?: PendingObject[]; dispatchRunId?: number | null; dispatchHtmlUrl?: string | null }
     | { ok: false; intent: "upload-image"; error: string }
     | null
     | undefined;
@@ -1155,19 +1387,9 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     }
   }, [syncFetcherData, syncDialogOpen]);
 
-  useEffect(() => {
-    if (iiifFetcherData?.ok && iiifFetcherData.intent === "add-iiif-object" && addIiifOpen) {
-      setAddIiifOpen(false);
-      setIiifFetchResult(null);
-      if (iiifFetcherData.savedDirectly) {
-        // External object saved directly to D1 — no build needed, just reload the list
-        return;
-      }
-      setPendingObjects([iiifFetcherData.pendingObject]);
-      sheetsFetcher.submit({ intent: "pre-commit-check" }, { method: "post" });
-      setCommitModalOpen(true);
-    }
-  }, [iiifFetcherData, addIiifOpen]);
+  // IIIF add flow migrated to Yjs — no route action for add-iiif-object.
+  // The confirm handler below writes to the Y.Array and kicks off client-side
+  // manifest validation. The dialog closes immediately on confirm.
 
   useEffect(() => {
     if (!uploadSubmitted) return;
@@ -1175,10 +1397,10 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       setUploadDialogOpen(false);
       setUploadError(null);
       setUploadSubmitted(false);
-      // Pass pending object to CommitAndBuildModal — it will call insert-pending-objects
-      // after build success, inserting the object to D1 (D-13 pending objects pattern).
-      // Image + CSV are already committed by the action; no pre-commit-check needed here.
-      setPendingObjects([uploadFetcherData.pendingObject]);
+      // Pass pending objects to CommitAndBuildModal — it will call insert-pending-objects
+      // after build success, inserting them to D1 (pending objects pattern).
+      // Images + CSV are already committed by the action; no pre-commit-check needed here.
+      setPendingObjects(uploadFetcherData.pendingObjects ?? [uploadFetcherData.pendingObject]);
       setDispatchRunId(uploadFetcherData.dispatchRunId ?? null);
       setDispatchHtmlUrl(uploadFetcherData.dispatchHtmlUrl ?? null);
       setIsUploadFlow(true);
@@ -1233,41 +1455,89 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   }
 
   function handleIiifConfirm(payload: AddIiifConfirmPayload) {
-    iiifFetcher.submit(
-      {
-        intent: "add-iiif-object",
-        title: payload.title,
-        creator: payload.creator,
-        description: payload.description,
-        source: payload.source,
-        credit: payload.credit,
-        thumbnail: payload.thumbnail,
-        source_url: payload.manifestUrl,
-        image_available: String(payload.image_available),
-        object_id: payload.object_id,
-      },
-      { method: "post" }
-    );
+    // IIIF objects flow through the Y.Array with a "pending" validation
+    // state. The DO snapshot (plan 27-03) skips pending objects, so they do
+    // not reach D1 until this client-side fetch marks them valid.
+    if (!ops || !ydoc) {
+      // No active ydoc — silently drop; reconnect will let the user retry.
+      // eslint-disable-next-line no-console
+      console.warn("[objects] IIIF add requested without active ydoc; ignored");
+      setAddIiifOpen(false);
+      setIiifFetchResult(null);
+      return;
+    }
+
+    const objectId = payload.object_id || slugify(payload.title);
+    ops.addIiifObject(objectId, payload.title, payload.manifestUrl);
+
+    // Seed additional fields on the just-pushed Y.Map (addIiifObject writes
+    // the minimum set — fill in creator/description/source/credit/thumbnail
+    // from the dialog payload so the DO snapshot can INSERT a complete row
+    // once validation succeeds).
+    const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+    const justAdded = objectsArray.get(objectsArray.length - 1) as
+      | Y.Map<unknown>
+      | undefined;
+    if (justAdded) {
+      ydoc.transact(() => {
+        const creatorText = justAdded.get("creator");
+        if (creatorText instanceof Y.Text && payload.creator) {
+          creatorText.insert(0, payload.creator);
+        }
+        const descriptionText = justAdded.get("description");
+        if (descriptionText instanceof Y.Text && payload.description) {
+          descriptionText.insert(0, payload.description);
+        }
+        const altText = justAdded.get("alt_text");
+        if (altText instanceof Y.Text && payload.title) {
+          altText.insert(0, payload.title);
+        }
+        if (payload.thumbnail) justAdded.set("thumbnail", payload.thumbnail);
+        if (payload.source) justAdded.set("source", payload.source);
+        if (payload.credit) justAdded.set("credit", payload.credit);
+        justAdded.set("image_available", payload.image_available);
+      });
+
+      // Fire-and-forget client-side manifest validation.
+      // Success → `_validation_state: "valid"`, failure → `"error"`.
+      validateManifestOnYMap(justAdded, payload.manifestUrl);
+    }
+
+    setAddIiifOpen(false);
+    setIiifFetchResult(null);
   }
 
-  function handleUploadConfirm(payload: UploadImageConfirmPayload) {
+  function handleUploadConfirm(payloads: UploadImageConfirmPayload[]) {
     const fd = new FormData();
     fd.append("intent", "upload-image");
-    fd.append("imageFile", payload.file);
-    fd.append("metadata", JSON.stringify({
-      objectId: payload.objectId,
-      title: payload.title,
-      creator: payload.creator,
-      description: payload.description,
-      source: payload.source,
-      credit: payload.credit,
-      period: payload.period,
-      year: payload.year,
-      altText: payload.altText,
-    }));
+    // Append each image file under the same key — formData.getAll("imageFile") on server
+    for (const payload of payloads) {
+      fd.append("imageFile", payload.file);
+    }
+    // Send all metadata as a single JSON array
+    fd.append("metadataArray", JSON.stringify(payloads.map((p) => ({
+      objectId: p.objectId,
+      title: p.title,
+      creator: p.creator,
+      description: p.description,
+      source: p.source,
+      credit: p.credit,
+      period: p.period,
+      year: p.year,
+      altText: p.altText,
+    }))));
     setUploadSubmitted(true);
     uploadFetcher.submit(fd, { method: "post", encType: "multipart/form-data" });
   }
+
+  // Capture the pending payload at submit time so the Yjs mirror hook has the
+  // full metadata to hand even after state changes (upload flow transitions
+  // pendingObjects through several setState calls).
+  useEffect(() => {
+    if (pendingObjects.length > 0) {
+      lastInsertedPendingRef.current = pendingObjects;
+    }
+  }, [pendingObjects]);
 
   function handleBuildFailed() {
     // Build failed — pending objects were never inserted, nothing to clean up
@@ -1279,7 +1549,20 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   }
 
   function handleBuildSuccess() {
-    // Build succeeded — close modal, clear pending objects
+    // Build succeeded — mark uploaded objects as image_available in Yjs
+    if (isUploadFlow && ydoc) {
+      const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+      const uploadedIds = new Set(pendingObjects.map((p) => p.object_id));
+      ydoc.transact(() => {
+        for (let i = 0; i < objectsArray.length; i++) {
+          const yMap = objectsArray.get(i);
+          if (uploadedIds.has(yMap.get("object_id") as string)) {
+            yMap.set("image_available", true);
+          }
+        }
+      });
+    }
+    // Close modal, clear pending objects
     // (D1 insertion is handled by the modal via insert-pending-objects action)
     setCommitModalOpen(false);
     setPendingObjects([]);
@@ -1315,23 +1598,238 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     dialogFetchResult = { ok: false, error: "fetch_failed" };
   }
 
-  // Apply sort + filter
-  const processedObjects = filterObjects(
-    sortObjects(loaderObjects as ObjectRowObject[], sortBy),
-    filterStatus
-  );
-
-  const hasObjects = loaderObjects.length > 0;
   const isComputing = syncFetcher.state !== "idle" &&
     syncFetcher.formData?.get("intent") === "compute-sync-diff";
   const isApplying = syncFetcher.state !== "idle" &&
     syncFetcher.formData?.get("intent") === "sync-apply";
   const isFetchingIiif = iiifFetcher.state !== "idle" &&
     iiifFetcher.formData?.get("intent") === "fetch-iiif-preview";
-  const isAddingIiif = iiifFetcher.state !== "idle" &&
-    iiifFetcher.formData?.get("intent") === "add-iiif-object";
+  // add-iiif-object is no longer a route action — the Y.Array path is
+  // instantaneous, so the dialog's "adding" spinner is always false now.
+  const isAddingIiif = false;
   const isUploading = uploadFetcher.state !== "idle" &&
     uploadFetcher.formData?.get("intent") === "upload-image";
+
+  // --------------------------------------------------------------------
+  // Source of truth: Y.Array when ydoc is available, loader data otherwise
+  // --------------------------------------------------------------------
+  const [yjsObjects, setYjsObjects] = useState<YjsObjectRow[] | null>(null);
+
+  useEffect(() => {
+    if (!ydoc) {
+      setYjsObjects(null);
+      return;
+    }
+    const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+    const recompute = () => {
+      const next: YjsObjectRow[] = [];
+      for (let i = 0; i < objectsArray.length; i++) {
+        next.push(yMapToObjectRow(objectsArray.get(i), i));
+      }
+      setYjsObjects(next);
+    };
+    recompute();
+    objectsArray.observeDeep(recompute);
+    return () => objectsArray.unobserveDeep(recompute);
+  }, [ydoc]);
+
+  const useYjs = ydoc !== null && ops !== null && yjsObjects !== null;
+
+  // --------------------------------------------------------------------
+  // Delete flow — hybrid IIIF vs self-hosted
+  // --------------------------------------------------------------------
+  const deleteFetcher = useFetcher();
+  const [deleteTarget, setDeleteTarget] = useState<{
+    object: YjsObjectRow;
+    contributors: string[];
+  } | null>(null);
+
+  function openDeleteModalFor(object: YjsObjectRow) {
+    // Contributors: objects_edited from contributions, plus the
+    // creator (unless it's the current user).
+    const names = new Set<string>();
+    const typedMembers = members as ObjectsMember[];
+    if (object.id > 0) {
+      for (const m of typedMembers) {
+        if (m.userId === currentUserId) continue;
+        const edited = m.contributions?.objects_edited ?? [];
+        if (Array.isArray(edited) && edited.includes(object.id)) {
+          names.add(m.name);
+        }
+      }
+    }
+    if (object._createdBy && object._createdBy !== currentUserId) {
+      const creator = (members as ObjectsMember[]).find(
+        (m: ObjectsMember) => m.userId === object._createdBy
+      );
+      if (creator) names.add(creator.name);
+    }
+    setDeleteTarget({ object, contributors: Array.from(names) });
+  }
+
+  function handleDeleteRequest(object: YjsObjectRow) {
+    if (!useYjs) return;
+    if (object._yMap && !ops!.canDelete(object._yMap)) return;
+    openDeleteModalFor(object);
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return;
+    const { object } = deleteTarget;
+    // Self-hosted objects (origin === "repo") require the D1-side delete
+    // route action so repo cleanup can run. IIIF objects live only in the
+    // Y.Array; the DO snapshot DELETE branch handles D1 removal.
+    if (object._origin === "repo" && object.id > 0) {
+      deleteFetcher.submit(
+        { intent: "delete-object", objectDbId: String(object.id) },
+        { method: "post" }
+      );
+    }
+    if (ops) {
+      ops.deleteObject(object.id > 0 ? object.id : null, object._tempId ?? null);
+    }
+    setDeleteTarget(null);
+  }
+
+  // --------------------------------------------------------------------
+  // Upload-completion → Y.Array mirror
+  //
+  // After insert-pending-objects succeeds, CommitAndBuildModal calls
+  // onInserted with the real D1 ids. We push matching Y.Maps into the
+  // objects Y.Array with the canonical id so all connected clients see the
+  // new self-hosted upload (and receive a toast notification). The _id is
+  // set to the D1 id, so the next snapshotToD1 pass will UPDATE (not
+  // duplicate-INSERT) this row.
+  // --------------------------------------------------------------------
+  const lastInsertedPendingRef = useRef<PendingObject[] | null>(null);
+  function handleInsertedToD1(
+    inserted: Array<{ id: number; object_id: string }>
+  ) {
+    if (!ydoc) return;
+    const pending = lastInsertedPendingRef.current ?? pendingObjects;
+    if (!pending || pending.length === 0) return;
+    const idByObjectId = new Map<string, number>();
+    for (const row of inserted) idByObjectId.set(row.object_id, row.id);
+
+    const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+    ydoc.transact(() => {
+      for (const p of pending) {
+        const d1Id = idByObjectId.get(p.object_id);
+        if (d1Id === undefined) continue;
+        const objMap = new Y.Map<unknown>();
+        objMap.set("_id", d1Id);
+        objMap.set("_temp_id", crypto.randomUUID());
+        objMap.set("created_by", currentUserId);
+        objMap.set("object_id", p.object_id);
+        objMap.set("title", new Y.Text(p.title ?? ""));
+        objMap.set("creator", new Y.Text(p.creator ?? ""));
+        objMap.set("description", new Y.Text(p.description ?? ""));
+        objMap.set("alt_text", new Y.Text(p.title ?? ""));
+        objMap.set("source_url", p.source_url ?? "");
+        objMap.set("period", new Y.Text(p.period ?? ""));
+        objMap.set("year", new Y.Text(p.year ?? ""));
+        objMap.set("featured", p.featured);
+        objMap.set("image_available", p.image_available);
+        objMap.set("_validation_state", "valid");
+        objMap.set("order", objectsArray.length);
+        objMap.set("origin", "repo");
+        objMap.set("missing_from_repo", false);
+        objMap.set("thumbnail", p.thumbnail ?? "");
+        objectsArray.push([objMap]);
+      }
+    });
+
+    // Toast for other collaborators — locally the convenor sees the modal
+    // flow, but showing the toast is harmless and consistent.
+    for (const p of pending) {
+      showToast({
+        message: tStructural("toast_object_added", {
+          title: p.title ?? p.object_id,
+        }),
+        type: "info",
+      });
+    }
+    lastInsertedPendingRef.current = null;
+  }
+
+  // --------------------------------------------------------------------
+  // dnd-kit sensors (reorder)
+  // --------------------------------------------------------------------
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const keyFor = (o: YjsObjectRow): string | number =>
+    o.id > 0 ? o.id : o._tempId ?? `idx-${o._yIndex ?? 0}`;
+
+  function handleDragEnd(event: DragEndEvent) {
+    if (!useYjs) return;
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const list = yjsObjects ?? [];
+    const keys = list.map((o) => keyFor(o));
+    const oldIndex = keys.findIndex((k) => k === active.id);
+    const newIndex = keys.findIndex((k) => k === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    ops!.reorderObjects(oldIndex, newIndex);
+  }
+
+  // --------------------------------------------------------------------
+  // Remote-delete toast — fires when an object disappears from the
+  // Y.Array. We identify the deleted object by its last known title.
+  // --------------------------------------------------------------------
+  const prevTitlesRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!useYjs) return;
+    const list = yjsObjects ?? [];
+    const curr = new Map<string, string>();
+    for (const o of list) curr.set(String(keyFor(o)), o.title ?? o.object_id);
+    const deleted: string[] = [];
+    prevTitlesRef.current.forEach((title, key) => {
+      if (!curr.has(key)) deleted.push(title);
+    });
+    prevTitlesRef.current = curr;
+    if (deleted.length === 0) return;
+    const deleterName = remoteCollaborators[0]?.user.name ?? "";
+    for (const title of deleted) {
+      const message = deleterName
+        ? tStructural("toast_item_deleted", { label: title, name: deleterName })
+        : tStructural("toast_item_deleted_generic", { label: title });
+      showToast({
+        message,
+        type: "destructive",
+        ...(userRole === "convenor"
+          ? { action: { label: tStructural("toast_item_deleted_undo"), onClick: () => {} } }
+          : {}),
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yjsObjects, useYjs, userRole]);
+
+  // --------------------------------------------------------------------
+  // Apply sort + filter. Yjs mode preserves Y.Array order for the default
+  // ("title") sort — Y.Array position IS the canonical order. Switching to
+  // "status" sort falls through to the deriveStatus-based ordering.
+  // --------------------------------------------------------------------
+  const sourceList: YjsObjectRow[] = useYjs
+    ? (yjsObjects ?? [])
+    : (loaderObjects as YjsObjectRow[]);
+  const processedObjects: YjsObjectRow[] = useYjs
+    ? (filterObjects(
+        sortBy === "status"
+          ? (sortObjects(sourceList, "status") as YjsObjectRow[])
+          : sourceList,
+        filterStatus
+      ) as YjsObjectRow[])
+    : (filterObjects(
+        sortObjects(sourceList, sortBy),
+        filterStatus
+      ) as YjsObjectRow[]);
+
+  const hasObjects = sourceList.length > 0;
+  const sortableIds: (string | number)[] = processedObjects.map((o) => keyFor(o));
+  const isConvenor = userRole === "convenor";
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -1417,6 +1915,26 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
               <p className="font-body text-sm text-gray-500 text-center py-8">
                 {filterStatus !== "all" ? t("filter_all") : ""}
               </p>
+            ) : useYjs ? (
+              processedObjects.map((object) => (
+                <SortableObjectRow
+                  key={String(keyFor(object))}
+                  sortableId={keyFor(object)}
+                  object={object}
+                  canDelete={
+                    object._yMap ? ops!.canDelete(object._yMap) : isConvenor
+                  }
+                  deleteTooltip={tStructural("tooltip_cannot_delete")}
+                  onDelete={() => handleDeleteRequest(object)}
+                  onToggleFeatured={handleToggleFeatured}
+                  siteBaseUrl={siteBaseUrl}
+                  validationState={object._validationState ?? null}
+                  validationLabels={{
+                    pending: tStructural("validation_pending"),
+                    error: tStructural("validation_error"),
+                  }}
+                />
+              ))
             ) : (
               processedObjects.map((object) => (
                 <ObjectRow
@@ -1453,31 +1971,38 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
               {t("add_objects_title")}
             </h3>
             <div className="flex flex-col gap-3">
-              <button
-                type="button"
-                onClick={() => { setAddObjectsOpen(false); handleSyncClick(); }}
-                disabled={isComputing}
-                className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-periwinkle hover:bg-lavender/10 transition-colors group"
-              >
-                <p className="font-heading font-semibold text-sm text-charcoal group-hover:text-terracotta">
-                  {t("add_objects_sync")}
-                </p>
-                <p className="font-body text-xs text-gray-500 mt-0.5">
-                  {t("add_objects_sync_desc")}
-                </p>
-              </button>
-              <button
-                type="button"
-                onClick={() => { setAddObjectsOpen(false); setUploadDialogOpen(true); setUploadError(null); }}
-                className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-periwinkle hover:bg-lavender/10 transition-colors group"
-              >
-                <p className="font-heading font-semibold text-sm text-charcoal group-hover:text-terracotta">
-                  {t("add_objects_upload")}
-                </p>
-                <p className="font-body text-xs text-gray-500 mt-0.5">
-                  {t("add_objects_upload_desc")}
-                </p>
-              </button>
+              {/* Sync and upload are convenor-only — they require repo
+                  writes (commit + CSV + tile workflow dispatch). Collaborators
+                  can still add external IIIF manifests below. */}
+              {isConvenor && (
+                <button
+                  type="button"
+                  onClick={() => { setAddObjectsOpen(false); handleSyncClick(); }}
+                  disabled={isComputing}
+                  className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-periwinkle hover:bg-lavender/10 transition-colors group"
+                >
+                  <p className="font-heading font-semibold text-sm text-charcoal group-hover:text-terracotta">
+                    {t("add_objects_sync")}
+                  </p>
+                  <p className="font-body text-xs text-gray-500 mt-0.5">
+                    {t("add_objects_sync_desc")}
+                  </p>
+                </button>
+              )}
+              {isConvenor && (
+                <button
+                  type="button"
+                  onClick={() => { setAddObjectsOpen(false); setUploadDialogOpen(true); setUploadError(null); }}
+                  className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-periwinkle hover:bg-lavender/10 transition-colors group"
+                >
+                  <p className="font-heading font-semibold text-sm text-charcoal group-hover:text-terracotta">
+                    {t("add_objects_upload")}
+                  </p>
+                  <p className="font-body text-xs text-gray-500 mt-0.5">
+                    {t("add_objects_upload_desc")}
+                  </p>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => { setAddObjectsOpen(false); handleAddIiifClick(); }}
@@ -1541,6 +2066,17 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         onClose={handleCommitCancel}
         onBuildSuccess={handleBuildSuccess}
         onBuildFailed={handleBuildFailed}
+        onInserted={handleInsertedToD1}
+      />
+
+      {/* Delete confirmation */}
+      <DeleteConfirmationModal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        entityType="object"
+        entityLabel={deleteTarget?.object.title ?? deleteTarget?.object.object_id ?? ""}
+        contributors={deleteTarget?.contributors}
       />
     </div>
   );

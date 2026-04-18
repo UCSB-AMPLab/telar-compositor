@@ -1,23 +1,25 @@
 {
-  "title": "Panel",
-  "page_title": "Panel",
+  "title": "Inicio",
+  "page_title": "Inicio",
   "empty_state": "Aún no hay proyectos",
   "empty_state_description": "Conecta un repositorio de GitHub para comenzar.",
   "connect_repo": "Conectar un repositorio",
   "new_story": "Nueva historia",
   "repo_explanation": "Este repositorio ha sido importado al compositor. Si deseas seleccionar uno diferente, haz clic en el botón 'Conectar repositorio' arriba.",
-  "intro_paragraph_1": "Telar es una plataforma de narrativa digital que combina imágenes en alta resolución con narrativas paso a paso. Tu sitio se construye a partir de dos tipos principales de contenido: <strong>objetos</strong> — imágenes servidas a través del <iiifLink>International Image Interoperability Framework (IIIF)</iiifLink>, que pueden ser autoalojadas o provenir de museos y bibliotecas de todo el mundo — y <strong>historias</strong> — narrativas paso a paso que guían a los visitantes a través de esos objetos, combinando vistas detalladas con preguntas, respuestas y capas ampliables de información adicional.",
-  "intro_paragraph_2": "Usa el compositor para gestionar tus objetos e historias, configurar tu sitio y publicar cambios. Puedes aprender más sobre cómo funciona Telar en <telarLink>telar.ucsb.edu</telarLink> y en la <docsLink>documentación</docsLink>.",
+  "intro_paragraph_1": "Telar es una plataforma de narrativa digital que combina imágenes en alta resolución, audio y video con narrativas paso a paso. Tu sitio se construye en torno a dos tipos principales de contenido: <strong>objetos</strong> — imágenes servidas a través del <iiifLink>International Image Interoperability Framework (IIIF)</iiifLink>, además de audio y video, autoalojados o provenientes de museos y bibliotecas de todo el mundo — e <strong>historias</strong> — narrativas paso a paso que guían a los visitantes a través de esos objetos, combinando vistas detalladas con preguntas, respuestas y capas ampliables de información adicional. Estos se complementan con <strong>entradas del glosario</strong> (términos clave que tus historias pueden enlazar para ofrecer definiciones rápidas) y <strong>páginas</strong> (contenido de apoyo como una sección \"Acerca de\" o créditos).",
+  "intro_paragraph_2": "Usa el compositor para gestionar todo este contenido, configurar tu sitio y publicar cambios. Puedes aprender más sobre cómo funciona Telar en <telarLink>telar.org</telarLink> y en la <docsLink>documentación</docsLink>.",
   "workflow": {
     "title": "Cómo funciona el compositor",
     "step1_title": "1. Configurar",
     "step1_desc": "Define el título, la descripción, el idioma y las opciones de visualización de tu sitio.",
     "step2_title": "2. Objetos",
-    "step2_desc": "Gestiona las imágenes que referencian tus historias — agrega metadatos, verifica los mosaicos IIIF e importa fuentes externas.",
+    "step2_desc": "Gestiona las imágenes que referencian tus historias — agrega metadatos, verifica las teselas IIIF e importa fuentes externas.",
     "step3_title": "3. Historias",
     "step3_desc": "Crea y edita narrativas paso a paso con vistas detalladas, anotaciones y capas ampliables de información.",
-    "step4_title": "4. Publicar",
-    "step4_desc": "Revisa tus cambios y publica en tu sitio de GitHub Pages en un solo commit."
+    "step4_title": "4. Elementos adicionales",
+    "step4_desc": "Agrega un glosario de términos, personaliza la página de inicio y crea páginas de apoyo para enriquecer tus historias.",
+    "step5_title": "5. Publicar",
+    "step5_desc": "Revisa tus cambios y publica en tu sitio de GitHub Pages en un solo commit."
   },
   "save_publish": "Tus ediciones se guardan automáticamente mientras trabajas. Nada aparece en tu sitio publicado hasta que decidas publicar. Si alguien edita el repositorio directamente en GitHub, deberás resincronizar antes de publicar.",
   "preview_intro": "A continuación se muestra una vista previa de la página de inicio de tu sitio. Cada sección muestra tu contenido real tal como lo verán los visitantes — haz clic en cualquier sección para editarla directamente. También puedes usar las pestañas de arriba para gestionar tus historias, objetos y configuración del sitio con más detalle.",
@@ -48,7 +50,8 @@
     "never_hint": "Edita aquí, luego publica en tu sitio cuando quieras",
     "manage_repos": "Cambiar, agregar o eliminar repositorios",
     "current": "actual",
-    "view_site": "Ver sitio"
+    "view_site": "Ver sitio",
+    "view_on_github": "Ver en GitHub"
   },
   "story_card": {
     "steps_one": "{{count}} paso",
@@ -88,7 +91,7 @@
     "projects": "Tienes {{count}} proyectos. El límite es de 5 repositorios conectados."
   },
   "story_editor_placeholder": "Editor de historias — próximamente",
-  "back_to_dashboard": "Volver al panel",
+  "back_to_dashboard": "Volver al inicio",
   "sync_modal": {
     "title": "El repositorio ha cambiado",
     "confirm_body": "Tu repositorio en GitHub se ha actualizado desde la última vez que se sincronizó con el compositor. Revisa los cambios para asegurarte de que nuestra copia de trabajo esté al día con el sitio publicado.",

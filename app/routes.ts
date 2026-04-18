@@ -8,6 +8,7 @@ export default [
   layout("routes/_auth.tsx", [
     route("/signin", "routes/_auth.signin.tsx"),
     route("/auth/callback", "routes/_auth.callback.tsx"),
+    route("/invite/:token", "routes/_auth.invite.$token.tsx"),
   ]),
 
   // Sign out
@@ -24,6 +25,8 @@ export default [
     route("/objects/:objectId", "routes/_app.objects.$objectId.tsx"),
     route("/stories", "routes/_app.stories.tsx"),
     route("/stories/:storyId", "routes/_app.stories.$storyId.tsx"),
+    route("/homepage", "routes/_app.homepage.tsx"),
+    route("/pages", "routes/_app.pages.tsx"),
     route("/glossary", "routes/_app.glossary.tsx"),
     route("/config", "routes/_app.config.tsx"),
     route("/publish", "routes/_app.publish.tsx"),

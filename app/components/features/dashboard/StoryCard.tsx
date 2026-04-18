@@ -12,6 +12,7 @@ import { Link, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
 import { formatRelative } from "~/lib/format-relative";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
 
 interface StoryCardStory {
   id: number;
@@ -37,9 +38,15 @@ interface StoryCardProps {
 
 export function StoryCard({ story, stepCount, lastSynced, className = "", isDragOverlay = false, coverInfo, siteBaseUrl }: StoryCardProps) {
   const { t } = useTranslation("dashboard");
+  const { t: tCollab } = useTranslation("collaboration");
   const navigate = useNavigate();
   const isPrivate = story.private ?? false;
   const isDraft = story.draft ?? false;
+
+  const { remoteCollaborators } = useCollaborationContext();
+  const storyCollaborators = remoteCollaborators.filter(
+    (c) => c.location?.storyId === story.story_id
+  );
 
   // Resolve cover thumbnail from step-1 object (same pattern as ObjectPickerDialog)
   const needsResolve = coverInfo && !coverInfo.thumbnail && coverInfo.imageAvailable && siteBaseUrl;
@@ -59,7 +66,7 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
       className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex flex-col gap-2 hover:shadow-md transition-shadow relative ${isDraft ? "opacity-75" : ""} ${className}`}
     >
       {/* Thumbnail */}
-      <div className="aspect-square bg-cream-dark rounded-lg overflow-hidden -mx-4 -mt-4 mb-1">
+      <div className="aspect-square bg-cream-dark rounded-lg overflow-hidden -mx-4 -mt-4 mb-1 relative">
         {thumbSrc ? (
           <img
             src={thumbSrc}
@@ -69,6 +76,25 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs font-body">
             No image
+          </div>
+        )}
+        {storyCollaborators.length > 0 && (
+          <div className="absolute bottom-2 left-2 flex items-center">
+            {storyCollaborators.slice(0, 3).map((collab, i) => (
+              <img
+                key={collab.clientId}
+                src={`https://avatars.githubusercontent.com/u/${collab.user.githubId}?s=40`}
+                alt={collab.user.name}
+                aria-label={tCollab("presence_card_badge_aria", { name: collab.user.name })}
+                className={`w-5 h-5 rounded-full object-cover${i > 0 ? " -ml-1" : ""}`}
+                style={{ outline: `1.5px solid ${collab.user.color}`, outlineOffset: "0.5px" }}
+              />
+            ))}
+            {storyCollaborators.length > 3 && (
+              <span className="ml-1 font-body text-[10px] text-charcoal">
+                +{storyCollaborators.length - 3}
+              </span>
+            )}
           </div>
         )}
       </div>

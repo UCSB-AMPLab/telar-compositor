@@ -7,7 +7,7 @@
  * isRepoInInstallation) and passes it in. Errors are thrown as typed
  * Error subclasses so route handlers can branch with instanceof.
  *
- * This file is the Wave 0 skeleton from phase 19 plan 01:
+ * This file is the initial skeleton:
  *   - TEMPLATE_OWNER / TEMPLATE_REPO constants
  *   - Typed error subclasses (RepoNameTakenError, PermissionDeniedError,
  *     GitHubError, RepoNotReadyError)
@@ -83,9 +83,9 @@ export type CreateSiteResult = { repoUrl: string; defaultBranch: string };
 // Implementations
 
 /**
- * GitHub repo naming rules (per D-04):
+ * GitHub repo naming rules:
  * - 1–100 characters
- * - character class [A-Za-z0-9._-]
+ * - character class [a-z0-9._-] (lowercase only — Telar convention)
  * - must not start with '.' or '-'
  * - must not be exactly '.' or '..'
  */
@@ -168,9 +168,9 @@ export async function createSiteFromTemplate(
 /**
  * Polls `GET /repos/{owner}/{name}/contents/_config.yml` at a fixed 1s interval
  * until HTTP 200 or `timeoutMs` elapses. Existence of the file is enough;
- * the body is not decoded (per D-11).
+ * the body is not decoded.
  *
- * Behaviour (per D-10..D-13):
+ * Behaviour:
  * - Fixed 1000ms interval
  * - Default `timeoutMs = 15000`
  * - Throws `RepoNotReadyError` on timeout (carries `lastStatus` if one was observed)
@@ -196,7 +196,7 @@ export async function waitForRepoReady(
       if (res.status === 200) return;
       // 404 (not yet populated) and 5xx (GitHub hiccup) both fall through to retry.
     } catch {
-      // Network error — swallow and retry until deadline (per D-13).
+      // Network error — swallow and retry until deadline.
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
@@ -210,9 +210,9 @@ export async function waitForRepoReady(
 /**
  * Checks whether the installation associated with `installationToken` can see
  * the repo `{owner}/{name}`. Paginates `GET /installation/repositories` at
- * per_page=100 (per D-14).
+ * per_page=100.
  *
- * Returns `false` when the target is absent across all pages (per D-15).
+ * Returns `false` when the target is absent across all pages.
  * Throws `GitHubError` on HTTP/network failure.
  */
 export async function isRepoInInstallation(

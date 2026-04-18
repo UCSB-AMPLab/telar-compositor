@@ -21,6 +21,9 @@ import {
   updateConfigFields,
   computeChangeSummary,
   runPrePublishValidation,
+  buildNavigationYml,
+  serializeGlossaryCsv,
+  serializePageMarkdown,
 } from "~/lib/publish.server";
 import type { PublishSnapshot, CurrentPublishState } from "~/lib/publish.server";
 
@@ -120,6 +123,9 @@ describe("serializeStoryCsv", () => {
     question: "What do you see?",
     answer: "A weaving.",
     alt_text: null as string | null,
+    clip_start: null as string | null,
+    clip_end: null as string | null,
+    loop: null as string | null,
     layers: [] as { layer_number: number; title: string | null; button_label: string | null; content: string | null }[],
   };
 
@@ -180,6 +186,9 @@ describe("serializeStoryCsv", () => {
       question: null,
       answer: null,
       alt_text: null as string | null,
+      clip_start: null as string | null,
+      clip_end: null as string | null,
+      loop: null as string | null,
       layers: [],
     };
     const csv = serializeStoryCsv([baseStep, emptyStep], "weavers");
@@ -529,6 +538,100 @@ describe("computeChangeSummary", () => {
     const summary = computeChangeSummary(currentState, snapshot);
     expect(summary.landing.changed).toBe(true);
     expect(summary.isUpToDate).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildNavigationYml
+// ---------------------------------------------------------------------------
+
+describe("buildNavigationYml", () => {
+  it("generates correct YAML for page items", () => {
+    const result = buildNavigationYml([
+      { type: "page", slug: "about", label: "About", visible: true },
+    ]);
+    expect(result).toContain('title_en: "About"');
+    expect(result).toContain('titulo_es: "About"');
+    expect(result).toContain("url: /about/");
+  });
+
+  it("generates correct YAML for builtin glossary item", () => {
+    const result = buildNavigationYml([
+      { type: "builtin", key: "glossary", label: "Glossary", visible: true },
+    ]);
+    expect(result).toContain('title_en: "Glossary"');
+    expect(result).toContain("url: /glossary/");
+  });
+
+  it("generates correct YAML for builtin collection item", () => {
+    const result = buildNavigationYml([
+      { type: "builtin", key: "collection", label: "Collection", visible: true },
+    ]);
+    expect(result).toContain("url: /objects/");
+  });
+
+  it("generates correct YAML for external link items", () => {
+    const result = buildNavigationYml([
+      { type: "external", url: "https://example.com", label: "Partner", visible: true },
+    ]);
+    expect(result).toContain('title_en: "Partner"');
+    expect(result).toContain('url: "https://example.com"');
+    expect(result).toContain("external: true");
+  });
+
+  it("excludes hidden items (visible: false)", () => {
+    const result = buildNavigationYml([
+      { type: "page", slug: "team", label: "Team", visible: false },
+      { type: "page", slug: "about", label: "About", visible: true },
+    ]);
+    expect(result).not.toContain("Team");
+    expect(result).toContain("About");
+  });
+
+  it("writes both title_en and titulo_es with same label for monolingual sites", () => {
+    const result = buildNavigationYml([
+      { type: "page", slug: "about", label: "About Us", visible: true },
+    ]);
+    expect(result).toContain('title_en: "About Us"');
+    expect(result).toContain('titulo_es: "About Us"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// glossary and pages publish
+// ---------------------------------------------------------------------------
+
+describe("glossary and pages publish", () => {
+  it("serialises glossary_terms to glossary.csv", () => {
+    const result = serializeGlossaryCsv([
+      { term_id: "enc", title: "Encomienda", definition: "A labor system" },
+    ]);
+    expect(result).toBe('term_id,title,definition\nenc,"Encomienda","A labor system"\n');
+  });
+
+  it("serializeGlossaryCsv escapes double quotes in values", () => {
+    const result = serializeGlossaryCsv([
+      { term_id: "enc", title: 'Say "hello"', definition: 'Has "quotes"' },
+    ]);
+    expect(result).toContain('"Say ""hello"""');
+    expect(result).toContain('"Has ""quotes"""');
+  });
+
+  it("serializeGlossaryCsv handles null title and definition", () => {
+    const result = serializeGlossaryCsv([
+      { term_id: "enc", title: null, definition: null },
+    ]);
+    expect(result).toBe('term_id,title,definition\nenc,"",""\n');
+  });
+
+  it("serialises pages to markdown files with frontmatter", () => {
+    const result = serializePageMarkdown("About", "Welcome to the site.");
+    expect(result).toBe('---\ntitle: "About"\n---\n\nWelcome to the site.\n');
+  });
+
+  it("serializePageMarkdown handles empty body", () => {
+    const result = serializePageMarkdown("Contact", "");
+    expect(result).toBe('---\ntitle: "Contact"\n---\n\n\n');
   });
 });
 

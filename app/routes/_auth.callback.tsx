@@ -119,6 +119,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = await sessionStorage.getSession();
   session.set("userId", userId);
 
+  // Support post-OAuth redirect to the page that triggered sign-in (e.g. invite accept)
+  const returnTo = stateSession.get("returnTo") as string | undefined;
+  const safeRedirect =
+    returnTo && returnTo.startsWith("/") && !returnTo.includes("//")
+      ? returnTo
+      : "/dashboard";
+
   const headers = new Headers();
   headers.append("Set-Cookie", await sessionStorage.commitSession(session));
   // Clear the OAuth state cookie
@@ -127,5 +134,5 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     await stateCookieStorage.destroySession(stateSession),
   );
 
-  return redirect("/dashboard", { headers });
+  return redirect(safeRedirect, { headers });
 }

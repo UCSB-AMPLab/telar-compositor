@@ -26,6 +26,8 @@
 import { githubHeaders, decodeGitHubContent } from "~/lib/github.server";
 import type { TreeEntry } from "~/lib/github.server";
 import type { CommitFile } from "~/lib/commit.server";
+import { validateManifest, type Manifest } from "~/lib/manifest-schema.server";
+import { BUNDLED_MANIFESTS } from "~/../migrations";
 
 const GITHUB_API = "https://api.github.com";
 const FRAMEWORK_OWNER = "UCSB-AMPLab";
@@ -51,8 +53,29 @@ export const FRAMEWORK_PREFIXES = [
   "_data/themes/",
 ] as const;
 
-/** Individual files that belong to the Telar framework. */
-export const FRAMEWORK_FILES = ["_data/navigation.yml", "CHANGELOG.md"] as const;
+/** Individual files that belong to the Telar framework.
+ *
+ * Dependency manifests (package.json, Gemfile, Gemfile.lock, requirements.txt)
+ * must travel with upgrades: the framework's JS/Ruby/Python build steps break
+ * when source files (e.g. scroll-engine.js) import libraries that haven't
+ * been added to the user's manifest. Before they were listed here, upgrades
+ * shipped new framework code without bumping the deps and CI failed with
+ * unresolved-module errors.
+ */
+export const FRAMEWORK_FILES = [
+  "_data/navigation.yml",
+  "CHANGELOG.md",
+  // Dependency manifests — source files assume these deps, CI fails otherwise.
+  "package.json",
+  "Gemfile",
+  "Gemfile.lock",
+  "requirements.txt",
+  // Framework-owned root files users don't customise.
+  "LICENSE",
+  "NOTICE",
+  "pytest.ini",
+  "vitest.config.js",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -261,7 +284,7 @@ export function buildUpgradeSummary(
   for (const file of additions) {
     const category = categorizeFrameworkPath(file.path);
     if (category !== "deletions" && category !== "total") {
-      (summary as Record<string, number>)[category]++;
+      (summary as unknown as Record<string, number>)[category]++;
     }
     summary.total++;
   }
@@ -387,7 +410,10 @@ export async function computeUpgradeDiff(
   token: string,
   userTree: TreeEntry[],
   releaseTag: string,
+  options: { fetchContent?: boolean } = {},
 ): Promise<UpgradeDiff> {
+  const fetchContent = options.fetchContent ?? true;
+
   // 1. Fetch framework tree at the release tag
   const releaseTree = await getFrameworkTreeAtTag(token, releaseTag);
 
@@ -406,15 +432,22 @@ export async function computeUpgradeDiff(
     }
   }
 
-  // 3. Compute additions (new files + changed files)
+  // 3. Compute additions (new files + changed files).
+  // When fetchContent=false (the review-page loader path), we only collect
+  // paths — this skips N sequential GitHub API calls (one per changed file)
+  // that can otherwise dominate page load time. The upgrade action path
+  // (fetchContent=true, default) still fetches real content for the commit.
   const additions: CommitFile[] = [];
   for (const [path, releaseSha] of releaseMap.entries()) {
     const userSha = userMap.get(path);
     if (userSha === undefined || userSha !== releaseSha) {
-      // File is new or changed — fetch content from framework repo at release tag
-      const content = await getFrameworkFileContent(token, path, releaseTag);
-      if (content !== null) {
-        additions.push({ path, content });
+      if (fetchContent) {
+        const content = await getFrameworkFileContent(token, path, releaseTag);
+        if (content !== null) {
+          additions.push({ path, content });
+        }
+      } else {
+        additions.push({ path, content: "" });
       }
     }
   }
@@ -481,4 +514,215 @@ export async function checkTelarVersion(
     // Fail open: GitHub API failure should not block the user
     return { needsUpgrade: false, latestTag: null, isBelowMinimum: false };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Manifest loading
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory cache for release-asset manifests within a single Worker isolate.
+ * Keyed by tag name. Release assets are immutable for a given tag, so entries
+ * need no TTL during a request chain. Isolate recycling naturally clears.
+ */
+const manifestCache = new Map<string, Manifest>();
+
+/**
+ * Test-only helper to clear the release-asset cache between tests. Not part of
+ * the runtime API — tests call this in beforeEach to avoid cross-test bleed.
+ */
+export function __clearManifestCacheForTests(): void {
+  manifestCache.clear();
+}
+
+/**
+ * Fetch migration.json from a specific framework release. Returns null when
+ * the release has no migration.json asset, or when the release tag 404s —
+ * callers treat null as "no manifest available" and fail closed (see
+ * Throws on validation failure and on non-404
+ * GitHub API errors so upgrade actions surface the failure rather than
+ * silently proceed.
+ */
+export async function fetchReleaseManifest(
+  token: string,
+  tagName: string,
+): Promise<Manifest | null> {
+  if (manifestCache.has(tagName)) return manifestCache.get(tagName)!;
+  const relRes = await fetch(
+    `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/releases/tags/${encodeURIComponent(tagName)}`,
+    { headers: githubHeaders(token) },
+  );
+  if (relRes.status === 404) return null;
+  if (!relRes.ok) {
+    throw new Error(
+      `GitHub API error fetching release ${tagName}: ${relRes.status}`,
+    );
+  }
+  const release = (await relRes.json()) as {
+    assets?: Array<{ name: string; url: string }>;
+  };
+  const asset = release.assets?.find((a) => a.name === "migration.json");
+  if (!asset) return null;
+  const assetRes = await fetch(asset.url, {
+    headers: { ...githubHeaders(token), Accept: "application/octet-stream" },
+  });
+  if (!assetRes.ok) {
+    throw new Error(
+      `GitHub API error fetching migration asset for ${tagName}: ${assetRes.status}`,
+    );
+  }
+  const raw = await assetRes.json();
+  // Validator throws ManifestValidationError on invalid shape.
+  const validated = validateManifest(raw);
+  manifestCache.set(tagName, validated);
+  return validated;
+}
+
+/**
+ * Build the sequential chain of manifests that upgrades a site from
+ * `fromVersion` to `toVersion`. Uses EXACT string equality on from_version
+ * and to_version — no version normalisation (Pitfall 1).
+ *
+ * Returns manifests in application order. Throws if no chain reaches
+ * toVersion, or if a loop is detected.
+ */
+export function chainManifests(
+  fromVersion: string,
+  toVersion: string,
+  available: Manifest[],
+): Manifest[] {
+  if (fromVersion === toVersion) return [];
+  const byFrom = new Map<string, Manifest>();
+  for (const m of available) byFrom.set(m.from_version, m);
+  const chain: Manifest[] = [];
+  let current = fromVersion;
+  const visited = new Set<string>();
+  while (current !== toVersion) {
+    if (visited.has(current)) {
+      throw new Error(`Manifest chain loop detected at ${current}`);
+    }
+    visited.add(current);
+    const next = byFrom.get(current);
+    if (!next) {
+      throw new Error(
+        `Unsupported upgrade path: no manifest from ${current} (target ${toVersion}). ` +
+          `Available starting versions: ${Array.from(byFrom.keys()).join(", ")}`,
+      );
+    }
+    chain.push(next);
+    current = next.to_version;
+  }
+  return chain;
+}
+
+/**
+ * Load + chain manifests from bundled + release-asset sources. Bundled
+ * manifests cover historical versions; anything not bundled
+ * is fetched as a release asset from the framework repo.
+ *
+ * Algorithm:
+ *   1. Seed the accumulated set with BUNDLED_MANIFESTS.
+ *   2. Try chainManifests. On "no manifest from X" error, attempt to fetch
+ *      the missing manifest by release tag (trying a small set of tag
+ *      candidates), verify its from_version matches the dead-end, and retry.
+ *   3. Fail closed after 10 attempts or when no candidate tag yields the
+ *      required manifest (Pitfall 6 / A3).
+ *
+ * Tag-name heuristic: a release at tag `vX.Y.Z` ships a migration.json whose
+ * to_version is "X.Y.Z" and whose from_version is the previous version. The
+ * candidate list tries `v{deadEnd}` and `{deadEnd}` (for releases tagged at
+ * the from-version — rare), and `v{toVersion}` / `{toVersion}` (for the
+ * common single-hop case where the dead-end is exactly one step away).
+ */
+export async function loadManifestChain(
+  token: string,
+  fromVersion: string,
+  toVersion: string,
+): Promise<Manifest[]> {
+  if (fromVersion === toVersion) return [];
+  const accumulated: Manifest[] = [...BUNDLED_MANIFESTS];
+  let attempts = 0;
+  while (attempts < 10) {
+    try {
+      return chainManifests(fromVersion, toVersion, accumulated);
+    } catch (err) {
+      const msg = (err as Error).message;
+      const match = msg.match(/no manifest from ([^\s]+)/);
+      if (!match) throw err;
+      const deadEnd = match[1];
+      // Heuristic: try a handful of likely release-tag names. In practice
+      // users are rarely more than one step behind, so v{toVersion} is the
+      // most likely hit. For multi-hop cases this will eventually fail and
+      // surface a clear error — which is preferable to silent data loss.
+      const candidateTags = [
+        `v${toVersion}`,
+        toVersion,
+        `v${deadEnd}`,
+        deadEnd,
+      ];
+      let fetched: Manifest | null = null;
+      for (const tag of candidateTags) {
+        let attempt: Manifest | null = null;
+        try {
+          attempt = await fetchReleaseManifest(token, tag);
+        } catch {
+          // Non-404 fetch errors bubble up; 404 already yielded null — for
+          // chain discovery we treat fetch-level errors as "try next tag".
+          continue;
+        }
+        if (attempt && attempt.from_version === deadEnd) {
+          fetched = attempt;
+          break;
+        }
+      }
+      if (!fetched) {
+        throw new Error(
+          `Missing migration manifest for upgrade path ${deadEnd} → (toward ${toVersion}). ` +
+            `Ensure the framework release includes a migration.json asset.`,
+        );
+      }
+      accumulated.push(fetched);
+      attempts++;
+    }
+  }
+  throw new Error(
+    `loadManifestChain: exceeded 10 attempts building chain ${fromVersion} → ${toVersion}`,
+  );
+}
+
+/**
+ * Collect the set of repo-relative paths the manifest chain will need to
+ * read before applyManifestChain runs. For ops scoped by file_glob, this is
+ * heuristic — we cannot fully expand globs statically. Callers extend with
+ * known file sets (e.g. always include _config.yml).
+ */
+export function collectFilesReferencedByChain(chain: Manifest[]): Set<string> {
+  const paths = new Set<string>();
+  for (const m of chain) {
+    for (const op of m.operations) {
+      switch (op.type) {
+        case "config_add_field":
+        case "config_update_value":
+        case "config_rename_field":
+          paths.add("_config.yml");
+          break;
+        case "file_delete":
+          for (const p of op.paths) paths.add(p);
+          break;
+        case "gitignore_add":
+          paths.add(".gitignore");
+          break;
+        case "csv_add_column":
+        case "csv_rename_column":
+        case "regex_replace":
+          // Glob-scoped — phase 30 bring-up: known CSV paths enumerated here.
+          paths.add("telar-content/spreadsheets/project.csv");
+          paths.add("telar-content/spreadsheets/proyecto.csv");
+          break;
+        case "create_directory":
+          break;
+      }
+    }
+  }
+  return paths;
 }

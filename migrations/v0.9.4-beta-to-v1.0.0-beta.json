@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "from_version": "0.9.4-beta",
+  "to_version": "1.0.0-beta",
+  "description": "Card-stack architecture, video/audio support, Lucide icons, scroll engine",
+  "operations": [
+    {
+      "type": "config_update_value",
+      "key": "max_viewer_cards",
+      "old_value": "10",
+      "new_value": "8"
+    }
+  ],
+  "manual_steps": {
+    "en": [
+      {
+        "description": "**If you use GitHub Pages:**\n\nReplace your `.github/workflows/build.yml` with the latest version from the Telar repository. The new workflow adds an audio processing step that runs conditionally when audio files are detected. Go to https://github.com/UCSB-AMPLab/telar/blob/main/.github/workflows/build.yml, click \"Raw\", copy the entire file, and replace the contents of `.github/workflows/build.yml` in your repository.",
+        "doc_url": "https://github.com/UCSB-AMPLab/telar/blob/main/.github/workflows/build.yml",
+        "audience": "local"
+      },
+      {
+        "description": "**If you work with your site locally:**\n\nInstall JavaScript dependencies:\n\n```\nnpm install\n```\n\nThis adds lenis (scroll engine), @vimeo/player (video embeds), esbuild (JS bundler), and vitest (test runner).\n\n**Optional — audio support** (only if your site includes audio objects):\n\n```\nbrew install ffmpeg audiowaveform      # macOS\nsudo apt install ffmpeg audiowaveform  # Ubuntu\n```\n\nSites without audio objects do not need these tools.",
+        "audience": "local"
+      }
+    ],
+    "es": [
+      {
+        "description": "**Si usas GitHub Pages:**\n\nReemplaza tu `.github/workflows/build.yml` con la versión más reciente del repositorio de Telar. El nuevo flujo agrega un paso de procesamiento de audio que se ejecuta condicionalmente cuando se detectan archivos de audio. Ve a https://github.com/UCSB-AMPLab/telar/blob/main/.github/workflows/build.yml, haz clic en \"Raw\", copia todo el contenido del archivo y reemplaza el contenido de `.github/workflows/build.yml` en tu repositorio.",
+        "doc_url": "https://github.com/UCSB-AMPLab/telar/blob/main/.github/workflows/build.yml",
+        "audience": "local"
+      },
+      {
+        "description": "**Si trabajas con tu sitio localmente:**\n\nInstala las dependencias de JavaScript:\n\n```\nnpm install\n```\n\nEsto agrega lenis (motor de scroll), @vimeo/player (videos incrustados), esbuild (empaquetador JS) y vitest (ejecutor de pruebas).\n\n**Opcional — soporte de audio** (solo si el sitio incluye objetos de audio):\n\n```\nbrew install ffmpeg audiowaveform      # macOS\nsudo apt install ffmpeg audiowaveform  # Ubuntu\n```\n\nLos sitios sin objetos de audio no necesitan estas herramientas.",
+        "audience": "local"
+      }
+    ]
+  }
+}

@@ -194,7 +194,8 @@ function buildChecklistItems(
       { key: "config", i18nKey: "step_sync.importing_config", state: "pending" },
       { key: "objects", i18nKey: "step_sync.importing_objects", state: "pending" },
       { key: "stories", i18nKey: "step_sync.importing_stories", state: "pending" },
-      { key: "glossary", i18nKey: "step_sync.importing_glossary", state: "pending" },
+      { key: "glossary", i18nKey: "step_sync.importing_glossary_entries", state: "pending" },
+      { key: "pages", i18nKey: "step_sync.importing_pages", state: "pending" },
       { key: "iiif", i18nKey: "step_sync.scanning_iiif", state: "pending" },
     ];
   }
@@ -205,7 +206,8 @@ function buildChecklistItems(
       { key: "config", i18nKey: "step_sync.importing_config", state: "pending" },
       { key: "objects", i18nKey: "step_sync.importing_objects", state: "pending" },
       { key: "stories", i18nKey: "step_sync.importing_stories", state: "pending" },
-      { key: "glossary", i18nKey: "step_sync.importing_glossary", state: "pending" },
+      { key: "glossary", i18nKey: "step_sync.importing_glossary_entries", state: "pending" },
+      { key: "pages", i18nKey: "step_sync.importing_pages", state: "pending" },
       { key: "iiif", i18nKey: "step_sync.scanning_iiif", state: "pending" },
     ];
   }
@@ -217,7 +219,8 @@ function buildChecklistItems(
       { key: "config", i18nKey: "step_sync.importing_config", state: "pending" },
       { key: "objects", i18nKey: "step_sync.importing_objects", state: "pending" },
       { key: "stories", i18nKey: "step_sync.importing_stories", state: "pending" },
-      { key: "glossary", i18nKey: "step_sync.importing_glossary", state: "pending" },
+      { key: "glossary", i18nKey: "step_sync.importing_glossary_entries", state: "pending" },
+      { key: "pages", i18nKey: "step_sync.importing_pages", state: "pending" },
       { key: "iiif", i18nKey: "step_sync.scanning_iiif", state: "pending" },
     ];
   }
@@ -229,7 +232,8 @@ function buildChecklistItems(
       { key: "config", i18nKey: "step_sync.importing_config", state: "done" },
       { key: "objects", i18nKey: "step_sync.importing_objects", state: "pending" },
       { key: "stories", i18nKey: "step_sync.importing_stories", state: "pending" },
-      { key: "glossary", i18nKey: "step_sync.importing_glossary", state: "pending" },
+      { key: "glossary", i18nKey: "step_sync.importing_glossary_entries", state: "pending" },
+      { key: "pages", i18nKey: "step_sync.importing_pages", state: "pending" },
       { key: "iiif", i18nKey: "step_sync.scanning_iiif", state: "pending" },
       { key: "sheets", i18nKey: "step_sync.importing_sheets", state: "error" },
     ];
@@ -266,6 +270,12 @@ function buildChecklistItems(
       i18nKey: "step_sync.importing_glossary_entries",
       state: "done",
       detail: `(${result.glossary.imported})`,
+    },
+    {
+      key: "pages",
+      i18nKey: "step_sync.importing_pages",
+      state: "done",
+      detail: `(${result.pages.imported})`,
     },
     {
       key: "iiif",

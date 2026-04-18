@@ -120,10 +120,13 @@ describe("LayerPanel: canDelete", () => {
     expect(deleteBtn).toBeDefined();
   });
 
-  it("hides delete button when canDelete is false", () => {
+  it("shows delete button as disabled when canDelete is false", () => {
     render(<LayerPanel {...defaultProps} canDelete={false} />);
-    const deleteBtn = screen.queryByRole("button", { name: /layer.delete_title/i });
-    expect(deleteBtn).toBeNull();
+    const deleteBtn = screen.getByRole("button", { name: /layer.delete_title/i });
+    // Delete buttons are visible but disabled with a tooltip so the
+    // permission system is discoverable rather than hidden.
+    expect(deleteBtn).toBeDefined();
+    expect((deleteBtn as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows 'Open second panel' button in layer 1 when hasLayer2 is true", () => {

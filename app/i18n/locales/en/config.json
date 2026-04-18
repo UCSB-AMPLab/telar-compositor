@@ -1,7 +1,14 @@
 {
   "title": "Site Configuration",
   "save": "Save Changes",
+  "saving": "Saving…",
   "saved": "Changes saved",
+  "unsaved_changes": {
+    "title": "Unsaved Changes",
+    "message": "You have unsaved changes. Are you sure you want to leave this page?",
+    "stay": "Stay",
+    "leave": "Leave"
+  },
   "sections": {
     "site_settings": {
       "title": "Site Settings",
@@ -54,5 +61,17 @@
       "disabled_notice": "Google Sheets has been disabled. The compositor manages your content directly.",
       "enabled_notice": "Google Sheets is currently the content source. Changes made here will be overwritten on next sync."
     }
-  }
+  },
+  "navigation_menu_title": "Navigation Menu",
+  "navigation_menu_description_before": "To edit the site navigation bar, go to the ",
+  "navigation_menu_pages_link": "Pages tab",
+  "navigation_menu_description_after": " in the Compositor or edit /_data/navigation.yml in your repository.",
+  "navigation_section": "Navigation",
+  "add_external_link": "+ Add external link",
+  "external_link_url_placeholder": "https://...",
+  "delete_nav_item_confirm": "Remove this link from the navigation?",
+  "drag_reorder_aria": "Drag to reorder",
+  "show_nav_aria": "Show in navigation",
+  "hide_nav_aria": "Hide from navigation",
+  "remove_link_aria": "Remove link"
 }

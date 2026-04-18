@@ -13,12 +13,16 @@
     "attribution": "The Telar Compositor is a project of <neo>Neogranadina</neo> and the UC Santa Barbara <ampl>Archives, Memory, and Preservation Lab</ampl>"
   },
   "nav": {
-    "dashboard": "Dashboard",
+    "dashboard": "Start",
+    "config": "Config",
+    "homepage": "Homepage",
     "objects": "Objects",
     "stories": "Stories",
+    "pages": "Pages",
     "glossary": "Glossary",
-    "config": "Config",
-    "publish": "Publish"
+    "publish": "Publish",
+    "site": "Site",
+    "site_aria": "Open published site in a new tab"
   },
   "sync_banner": {
     "message": "Your GitHub repository has changed since the last sync. Review the changes to keep the compositor's working copy up to date.",
@@ -27,5 +31,6 @@
   "dialog": {
     "dismiss_cancel": "Go back",
     "dismiss_confirm": "Close"
-  }
+  },
+  "user_menu_aria": "User menu"
 }

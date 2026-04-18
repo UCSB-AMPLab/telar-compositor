@@ -8,9 +8,22 @@
  * Turndown is loaded lazily on first paste to avoid bundling its CJS
  * dependency (@mixmark-io/domino) into the SSR server build, where
  * require() is not available in Cloudflare Workers.
+ *
+ * Rules applied (in priority order within Turndown):
+ *  1. videoIframe — preserve YouTube/Vimeo iframes as raw HTML
+ *  2. googleDocsOuterBold — strip docs-internal-guid <b style="font-weight:normal"> wrappers
+ *  3. googleDocsInlineBold — convert <span style="font-weight:700"> to **bold**
+ *  4. googleDocsInlineItalic — convert <span style="font-style:italic"> to *italic*
+ *  5. wordEmptyParagraph — strip <o:p> tags and MsoNormal paragraphs containing only <o:p>
+ *  6. wordMsoSpan — strip <span style="mso-*"> wrappers, preserving text
+ *  7. wordMsoEmptyParagraph — strip empty MsoNormal paragraphs
+ *  8. emptySpan — strip whitespace-only <span> elements (Google Docs detritus)
+ *
+ * Post-processing normalises smart quotes and typographic dashes to ASCII equivalents.
  */
 
 import { EditorView } from "@codemirror/view";
+import type TurndownService from "turndown";
 
 /** Domains whose iframes are preserved as raw HTML on paste. */
 const VIDEO_EMBED_DOMAINS = [
@@ -32,24 +45,180 @@ function isVideoEmbed(src: string): boolean {
   }
 }
 
-let td: import("turndown").default | null = null;
+let td: TurndownService | null = null;
 
-async function getTurndown() {
+/**
+ * Resets the singleton Turndown instance. Exported for test teardown only —
+ * prevents rule accumulation across test cases and Vite HMR reloads.
+ */
+export function _resetTurndownForTests() { td = null; }
+
+/**
+ * Returns (and lazily initialises) the Turndown instance with all paste sanitisation rules.
+ * Exported as a named export so tests can call it directly without a DOM environment.
+ */
+export async function getTurndown() {
   if (!td) {
     const TurndownService = (await import("turndown")).default;
     td = new TurndownService({ headingStyle: "atx", bulletListMarker: "-" });
 
-    // Preserve YouTube/Vimeo iframes as raw HTML
+    // Rule 1: Preserve YouTube/Vimeo iframes as raw HTML
     td.addRule("videoIframe", {
-      filter: (node) =>
+      filter: (node: HTMLElement) =>
         node.nodeName === "IFRAME" &&
         isVideoEmbed((node as HTMLIFrameElement).getAttribute("src") ?? ""),
-      replacement: (_content, node) => {
+      replacement: (_content: string, node) => {
         return `\n\n${(node as HTMLElement).outerHTML}\n\n`;
       },
     });
+
+    // Strip script, style, xml, and other non-content elements entirely
+    td.remove(["script", "style", "xml", "noscript", "title", "meta", "link"] as Array<keyof HTMLElementTagNameMap>);
+
+    // Rule 2: Google Docs outer bold wrapper — <b style="font-weight:normal"> surrounds the
+    // entire pasted content and must be stripped without adding bold markers
+    td.addRule("googleDocsOuterBold", {
+      filter: (node: HTMLElement) =>
+        node.nodeName === "B" &&
+        node.getAttribute("style")?.includes("font-weight:normal") === true,
+      replacement: (content: string) => content,
+    });
+
+    // Rule 3: Google Docs inline bold spans (font-weight:700 or bold)
+    td.addRule("googleDocsInlineBold", {
+      filter: (node: HTMLElement) => {
+        if (node.nodeName !== "SPAN") return false;
+        const fw = node.style?.fontWeight;
+        return fw === "700" || fw === "bold";
+      },
+      replacement: (content: string) => {
+        const trimmed = content.trim();
+        return trimmed ? `**${trimmed}**` : "";
+      },
+    });
+
+    // Rule 4: Google Docs inline italic spans (font-style:italic)
+    td.addRule("googleDocsInlineItalic", {
+      filter: (node: HTMLElement) => {
+        if (node.nodeName !== "SPAN") return false;
+        return node.style?.fontStyle === "italic";
+      },
+      replacement: (content: string) => {
+        const trimmed = content.trim();
+        return trimmed ? `*${trimmed}*` : "";
+      },
+    });
+
+    // Rule 5: Word empty paragraph markers — <o:p> tags and MsoNormal paragraphs
+    // that contain only <o:p></o:p> produce empty string
+    td.addRule("wordEmptyParagraph", {
+      filter: (node: HTMLElement) => {
+        // Match <o:p> tags directly
+        if (node.nodeName.toLowerCase() === "o:p") return true;
+        // Match <p> whose only content is <o:p></o:p>
+        if (node.nodeName === "P" && node.innerHTML?.trim() === "<o:p></o:p>") return true;
+        return false;
+      },
+      replacement: () => "",
+    });
+
+    // Rule 6: Word MSO-styled spans (mso-* in style attribute) — strip wrapper, keep text
+    td.addRule("wordMsoSpan", {
+      filter: (node: HTMLElement) =>
+        node.nodeName === "SPAN" &&
+        /mso-/.test(node.getAttribute("style") ?? ""),
+      replacement: (content: string) => content,
+    });
+
+    // Rule 7: Word MsoNormal class paragraphs with no real text content
+    td.addRule("wordMsoEmptyParagraph", {
+      filter: (node: HTMLElement) => {
+        if (node.nodeName !== "P") return false;
+        const cls = node.className ?? "";
+        return /^Mso/.test(cls) && !node.textContent?.trim();
+      },
+      replacement: () => "",
+    });
+
+    // Rule 8: Empty spans (Google Docs detritus) — whitespace-only spans produce nothing
+    td.addRule("emptySpan", {
+      filter: (node: HTMLElement) =>
+        node.nodeName === "SPAN" &&
+        !node.textContent?.trim(),
+      replacement: () => "",
+    });
   }
   return td;
+}
+
+/**
+ * Strips Word conditional comments and XML namespace declarations from pasted HTML.
+ * These contain VBA/JS helper functions (msoCommentShow, etc.) that Turndown
+ * would otherwise render as visible text.
+ */
+function stripWordArtefacts(html: string): string {
+  return html
+    // Remove <!--[if ...]>...<![endif]--> conditional comment blocks (incl. nested)
+    .replace(/<!--\[if[^]*?<!\[endif\]-->/gi, "")
+    // Remove <?xml ...?> processing instructions
+    .replace(/<\?xml[^?]*\?>/gi, "")
+    // Remove Word XML namespace tags like <o:p>, <w:Sdt>, <st1:*>, etc.
+    .replace(/<\/?\w+:[^>]*>/gi, "")
+    // Remove Word comment anchor links — <a name="_msocom_1">, <a name="msocomanchor_1">, etc.
+    .replace(/<a[^>]*name="[^"]*mso(?:com|anchor)[^"]*"[^>]*>.*?<\/a>/gi, "")
+    // Remove Word comment reference markers like [LCE1], [LC1], etc. left after anchor stripping
+    .replace(/\[(?:LCE?\d+|mso\w+)\](?:\[\d+\])?/g, "");
+}
+
+/**
+ * Normalises smart quotes and typographic dashes to their ASCII/spaced equivalents.
+ * Applied as post-processing after Turndown conversion.
+ */
+function normaliseQuotesAndDashes(text: string): string {
+  return text
+    .replace(/[\u2018\u2019]/g, "'")          // smart single quotes → '
+    .replace(/[\u201C\u201D]/g, '"')           // smart double quotes → "
+    .replace(/\u2013/g, " \u2013 ")            // en-dash → spaced en-dash
+    .replace(/\u2014/g, " \u2014 ")            // em-dash → spaced em-dash
+    .replace(/\[(?:LCE?\d+|mso\w+)\](?:\[\d+\])?/g, "")  // stray Word comment markers
+    .replace(/ {2,}/g, " ");                   // collapse any double spaces created above
+}
+
+/**
+ * Synchronous paste event handler. MUST return `boolean` synchronously —
+ * CodeMirror checks the return for the literal `true` to decide the event
+ * was handled; a returned Promise is truthy-but-not-`true`, so CodeMirror
+ * used to run its own default paste afterwards and the markdown dispatch
+ * layered on top — inserting the same content twice. Reads clipboardData
+ * up-front (it is not accessible once the event has been dispatched),
+ * calls preventDefault synchronously, returns `true`, and does the async
+ * Turndown work inside a fire-and-forget IIFE.
+ *
+ * Exported so tests can exercise the return shape without standing up a
+ * full EditorView.
+ */
+export function handleRichPaste(event: ClipboardEvent, view: EditorView): boolean {
+  const html = event.clipboardData?.getData("text/html");
+  if (!html) return false; // Let CodeMirror handle plain text
+
+  const plainFallback = event.clipboardData?.getData("text/plain") ?? "";
+  event.preventDefault();
+
+  void (async () => {
+    try {
+      const turndown = await getTurndown();
+      const cleanHtml = stripWordArtefacts(html);
+      let markdown = turndown.turndown(cleanHtml);
+      markdown = normaliseQuotesAndDashes(markdown);
+      view.dispatch(view.state.replaceSelection(markdown));
+    } catch {
+      if (plainFallback) {
+        view.dispatch(view.state.replaceSelection(plainFallback));
+      }
+    }
+  })();
+
+  return true;
 }
 
 /**
@@ -57,14 +226,5 @@ async function getTurndown() {
  * Handles rich text from web pages; plain text paste is unchanged.
  */
 export const richPasteExtension = EditorView.domEventHandlers({
-  async paste(event, view) {
-    const html = event.clipboardData?.getData("text/html");
-    if (!html) return false; // Let CodeMirror handle plain text
-
-    event.preventDefault();
-    const turndown = await getTurndown();
-    const markdown = turndown.turndown(html);
-    view.dispatch(view.state.replaceSelection(markdown));
-    return true;
-  },
+  paste: handleRichPaste,
 });

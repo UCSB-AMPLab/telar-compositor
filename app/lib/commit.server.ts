@@ -97,14 +97,22 @@ export async function commitFilesToRepo(
   messageBody?: string,
   deletions?: string[],
   skipCi?: boolean,
+  expectedHeadOidOverride?: string,
 ): Promise<{ newHeadSha: string }> {
-  // 1. Fetch current HEAD OID
-  const headData = await graphqlGitHub<HeadOidData>(token, GET_HEAD_OID, {
-    owner,
-    repo,
-    branch,
-  });
-  const expectedHeadOid = headData.repository.ref.target.oid;
+  // 1. Resolve expectedHeadOid — prefer caller-supplied override (
+  //    captured earlier in a multi-step pipeline to guard against TOCTOU), fall
+  //    back to a fresh lookup to keep single-step callers backward-compatible.
+  let expectedHeadOid: string;
+  if (expectedHeadOidOverride) {
+    expectedHeadOid = expectedHeadOidOverride;
+  } else {
+    const headData = await graphqlGitHub<HeadOidData>(token, GET_HEAD_OID, {
+      owner,
+      repo,
+      branch,
+    });
+    expectedHeadOid = headData.repository.ref.target.oid;
+  }
 
   // 2. Base64-encode each file's content (UTF-8 safe)
   const additions = files.map((f) => ({

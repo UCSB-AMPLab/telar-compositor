@@ -74,11 +74,18 @@ export function ProjectStatusBar({
     <div
       className={`bg-white rounded-lg border border-gray-100 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-body ${className}`}
     >
-      {/* Repo name */}
-      <div className="flex items-center gap-2 text-charcoal font-medium shrink-0">
+      {/* Repo name — links to GitHub */}
+      <a
+        href={`https://github.com/${repoName}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={t("status_bar.view_on_github")}
+        title={t("status_bar.view_on_github")}
+        className="flex items-center gap-2 text-charcoal font-medium shrink-0 hover:underline"
+      >
         <Github className="w-4 h-4 text-gray-400" />
         <span>{repoName}</span>
-      </div>
+      </a>
 
       {/* Status chip — clickable when actionable */}
       {status === "out_of_sync" ? (

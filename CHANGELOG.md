@@ -1,5 +1,64 @@
 # Changelog
 
+## v1.0.0-beta (2026-04-17)
+
+Real-time multi-user editing, in-app framework upgrades, and the pages and glossary editors that bring the compositor to feature parity with Telar 1.2.0. The largest release in the compositor's history.
+
+### Real-time collaboration
+
+- **Up to 6 editors per project** — Members work in the same project simultaneously and see each other's changes instantly. Built on Yjs with a Cloudflare Durable Object per project; state survives reload and disconnect
+- **Presence avatars** — Header shows everyone currently in the project, with a hover tooltip indicating which page they're viewing or editing
+- **Per-field "currently editing" indicators** — Inline fields show a coloured highlight when another member is typing in them
+- **Convenor / collaborator roles** — Project owners can invite collaborators by email; collaborators can edit but not delete other people's work or run destructive actions
+- **Contribution tracking** — Donut chart in the new collaboration sidebar shows each member's edit share, sourced from per-field authorship metadata
+- **Shared undo/redo** — Ctrl/Cmd+Z works across all collaborative surfaces and respects other members' concurrent edits
+- **Snapshot integrity** — Server-side guard prevents Y.Array duplication during snapshot persistence
+
+### In-app framework upgrades
+
+- **One-click upgrade flow** — Detect new Telar releases and run the framework migration on the user's repo without leaving the compositor
+- **Bundled migration manifests** — Five hand-authored migrations cover every framework transition from v0.9.2-beta through v1.2.0; manifests for newer releases ship as GitHub Release assets
+- **Freeze modal during upgrades** — All connected clients see a full-screen overlay while the upgrade runs; non-owners auto-reload when it completes
+- **External version drift detection** — If someone changes the framework version in GitHub directly, the dashboard surfaces a toast on next sync
+- **Manual-step rendering** — Upgrades that require user action surface the steps in the done screen with markdown bodies and "Read more" links
+
+### New content surfaces
+
+- **Pages editor** — First-class editor for static pages with sortable navigation, slug uniqueness enforcement, and bilingual support
+- **Glossary editor** — Two-column editor for glossary terms with markdown bodies and `[[term_id]]` link insertion from any markdown surface
+
+### Editor improvements
+
+- **Layer panel** — Per-step layer editor with drag-to-reorder
+- **Refined step layout** — Tightened title-card, narrative, and viewer columns; consistent inline editing across all fields
+- **Glossary link button** in the markdown toolbar with searchable term picker
+- **Image upload metadata flow** — Walks users through file selection, metadata entry, and dismiss confirmation before the commit-and-build
+
+### Onboarding and dashboard
+
+- **Dashboard tabs** — Site / Team / Settings tabs with a five-step workflow guide on the Start page
+- **Pagination of installation repos** — Onboarding search now sees every repo in the installation, not just the first page
+- **Cascade unlink** — Removing a project also clears its members, invites, and pages
+- **Connected sites** — Onboarding separates already-connected sites with open/resume actions
+- **Install on another account** — Inline callout to install the GitHub App on additional accounts or organisations
+- **Page count in import progress** — Onboarding surfaces page count alongside object and story counts
+- **Refreshed layout chrome** — Header, footer, tab nav, restriction banner
+
+### Bug fixes
+
+- **YAML escape in published output** — Page titles or nav labels containing `:`, `"`, or newlines no longer produce malformed Jekyll output
+- **Sync divergence banner** — Banner now actually shows when there's real divergence between repo and compositor; previously always silently disabled
+- **Object delete leaves no orphans** — Deleting an object now removes both the metadata row and the image files from the repo; previously files accumulated as orphans
+- **Rich paste no longer duplicates content** — Pasting HTML into the markdown editor no longer inserts the markdown twice
+- **CSV genre column** — Object exports now include the `medium_genre` column for all object operations
+
+### Infrastructure
+
+- D1 migrations 0015–0021: collaboration tables, Yjs state blob, presence colours, contributions JSON, objects order, navigation slug uniqueness
+- New dependencies: `yjs`, `y-websocket`, `y-codemirror.next`
+- Cloudflare Durable Object binding (`COLLABORATION` → `ProjectCollaborationDO`)
+- TypeScript clean across `app/`, `workers/`, and `tests/`
+
 ## v0.3.0-beta (2026-04-09)
 
 Create new site flow — users can generate a fresh Telar site from the repo template without leaving the compositor.

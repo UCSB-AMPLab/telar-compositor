@@ -43,7 +43,7 @@
     "blockers_heading": "Debes corregir esto antes de publicar",
     "warnings_heading": "Sugerencias",
     "stale_head": "El repositorio de tu sitio cambió desde la última sincronización. Sincroniza de nuevo antes de publicar.",
-    "stale_head_action": "Ir al panel para sincronizar",
+    "stale_head_action": "Ir al inicio para sincronizar",
     "object_no_title": "El objeto \"{{id}}\" no tiene título",
     "step_no_position": "El paso {{number}} no tiene posición de vista — el sitio publicado mostrará el 100% de la imagen."
   },
@@ -63,7 +63,7 @@
     "deleted_story": "- Historia: {{title}}",
     "new_object": "+ Objeto: {{title}}",
     "deleted_object": "- Objeto: {{title}}",
-    "footer": "Publicado con Telar Compositor"
+    "footer": "Publicado con el Compositor de Telar"
   },
   "commit": {
     "heading": "Escribe un mensaje de commit",
@@ -86,7 +86,7 @@
     "success_description": "Tus cambios se publicaron. Si no ves todo, recarga la página con Cmd-Shift-R (Mac) o Ctrl-Shift-R (Windows) un par de veces.",
     "view_site": "Ver tu sitio",
     "view_commit": "Ver el commit completo en GitHub",
-    "back_to_dashboard": "Volver al panel",
+    "back_to_dashboard": "Volver al inicio",
     "failed_heading": "El build falló",
     "failed_description": "Algo salió mal al construir tu sitio.",
     "view_actions": "Ver detalles del build",

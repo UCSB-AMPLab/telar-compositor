@@ -1,8 +1,11 @@
 /**
  * StepView — editor panel for a regular story step (1-N).
  *
- * Renders inline-editable question and answer fields that autosave
- * to the steps table via the "autosave-step-field" intent.
+ * Renders inline-editable question, answer, and alt_text fields that write
+ * directly to Yjs Y.Text instances via InlineTextField/InlineTextArea.
+ * Falls back to initialValue (from D1 SSR render) when yText is null
+ * (pre-connection or SSR).
+ *
  * Layer buttons (up to 2) appear below the answer, styled as pills.
  * Each layer button has a pencil icon to edit the button label inline.
  * Vertically centered within the narrative column.
@@ -12,6 +15,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useFetcher } from "react-router";
 import { Pencil, Check, X, PencilLine } from "lucide-react";
+import * as Y from "yjs";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
 
@@ -37,6 +41,10 @@ interface StepViewProps {
   onCreateLayer: (stepId: number, layerNumber: number, defaultLabel: string) => void;
   actionUrl: string;
   isFirstStep?: boolean;
+  questionYText: Y.Text | null;
+  answerYText: Y.Text | null;
+  altTextYText: Y.Text | null;
+  storySlug: string;
 }
 
 /** Inline editor for a layer button label — appears on pencil click. */
@@ -104,7 +112,7 @@ function LayerButtonWithEdit({
           type="button"
           onClick={handleSave}
           className="p-1 text-green-600 hover:text-green-700 transition-colors"
-          aria-label="Save label"
+          aria-label={t("step.save_label_aria")}
         >
           <Check className="w-3.5 h-3.5" />
         </button>
@@ -112,7 +120,7 @@ function LayerButtonWithEdit({
           type="button"
           onClick={handleCancel}
           className="p-1 text-gray-400 hover:text-charcoal transition-colors"
-          aria-label="Cancel editing"
+          aria-label={t("step.cancel_editing_aria")}
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -133,7 +141,7 @@ function LayerButtonWithEdit({
         type="button"
         onClick={() => setEditing(true)}
         className="group/pencil flex items-center gap-1 p-1.5 text-gray-300 hover:text-charcoal transition-all rounded hover:bg-gray-100"
-        aria-label="Edit button label"
+        aria-label={t("step.edit_button_label_aria")}
       >
         <Pencil className="w-3 h-3" />
         <span className="font-body text-xs text-gray-400 opacity-0 group-hover/pencil:opacity-100 transition-opacity">
@@ -144,7 +152,18 @@ function LayerButtonWithEdit({
   );
 }
 
-export function StepView({ step, layers, onOpenLayer, onCreateLayer, actionUrl, isFirstStep }: StepViewProps) {
+export function StepView({
+  step,
+  layers,
+  onOpenLayer,
+  onCreateLayer,
+  actionUrl,
+  isFirstStep,
+  questionYText,
+  answerYText,
+  altTextYText,
+  storySlug,
+}: StepViewProps) {
   const { t } = useTranslation("editor");
   const questionRef = useRef<HTMLDivElement>(null);
   const answerRef = useRef<HTMLDivElement>(null);
@@ -176,11 +195,10 @@ export function StepView({ step, layers, onOpenLayer, onCreateLayer, actionUrl, 
             </button>
             <InlineTextField
               initialValue={step.question ?? ""}
-              fieldName="question"
-              entityId={step.id}
-              intent="autosave-step-field"
+              yText={questionYText}
               placeholder={t("step.question_placeholder")}
               inputClassName="font-heading text-xl font-semibold text-charcoal"
+              fieldKey={`step-${storySlug}-${step.id}-question`}
             />
           </div>
 
@@ -198,12 +216,11 @@ export function StepView({ step, layers, onOpenLayer, onCreateLayer, actionUrl, 
             </button>
             <InlineTextArea
               initialValue={step.answer ?? ""}
-              fieldName="answer"
-              entityId={step.id}
-              intent="autosave-step-field"
+              yText={answerYText}
               placeholder={t("step.answer_placeholder")}
               inputClassName="font-body text-base text-charcoal"
               rows={5}
+              fieldKey={`step-${storySlug}-${step.id}-answer`}
             />
           </div>
         </div>
@@ -221,12 +238,11 @@ export function StepView({ step, layers, onOpenLayer, onCreateLayer, actionUrl, 
           <div className="group/field relative">
             <InlineTextArea
               initialValue={step.alt_text ?? ""}
-              fieldName="alt_text"
-              entityId={step.id}
-              intent="autosave-step-field"
+              yText={altTextYText}
               placeholder={t("step.alt_text_placeholder")}
               inputClassName="font-body text-sm text-gray-500"
               rows={2}
+              fieldKey={`step-${storySlug}-${step.id}-alt_text`}
             />
           </div>
         </div>

@@ -5,7 +5,7 @@
  * time format conversion helpers. Ported from the Telar framework's
  * card-type.js regex patterns.
  *
- * Used by the story editor (Plan 02) to render the correct player/viewer
+ * Used by the story editor to render the correct player/viewer
  * component for each step based on the object's source URL or file extension.
  */
 

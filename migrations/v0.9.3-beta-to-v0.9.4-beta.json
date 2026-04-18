@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "from_version": "0.9.3-beta",
+  "to_version": "0.9.4-beta",
+  "description": "Add PyMuPDF dependency for PDF object support",
+  "operations": [],
+  "manual_steps": {
+    "en": [
+      {
+        "description": "**If you use GitHub Pages:**\n\nNo action needed. The updated requirements.txt will be picked up automatically on the next build. If your site has PDF objects, trigger a rebuild to generate their IIIF tiles: go to your repository's Actions tab, select the \"Build and Deploy\" workflow, and click **Run workflow**.",
+        "audience": "local"
+      },
+      {
+        "description": "**If you work with your site locally:**\n\nInstall the new dependency:\n\n`pip install PyMuPDF`\n\nIf your site has PDF objects and their IIIF tiles were not previously generated, regenerate them:\n\n`python3 scripts/generate_iiif.py --base-url YOUR_SITE_URL`\n\n(Replace YOUR_SITE_URL with your site's URL, e.g. https://yourusername.github.io/your-repo)",
+        "audience": "local"
+      }
+    ],
+    "es": [
+      {
+        "description": "**Si usas GitHub Pages:**\n\nNo se requiere ninguna acción. El archivo requirements.txt actualizado se aplicará automáticamente en la próxima construcción. Si el sitio tiene objetos PDF, inicia una reconstrucción para generar sus teselas IIIF: ve a la pestaña Actions del repositorio, selecciona el flujo \"Build and Deploy\" y haz clic en **Run workflow**.",
+        "audience": "local"
+      },
+      {
+        "description": "**Si trabajas con tu sitio localmente:**\n\nInstala la nueva dependencia:\n\n`pip install PyMuPDF`\n\nSi el sitio tiene objetos PDF y sus teselas IIIF no se generaron previamente, regenéralas:\n\n`python3 scripts/generate_iiif.py --base-url URL_DE_TU_SITIO`\n\n(Reemplaza URL_DE_TU_SITIO con la URL del sitio, ej. https://tuusuario.github.io/tu-repositorio)",
+        "audience": "local"
+      }
+    ]
+  }
+}
