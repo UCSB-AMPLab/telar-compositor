@@ -26,7 +26,7 @@ async function importKey(
   const keyBytes = hexToBytes(keyHex);
   return crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes as BufferSource,
     { name: "AES-GCM" },
     false,
     [usage],

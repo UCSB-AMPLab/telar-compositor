@@ -123,6 +123,9 @@ describe("serializeStoryCsv", () => {
     question: "What do you see?",
     answer: "A weaving.",
     alt_text: null as string | null,
+    clip_start: null as string | null,
+    clip_end: null as string | null,
+    loop: null as string | null,
     layers: [] as { layer_number: number; title: string | null; button_label: string | null; content: string | null }[],
   };
 
@@ -183,6 +186,9 @@ describe("serializeStoryCsv", () => {
       question: null,
       answer: null,
       alt_text: null as string | null,
+      clip_start: null as string | null,
+      clip_end: null as string | null,
+      loop: null as string | null,
       layers: [],
     };
     const csv = serializeStoryCsv([baseStep, emptyStep], "weavers");

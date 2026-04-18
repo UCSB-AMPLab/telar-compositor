@@ -31,9 +31,12 @@ const i18nServer = new RemixI18Next({
     fallbackLng: fallbackLanguage,
     supportedLngs: [...supportedLanguages],
   },
+  // RemixI18Next v7 types BackendModule as a class/instance; the raw
+  // loadPath config worked by duck-typing in older versions and we keep
+  // it for Workers where no backend is actually invoked at request time.
   backend: {
     loadPath: "./public/locales/{{lng}}/{{ns}}.json",
-  },
+  } as unknown as NonNullable<ConstructorParameters<typeof RemixI18Next>[0]["backend"]>,
 });
 
 /** Resolve locale for a request (used in root loader) */

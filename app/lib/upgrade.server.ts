@@ -284,7 +284,7 @@ export function buildUpgradeSummary(
   for (const file of additions) {
     const category = categorizeFrameworkPath(file.path);
     if (category !== "deletions" && category !== "total") {
-      (summary as Record<string, number>)[category]++;
+      (summary as unknown as Record<string, number>)[category]++;
     }
     summary.total++;
   }

@@ -109,7 +109,7 @@ export function IiifViewer({
       try {
         const res = await fetch(manifestUrl!);
         if (!res.ok || cancelled) return;
-        const manifest = await res.json();
+        const manifest = await res.json() as Record<string, unknown>;
         const extracted = extractAllPages(manifest);
         if (!cancelled) {
           if (extracted.length > 0) {

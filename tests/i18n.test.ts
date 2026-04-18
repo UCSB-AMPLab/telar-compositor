@@ -69,7 +69,7 @@ describe("en/common.json", () => {
   });
 
   it("contains nav section with dashboard, objects, stories keys", () => {
-    const nav = (enCommon as Record<string, Record<string, unknown>>).nav;
+    const nav = (enCommon as unknown as Record<string, Record<string, unknown>>).nav;
     expect(nav).toBeDefined();
     expect(nav.dashboard).toBeTruthy();
     expect(nav.objects).toBeTruthy();

@@ -96,8 +96,8 @@ function renderCollaboratorClient() {
         userGithubId: 42,
         userName: "alice",
         presenceColor: "#abc",
+        children: React.createElement(UpgradeConsumer),
       },
-      React.createElement(UpgradeConsumer),
     ),
   );
 }

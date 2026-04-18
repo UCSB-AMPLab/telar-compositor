@@ -38,6 +38,9 @@ const mockContextValue: CollaborationContextValue = {
   isPublishing: false,
   publishError: false,
   setIsPublishing: vi.fn(),
+  isUpgrading: false,
+  upgradeError: false,
+  setIsUpgrading: vi.fn(),
   remoteCollaborators: [
     {
       clientId: 101,

@@ -443,7 +443,10 @@ describe("commitMultipleBinaryFilesWithCsv", () => {
 
     // Tree is the 6th call (index 5, after ref, commit, blob, blob, blob)
     const treeCallIdx = mockFetch.mock.calls.findIndex(
-      ([url, opts]: [string, RequestInit]) => url.includes("/git/trees") && opts?.method === "POST"
+      (call: unknown[]) => {
+        const [url, opts] = call as [string, RequestInit];
+        return url.includes("/git/trees") && opts?.method === "POST";
+      }
     );
     const treeBody = JSON.parse(mockFetch.mock.calls[treeCallIdx][1].body);
 
@@ -462,7 +465,10 @@ describe("commitMultipleBinaryFilesWithCsv", () => {
     await commitMultipleBinaryFilesWithCsv(TWO_IMAGE_PARAMS);
 
     const commitCallIdx = mockFetch.mock.calls.findIndex(
-      ([url, opts]: [string, RequestInit]) => url.includes("/git/commits") && opts?.method === "POST"
+      (call: unknown[]) => {
+        const [url, opts] = call as [string, RequestInit];
+        return url.includes("/git/commits") && opts?.method === "POST";
+      }
     );
     const commitBody = JSON.parse(mockFetch.mock.calls[commitCallIdx][1].body);
     expect(commitBody.message).toContain("[skip ci]");
@@ -503,7 +509,10 @@ describe("commitMultipleBinaryFilesWithCsv", () => {
     await commitMultipleBinaryFilesWithCsv(TWO_IMAGE_PARAMS);
 
     const treeCallIdx = mockFetch.mock.calls.findIndex(
-      ([url, opts]: [string, RequestInit]) => url.includes("/git/trees") && opts?.method === "POST"
+      (call: unknown[]) => {
+        const [url, opts] = call as [string, RequestInit];
+        return url.includes("/git/trees") && opts?.method === "POST";
+      }
     );
     const treeBody = JSON.parse(mockFetch.mock.calls[treeCallIdx][1].body);
     for (const entry of treeBody.tree) {

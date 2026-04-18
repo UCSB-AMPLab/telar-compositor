@@ -125,14 +125,19 @@ describe("delete-story: Drizzle mock pattern for renumber", () => {
     const remainingAfterDelete = [{ id: 8 }, { id: 9 }, { id: 10 }];
 
     const updateCalls: Array<{ order: number; updated_at: string }> = [];
-    const mockDb = {
+    interface FakeDb {
+      update: ReturnType<typeof vi.fn>;
+      set: ReturnType<typeof vi.fn>;
+      where: ReturnType<typeof vi.fn>;
+    }
+    const mockDb: FakeDb = {
       update: vi.fn(() => mockDb),
       set: vi.fn((values: { order: number; updated_at: string }) => {
         updateCalls.push(values);
         return mockDb;
       }),
       where: vi.fn(() => Promise.resolve()),
-    } as unknown as typeof mockDb;
+    };
 
     const now = new Date().toISOString();
     await Promise.all(

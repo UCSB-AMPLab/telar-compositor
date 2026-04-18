@@ -1516,7 +1516,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       const signedData = new TextEncoder().encode(payloadB64);
       const signature = base64urlDecode(sigB64);
 
-      const valid = await crypto.subtle.verify("HMAC", key, signature, signedData);
+      const valid = await crypto.subtle.verify("HMAC", key, signature as BufferSource, signedData);
       if (!valid) return null;
 
       // Decode payload

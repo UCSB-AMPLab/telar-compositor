@@ -191,8 +191,8 @@ export function makeAfterTransactionHandler(
       userFieldSets.set(userId, fieldSet);
     }
 
-    tr.changed.forEach((changedKeys: Set<string | null>, sharedType: Y.AbstractType<unknown>) => {
-      const paths = resolveFieldPaths(sharedType, changedKeys, ydoc);
+    tr.changed.forEach((changedKeys, sharedType) => {
+      const paths = resolveFieldPaths(sharedType as Y.AbstractType<unknown>, changedKeys, ydoc);
       for (const path of paths) {
         fieldSet!.add(path);
       }

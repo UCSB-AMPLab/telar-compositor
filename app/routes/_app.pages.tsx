@@ -299,8 +299,9 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     return () => config.unobserveDeep(recomputeNav);
   }, [ydoc]);
 
-  // Site title from Yjs config
-  const [siteTitle, setSiteTitle] = useState(project.title || "");
+  // Site title from Yjs config — initialised empty; recomputeTitle below
+  // hydrates from the Y.Map<"config"> as soon as ydoc is ready.
+  const [siteTitle, setSiteTitle] = useState("");
 
   useEffect(() => {
     if (!ydoc) return;

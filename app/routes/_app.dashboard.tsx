@@ -186,11 +186,12 @@ export async function action({ request, context }: Route.ActionArgs) {
   const intent = formData.get("intent") as string;
 
   // Helper to get active project from session
+  const userId = user.id;
   async function getActiveProject() {
     const sessionStorage = createSessionStorage(env.SESSION_SECRET);
     const session = await sessionStorage.getSession(request.headers.get("Cookie"));
     const sessionActiveId = session.get("activeProjectId") as number | undefined;
-    const allProjects = await getUserProjects(db, user.id);
+    const allProjects = await getUserProjects(db, userId);
     if (allProjects.length === 0) return null;
     return allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
   }
