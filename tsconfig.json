@@ -18,6 +18,7 @@
     "allowJs": true,
     "skipLibCheck": true,
     "baseUrl": ".",
+    "rootDirs": [".", "./.react-router/types"],
     "paths": {
       "~/*": ["./app/*"]
     }
