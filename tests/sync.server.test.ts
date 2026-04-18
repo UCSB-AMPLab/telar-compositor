@@ -24,7 +24,11 @@ import * as githubServer from "~/lib/github.server";
 import {
   computeFullSyncDiff,
   applyFullSyncChanges,
+  computeSyncDiff,
+  computeGlossarySyncDiff,
+  extractTelarVersion,
 } from "~/lib/sync.server";
+import type { FullSyncDiff } from "~/lib/sync.server";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -475,6 +479,7 @@ describe("applyFullSyncChanges", () => {
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: [], insertNew: [] },
       config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
     };
 
     const result = await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb);
@@ -507,6 +512,7 @@ describe("applyFullSyncChanges", () => {
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: [], insertNew: ["new-story"] },
       config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
     };
 
     await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb);
@@ -529,6 +535,7 @@ describe("applyFullSyncChanges", () => {
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: ["my-story"], insertNew: [] },
       config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
     };
 
     await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb);
@@ -561,6 +568,7 @@ describe("applyFullSyncChanges", () => {
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: [], insertNew: [] },
       config: { accept: ["title"], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
     };
 
     await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb);
@@ -608,5 +616,571 @@ describe("FullSyncDiff return structure", () => {
     expect(result.stories).toHaveProperty("missingStories");
     expect(result.config).toHaveProperty("changedFields");
     expect(result).toHaveProperty("hasConflicts");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// glossary sync diff
+// ---------------------------------------------------------------------------
+
+const GLOSSARY_CSV_ONE_TERM = `term_id,title,definition
+enc,"Encomienda","A labor system used in colonial Spanish America"`;
+
+const GLOSSARY_CSV_TWO_TERMS = `term_id,title,definition
+enc,"Encomienda","A labor system used in colonial Spanish America"
+mita,"Mita","Mandatory public service system"`;
+
+const GLOSSARY_CSV_CHANGED_DEF = `term_id,title,definition
+enc,"Encomienda","Updated definition for encomienda"`;
+
+describe("glossary sync diff", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("detects added glossary terms from repo (term in repo but not in D1)", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return GLOSSARY_CSV_TWO_TERMS;
+      return null;
+    });
+
+    // D1 has only one term
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system used in colonial Spanish America", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.added).toHaveLength(1);
+    expect(result.added[0].term_id).toBe("mita");
+    expect(result.removed).toHaveLength(0);
+    expect(result.changed).toHaveLength(0);
+  });
+
+  it("detects removed glossary terms (term in D1 but not in repo)", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return GLOSSARY_CSV_ONE_TERM;
+      return null;
+    });
+
+    // D1 has two terms
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system used in colonial Spanish America", updated_at: null },
+      { id: 2, project_id: projectId, term_id: "mita", title: "Mita", definition: "Mandatory public service system", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.removed).toHaveLength(1);
+    expect(result.removed[0].term_id).toBe("mita");
+    expect(result.added).toHaveLength(0);
+    expect(result.changed).toHaveLength(0);
+  });
+
+  it("detects changed glossary term definitions", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return GLOSSARY_CSV_CHANGED_DEF;
+      return null;
+    });
+
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system used in colonial Spanish America", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changed).toHaveLength(1);
+    expect(result.changed[0].term_id).toBe("enc");
+    expect(result.changed[0].repoDefinition).toBe("Updated definition for encomienda");
+    expect(result.changed[0].d1Definition).toBe("A labor system used in colonial Spanish America");
+    expect(result.added).toHaveLength(0);
+    expect(result.removed).toHaveLength(0);
+  });
+
+  it("handles empty glossary CSV — all D1 terms appear as removed", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return null;
+      return null;
+    });
+
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    // No repo CSV → no repo terms → all D1 terms are "removed"
+    expect(result.removed).toHaveLength(1);
+    expect(result.added).toHaveLength(0);
+    expect(result.changed).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeSyncDiff — origin-aware missing object classification (DATA-03)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// extractTelarVersion — unit tests
+// ---------------------------------------------------------------------------
+
+describe("extractTelarVersion", () => {
+  it("reads quoted version", () => {
+    const y = 'telar:\n  version: "1.2.0"\n  release_date: "2026-01-01"\n';
+    expect(extractTelarVersion(y)).toBe("1.2.0");
+  });
+
+  it("reads unquoted version", () => {
+    const y = "telar:\n  version: 1.2.0\n";
+    expect(extractTelarVersion(y)).toBe("1.2.0");
+  });
+
+  it("reads single-quoted version", () => {
+    const y = "telar:\n  version: '1.2.0'\n";
+    expect(extractTelarVersion(y)).toBe("1.2.0");
+  });
+
+  it("tolerates trailing comment", () => {
+    const y = 'telar:\n  version: "1.2.0" # latest\n';
+    expect(extractTelarVersion(y)).toBe("1.2.0");
+  });
+
+  it("reads a v-prefixed version string", () => {
+    const y = 'telar:\n  version: "v0.9.0"\n';
+    expect(extractTelarVersion(y)).toBe("v0.9.0");
+  });
+
+  it("returns null when telar: block absent", () => {
+    const y = "title: my site\nbaseurl: /x\n";
+    expect(extractTelarVersion(y)).toBeNull();
+  });
+
+  it("returns null when telar: block has no version key", () => {
+    const y = 'telar:\n  release_date: "2026-01-01"\n';
+    expect(extractTelarVersion(y)).toBeNull();
+  });
+
+  it("stops at next top-level key", () => {
+    const y = 'telar:\n  version: "1.2.0"\nother:\n  version: "9.9.9"\n';
+    expect(extractTelarVersion(y)).toBe("1.2.0");
+  });
+
+  it("first match wins when the telar: block is re-entered", () => {
+    // Tolerates invalid YAML that declares telar: twice — first match wins
+    const y = 'telar:\n  version: "1.2.0"\nother: x\ntelar:\n  version: "9.9.9"\n';
+    expect(extractTelarVersion(y)).toBe("1.2.0");
+  });
+
+  it("returns null on empty input", () => {
+    expect(extractTelarVersion("")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeFullSyncDiff — versionChange
+// ---------------------------------------------------------------------------
+
+const CONFIG_YML_REPO_NEWER = `title: My Site
+lang: en
+description: A great site
+author: Test User
+email: test@example.com
+baseurl: /my-repo
+url: https://mysite.github.io
+telar:
+  version: "0.10.0"`;
+
+const CONFIG_YML_REPO_OLDER = `title: My Site
+lang: en
+description: A great site
+author: Test User
+email: test@example.com
+baseurl: /my-repo
+url: https://mysite.github.io
+telar:
+  version: "0.8.0"`;
+
+const CONFIG_YML_NO_TELAR_VERSION = `title: My Site
+lang: en
+description: A great site
+author: Test User
+email: test@example.com
+baseurl: /my-repo
+url: https://mysite.github.io`;
+
+describe("computeFullSyncDiff — versionChange", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+  });
+
+  it("sets direction=ahead when repo version newer than d1", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_REPO_NEWER;
+      return null;
+    });
+
+    const d1Stories: MockStory[] = [
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+    const d1Config = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", telar_version: "0.9.0" },
+    ];
+
+    const mockDb = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1Config,
+    ]);
+
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+
+    expect(result.config.versionChange).not.toBeNull();
+    expect(result.config.versionChange!.direction).toBe("ahead");
+    expect(result.config.versionChange!.repoVersion).toBe("0.10.0");
+    expect(result.config.versionChange!.d1Version).toBe("0.9.0");
+  });
+
+  it("sets direction=behind when repo version older than d1", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_REPO_OLDER;
+      return null;
+    });
+
+    const d1Stories: MockStory[] = [
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+    const d1Config = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", telar_version: "0.9.0" },
+    ];
+
+    const mockDb = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1Config,
+    ]);
+
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+
+    expect(result.config.versionChange).not.toBeNull();
+    expect(result.config.versionChange!.direction).toBe("behind");
+    expect(result.config.versionChange!.repoVersion).toBe("0.8.0");
+    expect(result.config.versionChange!.d1Version).toBe("0.9.0");
+  });
+
+  it("returns null versionChange when versions equal", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_BASE; // version 0.9.0
+      return null;
+    });
+
+    const d1Stories: MockStory[] = [
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+    const d1Config = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", telar_version: "0.9.0" },
+    ];
+
+    const mockDb = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1Config,
+    ]);
+
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+
+    expect(result.config.versionChange).toBeNull();
+  });
+
+  it("sets direction=ahead when d1 telar_version is null", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_BASE; // repo: 0.9.0
+      return null;
+    });
+
+    const d1Stories: MockStory[] = [
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+    // d1 has no telar_version yet
+    const d1Config = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", telar_version: null },
+    ];
+
+    const mockDb = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1Config,
+    ]);
+
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+
+    expect(result.config.versionChange).not.toBeNull();
+    expect(result.config.versionChange!.direction).toBe("ahead");
+    expect(result.config.versionChange!.repoVersion).toBe("0.9.0");
+    expect(result.config.versionChange!.d1Version).toBeNull();
+  });
+
+  it("returns null versionChange when repo version absent", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_NO_TELAR_VERSION;
+      return null;
+    });
+
+    const d1Stories: MockStory[] = [
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+    const d1Config = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", telar_version: "0.9.0" },
+    ];
+
+    const mockDb = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1Config,
+    ]);
+
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+
+    expect(result.config.versionChange).toBeNull();
+  });
+
+  it("returns null versionChange when both repo and d1 versions are absent", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_NO_TELAR_VERSION;
+      return null;
+    });
+
+    const d1Stories: MockStory[] = [
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+    const d1Config = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", telar_version: null },
+    ];
+
+    const mockDb = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1Config,
+    ]);
+
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+
+    expect(result.config.versionChange).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyFullSyncChanges — versionChange D1 healing
+// ---------------------------------------------------------------------------
+
+describe("applyFullSyncChanges — versionChange D1 healing", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_BASE;
+      return null;
+    });
+  });
+
+  function baseChanges() {
+    return {
+      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+      stories: { accept: [], reject: [], insertNew: [] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
+    };
+  }
+
+  function makeDiff(versionChange: FullSyncDiff["config"]["versionChange"]): FullSyncDiff {
+    return {
+      objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [] },
+      stories: { newStories: [], changedStories: [], missingStories: [] },
+      config: { changedFields: [], versionChange },
+      glossary: { added: [], removed: [], changed: [] },
+      hasConflicts: false,
+    };
+  }
+
+  it("updates D1 telar_version when direction=ahead", async () => {
+    const updates: Array<{ table: unknown; set: unknown }> = [];
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (table, set) => {
+        updates.push({ table, set });
+      },
+    });
+
+    const diff = makeDiff({ direction: "ahead", repoVersion: "0.10.0", d1Version: "0.9.0" });
+    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb, diff);
+
+    const versionUpdates = updates.filter(
+      (u) =>
+        u.set !== null &&
+        typeof u.set === "object" &&
+        (u.set as Record<string, unknown>).telar_version === "0.10.0",
+    );
+    expect(versionUpdates.length).toBeGreaterThan(0);
+  });
+
+  it("does NOT update D1 telar_version when direction=behind", async () => {
+    const updates: Array<{ table: unknown; set: unknown }> = [];
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (table, set) => {
+        updates.push({ table, set });
+      },
+    });
+
+    const diff = makeDiff({ direction: "behind", repoVersion: "0.8.0", d1Version: "0.9.0" });
+    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb, diff);
+
+    // D1 must not receive any telar_version write (user decides).
+    const wrongUpdates = updates.filter(
+      (u) =>
+        u.set !== null &&
+        typeof u.set === "object" &&
+        "telar_version" in (u.set as Record<string, unknown>),
+    );
+    expect(wrongUpdates).toHaveLength(0);
+  });
+
+  it("does NOT update D1 telar_version when versionChange=null", async () => {
+    const updates: Array<{ table: unknown; set: unknown }> = [];
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (table, set) => {
+        updates.push({ table, set });
+      },
+    });
+
+    const diff = makeDiff(null);
+    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb, diff);
+
+    const wrongUpdates = updates.filter(
+      (u) =>
+        u.set !== null &&
+        typeof u.set === "object" &&
+        "telar_version" in (u.set as Record<string, unknown>),
+    );
+    expect(wrongUpdates).toHaveLength(0);
+  });
+
+  it("does NOT update D1 telar_version when diff is omitted (backward-compatible callers)", async () => {
+    const updates: Array<{ table: unknown; set: unknown }> = [];
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (table, set) => {
+        updates.push({ table, set });
+      },
+    });
+
+    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb);
+
+    const wrongUpdates = updates.filter(
+      (u) =>
+        u.set !== null &&
+        typeof u.set === "object" &&
+        "telar_version" in (u.set as Record<string, unknown>),
+    );
+    expect(wrongUpdates).toHaveLength(0);
+  });
+});
+
+describe("computeSyncDiff — origin-aware missing object classification", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    // Repo CSV is empty — no objects in repo
+    vi.mocked(githubServer.getFileContent).mockResolvedValue("");
+  });
+
+  it("compositor-origin object NOT in repo CSV is excluded from missingObjects", async () => {
+    // D1 has an object with origin='compositor' that is not in the repo CSV
+    const d1Objects = [
+      {
+        id: 1, project_id: projectId, object_id: "ext-iiif-object",
+        title: "External IIIF Object", origin: "compositor",
+        featured: false, missing_from_repo: false,
+        creator: null, description: null, source_url: "https://example.com/manifest.json",
+        period: null, year: null, object_type: null, subjects: null,
+        source: null, credit: null, thumbnail: null,
+        image_available: true, updated_at: null,
+      },
+    ];
+
+    // computeSyncDiff queries: d1Objects, steps, story titles
+    const mockDb = createSequentialMockDb([d1Objects, [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    // Compositor-origin object must NOT appear in missingObjects
+    expect(result.missingObjects).toHaveLength(0);
+  });
+
+  it("repo-origin object NOT in repo CSV IS included in missingObjects", async () => {
+    // D1 has an object with origin='repo' (default) that is not in the repo CSV
+    const d1Objects = [
+      {
+        id: 2, project_id: projectId, object_id: "repo-object",
+        title: "Repo Object", origin: "repo",
+        featured: false, missing_from_repo: false,
+        creator: null, description: null, source_url: null,
+        period: null, year: null, object_type: null, subjects: null,
+        source: null, credit: null, thumbnail: null,
+        image_available: false, updated_at: null,
+      },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Objects, [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    // Repo-origin object missing from CSV MUST appear in missingObjects
+    expect(result.missingObjects).toHaveLength(1);
+    expect(result.missingObjects[0].object_id).toBe("repo-object");
   });
 });

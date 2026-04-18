@@ -1,6 +1,6 @@
 /**
  * Tests for the onboarding route action — specifically the three new
- * create-site intent branches wired in Phase 20-01:
+ * create-site intent branches:
  *   - check-repo-name
  *   - create-site
  *   - check-installation-scope
@@ -8,14 +8,14 @@
  * FALLBACK (Task 1 spike): Mocking the full onboarding.tsx import graph
  * (auth middleware, drizzle/D1, crypto, github libs, commit/import/upgrade
  * helpers) in isolation is brittle. Per plan 20-01 Task 1 escape hatch and
- * CONTEXT D-15, we exercise a pure helper `handleCreateSiteIntents(intent,
+ * We exercise a pure helper `handleCreateSiteIntents(intent,
  * formData, token, env)` exported from `~/routes/onboarding` that each of
  * the three new `if (intent === ...)` branches delegates to.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock the Phase 19 server module used by the helper.
+// Mock the create-site server module used by the helper.
 vi.mock("~/lib/create-site.server", () => {
   class RepoNameTakenError extends Error {}
   class PermissionDeniedError extends Error {}
@@ -37,7 +37,7 @@ vi.mock("~/lib/github-app.server", () => ({
   getInstallationToken: vi.fn(),
 }));
 
-// getDb must never be called by the three new branches (CSITE-06 invariant).
+// getDb must never be called by the three new branches.
 vi.mock("~/lib/db.server", () => ({
   getDb: vi.fn(() => {
     throw new Error("getDb should not be called in create-site intent branches");

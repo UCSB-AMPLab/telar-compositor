@@ -10,6 +10,9 @@ import {
   enableGitHubPages,
   StaleHeadError,
   BUILD_PHASES,
+  dispatchWorkflow,
+  getLatestWorkflowRun,
+  type DispatchResult,
 } from "~/lib/commit.server";
 import { graphqlGitHub, githubHeaders } from "~/lib/github.server";
 
@@ -271,6 +274,72 @@ describe("commitFilesToRepo", () => {
 });
 
 // ---------------------------------------------------------------------------
+// commitFilesToRepo skipCi tests
+// ---------------------------------------------------------------------------
+
+describe("commitFilesToRepo skipCi", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("Test skipCi-1: when skipCi=true, headline ends with ' [skip ci]'", async () => {
+    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "objects.csv", content: "object_id\nobj-001" }],
+      "chore: update objects",
+      undefined,
+      undefined,
+      true, // skipCi
+    );
+
+    const secondBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+    );
+    const headline = secondBody.variables.input.message.headline;
+    expect(headline).toBe("chore: update objects [skip ci]");
+  });
+
+  it("Test skipCi-2: when skipCi=false or omitted, headline equals raw message (no [skip ci])", async () => {
+    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "objects.csv", content: "object_id\nobj-001" }],
+      "chore: update objects",
+    );
+
+    const secondBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+    );
+    const headline = secondBody.variables.input.message.headline;
+    expect(headline).toBe("chore: update objects");
+    expect(headline).not.toContain("[skip ci]");
+  });
+
+  it("Test skipCi-3: when skipCi=true and messageBody provided, body is still sent separately", async () => {
+    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "objects.csv", content: "object_id\nobj-001" }],
+      "chore: update objects",
+      "This is the body text",
+      undefined,
+      true, // skipCi
+    );
+
+    const secondBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+    );
+    const message = secondBody.variables.input.message;
+    expect(message.headline).toBe("chore: update objects [skip ci]");
+    expect(message.body).toBe("This is the body text");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // disableGoogleSheetsInConfig tests
 // ---------------------------------------------------------------------------
 
@@ -338,12 +407,14 @@ const WORKFLOW_RUNS_RESPONSE = {
   workflow_runs: [
     {
       id: 12345,
+      name: "Build and Deploy Telar Site",
       status: "completed",
       conclusion: "success",
       html_url: "https://github.com/testuser/my-site/actions/runs/12345",
     },
     {
       id: 12344,
+      name: "Build and Deploy Telar Site",
       status: "completed",
       conclusion: "success",
       html_url: "https://github.com/testuser/my-site/actions/runs/12344",
@@ -368,13 +439,14 @@ describe("listWorkflowRunsBySha", () => {
     );
   });
 
-  it("Test 16: returns mapped array of { id, status, conclusion, html_url }", async () => {
+  it("Test 16: returns mapped array of { id, name, status, conclusion, html_url }", async () => {
     globalThis.fetch = makeRestFetch(WORKFLOW_RUNS_RESPONSE);
 
     const result = await listWorkflowRunsBySha(TOKEN, OWNER, REPO, "abc123");
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({
       id: 12345,
+      name: "Build and Deploy Telar Site",
       status: "completed",
       conclusion: "success",
       html_url: "https://github.com/testuser/my-site/actions/runs/12345",
@@ -607,6 +679,154 @@ title: My Site
 });
 
 // ---------------------------------------------------------------------------
+// dispatchWorkflow tests
+// ---------------------------------------------------------------------------
+
+describe("dispatchWorkflow", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("dispatches-1: returns DispatchResult with runId=0 on 204 (legacy fallback)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      text: async () => "",
+    });
+
+    const result: DispatchResult = await dispatchWorkflow(TOKEN, OWNER, REPO, "objects-only.yml");
+
+    expect(result).toEqual({ runId: 0, runUrl: "", htmlUrl: "" });
+
+    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/objects-only.yml/dispatches`
+    );
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body as string);
+    expect(body.ref).toBe("main");
+    expect(body.return_run_details).toBe(true);
+  });
+
+  it("dispatches-2: passes inputs in request body and return_run_details: true", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      text: async () => "",
+    });
+
+    await dispatchWorkflow(TOKEN, OWNER, REPO, "iiif-only.yml", { object_ids: "obj-001,obj-002" });
+
+    const body = JSON.parse(
+      ((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit).body as string
+    );
+    expect(body.inputs).toEqual({ object_ids: "obj-001,obj-002" });
+    expect(body.return_run_details).toBe(true);
+  });
+
+  it("dispatches-3: throws Error with status code when dispatch fails", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      text: async () => "Unprocessable Entity",
+    });
+
+    await expect(
+      dispatchWorkflow(TOKEN, OWNER, REPO, "objects-only.yml")
+    ).rejects.toThrow("422");
+  });
+
+  it("dispatches-4: returns DispatchResult with runId from JSON body on 200 response", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        workflow_run_id: 12345,
+        run_url: "https://api.github.com/repos/testuser/my-telar-site/actions/runs/12345",
+        html_url: "https://github.com/testuser/my-telar-site/actions/runs/12345",
+      }),
+    });
+
+    const result: DispatchResult = await dispatchWorkflow(TOKEN, OWNER, REPO, "iiif-only.yml");
+
+    expect(result.runId).toBe(12345);
+    expect(result.runUrl).toBe("https://api.github.com/repos/testuser/my-telar-site/actions/runs/12345");
+    expect(result.htmlUrl).toBe("https://github.com/testuser/my-telar-site/actions/runs/12345");
+  });
+
+  it("dispatches-5: sends correct URL with workflow file name", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        workflow_run_id: 99,
+        run_url: "https://api.github.com/repos/testuser/my-telar-site/actions/runs/99",
+        html_url: "https://github.com/testuser/my-telar-site/actions/runs/99",
+      }),
+    });
+
+    await dispatchWorkflow(TOKEN, OWNER, REPO, "iiif-only.yml");
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toBe(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/iiif-only.yml/dispatches`
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getLatestWorkflowRun tests
+// ---------------------------------------------------------------------------
+
+const LATEST_RUN_RESPONSE = {
+  workflow_runs: [
+    {
+      id: 99001,
+      name: "Process Objects (Compositor)",
+      status: "in_progress",
+      conclusion: null,
+      html_url: "https://github.com/testuser/my-site/actions/runs/99001",
+    },
+  ],
+};
+
+describe("getLatestWorkflowRun", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("latest-run-1: returns first workflow run from response", async () => {
+    globalThis.fetch = makeRestFetch(LATEST_RUN_RESPONSE);
+
+    const result = await getLatestWorkflowRun(TOKEN, OWNER, REPO, "objects-only.yml");
+
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toBe(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/objects-only.yml/runs?per_page=1`
+    );
+    expect(result).not.toBeNull();
+    expect(result?.id).toBe(99001);
+    expect(result?.name).toBe("Process Objects (Compositor)");
+  });
+
+  it("latest-run-2: returns null when API returns non-OK status", async () => {
+    globalThis.fetch = makeRestFetch({}, 404);
+
+    const result = await getLatestWorkflowRun(TOKEN, OWNER, REPO, "objects-only.yml");
+
+    expect(result).toBeNull();
+  });
+
+  it("latest-run-3: returns null when workflow_runs is empty", async () => {
+    globalThis.fetch = makeRestFetch({ workflow_runs: [] });
+
+    const result = await getLatestWorkflowRun(TOKEN, OWNER, REPO, "objects-only.yml");
+
+    expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // enableGitHubPages tests
 // ---------------------------------------------------------------------------
 
@@ -659,5 +879,31 @@ describe("enableGitHubPages", () => {
     const opts = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
     const headers = opts.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("throws pages_permission_denied on 403", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: "Resource not accessible by integration" }),
+      text: async () => JSON.stringify({ message: "Resource not accessible by integration" }),
+    });
+
+    await expect(
+      enableGitHubPages(TOKEN, OWNER, REPO)
+    ).rejects.toThrow("pages_permission_denied");
+  });
+
+  it("throws generic error on other failures (e.g. 422)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => "Validation failed",
+      text: async () => "Validation failed",
+    });
+
+    await expect(
+      enableGitHubPages(TOKEN, OWNER, REPO)
+    ).rejects.toThrow("Failed to enable GitHub Pages: 422");
   });
 });

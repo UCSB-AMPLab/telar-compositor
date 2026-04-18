@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * InstallationScopePrompt.test.tsx — Phase 21 Plan 02 / D-28.
+ * InstallationScopePrompt.test.tsx.
  *
  * Covers:
  *  - Renders title / body / grant button / waiting copy (via translation keys)

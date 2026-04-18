@@ -9,11 +9,12 @@ import {
 
 const TOKEN = "test-token-abc";
 
-function makeFetch(body: unknown, status = 200) {
+function makeFetch(body: unknown, status = 200, linkHeader: string | null = null) {
   return vi.fn().mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
+    headers: { get: (name: string) => (name.toLowerCase() === "link" ? linkHeader : null) },
   });
 }
 
@@ -73,6 +74,58 @@ describe("listInstallationRepos", () => {
     const headers = call[1].headers as Record<string, string>;
     expect(headers["Authorization"]).toBe(`Bearer ${TOKEN}`);
     expect(headers["X-GitHub-Api-Version"]).toBe("2022-11-28");
+  });
+
+  it("requests per_page=100 to maximise single-page yield", async () => {
+    globalThis.fetch = makeFetch({ repositories: [] });
+    await listInstallationRepos(TOKEN, 7);
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(url).toContain("per_page=100");
+  });
+
+  it("returns only the first page when Link has no rel=next", async () => {
+    const repositories = [
+      { id: 1, name: "a", full_name: "u/a", owner: { login: "u", avatar_url: "" }, private: false, description: null },
+    ];
+    globalThis.fetch = makeFetch({ repositories });
+    const result = await listInstallationRepos(TOKEN, 1);
+    expect(result.repositories).toHaveLength(1);
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it("follows Link: rel=\"next\" headers across multiple pages and concatenates results", async () => {
+    // Two pages. First has a next link to page 2; page 2 has no next link.
+    const page1 = [
+      { id: 1, name: "a", full_name: "u/a", owner: { login: "u", avatar_url: "" }, private: false, description: null },
+    ];
+    const page2 = [
+      { id: 2, name: "b", full_name: "u/b", owner: { login: "u", avatar_url: "" }, private: false, description: null },
+      { id: 3, name: "c", full_name: "u/c", owner: { login: "u", avatar_url: "" }, private: false, description: null },
+    ];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ repositories: page1 }),
+        headers: {
+          get: (n: string) => (n.toLowerCase() === "link"
+            ? '<https://api.github.com/user/installations/1/repositories?per_page=100&page=2>; rel="next", <https://api.github.com/user/installations/1/repositories?per_page=100&page=2>; rel="last"'
+            : null),
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ repositories: page2 }),
+        headers: { get: () => null },
+      });
+    globalThis.fetch = fetchMock;
+
+    const result = await listInstallationRepos(TOKEN, 1);
+    expect(result.repositories.map((r) => r.full_name)).toEqual(["u/a", "u/b", "u/c"]);
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    // Second call uses the URL from the Link header
+    expect(fetchMock.mock.calls[1][0]).toContain("page=2");
   });
 });
 

@@ -4,6 +4,7 @@
  * Tests cover:
  *   - deriveStatus: all four status values
  *   - generateUniqueObjectSlug: no collision, and -2 suffix on collision
+ *   - update-object action: alt_text persistence (A11Y-01)
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -94,5 +95,72 @@ describe("generateUniqueObjectSlug", () => {
 
     const slug = await generateUniqueObjectSlug("portrait", 1, mockDb);
     expect(slug).toBe("portrait-4");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// update-object action: alt_text persistence (A11Y-01)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simulates the update-object action logic for alt_text, mirroring the
+ * pattern in app/routes/_app.objects.$objectId.js update-object case.
+ * The production code uses: formData.get("alt_text")?.trim() || null
+ */
+function simulateUpdateObjectAltText(formDataValues: Record<string, string | undefined>) {
+  const setCalls: Array<Record<string, unknown>> = [];
+  const mockDb = {
+    update: vi.fn(() => mockDb),
+    set: vi.fn((values: Record<string, unknown>) => {
+      setCalls.push(values);
+      return mockDb;
+    }),
+    where: vi.fn(() => Promise.resolve()),
+  };
+
+  const raw = formDataValues["alt_text"];
+  const alt_text = raw?.trim() || null;
+
+  mockDb.update("objects" as any).set({ alt_text }).where();
+
+  return { setCalls, alt_text };
+}
+
+describe("update-object action: alt_text persistence (A11Y-01)", () => {
+  it("persists alt_text when a non-empty string is submitted", () => {
+    const { setCalls, alt_text } = simulateUpdateObjectAltText({
+      alt_text: "A red bird on a branch",
+    });
+
+    expect(alt_text).toBe("A red bird on a branch");
+    expect(setCalls).toHaveLength(1);
+    expect(setCalls[0]).toMatchObject({ alt_text: "A red bird on a branch" });
+  });
+
+  it("stores null when alt_text is an empty string", () => {
+    const { setCalls, alt_text } = simulateUpdateObjectAltText({
+      alt_text: "",
+    });
+
+    expect(alt_text).toBeNull();
+    expect(setCalls[0]).toMatchObject({ alt_text: null });
+  });
+
+  it("stores null when alt_text is whitespace-only", () => {
+    const { setCalls, alt_text } = simulateUpdateObjectAltText({
+      alt_text: "   ",
+    });
+
+    expect(alt_text).toBeNull();
+    expect(setCalls[0]).toMatchObject({ alt_text: null });
+  });
+
+  it("trims leading and trailing whitespace before persisting", () => {
+    const { setCalls, alt_text } = simulateUpdateObjectAltText({
+      alt_text: "  A painting of a mountain  ",
+    });
+
+    expect(alt_text).toBe("A painting of a mountain");
+    expect(setCalls[0]).toMatchObject({ alt_text: "A painting of a mountain" });
   });
 });

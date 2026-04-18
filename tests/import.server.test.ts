@@ -10,6 +10,7 @@ import {
   mapProjectCsv,
   mapStoryCsv,
   parseIndexMd,
+  parsePageMarkdown,
 } from "~/lib/import.server";
 import { parseYaml } from "~/lib/yaml.server";
 
@@ -414,6 +415,46 @@ describe("mapObjectsCsv - medium_genre backwards compatibility", () => {
     ];
     const mapped = mapObjectsCsv(rows);
     expect(mapped[0].object_type).toBe("Watercolor");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pages import
+// ---------------------------------------------------------------------------
+
+describe("pages import — parsePageMarkdown", () => {
+  it("extracts title from YAML frontmatter and body text", () => {
+    const content = `---\ntitle: About\n---\nWelcome to the site.`;
+    const result = parsePageMarkdown(content, "about");
+    expect(result.title).toBe("About");
+    expect(result.body).toBe("Welcome to the site.");
+  });
+
+  it("strips surrounding quotes from title in frontmatter", () => {
+    const content = `---\ntitle: "My Page"\n---\nBody here.`;
+    const result = parsePageMarkdown(content, "my-page");
+    expect(result.title).toBe("My Page");
+  });
+
+  it("uses filename as title when no frontmatter", () => {
+    const content = "Just a plain body without frontmatter.";
+    const result = parsePageMarkdown(content, "contact");
+    expect(result.title).toBe("contact");
+    expect(result.body).toBe("Just a plain body without frontmatter.");
+  });
+
+  it("returns empty body string when content has only frontmatter", () => {
+    const content = `---\ntitle: About\n---\n`;
+    const result = parsePageMarkdown(content, "about");
+    expect(result.title).toBe("About");
+    expect(result.body).toBe("");
+  });
+
+  it("uses filename as title when frontmatter has no title key", () => {
+    const content = `---\nlayout: page\n---\nSome body.`;
+    const result = parsePageMarkdown(content, "slug-here");
+    expect(result.title).toBe("slug-here");
+    expect(result.body).toBe("Some body.");
   });
 });
 
