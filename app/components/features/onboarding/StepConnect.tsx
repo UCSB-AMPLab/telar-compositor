@@ -7,8 +7,8 @@
  */
 
 import { useMemo, useState } from "react";
-import { useFetcher } from "react-router";
-import { GitBranch, Lock, AlertTriangle, Link2Off, Plus, X } from "lucide-react";
+import { useFetcher, Form, Link } from "react-router";
+import { GitBranch, Lock, AlertTriangle, Link2Off, Plus, X, ArrowRight, Play } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
 import { CreateSiteForm } from "./CreateSiteForm";
@@ -49,8 +49,8 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
   const [unlinkTarget, setUnlinkTarget] = useState<ConnectedProject | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "create">("list");
   const [accountModalOpen, setAccountModalOpen] = useState(false);
-  // Phase 21 Plan 02: scope-fallback for the normal connect flow. End-to-end
-  // wiring of the "App can't see picked repo" signal is deferred to Plan 03
+  // Scope-fallback for the normal connect flow. End-to-end
+  // wiring of the "App can't see picked repo" signal is deferred
   // (verified manually). The reusable InstallationScopePrompt is the primary
   // deliverable; this state exists so the conditional render site is in place.
   const [scopeBlocked, setScopeBlocked] = useState<RepoWithInstallation | null>(null);
@@ -98,9 +98,13 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
   const connectedRepoNames = new Set(connectedProjects.map((p) => p.github_repo_full_name));
   const orphanRepoNameSet = useMemo(() => new Set(orphanRepoNames), [orphanRepoNames]);
 
-  const filtered = repos.filter((repo) =>
-    repo.full_name.toLowerCase().includes(search.toLowerCase()),
+  const filtered = repos.filter(
+    (repo) =>
+      !connectedRepoNames.has(repo.full_name) &&
+      repo.full_name.toLowerCase().includes(search.toLowerCase()),
   );
+
+  const hasConnectedSites = connectedProjects.length >= 1;
 
   const isUnlinking = unlinkFetcher.state !== "idle";
 
@@ -226,7 +230,7 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
         </div>
       )}
 
-      {/* Scope-blocked fallback for the normal connect flow (Plan 02 conditional site). */}
+      {/* Scope-blocked fallback for the normal connect flow. */}
       {viewMode === "list" && scopeBlocked && (
         <InstallationScopePrompt
           installationId={scopeBlocked.installationId}
@@ -264,7 +268,83 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
 
       {viewMode === "list" && !scopeBlocked && hasInstallations && (
       <>
-      {/* Create-new-site CTA — sits above the search input (D-02). */}
+      {/* Your connected sites — only rendered when the user has at least one
+          project. Surfaces Open / Resume / Unlink per row so the user can
+          manage existing sites without leaving the onboarding surface. */}
+      {hasConnectedSites && (
+        <section className="mb-6">
+          <h3 className="font-heading font-semibold text-sm uppercase tracking-wider text-charcoal mb-2">
+            {t("step_connect.your_sites_heading")}
+          </h3>
+          <ul className="space-y-2">
+            {connectedProjects.map((project) => {
+              const isComplete = project.onboarding_completed === true;
+              return (
+                <li
+                  key={project.id}
+                  className="rounded-lg border border-gray-200 bg-white p-3 flex items-center gap-3"
+                >
+                  <GitBranch className="w-4 h-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
+                    <span className="font-heading font-semibold text-sm text-charcoal truncate">
+                      {project.github_repo_full_name}
+                    </span>
+                    {!isComplete && (
+                      <span className="inline-flex items-center text-xs font-body text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 flex-shrink-0">
+                        {t("step_connect.status_incomplete")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {isComplete ? (
+                      <Form method="post" action="/dashboard">
+                        <input type="hidden" name="intent" value="switch-project" />
+                        <input type="hidden" name="projectId" value={project.id} />
+                        <button
+                          type="submit"
+                          className="inline-flex items-center gap-1 text-xs font-heading font-semibold uppercase tracking-wider text-charcoal hover:bg-gray-50 border border-gray-200 rounded-full px-3 py-1 transition-colors cursor-pointer"
+                        >
+                          {t("step_connect.open")}
+                          <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+                        </button>
+                      </Form>
+                    ) : (
+                      <Link
+                        to={`/onboarding?resume=${project.id}`}
+                        className="inline-flex items-center gap-1 text-xs font-heading font-semibold uppercase tracking-wider text-charcoal hover:bg-gray-50 border border-gray-200 rounded-full px-3 py-1 transition-colors cursor-pointer"
+                      >
+                        <Play className="w-3.5 h-3.5" aria-hidden="true" />
+                        {t("step_connect.resume")}
+                      </Link>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setUnlinkTarget(project)}
+                      disabled={isUnlinking}
+                      className="inline-flex items-center gap-1 text-xs font-heading font-semibold uppercase tracking-wider text-red-600 hover:bg-red-50 border border-red-200 rounded-full px-3 py-1 transition-colors cursor-pointer"
+                      title={t("step_connect.unlink")}
+                    >
+                      <Link2Off className="w-3.5 h-3.5" aria-hidden="true" />
+                      {t("step_connect.unlink")}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      {/* "Add another site" heading — only shown when the connected-sites
+          section above is rendered, so first-time users see the original
+          uncluttered layout. */}
+      {hasConnectedSites && (
+        <h3 className="font-heading font-semibold text-sm uppercase tracking-wider text-charcoal mb-3">
+          {t("step_connect.add_another_heading")}
+        </h3>
+      )}
+
+      {/* Create-new-site CTA — sits above the search input. */}
       <div className="mb-4">
         <Button variant="primary" onClick={() => setViewMode("create")}>
           <Plus className="w-4 h-4" />
@@ -289,48 +369,6 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
           </p>
         ) : (
           filtered.map((repo) => {
-            const isConnected = connectedRepoNames.has(repo.full_name);
-            const connectedProject = isConnected
-              ? connectedProjects.find((p) => p.github_repo_full_name === repo.full_name)
-              : null;
-
-            if (isConnected) {
-              return (
-                <div
-                  key={repo.id}
-                  className="w-full rounded-lg p-3 flex items-start gap-3 border border-transparent bg-gray-50"
-                >
-                  <GitBranch className="w-4 h-4 text-gray-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-heading font-semibold text-sm text-gray-400 truncate">
-                        {repo.full_name}
-                      </span>
-                      <span className="inline-flex items-center text-xs font-body text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5 flex-shrink-0">
-                        {t("step_connect.connected_badge")}
-                      </span>
-                      {repo.private && (
-                        <span className="inline-flex items-center gap-1 text-xs font-body text-gray-400 border border-gray-200 rounded px-1.5 py-0.5 flex-shrink-0">
-                          <Lock className="w-3 h-3" aria-hidden="true" />
-                          Private
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => connectedProject && setUnlinkTarget(connectedProject)}
-                    disabled={isUnlinking}
-                    className="inline-flex items-center gap-1 text-xs font-heading font-semibold uppercase tracking-wider text-red-600 hover:bg-red-50 border border-red-200 rounded-full px-3 py-1 transition-colors flex-shrink-0 cursor-pointer"
-                    title={t("step_connect.unlink")}
-                  >
-                    <Link2Off className="w-3.5 h-3.5" aria-hidden="true" />
-                    {t("step_connect.unlink")}
-                  </button>
-                </div>
-              );
-            }
-
             return (
               <button
                 key={repo.id}
@@ -373,23 +411,25 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
         )}
       </div>
 
-      {/* GitHub App installation hint */}
-      <p className="font-body text-xs text-gray-400 mb-4">
-        <Trans
-          i18nKey="step_connect.missing_repo_hint"
-          ns="onboarding"
-          components={{
-            installationsLink: (
-              <a
-                href="https://github.com/settings/installations"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-gray-600"
-              />
-            ),
-          }}
-        />
-      </p>
+      {/* GitHub App installation callout — users whose repos live in other
+          accounts or orgs need to install the app on those too. */}
+      <div className="rounded-lg border border-gray-200 bg-cream-dark/60 p-4 mb-4">
+        <h3 className="font-heading font-semibold text-sm text-charcoal mb-1.5">
+          {t("step_connect.missing_repo_callout_title")}
+        </h3>
+        <p className="font-body text-xs text-gray-600 mb-3">
+          {t("step_connect.missing_repo_callout_body")}
+        </p>
+        <a
+          href={`https://github.com/apps/${githubAppSlug}/installations/new`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 font-heading font-semibold text-xs uppercase tracking-wider bg-charcoal text-white rounded-full px-4 py-1.5 hover:opacity-90 transition-opacity"
+        >
+          <GitBranch className="w-3.5 h-3.5" aria-hidden="true" />
+          {t("step_connect.missing_repo_callout_cta")}
+        </a>
+      </div>
 
       {/* Private repo + free plan warning */}
       {selected?.private && githubPlan === "free" && (

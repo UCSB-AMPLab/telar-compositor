@@ -10,9 +10,9 @@
 import { redirect } from "react-router";
 import type { Route } from "./+types/onboarding";
 import { authMiddleware, userContext } from "~/middleware/auth.server";
+import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { listUserInstallations, listInstallationRepos, getFileContent } from "~/lib/github.server";
-import { checkTelarVersion } from "~/lib/upgrade.server";
 import type { Repository } from "~/lib/github.server";
 import { importRepo } from "~/lib/import.server";
 import { commitFilesToRepo, disableGoogleSheetsInConfig, verifySiteUrl, enableGitHubPages } from "~/lib/commit.server";
@@ -24,6 +24,9 @@ import {
   project_config,
   project_themes,
   project_landing,
+  project_members,
+  project_invites,
+  project_pages,
   objects,
   stories,
   steps,
@@ -90,7 +93,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const repos = reposByInstallation.flat();
 
-  // Phase 21 Plan 03 (D-20): orphan-repo detection. "App can see it AND no D1
+  // Orphan-repo detection. "App can see it AND no D1
   // row" — used by StepConnect to render a "New — connect to continue" badge
   // next to repos that were likely created via the compositor but never
   // completed the import flow. Heuristic may false-positive on unrelated repos
@@ -153,12 +156,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         env,
         overrideGoogleSheetsUrl: sheetsUrl || undefined,
       });
-      if (result.valid && result.telarVersion) {
-        const versionCheck = await checkTelarVersion(token, result.telarVersion);
-        if (versionCheck.needsUpgrade) {
-          return redirect("/upgrade?from=/dashboard");
-        }
-      }
       return result;
     }
 
@@ -169,12 +166,6 @@ export async function action({ request, context }: Route.ActionArgs) {
       userId: user.id,
       env,
     });
-    if (result.valid && result.telarVersion) {
-      const versionCheck = await checkTelarVersion(token, result.telarVersion);
-      if (versionCheck.needsUpgrade) {
-        return redirect("/upgrade?from=/dashboard");
-      }
-    }
     return result;
   }
 
@@ -309,8 +300,14 @@ export async function action({ request, context }: Route.ActionArgs) {
         `chore: ${commitParts.join(", ")} — now managed by Telar Compositor`
       );
 
+      // Persist github_pages_url when we learned it from enable/fix flows — the
+      // column historically stayed null, leaving every consumer of it dead.
+      const persistedPagesUrl = pagesUrl
+        ? pagesUrl.replace(/\/+$/, "")
+        : null;
       await db.update(projects).set({
         head_sha: result.newHeadSha,
+        ...(persistedPagesUrl ? { github_pages_url: persistedPagesUrl } : {}),
         updated_at: new Date().toISOString(),
       }).where(eq(projects.id, projectId));
     }
@@ -332,7 +329,25 @@ export async function action({ request, context }: Route.ActionArgs) {
       .update(projects)
       .set({ onboarding_completed: true, updated_at: new Date().toISOString() })
       .where(eq(projects.id, projectId));
-    return { ok: true, intent: "complete-onboarding" };
+
+    // Promote the newly-onboarded project to the active session slot so the
+    // dashboard opens on it instead of whatever the previous active project
+    // was. Without this, returning users who add a second site land on their
+    // old site and wonder why the new one isn't showing.
+    const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+    const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+    session.set("activeProjectId", projectId);
+    const cookie = await sessionStorage.commitSession(session);
+
+    return new Response(
+      JSON.stringify({ ok: true, intent: "complete-onboarding" }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Set-Cookie": cookie,
+        },
+      },
+    );
   }
 
   if (intent === "unlink-project") {
@@ -372,6 +387,9 @@ export async function action({ request, context }: Route.ActionArgs) {
     await db.delete(stories).where(eq(stories.project_id, projectId));
     await db.delete(objects).where(eq(objects.project_id, projectId));
     await db.delete(glossary_terms).where(eq(glossary_terms.project_id, projectId));
+    await db.delete(project_pages).where(eq(project_pages.project_id, projectId));
+    await db.delete(project_invites).where(eq(project_invites.project_id, projectId));
+    await db.delete(project_members).where(eq(project_members.project_id, projectId));
     await db.delete(project_config).where(eq(project_config.project_id, projectId));
     await db.delete(project_themes).where(eq(project_themes.project_id, projectId));
     await db.delete(project_landing).where(eq(project_landing.project_id, projectId));
@@ -392,7 +410,7 @@ export default function OnboardingPage({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="min-h-screen flex flex-col bg-cream">
-      <Header user={user} />
+      <Header user={user} hasProject={false} />
       <main className="flex-1 flex items-start justify-center pt-10 pb-16 px-4">
         <div className="w-full max-w-2xl">
           <WizardShell repos={repos} installations={installations} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} user={user} hasInstallations={installations.length > 0} githubAppSlug={githubAppSlug} />

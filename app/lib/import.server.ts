@@ -15,7 +15,7 @@
 import Papa from "papaparse";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
-import { getFileContent, getRepoTree } from "~/lib/github.server";
+import { getFileContent, getRepoHead, getRepoTree } from "~/lib/github.server";
 import { discoverSheetTabs, fetchSheetCsv } from "~/lib/sheets.server";
 import { parseYaml } from "~/lib/yaml.server";
 import {
@@ -28,6 +28,8 @@ import {
   steps,
   layers,
   glossary_terms,
+  project_members,
+  project_pages,
 } from "~/db/schema";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +108,7 @@ export interface ImportResult {
   objects: { imported: number; skipped: number; warnings: string[] };
   stories: { imported: number; warnings: string[] };
   glossary: { imported: number };
+  pages: { imported: number };
   themes: {
     imported: number;
     list: Array<{ theme_id: string; name: string | null; swatch_color: string | null }>;
@@ -161,6 +164,31 @@ export function parseIndexMd(content: string | null | undefined): LandingData {
     objects_intro: frontmatter.objects_intro as string | undefined,
     welcome_body: match[2].trim() || undefined,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Page markdown parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses the content of a page markdown file and returns the title and body.
+ *
+ * Extracts the `title` frontmatter field and the markdown body. If no
+ * frontmatter is present, the fallback slug is used as the title.
+ */
+export function parsePageMarkdown(
+  content: string,
+  fallbackSlug: string,
+): { title: string; body: string } {
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!fmMatch) return { title: fallbackSlug, body: content.trim() };
+  const frontmatter = fmMatch[1];
+  const body = (fmMatch[2] ?? "").trim();
+  const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
+  const title = titleMatch
+    ? titleMatch[1].trim().replace(/^["']|["']$/g, "")
+    : fallbackSlug;
+  return { title, body };
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +503,7 @@ export async function importRepo({
       objects: { imported: 0, skipped: 0, warnings: [] },
       stories: { imported: 0, warnings: [] },
       glossary: { imported: 0 },
+      pages: { imported: 0 },
       themes: { imported: 0, list: [] },
       sheetsEnabled: false,
       sheetsDisabled: false,
@@ -498,6 +527,7 @@ export async function importRepo({
       objects: { imported: 0, skipped: 0, warnings: [] },
       stories: { imported: 0, warnings: [] },
       glossary: { imported: 0 },
+      pages: { imported: 0 },
       themes: { imported: 0, list: [] },
       sheetsEnabled: false,
       sheetsDisabled: false,
@@ -587,6 +617,7 @@ export async function importRepo({
   let stepRows: Array<typeof steps.$inferInsert> = [];
   let layerRows: Array<typeof layers.$inferInsert> = [];
   let glossaryRows: Array<typeof glossary_terms.$inferInsert> = [];
+  let pageRows: Array<{ title: string; slug: string; body: string; order: number }> = [];
   let objectWarnings: string[] = [...treeWarnings];
   let storyWarnings: string[] = [];
   let sheetsDisabled = false;
@@ -652,6 +683,7 @@ export async function importRepo({
         objects: { imported: 0, skipped: 0, warnings: [] },
         stories: { imported: 0, warnings: [] },
         glossary: { imported: 0 },
+        pages: { imported: 0 },
         themes: { imported: 0, list: [] },
         sheetsEnabled: true,
         sheetsDisabled: false,
@@ -703,6 +735,23 @@ export async function importRepo({
         title: r.title || undefined,
         definition: r.definition || undefined,
       }));
+    }
+
+    // ---- Pages import ----
+    const pagesTree = tree.filter(
+      (entry) =>
+        entry.type === "blob" &&
+        entry.path.startsWith("telar-content/texts/pages/") &&
+        entry.path.endsWith(".md"),
+    );
+    for (let i = 0; i < pagesTree.length; i++) {
+      const entry = pagesTree[i];
+      const filename = entry.path.split("/").pop()!;
+      const slug = filename.replace(/\.md$/, "");
+      const content = await getFileContent(token, owner, repo, entry.path);
+      if (content === null) continue;
+      const { title, body } = parsePageMarkdown(content, slug);
+      pageRows.push({ title, slug, body, order: i });
     }
   }
 
@@ -789,6 +838,7 @@ export async function importRepo({
       objects: { imported: 0, skipped: 0, warnings: [] },
       stories: { imported: 0, warnings: [] },
       glossary: { imported: 0 },
+      pages: { imported: 0 },
       themes: { imported: 0, list: [] },
       sheetsEnabled: false,
       sheetsDisabled: false,
@@ -799,18 +849,30 @@ export async function importRepo({
     };
   }
 
-  // Insert project record — initial import counts as a sync
+  // Insert project record — initial import counts as a sync. head_sha is
+  // captured so the _app loader's sync-diff and version checks have a
+  // baseline; without it the loader's gates short-circuit.
+  const initialHeadSha = await getRepoHead(token, owner, repo);
   const [projectRecord] = await db
     .insert(projects)
     .values({
       user_id: userId,
       github_repo_full_name: repoFullName,
       installation_id: installationId,
+      head_sha: initialHeadSha,
       last_synced_at: new Date().toISOString(),
     })
     .returning();
 
   const projectId = projectRecord.id;
+
+  // Insert convenor membership row for the new project
+  await db.insert(project_members).values({
+    project_id: projectId,
+    user_id: userId,
+    role: "convenor",
+    joined_at: new Date().toISOString(),
+  });
 
   try {
   // Update all rows with the real project ID
@@ -841,7 +903,7 @@ export async function importRepo({
 
   // Insert content tables — chunked to stay within D1's 100-variable limit
   // objects: 19 cols → max 5 rows; stories: 10 cols → max 10 rows;
-  // glossary: 6 cols → max 16 rows
+  // glossary: 6 cols → max 16 rows; pages: 7 cols → max 14 rows
   for (const chunk of chunkForD1(19, objectsWithProjectId)) {
     await db.insert(objects).values(chunk);
   }
@@ -850,6 +912,36 @@ export async function importRepo({
   }
   for (const chunk of chunkForD1(6, glossaryWithProjectId)) {
     await db.insert(glossary_terms).values(chunk);
+  }
+
+  // Insert pages (INSERT OR REPLACE to handle re-imports — Pitfall 3)
+  const now = new Date().toISOString();
+  if (pageRows.length > 0) {
+    const pagesWithProjectId = pageRows.map((p) => ({
+      project_id: projectId,
+      title: p.title,
+      slug: p.slug,
+      body: p.body,
+      order: p.order,
+      created_at: now,
+      updated_at: now,
+    }));
+    for (const chunk of chunkForD1(7, pagesWithProjectId)) {
+      for (const page of chunk) {
+        await db
+          .insert(project_pages)
+          .values(page)
+          .onConflictDoUpdate({
+            target: [project_pages.project_id, project_pages.slug],
+            set: {
+              title: page.title,
+              body: page.body,
+              order: page.order,
+              updated_at: page.updated_at,
+            },
+          });
+      }
+    }
   }
 
   // Insert steps and layers — requires real story DB IDs
@@ -957,6 +1049,7 @@ export async function importRepo({
     },
     stories: { imported: storyRows.filter((r) => r.story_id && String(r.story_id).trim() !== "").length, warnings: storyWarnings },
     glossary: { imported: glossaryRows.length },
+    pages: { imported: pageRows.length },
     themes: {
       imported: themeRows.length,
       list: themeRows.map((r) => ({

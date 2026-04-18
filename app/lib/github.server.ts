@@ -95,14 +95,38 @@ export async function listInstallationRepos(
   token: string,
   installationId: number,
 ): Promise<{ repositories: Repository[] }> {
-  const res = await fetch(
-    `${GITHUB_API}/user/installations/${installationId}/repositories`,
-    { headers: githubHeaders(token) },
-  );
-  if (!res.ok) {
-    throw new Error(`GitHub API error listing repos: ${res.status}`);
+  // Paginate through all repositories accessible to this installation.
+  // GitHub's default page size is 30 — without pagination, accounts with
+  // more repos than that get truncated lists and the onboarding search
+  // cannot find repos beyond the first page. Use per_page=100 (the API
+  // max) and follow Link: rel="next" headers until the last page.
+  const repositories: Repository[] = [];
+  let url: string | null =
+    `${GITHUB_API}/user/installations/${installationId}/repositories?per_page=100`;
+  while (url) {
+    const res: Response = await fetch(url, { headers: githubHeaders(token) });
+    if (!res.ok) {
+      throw new Error(`GitHub API error listing repos: ${res.status}`);
+    }
+    const page = (await res.json()) as { repositories: Repository[] };
+    repositories.push(...page.repositories);
+    url = parseNextLink(res.headers.get("link"));
   }
-  return res.json() as Promise<{ repositories: Repository[] }>;
+  return { repositories };
+}
+
+/**
+ * Parses a GitHub `Link` response header and returns the URL for rel="next",
+ * or null if there is no next page. Link headers look like:
+ *   <https://api.github.com/...&page=2>; rel="next", <...&page=10>; rel="last"
+ */
+function parseNextLink(header: string | null): string | null {
+  if (!header) return null;
+  for (const part of header.split(",")) {
+    const match = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+    if (match) return match[1];
+  }
+  return null;
 }
 
 /**
@@ -233,4 +257,29 @@ export async function graphqlGitHub<T = unknown>(
     throw new Error(`GraphQL: ${json.errors.map((e) => e.message).join(", ")}`);
   }
   return json.data as T;
+}
+
+// ---------------------------------------------------------------------------
+// User search
+// ---------------------------------------------------------------------------
+
+/**
+ * Search GitHub users by username prefix.
+ *
+ * Uses the GitHub REST API search endpoint with the user's OAuth token.
+ * Returns up to 5 matching users with login and avatar_url.
+ * Returns an empty array on error or if the query is too short.
+ */
+export async function searchGitHubUsers(
+  token: string,
+  query: string,
+): Promise<Array<{ login: string; avatar_url: string }>> {
+  if (!query || query.length < 2) return [];
+  const url = `${GITHUB_API}/search/users?q=${encodeURIComponent(query)}+type:user&per_page=5`;
+  const res = await fetch(url, { headers: githubHeaders(token) });
+  if (!res.ok) return [];
+  const data = (await res.json()) as {
+    items: Array<{ login: string; avatar_url: string }>;
+  };
+  return data.items ?? [];
 }

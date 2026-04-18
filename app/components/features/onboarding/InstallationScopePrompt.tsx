@@ -1,5 +1,5 @@
 /**
- * InstallationScopePrompt — Phase 21 Plan 02 (CSITE-05).
+ * InstallationScopePrompt.
  *
  * Reusable polling prompt shown when the GitHub App cannot yet see a repository
  * the user needs access to. Opens the GitHub App installation settings in a new
@@ -7,16 +7,16 @@
  * until the server reports `inScope: true`, then calls `onResolved()`.
  *
  * Used by:
- *  - CreateSiteForm (Phase 21 Plan 01 / Plan 02) — after repo creation, while
+ *  - CreateSiteForm — after repo creation, while
  *    waiting for the user to grant the GitHub App access to the new repo.
- *  - StepConnect (Phase 21 Plan 02) — normal connect flow when the user picks
+ *  - StepConnect — normal connect flow when the user picks
  *    an existing repo the App can't see.
  *
  * Safety:
- *  - setInterval is cleared on unmount (T-21-07).
+ *  - setInterval is cleared on unmount.
  *  - onResolved is ref-guarded so it fires at most once, and never after unmount.
- *  - Anchor uses rel="noopener noreferrer" (T-21-06).
- *  - Never renders raw fetcher error messages (T-21-08).
+ *  - Anchor uses rel="noopener noreferrer".
+ *  - Never renders raw fetcher error messages.
  */
 
 import { useEffect, useRef } from "react";

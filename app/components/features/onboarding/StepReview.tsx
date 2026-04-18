@@ -54,35 +54,35 @@ export function StepReview({
           {t("step_review.site_settings")}
         </h3>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-          {configFields.title && (
+          {typeof configFields.title === "string" && (
             <>
               <dt className="font-body text-gray-500">Title</dt>
-              <dd className="font-body text-charcoal truncate">{String(configFields.title)}</dd>
+              <dd className="font-body text-charcoal truncate">{configFields.title}</dd>
             </>
           )}
-          {configFields.lang && (
+          {typeof configFields.lang === "string" && (
             <>
               <dt className="font-body text-gray-500">Language</dt>
-              <dd className="font-body text-charcoal">{String(configFields.lang).toUpperCase()}</dd>
+              <dd className="font-body text-charcoal">{configFields.lang.toUpperCase()}</dd>
             </>
           )}
-          {configFields.theme && (
+          {typeof configFields.theme === "string" && (
             <>
               <dt className="font-body text-gray-500">Theme</dt>
-              <dd className="font-body text-charcoal truncate">{String(configFields.theme)}</dd>
+              <dd className="font-body text-charcoal truncate">{configFields.theme}</dd>
             </>
           )}
-          {configFields.telar_version && (
+          {typeof configFields.telar_version === "string" && (
             <>
               <dt className="font-body text-gray-500">Telar version</dt>
-              <dd className="font-body text-charcoal">{String(configFields.telar_version)}</dd>
+              <dd className="font-body text-charcoal">{configFields.telar_version}</dd>
             </>
           )}
         </dl>
       </section>
 
       {/* Import counts */}
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
         {/* Objects */}
         <div className="bg-white border border-gray-100 rounded-lg p-3 text-center">
           <p className="font-heading font-semibold text-lg text-charcoal">
@@ -115,6 +115,16 @@ export function StepReview({
           </p>
           <p className="font-body text-xs text-gray-500 mt-0.5">
             {t("step_review.glossary_title")}
+          </p>
+        </div>
+
+        {/* Pages */}
+        <div className="bg-white border border-gray-100 rounded-lg p-3 text-center">
+          <p className="font-heading font-semibold text-lg text-charcoal">
+            {importResult.pages.imported}
+          </p>
+          <p className="font-body text-xs text-gray-500 mt-0.5">
+            {t("step_review.pages_title")}
           </p>
         </div>
       </div>
