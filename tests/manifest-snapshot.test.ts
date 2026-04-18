@@ -1,0 +1,232 @@
+// @vitest-environment node
+/**
+ * Snapshot tests comparing applyManifestChain output against goldens generated
+ * by the canonical Python migration scripts on two real user sites.
+ *
+ * The goldens live under tests/fixtures/manifest-snapshots/ and are regenerated
+ * by scripts/generate-manifest-snapshots.sh. See
+ * tests/fixtures/manifest-snapshots/README.md for the generation pipeline.
+ *
+ * Strict byte equality is NOT achievable because the Python scripts and the
+ * manifest DSL diverge in ways that were captured during fixture generation:
+ *
+ *   1. Python's csv.writer produces CRLF line endings; Papa.unparse with
+ *      newline: "\n" produces LF.
+ *   2. Python's config_update_value on max_viewer_cards rewrites the trailing
+ *      comment to a new string. The manifest runner drops the comment entirely
+ *      (matches the line, replaces with just "key: value").
+ *   3. Python's collection_mode insertion uses "key: value # comment" (one
+ *      space before #). The manifest runner uses "key: value  # comment" (two
+ *      spaces).
+ *   4. Python's v110_to_v120 _update_project_csv writes the new column name to
+ *      BOTH the first and second rows (i < 2), but uses the same monolingual
+ *      name for both (whichever the site language resolved to). The manifest
+ *      runner detects the bilingual two-row header pattern and correctly
+ *      writes the `en` variant to the English row and the `es` variant to the
+ *      Spanish row, so both header rows stay aligned and semantically correct.
+ *      For monolingual CSVs Python's `i < 2` guard also corrupts the first data
+ *      row — the runner does not replicate that. The authoritative assertions
+ *      for both behaviours live in tests/manifest-runner.test.ts under the
+ *      "csv_add_column bilingual two-row header" describe block; here we
+ *      normalise away the row-1 value mismatch so this snapshot test stays
+ *      focused on structural / column-layout regressions rather than the known
+ *      Python quirks.
+ *
+ * To keep the snapshot test meaningful despite these known divergences, both
+ * sides are passed through normalise() before comparison. Any new divergence
+ * beyond what normalise() handles will still fail the test — the whole point
+ * The intent is that undocumented drift between JS and Python becomes a visible
+ * regression.
+ */
+import { describe, it, expect } from "vitest";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { join } from "path";
+import { applyManifestChain } from "~/lib/manifest-runner.server";
+import { chainManifests } from "~/lib/upgrade.server";
+import { BUNDLED_MANIFESTS } from "~/../migrations";
+import type { Language } from "~/lib/manifest-schema.server";
+
+const FIXTURES_DIR = join(__dirname, "fixtures", "manifest-snapshots");
+
+/** Hard-coded version mapping for each fixture directory name. */
+const VERSION_MAP: Record<string, { from: string; to: string }> = {
+  "mirl-story-v092-to-v120": { from: "0.9.2-beta", to: "1.2.0" },
+  "group_9_project-v092-to-v120": { from: "0.9.2-beta", to: "1.2.0" },
+};
+
+function detectLang(configContent: string): Language {
+  // Matches how the live upgrade flow derives telar_language for a site.
+  const m = configContent.match(/^\s*telar_language:\s*["']?([a-z]{2})/m);
+  return m?.[1] === "es" ? "es" : "en";
+}
+
+/**
+ * Normalise _config.yml content for comparison.
+ *
+ *   - Converts CRLF to LF (defence in depth; both sides are LF on disk
+ *     for _config.yml, but Python write round-trips can introduce CR).
+ *   - Strips the trailing comment (everything from "#" to end of line) on
+ *     the max_viewer_cards line, because Python rewrites it and the
+ *     manifest runner drops it.
+ *   - Collapses the inter-token whitespace between "collection_mode: false"
+ *     and the trailing "# ..." comment, so that Python's single-space
+ *     variant compares equal to the manifest runner's double-space variant.
+ *   - Trims trailing whitespace on every line and drops a trailing blank
+ *     line, to absorb minor whitespace-only edits.
+ */
+function normaliseConfig(content: string): string {
+  const normalisedLines = content.replace(/\r\n/g, "\n").split("\n").map(
+    (line) => {
+      let out = line;
+      // Strip trailing comment on max_viewer_cards so Python's rewrite and
+      // the manifest runner's drop both reduce to "max_viewer_cards: N".
+      if (/^\s*max_viewer_cards:/.test(out)) {
+        out = out.replace(/\s*#.*$/, "");
+      }
+      // Collapse multiple spaces before a # on the collection_mode line so
+      // Python's single-space and the runner's double-space agree.
+      if (/^\s*collection_mode:/.test(out)) {
+        out = out.replace(/\s+#/, " #");
+      }
+      return out.replace(/[ \t]+$/, "");
+    },
+  );
+  // Drop trailing empty lines.
+  while (
+    normalisedLines.length > 0 &&
+    normalisedLines[normalisedLines.length - 1] === ""
+  ) {
+    normalisedLines.pop();
+  }
+  return normalisedLines.join("\n");
+}
+
+/**
+ * Normalise project.csv content for comparison.
+ *
+ *   - Converts CRLF to LF.
+ *   - For the FIRST row (header): keeps as-is so a missing/renamed column in
+ *     either implementation still fails.
+ *   - For the SECOND row: Python's _update_project_csv writes the new column
+ *     name to row 1 with the same monolingual name as row 0. The manifest
+ *     runner writes either the Spanish bilingual variant (when row 1 is the
+ *     Spanish header row of a bilingual CSV) or op.default (otherwise). The
+ *     value these differ on is verified authoritatively by unit tests in
+ *     tests/manifest-runner.test.ts; here we strip the final cell of row 1 on
+ *     both sides so the snapshot test stays focused on structural regressions
+ *     rather than the known Python / runner value mismatch. Every other cell
+ *     — including any rename of an existing column — is still checked.
+ *   - For subsequent rows: unchanged.
+ *   - Trailing blank line normalised.
+ */
+function normaliseCsv(content: string): string {
+  const body = content.replace(/\r\n/g, "\n").replace(/\n+$/, "\n");
+  const rows = body.split("\n");
+  // Drop trailing rows that are empty or contain only commas (Papa.unparse
+  // emits one such row when the input CSV ends with a newline and
+  // skipEmptyLines is false during parse).
+  while (rows.length > 0 && /^,*$/.test(rows[rows.length - 1])) {
+    rows.pop();
+  }
+  if (rows.length >= 2) {
+    // Strip the last cell of row 1 to normalise Python's bilingual-header quirk.
+    const row1Cells = rows[1].split(",");
+    if (row1Cells.length > 0) {
+      row1Cells[row1Cells.length - 1] = "";
+      rows[1] = row1Cells.join(",");
+    }
+  }
+  return rows.join("\n");
+}
+
+describe("manifest runner snapshot tests", () => {
+  const fixtureDirs = existsSync(FIXTURES_DIR)
+    ? readdirSync(FIXTURES_DIR).filter((name) => {
+        const full = join(FIXTURES_DIR, name);
+        return statSync(full).isDirectory();
+      })
+    : [];
+
+  if (fixtureDirs.length === 0) {
+    it.skip("no fixtures present — run scripts/generate-manifest-snapshots.sh", () => {});
+    return;
+  }
+
+  for (const fixture of fixtureDirs) {
+    const base = join(FIXTURES_DIR, fixture);
+    const beforeDir = join(base, "before");
+    const expectedDir = join(base, "expected");
+
+    describe(`fixture: ${fixture}`, () => {
+      const versions = VERSION_MAP[fixture];
+      if (!versions) {
+        it.todo(`add ${fixture} to VERSION_MAP`);
+        return;
+      }
+
+      const configBefore = readFileSync(
+        join(beforeDir, "_config.yml"),
+        "utf-8",
+      );
+      const configExpected = readFileSync(
+        join(expectedDir, "_config.yml"),
+        "utf-8",
+      );
+      const lang = detectLang(configBefore);
+      const chain = chainManifests(
+        versions.from,
+        versions.to,
+        BUNDLED_MANIFESTS,
+      );
+
+      // Decide which CSV variant the fixture uses.
+      const csvEnBefore = join(beforeDir, "project.csv");
+      const csvEsBefore = join(beforeDir, "proyecto.csv");
+      const csvKey = existsSync(csvEnBefore)
+        ? "telar-content/spreadsheets/project.csv"
+        : existsSync(csvEsBefore)
+          ? "telar-content/spreadsheets/proyecto.csv"
+          : null;
+      const csvBeforePath = existsSync(csvEnBefore)
+        ? csvEnBefore
+        : existsSync(csvEsBefore)
+          ? csvEsBefore
+          : null;
+      const csvExpectedPath = csvBeforePath
+        ? existsSync(join(expectedDir, "project.csv"))
+          ? join(expectedDir, "project.csv")
+          : join(expectedDir, "proyecto.csv")
+        : null;
+
+      function runChain() {
+        const files = new Map<string, string>();
+        files.set("_config.yml", configBefore);
+        if (csvKey && csvBeforePath) {
+          files.set(csvKey, readFileSync(csvBeforePath, "utf-8"));
+        }
+        return applyManifestChain(chain, files, lang);
+      }
+
+      it("chainManifests resolves a non-empty chain", () => {
+        expect(chain.length).toBeGreaterThan(0);
+      });
+
+      it("_config.yml output matches Python golden (normalised)", () => {
+        const result = runChain();
+        const actual = result.files.get("_config.yml");
+        expect(actual).toBeDefined();
+        expect(normaliseConfig(actual!)).toBe(normaliseConfig(configExpected));
+      });
+
+      if (csvKey && csvBeforePath && csvExpectedPath) {
+        it("project CSV output matches Python golden (normalised)", () => {
+          const result = runChain();
+          const actual = result.files.get(csvKey);
+          const expected = readFileSync(csvExpectedPath, "utf-8");
+          expect(actual).toBeDefined();
+          expect(normaliseCsv(actual!)).toBe(normaliseCsv(expected));
+        });
+      }
+    });
+  }
+});

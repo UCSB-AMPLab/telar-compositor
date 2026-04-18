@@ -1,0 +1,152 @@
+# Telar - Digital Storytelling Framework
+# https://github.com/UCSB-AMPLab/telar
+
+# Site Settings
+title: Haptic khipu
+description: This project investigates a 16th century khipu in UC Santa
+  Barbara's Art, Design & Architecture Museum through material, haptic, and digital
+  imaging methods to explore how Andean recordkeeping systems encode knowledge in
+  fiber and form. A Spanish translation of this project will be available soon.
+url: https://khipu.mirl.arthistory.ucsb.edu
+baseurl: ""
+author: Alicia Boswell, Alida Jekabson, Izzy Devlin, Jeff O'Brien, María Lumbreras,
+  Juan Cobo Betancourt
+email: jeffobrien@ucsb.edu
+telar_theme: paisajes
+logo: '' # Path to logo image (optional, max 80px tall, 200-300px wide recommended)
+telar_language: en # Options: "en" (English), "es" (Español)
+collection_mode: false # Set to true to show objects first with large thumbnails and stories below with small thumbnails (collection-first homepage)
+
+# Story Interface Settings
+story_interface:
+  show_on_homepage: true # Set to false to hide stories section from homepage
+  show_story_steps: true # Set to false to hide "Step X" overlay in stories
+  show_object_credits: true # Set to true to display object credits badge (bottom-left corner, dismissable)
+  include_demo_content: false # Fetch demo stories from content.telar.org. Switch this off to hide demo stories and their content.
+
+
+# Collection Interface Settings
+collection_interface:
+  browse_and_search: true # Set to false to disable filtering sidebar and search on objects page
+  show_link_on_homepage: true # Set to false to hide "View the objects" link from homepage
+  show_sample_on_homepage: false # Set to true to show a sample of objects on homepage
+  featured_count: 4 # Number of objects to show on homepage (default 4)
+
+# Google Sheets Integration (optional)
+# Manage content via Google Sheets instead of editing CSV files directly.
+# See https://telar.org/docs/workflows/google-sheets/ for detailed setup instructions.
+#
+# Setup:
+# 1. Get the template: Duplicate our template at https://bit.ly/telar-template
+# 2. Share your sheet: Anyone with the link (Viewer access)
+# 3. Publish your sheet: File > Share > Publish to web
+# 4. Paste both URLs below
+# 5. Set enabled: true
+# 6. Commit changes
+#    - If using GitHub Pages: GitHub Actions will automatically discover tab GIDs and fetch CSVs
+#    - If running locally: Run `python3 scripts/fetch_google_sheets.py` before building
+google_sheets:
+  enabled: true
+  published_url: https://docs.google.com/spreadsheets/d/e/2PACX-1vTodWYk4eyiNgqnP3s499aY-AhsLoSyAVbDpX7gCNTnOHVRqOt-8TKOOL50rU8nQUHq-vj0C7JucEqC/pubhtml
+
+
+#
+#
+#
+# PLEASE DO NOT EDIT BELOW THIS LINE UNLESS YOU KNOW WHAT YOU ARE DOING
+#
+#
+#
+
+# Collections
+collections:
+  stories:
+    output: true
+    permalink: /stories/:name/
+  objects:
+    output: true
+    permalink: /objects/:name/
+  glossary:
+    output: true
+    permalink: /glossary/:name/
+
+# Collections Directory (a folder where Jekyll and the Telar scripts will put all auto-generated object and story working files)
+collections_dir: _jekyll-files
+
+# Build Settings
+markdown: kramdown
+permalink: pretty
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - .github
+  - README.md
+  - docs/
+  - scripts/
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+      type: "stories"
+    values:
+      layout: "story"
+  - scope:
+      path: ""
+      type: "objects"
+    values:
+      layout: "object"
+  - scope:
+      path: ""
+      type: "glossary"
+    values:
+      layout: "glossary"
+
+# Tell Jekyll not to expect dates for these collections
+future: true
+show_drafts: false
+
+# Telar Settings (version information)
+telar:
+  version: "0.9.2-beta"
+  release_date: "2026-03-13"
+
+# Plugins
+plugins:
+  - jekyll-seo-tag
+
+# WEBrick server configuration for development (enables CORS for IIIF)
+webrick:
+  headers:
+    Access-Control-Allow-Origin: "*"
+    Access-Control-Allow-Methods: "GET, POST, OPTIONS"
+    Access-Control-Allow-Headers: "Content-Type"
+
+# Development & Testing
+# Set to false or remove for production use
+development-features:
+  # Christmas Tree Mode - Displays all warning messages for testing multilingual support
+  # Set to true to light up the site with test warnings (test objects, fake errors, etc.)
+  christmas_tree_mode: false
+
+  # Viewer preloading configuration
+  # Controls how story viewers are preloaded for smoother navigation.
+  # Higher values = smoother scrolling but more memory usage.
+  # Lower values = less memory but may show loading shimmer during navigation.
+  # These defaults work well for most sites. Only adjust if experiencing issues.
+  viewer_preloading:
+    max_viewer_cards: 8     # Max viewers in memory (per-scene pool cap). Higher = smoother, more memory. (default: 8, max: 15)
+    preload_steps: 6        # Steps to preload ahead. Higher = smoother, more memory. (default: 6)
+    loading_threshold: 5    # Show shimmer on intro if story has >= N viewers. (default: 5)
+    min_ready_viewers: 3    # Hide shimmer when N viewers ready. (default: 3)
+
+  # Hide stories - skips story generation and hides stories section from index
+  # Objects remain visible and accessible
+  skip_stories: false # (Renamed from hide_stories)
+
+  # Hide collections - skips both object AND story generation
+  # Hides stories section, objects teaser, and /objects/ nav link
+  # Use this when building a site with only custom pages (no stories or objects)
+  skip_collections: false # (Renamed from hide_collections)
