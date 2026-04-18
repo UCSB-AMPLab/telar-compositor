@@ -7,17 +7,30 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Form, Link } from "react-router";
-import { ChevronDown, Settings, LogOut, Github } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { ChevronDown, Settings, LogOut, Github, Users } from "lucide-react";
 import type { AuthenticatedUser } from "~/middleware/auth.server";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { PresenceBar } from "~/components/ui/PresenceBar";
+import { ConnectionPill } from "~/components/ui/ConnectionPill";
 
 interface HeaderProps {
   user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email">;
+  environment?: string;
+  presenceColor?: string | null;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+  usersIconRef?: React.RefObject<HTMLButtonElement | null>;
+  hasProject?: boolean;
   className?: string;
 }
 
-export function Header({ user, className = "" }: HeaderProps) {
+export function Header({ user, environment, presenceColor, sidebarOpen, onToggleSidebar, usersIconRef, hasProject = false, className = "" }: HeaderProps) {
+  const { t: tCollab } = useTranslation("collaboration");
+  const { t: tCommon } = useTranslation("common");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { connectionStatus } = useCollaborationContext();
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -37,7 +50,7 @@ export function Header({ user, className = "" }: HeaderProps) {
 
   return (
     <header
-      className={`h-14 bg-charcoal flex items-center justify-between px-6 ${className}`}
+      className={`h-14 bg-charcoal flex items-center justify-between px-6 sticky top-0 z-30 ${className}`}
     >
       {/* Brand */}
       <Link
@@ -48,25 +61,59 @@ export function Header({ user, className = "" }: HeaderProps) {
         <span className="font-heading font-normal text-periwinkle" style={{ fontSize: "24px" }}>
           Compositor
         </span>
+        {environment === "staging" && (
+          <span className="ml-2 px-2 py-0.5 rounded-full bg-periwinkle/20 border border-periwinkle/40 font-heading text-xs text-periwinkle font-semibold tracking-wide uppercase">
+            Staging
+          </span>
+        )}
       </Link>
 
-      {/* User menu */}
-      <div className="relative" ref={dropdownRef}>
+      {/* Right section: presence bar + connection status + user menu */}
+      <div className="flex items-center gap-4">
+        <PresenceBar />
+        {/* Connection status pill — three states: connected / connecting / offline.
+            Hidden when there is no active project: collaboration state is meaningless
+            during onboarding and the alarming "Offline" copy reads as a session error. */}
+        {hasProject && <ConnectionPill status={connectionStatus} />}
+
+        {/* Collaboration sidebar toggle */}
+        {onToggleSidebar && (
+          <button
+            ref={usersIconRef}
+            type="button"
+            onClick={onToggleSidebar}
+            disabled={!hasProject}
+            aria-expanded={sidebarOpen}
+            aria-label={sidebarOpen ? tCollab("sidebar_close_aria") : tCollab("sidebar_open_aria")}
+            className={`p-1.5 rounded-full transition-colors ${
+              !hasProject
+                ? "text-gray-500 cursor-not-allowed"
+                : sidebarOpen
+                  ? "bg-periwinkle/20 text-periwinkle"
+                  : "text-white hover:bg-white/10"
+            }`}
+          >
+            <Users className="w-4.5 h-4.5" />
+          </button>
+        )}
+
+        {/* User menu */}
+        <div className="relative" ref={dropdownRef}>
         <button
           type="button"
           onClick={() => setDropdownOpen((v) => !v)}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity"
           aria-haspopup="true"
           aria-expanded={dropdownOpen}
-          aria-label="User menu"
+          aria-label={tCommon("user_menu_aria")}
         >
-          {/* Avatar — use GitHub CDN from github_id */}
+          {/* Avatar with presence colour ring */}
           <img
             src={`https://avatars.githubusercontent.com/u/${user.github_id}?s=56`}
             alt={displayName}
             className="w-7 h-7 rounded-full object-cover bg-periwinkle"
+            style={presenceColor ? { outline: `2px solid ${presenceColor}`, outlineOffset: "1px" } : undefined}
             onError={(e) => {
-              // Fallback to initials on load error
               const target = e.currentTarget;
               target.style.display = "none";
               const sibling = target.nextElementSibling as HTMLElement | null;
@@ -75,6 +122,7 @@ export function Header({ user, className = "" }: HeaderProps) {
           />
           <span
             className="w-7 h-7 rounded-full bg-periwinkle text-charcoal font-heading font-semibold text-xs items-center justify-center hidden"
+            style={presenceColor ? { outline: `2px solid ${presenceColor}`, outlineOffset: "1px" } : undefined}
             aria-hidden="true"
           >
             {initials}
@@ -141,6 +189,7 @@ export function Header({ user, className = "" }: HeaderProps) {
             </div>
           </>
         )}
+        </div>
       </div>
     </header>
   );
