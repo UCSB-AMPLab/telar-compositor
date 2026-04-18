@@ -11,5 +11,8 @@ export default defineConfig({
     alias: {
       "~": resolve(__dirname, "./app"),
     },
+    // Prefer TypeScript sources over any stray compiled .js artefacts that
+    // may linger beside .ts/.tsx files in the app tree.
+    extensions: [".ts", ".tsx", ".mjs", ".mts", ".js", ".jsx", ".json"],
   },
 });

@@ -29,4 +29,10 @@ declare interface Env {
 
   /** GitHub App URL slug (e.g. "telar-compositor" or "telar-compositor-dev") */
   GITHUB_APP_SLUG: string;
+
+  /** Durable Object namespace for per-project collaborative editing */
+  COLLABORATION: DurableObjectNamespace;
+
+  /** Optional password gate for collaboration features (omit or empty to disable) */
+  COLLAB_GATE?: string;
 }
