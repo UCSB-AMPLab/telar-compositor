@@ -27,6 +27,7 @@ import {
   computeSyncDiff,
   computeGlossarySyncDiff,
   extractTelarVersion,
+  hasDivergentChanges,
 } from "~/lib/sync.server";
 import type { FullSyncDiff } from "~/lib/sync.server";
 
@@ -1182,5 +1183,109 @@ describe("computeSyncDiff — origin-aware missing object classification", () =>
     // Repo-origin object missing from CSV MUST appear in missingObjects
     expect(result.missingObjects).toHaveLength(1);
     expect(result.missingObjects[0].object_id).toBe("repo-object");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasDivergentChanges — sync-divergence banner gate used in _app.tsx
+// ---------------------------------------------------------------------------
+
+describe("hasDivergentChanges", () => {
+  function emptyDiff(): FullSyncDiff {
+    return {
+      objects: {
+        newObjects: [],
+        changedObjects: [],
+        missingObjects: [],
+        unregisteredFiles: [],
+      },
+      stories: {
+        newStories: [],
+        changedStories: [],
+        missingStories: [],
+      },
+      config: {
+        changedFields: [],
+        versionChange: null,
+      },
+      glossary: {
+        added: [],
+        removed: [],
+        changed: [],
+      },
+      hasConflicts: false,
+    };
+  }
+
+  it("returns false for an empty diff (churn-only commit)", () => {
+    expect(hasDivergentChanges(emptyDiff())).toBe(false);
+  });
+
+  it("detects new objects", () => {
+    const diff = emptyDiff();
+    diff.objects.newObjects.push({
+      object_id: "x", title: "X", creator: null, description: null,
+      source_url: null, period: null, year: null, object_type: null,
+      subjects: null, source: null, credit: null, thumbnail: null,
+      alt_text: null, page: null, featured: false, hasImage: false,
+    } as never);
+    expect(hasDivergentChanges(diff)).toBe(true);
+  });
+
+  it("detects changed objects", () => {
+    const diff = emptyDiff();
+    diff.objects.changedObjects.push({ object_id: "x" } as never);
+    expect(hasDivergentChanges(diff)).toBe(true);
+  });
+
+  it("detects missing objects and unregistered files", () => {
+    const d1 = emptyDiff();
+    d1.objects.missingObjects.push({ object_id: "x" } as never);
+    const d2 = emptyDiff();
+    d2.objects.unregisteredFiles.push({ object_id: "y", filename: "y.jpg" });
+    expect(hasDivergentChanges(d1)).toBe(true);
+    expect(hasDivergentChanges(d2)).toBe(true);
+  });
+
+  it("detects story additions, changes, and removals", () => {
+    for (const key of ["newStories", "changedStories", "missingStories"] as const) {
+      const diff = emptyDiff();
+      (diff.stories[key] as unknown[]).push({ story_id: "s" });
+      expect(hasDivergentChanges(diff)).toBe(true);
+    }
+  });
+
+  it("detects config field changes", () => {
+    const diff = emptyDiff();
+    diff.config.changedFields.push({ key: "title", d1Value: "A", repoValue: "B" });
+    expect(hasDivergentChanges(diff)).toBe(true);
+  });
+
+  it("detects versionChange (behind path that should re-trigger toast)", () => {
+    const diff = emptyDiff();
+    diff.config.versionChange = {
+      direction: "behind",
+      repoVersion: "1.0.0",
+      d1Version: "1.2.0",
+    };
+    expect(hasDivergentChanges(diff)).toBe(true);
+  });
+
+  it("detects versionChange (ahead path — external upgrade)", () => {
+    const diff = emptyDiff();
+    diff.config.versionChange = {
+      direction: "ahead",
+      repoVersion: "1.2.0",
+      d1Version: "1.1.0",
+    };
+    expect(hasDivergentChanges(diff)).toBe(true);
+  });
+
+  it("detects glossary additions, changes, and removals", () => {
+    for (const key of ["added", "removed", "changed"] as const) {
+      const diff = emptyDiff();
+      (diff.glossary[key] as unknown[]).push({ term_id: "t" });
+      expect(hasDivergentChanges(diff)).toBe(true);
+    }
   });
 });

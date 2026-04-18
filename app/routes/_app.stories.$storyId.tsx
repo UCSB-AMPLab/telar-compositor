@@ -484,7 +484,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sidebarSteps: EditorStep[] = useYjs
     ? yjsSteps!.filter((s) => (s.step_number ?? 0) > 0 || s.id > 0 || s._tempId)
-    : (storySteps as EditorStep[])
+    : (storySteps as unknown as EditorStep[])
         .filter((s) => s.step_number > 0)
         .map((s) => ({
           ...s,
@@ -939,7 +939,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
             else setLayer2Open(true);
           }}
           onCreateLayer={handleCreateLayer}
-          actionUrl={`/stories/${story.slug}`}
+          actionUrl={`/stories/${story.story_id}`}
           isFirstStep={activeStepIndex === 1}
           titleYText={titleYText}
           subtitleYText={subtitleYText}
@@ -979,7 +979,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               open={layer1Open}
               onClose={() => { setLayer1Open(false); setLayer2Open(false); }}
               onDelete={handleDeleteLayer}
-              actionUrl={`/stories/${story.slug}`}
+              actionUrl={`/stories/${story.story_id}`}
               canDelete={
                 canDeleteLayer1 &&
                 (useYjs && activeLayer1._yMap
@@ -1017,7 +1017,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               open={layer2Open}
               onClose={() => setLayer2Open(false)}
               onDelete={handleDeleteLayer}
-              actionUrl={`/stories/${story.slug}`}
+              actionUrl={`/stories/${story.story_id}`}
               canDelete={
                 useYjs && activeLayer2._yMap
                   ? ops!.canDelete(activeLayer2._yMap)

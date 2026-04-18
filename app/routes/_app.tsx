@@ -25,7 +25,7 @@ import { getUserRole, getPresenceColor } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
-import { computeFullSyncDiff } from "~/lib/sync.server";
+import { computeFullSyncDiff, hasDivergentChanges } from "~/lib/sync.server";
 import { checkTelarVersion } from "~/lib/upgrade.server";
 import { Header } from "~/components/layout/Header";
 import { CollaborationProvider, useCollaborationContext, useSetAwarenessLocation } from "~/hooks/use-collaboration";
@@ -194,16 +194,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
             const diff = await computeFullSyncDiff(
               project.id, token, owner, repo, db, null,
             );
-            const hasRealChanges =
-              (diff.objects?.new?.length ?? 0) > 0 ||
-              (diff.objects?.changed?.length ?? 0) > 0 ||
-              (diff.objects?.removed?.length ?? 0) > 0 ||
-              (diff.stories?.new?.length ?? 0) > 0 ||
-              (diff.stories?.changed?.length ?? 0) > 0 ||
-              (diff.stories?.removed?.length ?? 0) > 0 ||
-              (diff.config?.changed?.length ?? 0) > 0;
-
-            if (hasRealChanges) {
+            if (hasDivergentChanges(diff)) {
               headDiverged = true;
             } else {
               // No meaningful changes — update head_sha silently
@@ -484,8 +475,8 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           isConvenor={userRole === "convenor"}
-          members={sidebarMembers}
-          seats={sidebarSeats}
+          members={sidebarMembers ?? []}
+          seats={sidebarSeats ?? { used: 0, limit: 5 }}
           triggerRef={usersIconRef}
         />
         <CollaborationOverlay userRole={userRole} />

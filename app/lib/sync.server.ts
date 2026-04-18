@@ -588,6 +588,30 @@ export interface FullSyncDiff {
   hasConflicts: boolean;
 }
 
+/**
+ * True when a FullSyncDiff contains any compositor-relevant divergence: objects,
+ * stories, config fields, glossary entries, or a repo↔D1 version change. Used by
+ * the _app loader to decide whether to raise the sync-divergence banner when
+ * repo HEAD differs from the last known SHA — without this, a churn-only commit
+ * would nag the user unnecessarily.
+ */
+export function hasDivergentChanges(diff: FullSyncDiff): boolean {
+  return (
+    diff.objects.newObjects.length > 0 ||
+    diff.objects.changedObjects.length > 0 ||
+    diff.objects.missingObjects.length > 0 ||
+    diff.objects.unregisteredFiles.length > 0 ||
+    diff.stories.newStories.length > 0 ||
+    diff.stories.changedStories.length > 0 ||
+    diff.stories.missingStories.length > 0 ||
+    diff.config.changedFields.length > 0 ||
+    diff.config.versionChange !== null ||
+    diff.glossary.added.length > 0 ||
+    diff.glossary.changed.length > 0 ||
+    diff.glossary.removed.length > 0
+  );
+}
+
 export interface FullSyncChanges {
   objects: SyncChanges;
   /** story_ids where user accepted repo changes (update D1 to repo values) */
