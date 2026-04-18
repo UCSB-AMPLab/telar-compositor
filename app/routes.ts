@@ -3,6 +3,7 @@ import { type RouteConfig, index, layout, route } from "@react-router/dev/routes
 export default [
   // API routes
   route("/api/locale", "routes/api.locale.tsx"),
+  route("/api/collab-gate", "routes/api.collab-gate.tsx"),
 
   // Unauthenticated routes
   layout("routes/_auth.tsx", [

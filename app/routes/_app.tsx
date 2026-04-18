@@ -430,10 +430,15 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     setSidebarOpen((v) => !v);
   }
 
-  function handleGateSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleGateSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const input = gateInputRef.current;
-    if (input && input.value.trim().toLowerCase() === "potato") {
+    if (!input) return;
+    const formData = new FormData();
+    formData.set("password", input.value.trim());
+    const res = await fetch("/api/collab-gate", { method: "POST", body: formData });
+    const data = (await res.json()) as { ok: boolean };
+    if (data.ok) {
       sessionStorage.setItem("collab_unlocked", "1");
       setCollabUnlocked(true);
       setGatePromptOpen(false);
