@@ -1,7 +1,14 @@
 {
   "title": "Configuración del sitio",
   "save": "Guardar cambios",
+  "saving": "Guardando…",
   "saved": "Cambios guardados",
+  "unsaved_changes": {
+    "title": "Cambios sin guardar",
+    "message": "Tienes cambios sin guardar. ¿Estás seguro de que quieres salir de esta página?",
+    "stay": "Quedarme",
+    "leave": "Salir"
+  },
   "sections": {
     "site_settings": {
       "title": "Configuración general",
@@ -54,5 +61,17 @@
       "disabled_notice": "Google Sheets ha sido desactivado. El compositor gestiona tu contenido directamente.",
       "enabled_notice": "Google Sheets es la fuente de contenido actual. Los cambios hechos aquí se sobrescribirán en la próxima sincronización."
     }
-  }
+  },
+  "navigation_menu_title": "Menú de navegación",
+  "navigation_menu_description_before": "Para editar la barra de navegación del sitio, ve a la ",
+  "navigation_menu_pages_link": "pestaña de Páginas",
+  "navigation_menu_description_after": " en el Compositor o edita /_data/navigation.yml en tu repositorio.",
+  "navigation_section": "Navegación",
+  "add_external_link": "+ Agregar enlace externo",
+  "external_link_url_placeholder": "https://...",
+  "delete_nav_item_confirm": "¿Eliminar este enlace de la navegación?",
+  "drag_reorder_aria": "Arrastrar para reordenar",
+  "show_nav_aria": "Mostrar en la navegación",
+  "hide_nav_aria": "Ocultar de la navegación",
+  "remove_link_aria": "Eliminar enlace"
 }

@@ -1,13 +1,13 @@
 {
-  "title": "Dashboard",
-  "page_title": "Dashboard",
+  "title": "Start",
+  "page_title": "Start",
   "empty_state": "No projects yet",
   "empty_state_description": "Connect a GitHub repository to get started.",
   "connect_repo": "Connect a Repository",
   "new_story": "New Story",
   "repo_explanation": "This repository has been imported into the compositor. If you would like to select a different one, click the 'Connect Repo' button above.",
-  "intro_paragraph_1": "Telar is a digital storytelling platform that combines high-resolution images with step-by-step narratives. Your site is built from two main types of content: <strong>objects</strong> — images served via the <iiifLink>International Image Interoperability Framework (IIIF)</iiifLink>, which can be self-hosted or sourced from museums and libraries worldwide — and <strong>stories</strong> — step-by-step narratives that guide visitors through those objects, combining close-up views with questions, answers, and expandable layers of deeper information.",
-  "intro_paragraph_2": "Use the compositor to manage your objects and stories, configure your site, and publish changes. You can learn more about how Telar works at <telarLink>telar.ucsb.edu</telarLink> and in the <docsLink>documentation</docsLink>.",
+  "intro_paragraph_1": "Telar is a digital storytelling platform that combines high-resolution images, audio, and video with step-by-step narratives. Your site is built around two primary content types: <strong>objects</strong> — images served via the <iiifLink>International Image Interoperability Framework (IIIF)</iiifLink>, plus audio and video, self-hosted or sourced from museums and libraries worldwide — and <strong>stories</strong> — step-by-step narratives that guide visitors through those objects, combining close-up views with questions, answers, and expandable layers of deeper information. These are complemented by <strong>glossary entries</strong> (key terms your stories can link to for quick definitions) and <strong>pages</strong> (supporting content such as an About or Credits section).",
+  "intro_paragraph_2": "Use the compositor to manage all of this content, configure your site, and publish changes. You can learn more about how Telar works at <telarLink>telar.org</telarLink> and in the <docsLink>documentation</docsLink>.",
   "workflow": {
     "title": "How the compositor works",
     "step1_title": "1. Configure",
@@ -16,8 +16,10 @@
     "step2_desc": "Manage the images your stories reference — add metadata, check IIIF tiles, and import external sources.",
     "step3_title": "3. Stories",
     "step3_desc": "Create and edit step-by-step narratives with close-up views, annotations, and expandable information layers.",
-    "step4_title": "4. Publish",
-    "step4_desc": "Review your changes and publish to your GitHub Pages site in a single commit."
+    "step4_title": "4. Additional elements",
+    "step4_desc": "Add a glossary of terms, customise your homepage, and create supporting pages to enrich your stories.",
+    "step5_title": "5. Publish",
+    "step5_desc": "Review your changes and publish to your GitHub Pages site in a single commit."
   },
   "save_publish": "Your edits are saved automatically as you work. Nothing goes live on your published site until you choose to publish. If someone edits the repository directly on GitHub, you'll need to re-sync before publishing.",
   "preview_intro": "Below is a preview of your site's landing page. Each section shows your actual content as visitors will see it — click any section to edit it directly. You can also use the tabs above to manage your stories, objects, and site configuration in more detail.",
@@ -48,7 +50,8 @@
     "never_hint": "Edit here, then publish to your site when ready",
     "manage_repos": "Switch, add, or remove GitHub Repos",
     "current": "current",
-    "view_site": "View site"
+    "view_site": "View site",
+    "view_on_github": "View on GitHub"
   },
   "story_card": {
     "steps_one": "{{count}} step",
@@ -86,8 +89,8 @@
     "stories": "You have {{count}} stories. Performance may be affected with more than 10.",
     "projects": "You have {{count}} projects. The limit is 5 connected repositories."
   },
-  "story_editor_placeholder": "Story Editor — Coming in Phase 5",
-  "back_to_dashboard": "Back to Dashboard",
+  "story_editor_placeholder": "Story Editor — Coming soon",
+  "back_to_dashboard": "Back to Start",
   "sync_modal": {
     "title": "Repository has changed",
     "confirm_body": "Your GitHub repository has been updated since the last time it was synced with the compositor. Review what changed to make sure our working copy stays in sync with the published site.",

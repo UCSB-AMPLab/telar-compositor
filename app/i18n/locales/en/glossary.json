@@ -1,0 +1,23 @@
+{
+  "glossary_title": "Glossary",
+  "intro": "The glossary is a collection of terms and definitions that your readers may encounter in the stories. Glossary terms can be linked from any text field using [[term_id]] syntax.",
+  "intro_instructions": "Use the sidebar to browse and add terms. Click a term to edit its title and definition.",
+  "learn_more": "Learn more about the glossary",
+  "new_term_button": "+ New Term",
+  "delete_term": "Delete term",
+  "delete_term_confirm": "Delete this term? Any [[term_id]] links in your content will become broken links.",
+  "delete_confirm_button": "Delete term",
+  "delete_cancel": "Keep term",
+  "empty_state": "Define the terms in your stories",
+  "empty_state_description": "Add terms your readers will encounter in the stories. Use [[term_id]] links in any text field to connect them.",
+  "no_term_selected": "Select a term to edit",
+  "title_label": "Term title",
+  "term_id_section_label": "Term ID",
+  "definition_label": "Definition",
+  "term_id_label": "Term ID (used in glossary links)",
+  "untitled_term": "Untitled term",
+  "insert_link_button": "Insert glossary link",
+  "custom_text_toggle": "Custom link text",
+  "search_terms_placeholder": "Search terms...",
+  "custom_display_placeholder": "Custom display text"
+}

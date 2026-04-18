@@ -25,5 +25,6 @@
     "confirm": "Eliminar"
   },
   "draft_toggle": "Borrador",
-  "private_toggle": "Privada"
+  "private_toggle": "Privada",
+  "drag_reorder_aria": "Arrastrar para reordenar"
 }

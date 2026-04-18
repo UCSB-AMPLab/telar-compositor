@@ -22,5 +22,11 @@ export const namespaces = [
   "config",
   "stories",
   "upgrade",
+  "homepage",
+  "pages",
+  "glossary",
+  "team",
+  "collaboration",
+  "structural",
 ] as const;
 

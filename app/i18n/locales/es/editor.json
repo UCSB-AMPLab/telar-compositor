@@ -37,7 +37,7 @@
   "word_count_one": "{{count}} palabra",
   "word_count_other": "{{count}} palabras",
   "breadcrumb": {
-    "dashboard": "Panel",
+    "dashboard": "Inicio",
     "untitled": "Historia sin título"
   },
   "title_card": {
@@ -59,7 +59,12 @@
     "click_to_edit": "Clic para editar",
     "title_card_label": "Portada",
     "add_step": "+ Agregar paso",
-    "step_label": "Paso {{number}}"
+    "step_label": "Paso {{number}}",
+    "no_question_yet": "Sin pregunta aún",
+    "delete_aria": "Eliminar paso",
+    "save_label_aria": "Guardar etiqueta",
+    "cancel_editing_aria": "Cancelar edición",
+    "edit_button_label_aria": "Editar etiqueta del botón"
   },
   "viewer": {
     "capture_position": "Capturar posición",
@@ -70,7 +75,10 @@
     "title_card_indicator": "Portada",
     "change_object": "Cambiar objeto",
     "no_object": "No se ha seleccionado un objeto — haz clic aquí para elegir uno",
-    "set_object_in_step1": "El objeto del visor en el Paso 0 es el mismo del Paso 1. Configúralo allí."
+    "set_object_in_step1": "El objeto del visor en el Paso 0 es el mismo del Paso 1. Configúralo allí.",
+    "zoom_in_aria": "Acercar",
+    "zoom_out_aria": "Alejar",
+    "reset_aria": "Restablecer vista"
   },
   "object_picker": {
     "title": "Elegir objeto",
@@ -97,7 +105,7 @@
     "clip_start_label": "Inicio del clip",
     "clip_end_label": "Fin del clip",
     "loop": "Repetir",
-    "loop_on": "si",
+    "loop_on": "sí",
     "loop_off": "no",
     "media_type_image": "Imagen",
     "media_type_video": "Video",
@@ -109,7 +117,13 @@
     "audio_pause": "Pausar",
     "clip_capture_fallback": "Ingresar tiempo manualmente (MM:SS)",
     "no_clip_set": "Sin clip definido",
-    "clip_capture_error": "No se pudo leer el tiempo de reproduccion. Ingresa el tiempo manualmente (MM:SS)."
+    "clip_capture_error": "No se pudo leer el tiempo de reproducción. Ingresa el tiempo manualmente (MM:SS).",
+    "google_drive_no_clip": "Google Drive no admite recorte de clips",
+    "play_aria": "Reproducir",
+    "pause_aria": "Pausar",
+    "restart_clip_aria": "Volver al inicio del clip",
+    "mute_aria": "Silenciar",
+    "unmute_aria": "Activar sonido"
   },
   "layer": {
     "add_panel": "+ Agregar panel",
@@ -132,6 +146,10 @@
     "panel_title": "Título del panel",
     "button_label": "Etiqueta del botón",
     "edit_button_label": "Editar contenido del botón",
-    "content_label": "Contenido"
+    "content_label": "Contenido",
+    "close_panel_aria": "Cerrar panel",
+    "panel_title_aria": "Título del panel",
+    "save_label_aria": "Guardar etiqueta",
+    "edit_button_label_aria": "Editar etiqueta del botón"
   }
 }

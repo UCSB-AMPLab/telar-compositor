@@ -25,5 +25,6 @@
     "confirm": "Delete"
   },
   "draft_toggle": "Draft",
-  "private_toggle": "Private"
+  "private_toggle": "Private",
+  "drag_reorder_aria": "Drag to reorder"
 }

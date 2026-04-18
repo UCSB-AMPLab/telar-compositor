@@ -1,0 +1,23 @@
+{
+  "glossary_title": "Glosario",
+  "intro": "El glosario es una colección de términos y definiciones que tus lectores pueden encontrar en las historias. Los términos del glosario se pueden enlazar desde cualquier campo de texto usando la sintaxis [[term_id]].",
+  "intro_instructions": "Usa la barra lateral para explorar y agregar términos. Haz clic en un término para editar su título y definición.",
+  "learn_more": "Más información sobre el glosario",
+  "new_term_button": "+ Nuevo término",
+  "delete_term": "Eliminar término",
+  "delete_term_confirm": "¿Eliminar este término? Los enlaces [[term_id]] en tu contenido quedarán rotos.",
+  "delete_confirm_button": "Eliminar término",
+  "delete_cancel": "Conservar término",
+  "empty_state": "Define los términos de tus historias",
+  "empty_state_description": "Agrega términos que tus lectores encontrarán en las historias. Usa enlaces [[term_id]] en cualquier campo de texto para conectarlos.",
+  "no_term_selected": "Selecciona un término para editar",
+  "title_label": "Título del término",
+  "term_id_section_label": "ID del término",
+  "definition_label": "Definición",
+  "term_id_label": "ID del término (usado en enlaces del glosario)",
+  "untitled_term": "Término sin título",
+  "insert_link_button": "Insertar enlace de glosario",
+  "custom_text_toggle": "Texto personalizado del enlace",
+  "search_terms_placeholder": "Buscar términos...",
+  "custom_display_placeholder": "Texto personalizado"
+}

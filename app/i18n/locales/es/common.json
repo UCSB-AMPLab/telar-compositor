@@ -14,11 +14,15 @@
   },
   "nav": {
     "dashboard": "Inicio",
+    "config": "Configuración",
+    "homepage": "Inicio del sitio",
     "objects": "Objetos",
     "stories": "Historias",
+    "pages": "Páginas",
     "glossary": "Glosario",
-    "config": "Configuración",
-    "publish": "Publicar"
+    "publish": "Publicar",
+    "site": "Sitio",
+    "site_aria": "Abrir el sitio publicado en una pestaña nueva"
   },
   "sync_banner": {
     "message": "Tu repositorio en GitHub ha cambiado desde la última sincronización. Revisa los cambios para mantener actualizada la copia de trabajo del compositor.",
@@ -27,5 +31,6 @@
   "dialog": {
     "dismiss_cancel": "Volver",
     "dismiss_confirm": "Cerrar"
-  }
+  },
+  "user_menu_aria": "Menú de usuario"
 }

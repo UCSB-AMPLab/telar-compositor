@@ -43,7 +43,7 @@
     "blockers_heading": "Must fix before publishing",
     "warnings_heading": "Suggestions",
     "stale_head": "Your site's repository has changed since you last synced. Please re-sync before publishing.",
-    "stale_head_action": "Go to Dashboard to re-sync",
+    "stale_head_action": "Go to Start to re-sync",
     "object_no_title": "Object \"{{id}}\" has no title",
     "step_no_position": "Step {{number}} has no viewer position — the published site will show 100% of the image."
   },
@@ -86,7 +86,7 @@
     "success_description": "Your changes have been published. If you don't see everything, do a full refresh (Cmd-Shift-R on Mac, Ctrl-Shift-R on Windows) a few times.",
     "view_site": "View your site",
     "view_commit": "See full commit on GitHub",
-    "back_to_dashboard": "Back to Dashboard",
+    "back_to_dashboard": "Back to Start",
     "failed_heading": "Build failed",
     "failed_description": "Something went wrong while building your site.",
     "view_actions": "View build details",
