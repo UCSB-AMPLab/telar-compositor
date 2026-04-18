@@ -63,7 +63,7 @@ import {
 import type { BuildPhaseStatus, WorkflowRun } from "~/lib/commit.server";
 import { githubHeaders } from "~/lib/github.server";
 import { getInstallationToken } from "~/lib/github-app.server";
-import { serializeObjectsCsv } from "~/lib/csv-export.server";
+import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import { ObjectRow } from "~/components/features/objects/ObjectRow";
 import { ObjectsEmptyState } from "~/components/features/objects/ObjectsEmptyState";
 import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
@@ -593,7 +593,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         })),
       ].sort((a, b) => a.object_id.localeCompare(b.object_id));
 
-      const uploadCsvContent = serializeObjectsCsv(uploadAllObjectsForCsv, uploadExistingCsv ?? undefined);
+      const uploadCsvContent = serializeObjectsCsv(uploadAllObjectsForCsv.map(dbObjectToCsvRow), uploadExistingCsv ?? undefined);
 
       // 9. Commit all images + CSV atomically in a single Git commit
       const commitLabel = uploadPendingObjects.map((p) => p.object_id).join(", ");
@@ -739,7 +739,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // Read existing CSV to preserve comment/instruction rows
       const existingCsv = await getFileContent(token, owner, repo, "telar-content/spreadsheets/objects.csv");
-      const csvContent = serializeObjectsCsv(allObjectsForCsv, existingCsv ?? undefined);
+      const csvContent = serializeObjectsCsv(allObjectsForCsv.map(dbObjectToCsvRow), existingCsv ?? undefined);
 
       const files: Array<{ path: string; content: string }> = [
         { path: "telar-content/spreadsheets/objects.csv", content: csvContent },

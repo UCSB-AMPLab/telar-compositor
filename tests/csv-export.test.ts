@@ -4,6 +4,8 @@ import {
   serializeObjectsCsv,
   extractCommentRows,
   OBJECTS_CSV_COLUMNS,
+  dbObjectToCsvRow,
+  type ObjectDbRow,
 } from "~/lib/csv-export.server";
 import { mapObjectsCsv } from "~/lib/import.server";
 
@@ -283,5 +285,88 @@ describe("serializeObjectsCsv", () => {
     const dataRow = parsed.data.find((r) => r.object_id === "obj-tricky");
     expect(dataRow).toBeDefined();
     expect(dataRow!.description).toBe('Contains, a comma and\na newline');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dbObjectToCsvRow — D1 → CSV row mapping used by every serializeObjectsCsv
+// call site (publish + objects routes). Regression for passing raw D1 rows
+// straight to serializeObjectsCsv, which would silently drop object_type.
+// ---------------------------------------------------------------------------
+
+describe("dbObjectToCsvRow", () => {
+  function makeDbRow(overrides: Partial<ObjectDbRow> = {}): ObjectDbRow {
+    return {
+      object_id: "obj-001",
+      title: "My Object",
+      featured: false,
+      creator: null,
+      description: null,
+      source_url: null,
+      period: null,
+      year: null,
+      object_type: null,
+      subjects: null,
+      source: null,
+      credit: null,
+      thumbnail: null,
+      alt_text: null,
+      ...overrides,
+    };
+  }
+
+  it("maps D1 object_type to CSV medium_genre (v1.0.0 rename)", () => {
+    const row = dbObjectToCsvRow(makeDbRow({ object_type: "Photograph" }));
+    expect(row.medium_genre).toBe("Photograph");
+    expect((row as unknown as Record<string, unknown>).object_type).toBeUndefined();
+  });
+
+  it("maps null object_type to null medium_genre", () => {
+    const row = dbObjectToCsvRow(makeDbRow({ object_type: null }));
+    expect(row.medium_genre).toBeNull();
+  });
+
+  it("passes through all other fields verbatim", () => {
+    const row = dbObjectToCsvRow(
+      makeDbRow({
+        object_id: "obj-042",
+        title: "Titulo",
+        featured: true,
+        creator: "Autor",
+        description: "Desc",
+        source_url: "https://ex.com",
+        period: "XIX",
+        year: "1850",
+        subjects: "a, b",
+        source: "s",
+        credit: "c",
+        thumbnail: "t.jpg",
+        alt_text: "alt",
+      }),
+    );
+    expect(row).toMatchObject({
+      object_id: "obj-042",
+      title: "Titulo",
+      featured: true,
+      creator: "Autor",
+      description: "Desc",
+      source_url: "https://ex.com",
+      period: "XIX",
+      year: "1850",
+      subjects: "a, b",
+      source: "s",
+      credit: "c",
+      thumbnail: "t.jpg",
+      alt_text: "alt",
+    });
+  });
+
+  it("round-trips through serializeObjectsCsv so medium_genre lands in the CSV", () => {
+    const csv = serializeObjectsCsv(
+      [makeDbRow({ object_id: "obj-x", object_type: "Audio" })].map(dbObjectToCsvRow),
+    );
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data.find((r) => r.object_id === "obj-x");
+    expect(dataRow?.medium_genre).toBe("Audio");
   });
 });

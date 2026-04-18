@@ -253,6 +253,38 @@ describe("commitFilesToRepo", () => {
     expect(fileChanges.deletions).toBeUndefined();
   });
 
+  it("Test 9c: object-delete pattern — CSV update + orphan image deletions in one commit, no body", async () => {
+    // Regression for the _app.objects.$objectId.tsx delete intent, which used
+    // to pass the deletions array into the messageBody slot (slot 7), leaving
+    // fileChanges.deletions empty. Orphan image files stayed in the repo.
+    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
+
+    const orphanFiles = [
+      "telar-content/objects/obj-001/obj-001.jpg",
+      "telar-content/objects/obj-001/iiif/info.json",
+      "telar-content/objects/obj-001/iiif/full/full/0/default.jpg",
+    ];
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "telar-content/spreadsheets/objects.csv", content: "object_id\nobj-002" }],
+      "Remove obj-001 via Telar Compositor",
+      undefined,         // messageBody — MUST be undefined or a string, never string[]
+      orphanFiles,       // deletions — slot 8
+    );
+
+    const secondBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+    );
+    const input = secondBody.variables.input;
+    // Orphan image paths travel through as deletions, not as a mis-placed body
+    expect(input.fileChanges.deletions).toHaveLength(3);
+    expect(input.fileChanges.deletions.map((d: { path: string }) => d.path)).toEqual(orphanFiles);
+    // No stray body — message is just headline
+    expect(input.message.body).toBeUndefined();
+    expect(input.message.headline).toBe("Remove obj-001 via Telar Compositor");
+  });
+
   it("Test 9: supports multiple files in a single commit (2 files in additions array)", async () => {
     globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
 

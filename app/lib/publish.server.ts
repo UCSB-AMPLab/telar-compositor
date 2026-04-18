@@ -17,7 +17,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { getFileContent } from "~/lib/github.server";
 import { slugify } from "~/lib/slugify";
-import { extractCommentRows, serializeObjectsCsv } from "~/lib/csv-export.server";
+import { extractCommentRows, serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import type { CommitFile } from "~/lib/commit.server";
 import {
   projects,
@@ -730,22 +730,7 @@ export async function buildPublishFileSet(
 
   // --- objects.csv ---
   const objectsCsvContent = serializeObjectsCsv(
-    objectRows.map((o) => ({
-      object_id: o.object_id,
-      title: o.title ?? null,
-      featured: o.featured ?? null,
-      creator: o.creator ?? null,
-      description: o.description ?? null,
-      source_url: o.source_url ?? null,
-      period: o.period ?? null,
-      year: o.year ?? null,
-      medium_genre: o.object_type ?? null, // D1 stores as object_type; CSV exports as medium_genre (v1.0.0)
-      subjects: o.subjects ?? null,
-      source: o.source ?? null,
-      credit: o.credit ?? null,
-      thumbnail: o.thumbnail ?? null,
-      alt_text: o.alt_text ?? null,
-    })),
+    objectRows.map(dbObjectToCsvRow),
     existingObjectsCsv ?? undefined,
   );
   files.push({

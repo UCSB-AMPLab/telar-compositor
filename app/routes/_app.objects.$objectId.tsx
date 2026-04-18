@@ -34,7 +34,7 @@ import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server"
 import { commitFilesToRepo, StaleHeadError, dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
 import type { WorkflowRun } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
-import { serializeObjectsCsv } from "~/lib/csv-export.server";
+import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import { asc } from "drizzle-orm";
 
 export const handle = { i18n: ["common", "objects"] };
@@ -296,7 +296,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         const existingCsv = await getFileContent(
           token, owner, repo, "telar-content/spreadsheets/objects.csv"
         );
-        const updatedCsv = serializeObjectsCsv(filteredObjects, existingCsv ?? undefined);
+        const updatedCsv = serializeObjectsCsv(filteredObjects.map(dbObjectToCsvRow), existingCsv ?? undefined);
 
         // Commit: updated CSV + deletions
         try {
@@ -304,6 +304,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
             token, owner, repo, "main",
             [{ path: "telar-content/spreadsheets/objects.csv", content: updatedCsv }],
             `Remove ${targetObject.object_id} via Telar Compositor`,
+            undefined,
             deletions.length > 0 ? deletions : undefined,
           );
 
