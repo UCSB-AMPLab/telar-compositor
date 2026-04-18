@@ -7,7 +7,7 @@
     {
       "binding": "DB",
       "database_name": "telar-compositor-db",
-      "database_id": "local-development",
+      "database_id": "bcd4a579-f19c-41e8-a3c2-5a314d57a358",
       "migrations_dir": "app/db/migrations"
     }
   ],
@@ -27,7 +27,7 @@
     "run_worker_first": ["/ws/"]
   },
   "vars": {
-    "ENVIRONMENT": "development",
+    "ENVIRONMENT": "production",
     "GITHUB_APP_SLUG": "telar-compositor"
   }
 }
