@@ -9,6 +9,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { StoryRow } from "~/components/features/stories/StoryRow";
 
 interface SortableStoryRowStory {
@@ -22,6 +23,14 @@ interface SortableStoryRowStory {
   updated_at: string | null;
 }
 
+/**
+ * The dnd-kit sortable identifier for a row. Stories created in the Y.Array
+ * but not yet backfilled by snapshotToD1 carry `_id: null` — use the
+ * client-generated `_temp_id` (UUID string) as the sortable id until the
+ * canonical D1 id is assigned. For D1-mode rows, this is just `story.id`.
+ */
+type SortableId = string | number;
+
 interface SortableStoryRowProps {
   story: SortableStoryRowStory;
   index: number;
@@ -29,6 +38,18 @@ interface SortableStoryRowProps {
   onDelete: (story: SortableStoryRowStory) => void;
   onToggleDraft: (story: SortableStoryRowStory) => void;
   onTogglePrivate: (story: SortableStoryRowStory) => void;
+  /** Stable identifier for dnd-kit — defaults to story.id, override when
+   *  items may not yet have a D1 id (Yjs _temp_id fallback). */
+  sortableId?: SortableId;
+  /** When false, the delete button is disabled and shows deleteTooltip. */
+  canDelete?: boolean;
+  deleteTooltip?: string;
+  /** When true, trash click calls onDelete directly (parent handles confirm). */
+  skipInternalConfirm?: boolean;
+  /** Optional extra className applied to the inner row (e.g. animations). */
+  rowClassName?: string;
+  /** Optional inline style on the row (e.g. --structural-highlight-color). */
+  rowStyle?: React.CSSProperties;
 }
 
 export function SortableStoryRow({
@@ -38,7 +59,14 @@ export function SortableStoryRow({
   onDelete,
   onToggleDraft,
   onTogglePrivate,
+  sortableId,
+  canDelete,
+  deleteTooltip,
+  skipInternalConfirm,
+  rowClassName,
+  rowStyle,
 }: SortableStoryRowProps) {
+  const { t } = useTranslation("stories");
   const {
     attributes,
     listeners,
@@ -47,7 +75,7 @@ export function SortableStoryRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: story.id });
+  } = useSortable({ id: sortableId ?? story.id });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -60,7 +88,7 @@ export function SortableStoryRow({
       ref={setActivatorNodeRef}
       {...listeners}
       type="button"
-      aria-label="Drag to reorder"
+      aria-label={t("drag_reorder_aria")}
       className="cursor-grab touch-none text-gray-300 hover:text-gray-400 transition-colors"
     >
       <GripVertical className="w-4 h-4" />
@@ -77,6 +105,11 @@ export function SortableStoryRow({
         onToggleDraft={onToggleDraft}
         onTogglePrivate={onTogglePrivate}
         dragHandle={dragHandle}
+        canDelete={canDelete}
+        deleteTooltip={deleteTooltip}
+        skipInternalConfirm={skipInternalConfirm}
+        rowClassName={rowClassName}
+        rowStyle={rowStyle}
       />
     </div>
   );

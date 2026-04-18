@@ -36,6 +36,16 @@ interface StoryRowProps {
   isDragOverlay?: boolean;
   /** Drag handle slot — injected by SortableStoryRow. */
   dragHandle?: React.ReactNode;
+  /** When false, the delete button is disabled and shows a tooltip. */
+  canDelete?: boolean;
+  /** Tooltip shown when the delete button is disabled. */
+  deleteTooltip?: string;
+  /** When true, trash click calls onDelete directly (parent handles confirm). */
+  skipInternalConfirm?: boolean;
+  /** Optional extra className applied to the row wrapper (e.g. animations). */
+  rowClassName?: string;
+  /** Optional inline style applied to the row wrapper (e.g. presence highlight). */
+  rowStyle?: React.CSSProperties;
 }
 
 export function StoryRow({
@@ -47,6 +57,11 @@ export function StoryRow({
   onTogglePrivate,
   isDragOverlay = false,
   dragHandle,
+  canDelete = true,
+  deleteTooltip,
+  skipInternalConfirm = false,
+  rowClassName,
+  rowStyle,
 }: StoryRowProps) {
   const { t } = useTranslation("stories");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -56,7 +71,8 @@ export function StoryRow({
   return (
     <>
       <div
-        className={`flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white hover:bg-gray-50 transition-colors ${isDraft ? "opacity-75" : ""} ${isDragOverlay ? "shadow-lg rounded-lg" : ""}`}
+        style={rowStyle}
+        className={`flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white hover:bg-gray-50 transition-colors ${isDraft ? "opacity-75" : ""} ${isDragOverlay ? "shadow-lg rounded-lg" : ""} ${rowClassName ?? ""}`}
       >
         {/* Drag handle slot */}
         {dragHandle && (
@@ -135,17 +151,27 @@ export function StoryRow({
           <button
             type="button"
             aria-label={t("delete_story.title")}
-            onClick={() => setDeleteOpen(true)}
+            onClick={() => {
+              if (!canDelete) return;
+              if (skipInternalConfirm) onDelete(story);
+              else setDeleteOpen(true);
+            }}
             onPointerDown={(e) => e.stopPropagation()}
-            className="shrink-0 text-gray-300 hover:text-red-400 transition-colors"
+            disabled={!canDelete}
+            title={!canDelete ? deleteTooltip : undefined}
+            className={`shrink-0 transition-colors ${
+              canDelete
+                ? "text-gray-300 hover:text-red-400 cursor-pointer"
+                : "text-gray-200 cursor-not-allowed"
+            }`}
           >
             <Trash2 className="w-4 h-4" />
           </button>
         )}
       </div>
 
-      {/* Delete confirmation dialog */}
-      {!isDragOverlay && (
+      {/* Internal delete confirmation dialog — bypassed when skipInternalConfirm is true */}
+      {!isDragOverlay && !skipInternalConfirm && (
         <DeleteStoryDialog
           open={deleteOpen}
           onClose={() => setDeleteOpen(false)}
