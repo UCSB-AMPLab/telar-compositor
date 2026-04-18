@@ -258,7 +258,7 @@ export function IiifViewer({
           type="button"
           onClick={() => viewerRef.current?.viewport.zoomBy(1.5)}
           className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
-          aria-label="Zoom in"
+          aria-label={t("viewer_zoom_in_aria")}
         >
           <ZoomIn className="w-4 h-4" />
         </button>
@@ -266,7 +266,7 @@ export function IiifViewer({
           type="button"
           onClick={() => viewerRef.current?.viewport.zoomBy(0.67)}
           className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
-          aria-label="Zoom out"
+          aria-label={t("viewer_zoom_out_aria")}
         >
           <ZoomOut className="w-4 h-4" />
         </button>
@@ -274,7 +274,7 @@ export function IiifViewer({
           type="button"
           onClick={() => viewerRef.current?.viewport.goHome()}
           className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
-          aria-label="Reset view"
+          aria-label={t("viewer_reset_aria")}
         >
           <Maximize className="w-4 h-4" />
         </button>
@@ -288,7 +288,7 @@ export function IiifViewer({
             onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage === 0}
             className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors disabled:opacity-40 disabled:cursor-default"
-            aria-label="Previous page"
+            aria-label={t("viewer_prev_page_aria")}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -300,7 +300,7 @@ export function IiifViewer({
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage === pages.length - 1}
             className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors disabled:opacity-40 disabled:cursor-default"
-            aria-label="Next page"
+            aria-label={t("viewer_next_page_aria")}
           >
             <ChevronRight className="w-4 h-4" />
           </button>

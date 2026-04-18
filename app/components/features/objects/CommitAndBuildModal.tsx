@@ -66,6 +66,12 @@ interface Props {
   skipCommit?: boolean;
   dispatchRunId?: number | null;
   dispatchHtmlUrl?: string | null;
+  /**
+   * Called after insert-pending-objects succeeds with the D1 ids and
+   * object_ids. Used by plan 27-06 so the objects page can mirror
+   * self-hosted uploads into the Yjs Y.Array.
+   */
+  onInserted?: (inserted: Array<{ id: number; object_id: string }>) => void;
 }
 
 type CommitData =
@@ -141,7 +147,7 @@ function connectorClass(phase: BuildPhaseStatus): string {
 // Component
 // ---------------------------------------------------------------------------
 
-export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingObjects, onClose, onBuildSuccess, onBuildFailed, skipCommit, dispatchRunId, dispatchHtmlUrl }: Props) {
+export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingObjects, onClose, onBuildSuccess, onBuildFailed, skipCommit, dispatchRunId, dispatchHtmlUrl, onInserted }: Props) {
   const { t } = useTranslation("objects");
   const commitFetcher = useFetcher();
   const pollFetcher = useFetcher();
@@ -244,10 +250,17 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
 
   // Process insert result
   useEffect(() => {
-    const data = insertFetcher.data as { ok: boolean; intent: string } | null | undefined;
+    const data = insertFetcher.data as
+      | { ok: boolean; intent: string; inserted?: Array<{ id: number; object_id: string }> }
+      | null
+      | undefined;
     if (data?.ok && data.intent === "insert-pending-objects") {
+      if (onInserted && data.inserted && data.inserted.length > 0) {
+        onInserted(data.inserted);
+      }
       setStep("success");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insertFetcher.data]);
 
   // When skipCommit and dispatch failed (step jumps directly to inserting on open),
