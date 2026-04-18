@@ -1,20 +1,23 @@
 /**
  * ToggleField — toggle switch with label and optional help text.
  *
- * Uses a hidden input for form submission and local state for the visual toggle.
+ * Uses local state for the visual toggle. Optional onChange callback
+ * fires immediately on toggle for auto-save integration.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface ToggleFieldProps {
   label: string;
   name: string;
   checked: boolean;
   help?: string;
+  onChange?: (name: string, value: boolean) => void;
 }
 
-export function ToggleField({ label, name, checked: initialChecked, help }: ToggleFieldProps) {
+export function ToggleField({ label, name, checked: initialChecked, help, onChange }: ToggleFieldProps) {
   const [checked, setChecked] = useState(initialChecked);
+  useEffect(() => { setChecked(initialChecked); }, [initialChecked]);
 
   return (
     <div className="mb-4">
@@ -24,7 +27,11 @@ export function ToggleField({ label, name, checked: initialChecked, help }: Togg
           type="button"
           role="switch"
           aria-checked={checked}
-          onClick={() => setChecked((v) => !v)}
+          onClick={() => {
+            const next = !checked;
+            setChecked(next);
+            onChange?.(name, next);
+          }}
           className={`relative w-10 h-6 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-periwinkle focus:ring-offset-1 ${
             checked ? "bg-periwinkle" : "bg-gray-200"
           }`}
@@ -37,7 +44,6 @@ export function ToggleField({ label, name, checked: initialChecked, help }: Togg
         </button>
       </div>
       {help && <p className="text-xs text-gray-400 mt-1">{help}</p>}
-      {/* Hidden input for form submission */}
       <input type="hidden" name={name} value={checked ? "true" : "false"} />
     </div>
   );

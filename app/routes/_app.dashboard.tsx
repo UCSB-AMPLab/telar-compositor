@@ -1,55 +1,40 @@
 /**
- * Dashboard — pedagogical landing page with site preview sections and inline editing.
+ * Dashboard — project management hub with team management and shared project support.
  *
- * Loader: fetches active project's stories, config, landing data, and objects.
- * Action: handles reorder, switch-project, autosave-landing, autosave-config.
- * Component: explanatory content, workflow steps, four inline-editable site preview
- *   sections (Site Description, Welcome Message, Stories, Objects).
+ * Loader: fetches owned + shared projects (via getUserProjects), active project's
+ *   team members, pending invites, and project config. Preview sections are on the
+ *   Homepage tab (_app.homepage.tsx).
+ * Action: handles switch-project, reorder, autosave-config, sync intents, and
+ *   team management intents (generate-invite, search-users, send-invite, remove-member).
+ * Component: project status bar, workflow steps, team panel.
  */
 
-import { asc, count, desc, eq, and, gt, inArray } from "drizzle-orm";
+import { asc, count, desc, eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
 import { Trans, useTranslation } from "react-i18next";
 import { Link, redirect, useFetcher, useLoaderData, useNavigate, useRouteLoaderData, useSearchParams } from "react-router";
 import React, { useState, useEffect } from "react";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragOverlay,
-} from "@dnd-kit/core";
-import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  rectSortingStrategy,
-  arrayMove,
-} from "@dnd-kit/sortable";
 import type { Route } from "./+types/_app.dashboard";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, stories, steps, project_config, objects, project_landing } from "~/db/schema";
+import { projects, stories, steps, project_config, project_members, project_invites, users } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
+import { getUserProjects, requireOwner } from "~/lib/membership.server";
 import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
 import type { FullSyncChanges } from "~/lib/sync.server";
 import { ProjectStatusBar } from "~/components/features/dashboard/ProjectStatusBar";
-import { StoryCard } from "~/components/features/dashboard/StoryCard";
-import { SortableStoryCard } from "~/components/features/dashboard/SortableStoryCard";
-// ConnectRepoDropdown merged into ProjectStatusBar
+import {
+  SyncConfirmModal,
+  SYNC_DIFF_FETCHER_KEY,
+} from "~/components/features/dashboard/SyncConfirmModal";
+import { RoleBadge } from "~/components/features/dashboard/RoleBadge";
+import { useVersionChangeToast } from "~/hooks/use-version-change-toast";
+import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
 import { EmptyState } from "~/components/features/dashboard/EmptyState";
-import { DashboardPreviewSection } from "~/components/features/dashboard/DashboardPreviewSection";
-import { SyncConfirmModal } from "~/components/features/dashboard/SyncConfirmModal";
-import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
-import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
-import { Settings, Image, BookOpen, Upload } from "lucide-react";
-import { InlineTextField } from "~/components/ui/InlineTextField";
-import { InlineTextArea } from "~/components/ui/InlineTextArea";
+import { Settings, Image, BookOpen, Sparkles, Upload } from "lucide-react";
 
-export const handle = { i18n: ["common", "dashboard", "editor"] };
+export const handle = { i18n: ["common", "dashboard", "team", "upgrade"] };
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);
@@ -58,18 +43,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  // Fetch all user projects
-  const allProjects = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.user_id, user.id));
+  // Fetch all projects the user has access to (owned + shared)
+  const allProjects = await getUserProjects(db, user.id);
 
   if (allProjects.length === 0) {
     throw redirect("/onboarding");
   }
 
-  // If any project has incomplete onboarding, redirect to finish it
-  const incompleteProject = allProjects.find((p) => !p.onboarding_completed);
+  // If any owned project has incomplete onboarding, redirect
+  const incompleteProject = allProjects.find(
+    (p) => p.userRole === "convenor" && !p.onboarding_completed
+  );
   if (incompleteProject) {
     throw redirect("/onboarding");
   }
@@ -79,29 +63,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  // Validate that the session project belongs to the user; fall back to first
+  // Validate that the session project is in the accessible list; fall back to first
   const activeProject =
     allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
 
-  const projectStories = await db
-    .select()
-    .from(stories)
-    .where(eq(stories.project_id, activeProject.id))
-    .orderBy(asc(stories.order));
+  const userRole = activeProject.userRole;
 
-  // Step counts per story
-  // Count only content steps (step_number > 0), excluding title card rows
-  const stepCountRows = await db
-    .select({ story_id: steps.story_id, count: count() })
-    .from(steps)
-    .where(gt(steps.step_number, 0))
-    .groupBy(steps.story_id);
-
-  const storyStepCounts: Record<number, number> = {};
-  for (const row of stepCountRows) {
-    storyStepCounts[row.story_id] = row.count;
-  }
-
+  // Fetch project config
   const configRows = await db
     .select()
     .from(project_config)
@@ -109,19 +77,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .limit(1);
   const config = configRows[0] ?? null;
 
-  // Fetch landing page data from project_landing
-  const landingRows = await db
-    .select()
-    .from(project_landing)
-    .where(eq(project_landing.project_id, activeProject.id))
-    .limit(1);
-  const landing = landingRows[0] ?? null;
-
-  // Fetch objects for the Objects preview section
-  const projectObjects = await db
-    .select()
-    .from(objects)
-    .where(eq(objects.project_id, activeProject.id));
+  // Fetch unpublished count for status bar
+  const projectStories = await db
+    .select({ id: stories.id, updated_at: stories.updated_at })
+    .from(stories)
+    .where(eq(stories.project_id, activeProject.id));
 
   let unpublishedCount = 0;
   if (activeProject.last_published_at) {
@@ -130,73 +90,89 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ).length;
   }
 
-  // Build siteBaseUrl for IIIF thumbnail resolution (same pattern as objects page)
-  const siteBaseUrl = config?.url
-    ? `${config.url}${config.baseurl ?? ""}`
-    : null;
+  // Fetch team members for the active project (joined with users table for profile data)
+  const memberRows = await db
+    .select({
+      userId: project_members.user_id,
+      role: project_members.role,
+      githubId: users.github_id,
+      username: users.github_login,
+      contributions: project_members.contributions,
+      presenceColor: project_members.presence_color,
+    })
+    .from(project_members)
+    .innerJoin(users, eq(project_members.user_id, users.id))
+    .where(eq(project_members.project_id, activeProject.id));
 
-  // Resolve cover thumbnails for stories from their lowest content step's object
-  const storyIds = projectStories.map((s) => s.id);
-  // Get the first content step (lowest step_number > 0) per story via subquery
-  const allContentSteps = storyIds.length > 0
-    ? await db
-        .select({ story_id: steps.story_id, step_number: steps.step_number, object_id: steps.object_id })
-        .from(steps)
-        .where(and(inArray(steps.story_id, storyIds), gt(steps.step_number, 0)))
-        .orderBy(asc(steps.step_number))
-    : [];
-  // Keep only the first step per story
-  const coverSteps: { story_id: number; object_id: string | null }[] = [];
-  const seenStories = new Set<number>();
-  for (const row of allContentSteps) {
-    if (!seenStories.has(row.story_id)) {
-      seenStories.add(row.story_id);
-      coverSteps.push({ story_id: row.story_id, object_id: row.object_id });
-    }
+  const members = memberRows.map((m) => ({
+    userId: m.userId,
+    githubId: m.githubId,
+    username: m.username,
+    role: m.role as "convenor" | "collaborator",
+    contributions: m.contributions ? JSON.parse(m.contributions) : null,
+    presenceColor: m.presenceColor ?? null,
+  }));
+
+  // Fetch pending invites (not yet used and not expired)
+  const now = new Date().toISOString();
+  const pendingInviteRows = await db
+    .select({
+      id: project_invites.id,
+      createdBy: project_invites.created_by,
+      expiresAt: project_invites.expires_at,
+    })
+    .from(project_invites)
+    .where(
+      and(
+        eq(project_invites.project_id, activeProject.id),
+        isNull(project_invites.used_by),
+        sql`${project_invites.expires_at} > ${now}`
+      )
+    );
+
+  const pendingInvites = pendingInviteRows.map((inv) => ({
+    id: inv.id,
+    createdBy: inv.createdBy,
+  }));
+
+  // Fetch owner login for shared projects display
+  const ownerIds = [...new Set(allProjects.map((p) => p.user_id))];
+  const ownerRows = await db
+    .select({ id: users.id, github_login: users.github_login })
+    .from(users)
+    .where(inArray(users.id, ownerIds));
+  const ownerLoginMap: Record<number, string> = {};
+  for (const row of ownerRows) {
+    ownerLoginMap[row.id] = row.github_login;
   }
 
-  // Map story_id -> object_id from step 1
-  const storyCoverObjectIds: Record<number, string> = {};
-  for (const row of coverSteps) {
-    if (row.object_id) storyCoverObjectIds[row.story_id] = row.object_id;
+  // Fetch member counts per project
+  const memberCountRows = await db
+    .select({ project_id: project_members.project_id, count: count() })
+    .from(project_members)
+    .where(inArray(project_members.project_id, allProjects.map((p) => p.id)))
+    .groupBy(project_members.project_id);
+  const memberCountMap: Record<number, number> = {};
+  for (const row of memberCountRows) {
+    memberCountMap[row.project_id] = row.count;
   }
 
-  // Look up thumbnail + image_available for those objects
-  const coverObjectIdValues = Object.values(storyCoverObjectIds);
-  const coverObjects = coverObjectIdValues.length > 0
-    ? await db
-        .select({ object_id: objects.object_id, thumbnail: objects.thumbnail, image_available: objects.image_available })
-        .from(objects)
-        .where(and(eq(objects.project_id, activeProject.id), inArray(objects.object_id, coverObjectIdValues)))
-    : [];
-
-  const objectThumbnailMap: Record<string, { thumbnail: string | null; image_available: boolean | null }> = {};
-  for (const obj of coverObjects) {
-    objectThumbnailMap[obj.object_id] = { thumbnail: obj.thumbnail, image_available: obj.image_available };
-  }
-
-  // Build story -> cover info map
-  const storyCoverMap: Record<number, { thumbnail: string | null; objectId: string; imageAvailable: boolean | null }> = {};
-  for (const [storyIdStr, objectId] of Object.entries(storyCoverObjectIds)) {
-    const storyId = Number(storyIdStr);
-    const objInfo = objectThumbnailMap[objectId];
-    if (objInfo) {
-      storyCoverMap[storyId] = { thumbnail: objInfo.thumbnail, objectId, imageAvailable: objInfo.image_available };
-    }
-  }
+  const allProjectsEnriched = allProjects.map((p) => ({
+    ...p,
+    ownerLogin: ownerLoginMap[p.user_id] ?? null,
+    memberCount: memberCountMap[p.id] ?? 1,
+  }));
 
   return {
     hasProject: true as const,
     project: activeProject,
-    allProjects,
-    stories: projectStories,
-    storyStepCounts,
-    storyCoverMap,
+    allProjects: allProjectsEnriched,
+    userRole,
+    currentUserId: user.id,
+    members,
+    pendingInvites,
     config,
-    landing,
-    objects: projectObjects,
     unpublishedCount,
-    siteBaseUrl,
   };
 }
 
@@ -209,13 +185,23 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
+  // Helper to get active project from session
+  async function getActiveProject() {
+    const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+    const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+    const sessionActiveId = session.get("activeProjectId") as number | undefined;
+    const allProjects = await getUserProjects(db, user.id);
+    if (allProjects.length === 0) return null;
+    return allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+  }
+
   switch (intent) {
     case "reorder": {
       const orderJson = formData.get("order") as string;
       const projectId = Number(formData.get("projectId"));
       const order: number[] = JSON.parse(orderJson);
 
-      // Security: verify all story IDs belong to the user's project
+      // Security: verify all story IDs belong to an accessible project
       const projectStories = await db
         .select({ id: stories.id })
         .from(stories)
@@ -246,14 +232,10 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "switch-project": {
       const projectId = Number(formData.get("projectId"));
 
-      // Verify ownership
-      const projectRows = await db
-        .select()
-        .from(projects)
-        .where(and(eq(projects.id, projectId), eq(projects.user_id, user.id)))
-        .limit(1);
-
-      if (projectRows.length === 0) {
+      // Verify the user has access to this project
+      const allProjects = await getUserProjects(db, user.id);
+      const accessible = allProjects.find((p) => p.id === projectId);
+      if (!accessible) {
         throw new Response("Not found", { status: 404 });
       }
 
@@ -265,34 +247,6 @@ export async function action({ request, context }: Route.ActionArgs) {
       return redirect("/dashboard", {
         headers: { "Set-Cookie": cookie },
       });
-    }
-
-    case "autosave-landing": {
-      const field = formData.get("field") as string;
-      const value = formData.get("value") as string;
-      const projectId = Number(formData.get("entityId") ?? formData.get("projectId"));
-      const allowedFields = ["stories_heading", "stories_intro", "objects_heading", "objects_intro", "welcome_body"];
-      if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
-
-      // Upsert: update if row exists, insert if not
-      const existing = await db
-        .select({ id: project_landing.id })
-        .from(project_landing)
-        .where(eq(project_landing.project_id, projectId))
-        .limit(1);
-
-      if (existing.length > 0) {
-        await db
-          .update(project_landing)
-          .set({ [field]: value, updated_at: new Date().toISOString() })
-          .where(eq(project_landing.project_id, projectId));
-      } else {
-        await db
-          .insert(project_landing)
-          .values({ project_id: projectId, [field]: value });
-      }
-
-      return { ok: true, intent: "autosave-landing" };
     }
 
     case "autosave-config": {
@@ -310,29 +264,163 @@ export async function action({ request, context }: Route.ActionArgs) {
       return { ok: true, intent: "autosave-config" };
     }
 
-    case "compute-full-sync-diff": {
-      // Get active project
-      const sessionStorage2 = createSessionStorage(env.SESSION_SECRET);
-      const session2 = await sessionStorage2.getSession(request.headers.get("Cookie"));
-      const sessionActiveId2 = session2.get("activeProjectId") as number | undefined;
+    case "generate-invite": {
+      const activeProject = await getActiveProject();
+      if (!activeProject) return { ok: false, intent: "generate-invite", error: "no_project" };
 
-      const allProjects2 = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
+      await requireOwner(db, activeProject.id, user.id);
 
-      if (allProjects2.length === 0) {
-        return { ok: false, intent: "compute-full-sync-diff", error: "no_project" };
+      const token = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+      await db.insert(project_invites).values({
+        project_id: activeProject.id,
+        token,
+        created_by: user.id,
+        expires_at: expiresAt,
+      });
+
+      const origin = new URL(request.url).origin;
+      const inviteUrl = `${origin}/invite/${token}`;
+      return { ok: true, intent: "generate-invite", inviteUrl };
+    }
+
+    case "search-users": {
+      const query = (formData.get("query") as string) ?? "";
+      if (!query || query.length < 2) {
+        return { ok: true, intent: "search-users", users: [] };
       }
 
-      const activeProject2 =
-        allProjects2.find((p) => p.id === Number(sessionActiveId2)) ?? allProjects2[0];
+      const activeProject = await getActiveProject();
+      if (!activeProject) return { ok: false, intent: "search-users", error: "no_project" };
 
       try {
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-        const [owner, repo] = activeProject2.github_repo_full_name.split("/");
+        const { searchGitHubUsers } = await import("~/lib/github.server");
+        const results = await searchGitHubUsers(token, query);
+        return { ok: true, intent: "search-users", users: results };
+      } catch {
+        return { ok: true, intent: "search-users", users: [] };
+      }
+    }
+
+    case "send-invite": {
+      const username = formData.get("username") as string;
+      if (!username) return { ok: false, intent: "send-invite", error: "missing_username" };
+
+      const activeProject = await getActiveProject();
+      if (!activeProject) return { ok: false, intent: "send-invite", error: "no_project" };
+
+      await requireOwner(db, activeProject.id, user.id);
+
+      // Look up user by github_login
+      const targetUserRows = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.github_login, username))
+        .limit(1);
+
+      if (targetUserRows.length > 0) {
+        const targetUserId = targetUserRows[0].id;
+        // Add as member directly (onConflictDoNothing handles already-a-member)
+        await db
+          .insert(project_members)
+          .values({
+            project_id: activeProject.id,
+            user_id: targetUserId,
+            role: "collaborator",
+            joined_at: new Date().toISOString(),
+          })
+          .onConflictDoNothing();
+        return { ok: true, intent: "send-invite", added: true };
+      } else {
+        // Create token-based invite
+        const token = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+        await db.insert(project_invites).values({
+          project_id: activeProject.id,
+          token,
+          created_by: user.id,
+          expires_at: expiresAt,
+        });
+        const origin = new URL(request.url).origin;
+        const inviteUrl = `${origin}/invite/${token}`;
+        return { ok: true, intent: "send-invite", added: false, inviteUrl };
+      }
+    }
+
+    case "cancel-invite": {
+      const inviteId = Number(formData.get("inviteId"));
+      if (!inviteId) return { ok: false, intent: "cancel-invite", error: "missing_invite_id" };
+
+      const activeProject = await getActiveProject();
+      if (!activeProject) return { ok: false, intent: "cancel-invite", error: "no_project" };
+
+      await requireOwner(db, activeProject.id, user.id);
+
+      // Verify invite belongs to this project
+      await db
+        .delete(project_invites)
+        .where(
+          and(
+            eq(project_invites.id, inviteId),
+            eq(project_invites.project_id, activeProject.id),
+          )
+        );
+
+      return { ok: true, intent: "cancel-invite" };
+    }
+
+    case "remove-member": {
+      const targetUserId = Number(formData.get("userId"));
+      if (!targetUserId) return { ok: false, intent: "remove-member", error: "missing_user_id" };
+
+      const activeProject = await getActiveProject();
+      if (!activeProject) return { ok: false, intent: "remove-member", error: "no_project" };
+
+      await requireOwner(db, activeProject.id, user.id);
+
+      // Cannot remove the owner
+      const targetRole = await db
+        .select({ role: project_members.role })
+        .from(project_members)
+        .where(
+          and(
+            eq(project_members.project_id, activeProject.id),
+            eq(project_members.user_id, targetUserId)
+          )
+        )
+        .limit(1);
+
+      if (targetRole[0]?.role === "convenor") {
+        return { ok: false, intent: "remove-member", error: "cannot_remove_owner" };
+      }
+
+      await db
+        .delete(project_members)
+        .where(
+          and(
+            eq(project_members.project_id, activeProject.id),
+            eq(project_members.user_id, targetUserId)
+          )
+        );
+
+      return { ok: true, intent: "remove-member" };
+    }
+
+    case "compute-full-sync-diff": {
+      const activeProject = await getActiveProject();
+      if (!activeProject) {
+        return { ok: false, intent: "compute-full-sync-diff", error: "no_project" };
+      }
+
+      // Guard: only owners may sync
+      await requireOwner(db, activeProject.id, user.id);
+
+      try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
         const diff = await computeFullSyncDiff(
-          activeProject2.id,
+          activeProject.id,
           token,
           owner,
           repo,
@@ -340,16 +428,14 @@ export async function action({ request, context }: Route.ActionArgs) {
           null,
         );
 
-        // If no meaningful changes found, update head_sha so the sync banner
-        // doesn't keep showing for inconsequential repo changes.
         const hasChanges =
-          (diff.objects?.new?.length ?? 0) > 0 ||
-          (diff.objects?.changed?.length ?? 0) > 0 ||
-          (diff.objects?.removed?.length ?? 0) > 0 ||
-          (diff.stories?.new?.length ?? 0) > 0 ||
-          (diff.stories?.changed?.length ?? 0) > 0 ||
-          (diff.stories?.removed?.length ?? 0) > 0 ||
-          (diff.config?.changed?.length ?? 0) > 0;
+          (diff.objects?.newObjects?.length ?? 0) > 0 ||
+          (diff.objects?.changedObjects?.length ?? 0) > 0 ||
+          (diff.objects?.missingObjects?.length ?? 0) > 0 ||
+          (diff.stories?.newStories?.length ?? 0) > 0 ||
+          (diff.stories?.changedStories?.length ?? 0) > 0 ||
+          (diff.stories?.missingStories?.length ?? 0) > 0 ||
+          (diff.config?.changedFields?.length ?? 0) > 0;
 
         if (!hasChanges) {
           const currentHead = await getRepoHead(token, owner, repo);
@@ -357,7 +443,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             await db
               .update(projects)
               .set({ head_sha: currentHead, updated_at: new Date().toISOString() })
-              .where(eq(projects.id, activeProject2.id));
+              .where(eq(projects.id, activeProject.id));
           }
         }
 
@@ -373,22 +459,13 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "apply-full-sync": {
-      // Get active project
-      const sessionStorage3 = createSessionStorage(env.SESSION_SECRET);
-      const session3 = await sessionStorage3.getSession(request.headers.get("Cookie"));
-      const sessionActiveId3 = session3.get("activeProjectId") as number | undefined;
-
-      const allProjects3 = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects3.length === 0) {
+      const activeProject = await getActiveProject();
+      if (!activeProject) {
         return { ok: false, intent: "apply-full-sync", error: "no_project" };
       }
 
-      const activeProject3 =
-        allProjects3.find((p) => p.id === Number(sessionActiveId3)) ?? allProjects3[0];
+      // Guard: only owners may apply sync
+      await requireOwner(db, activeProject.id, user.id);
 
       const changesJson = formData.get("changes") as string;
       if (!changesJson) {
@@ -404,9 +481,9 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       try {
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-        const [owner, repo] = activeProject3.github_repo_full_name.split("/");
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
         const result = await applyFullSyncChanges(
-          activeProject3.id,
+          activeProject.id,
           changes,
           token,
           owner,
@@ -428,80 +505,26 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 }
 
-interface StoryItem {
-  id: number;
-  story_id: string;
-  title: string | null;
-  subtitle: string | null;
-  byline: string | null;
-  private: boolean | null;
-  draft: boolean | null;
-  updated_at: string | null;
-}
-
-interface ObjectItem {
-  id: number;
-  object_id: string;
-  title: string | null;
-  creator: string | null;
-  description: string | null;
-  source: string | null;
-  thumbnail: string | null;
-  image_available: boolean | null;
-  featured: boolean | null;
-}
-
-/** Per-object card that resolves IIIF thumbnails (same pattern as ObjectPickerDialog). */
-function DashboardObjectCard({ obj, siteBaseUrl }: { obj: ObjectItem; siteBaseUrl: string | null }) {
-  // For self-hosted objects without a stored thumbnail, resolve from info.json
-  const needsResolve = !obj.thumbnail && obj.image_available && siteBaseUrl;
-  const infoJsonUrl = needsResolve
-    ? `${siteBaseUrl}/iiif/objects/${obj.object_id}/info.json`
-    : null;
-  const resolvedUrl = useIiifThumbnail(infoJsonUrl, 300);
-
-  // Upscale stored IIIF thumbnails that are too small
-  const storedThumb = obj.thumbnail
-    ? obj.thumbnail.replace(/\/full\/[^/]+\//, "/full/!400,400/")
-    : null;
-  const thumbSrc = storedThumb || resolvedUrl;
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
-      <div className="aspect-square bg-cream-dark">
-        {thumbSrc ? (
-          <img
-            src={thumbSrc}
-            alt={obj.title ?? obj.object_id}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs font-body">
-            No image
-          </div>
-        )}
-      </div>
-      <div className="p-2">
-        <p className="font-body text-xs text-charcoal leading-snug">
-          {obj.title ?? obj.object_id}
-        </p>
-        {obj.creator && (
-          <p className="font-body text-[10px] text-gray-500 mt-0.5">{obj.creator}</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Strip HTML tags from a string for plain-text display. */
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, "");
-}
-
 export default function DashboardPage({ loaderData }: Route.ComponentProps) {
-  const { t } = useTranslation("dashboard");
-  const navigate = useNavigate();
+  const { t, i18n } = useTranslation("dashboard");
+  const { t: tTeam } = useTranslation("team");
+  const docsUrl = i18n.language === "es" ? "https://telar.org/guia" : "https://telar.org/docs";
   const fetcher = useFetcher();
+
+  // Surface external version drift as a toast. The
+  // compute-full-sync-diff submission happens inside SyncConfirmModal via
+  // useFetcher({ key: SYNC_DIFF_FETCHER_KEY }); we subscribe to the same
+  // fetcher here so the toast fires once at the dashboard level and stays
+  // visible after the modal closes. The hook calls showToast with "info"
+  // for direction="ahead" (externalUpgradeToast — D1 was silently healed
+  // by applyFullSyncChanges) and "warning" for
+  // direction="behind" (externalDowngradeToast — user must verify per
+  // When there is no versionChange the hook is a no-op.
+  const syncDiffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
+  const syncDiffData = syncDiffFetcher.data as
+    | { ok?: boolean; diff?: { config?: { versionChange?: unknown } } }
+    | undefined;
+  useVersionChangeToast(syncDiffData as Parameters<typeof useVersionChangeToast>[0]);
 
   // Get headDiverged from parent app layout loader
   const appLoaderData = useRouteLoaderData("routes/_app") as { headDiverged?: boolean } | undefined;
@@ -525,67 +548,13 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
   const {
     project,
     allProjects,
-    stories: loaderStories,
-    storyStepCounts,
-    storyCoverMap,
-    unpublishedCount,
+    userRole,
+    currentUserId,
+    members,
+    pendingInvites,
     config,
-    landing,
-    objects: projectObjects,
-    siteBaseUrl,
+    unpublishedCount,
   } = loaderData;
-
-  // DnD order state (optimistic)
-  const [items, setItems] = useState<number[]>(
-    (loaderStories as StoryItem[]).map((s: StoryItem) => s.id)
-  );
-  const [activeId, setActiveId] = useState<number | null>(null);
-
-  // Reset order when loader data changes (handles reorder failure rollback)
-  useEffect(() => {
-    setItems((loaderStories as StoryItem[]).map((s: StoryItem) => s.id));
-  }, [loaderStories]);
-
-  // Build a map for quick story lookup by id
-  const storyMap: Record<number, StoryItem> = {};
-  for (const s of loaderStories) {
-    storyMap[s.id] = s;
-  }
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  function handleDragStart(event: DragStartEvent) {
-    setActiveId(event.active.id as number);
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    setActiveId(null);
-
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = items.indexOf(active.id as number);
-    const newIndex = items.indexOf(over.id as number);
-    const newOrder = arrayMove(items, oldIndex, newIndex);
-
-    // Optimistic update
-    setItems(newOrder);
-
-    // Persist to server
-    fetcher.submit(
-      {
-        intent: "reorder",
-        order: JSON.stringify(newOrder),
-        projectId: String(project.id),
-      },
-      { method: "post" }
-    );
-  }
 
   function handleSwitchProject(projectId: number) {
     fetcher.submit(
@@ -597,22 +566,6 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
     );
   }
 
-  const activeStory = activeId ? storyMap[activeId] : null;
-
-  // Render stories in sorted order
-  const sortedStories = items
-    .map((id) => storyMap[id])
-    .filter(Boolean) as StoryItem[];
-
-  // Objects: featured first, then up to featured_count total
-  const featuredCount = config?.featured_count ?? 4;
-  const featuredObjects = (projectObjects as ObjectItem[]).filter((o) => o.featured);
-  const nonFeaturedObjects = (projectObjects as ObjectItem[]).filter((o) => !o.featured);
-  const displayObjects = [
-    ...featuredObjects,
-    ...nonFeaturedObjects,
-  ].slice(0, featuredCount);
-
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* H1 */}
@@ -620,7 +573,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
         {t("page_title")}
       </h1>
 
-      {/* Project status bar */}
+      {/* Project status bar — uses enriched allProjects with role/owner info */}
       <ProjectStatusBar
         repoName={project.github_repo_full_name}
         lastPublished={project.last_published_at ?? null}
@@ -640,6 +593,11 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
         unpublishedCount={unpublishedCount ?? 0}
         onClose={() => setSyncModalOpen(false)}
       />
+
+      {/* Collaborator sync restriction banner */}
+      {userRole === "collaborator" && (
+        <RestrictionBanner message={tTeam("restriction_sync")} />
+      )}
 
       {/* Repo explanation */}
       <p className="font-body text-sm text-gray-500">
@@ -672,7 +630,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
             components={{
               telarLink: (
                 <a
-                  href="https://telar.ucsb.edu"
+                  href="https://telar.org"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline"
@@ -680,7 +638,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
               ),
               docsLink: (
                 <a
-                  href="https://telar.ucsb.edu/docs"
+                  href={docsUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline"
@@ -696,12 +654,13 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
         <h2 className="font-heading font-semibold text-base text-charcoal mb-3">
           {t("workflow.title")}
         </h2>
-        <div className="grid grid-cols-2 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] items-stretch gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr] items-stretch gap-3">
           {([
             { n: 1, icon: Settings, to: "/config" },
             { n: 2, icon: Image, to: "/objects" },
             { n: 3, icon: BookOpen, to: "/stories" },
-            { n: 4, icon: Upload, to: "/publish" },
+            { n: 4, icon: Sparkles, to: "/homepage" },
+            { n: 5, icon: Upload, to: "/publish" },
           ] as const).map(({ n, icon: Icon, to }, i) => (
             <React.Fragment key={n}>
               <Link
@@ -716,7 +675,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
                   {t(`workflow.step${n}_desc`)}
                 </p>
               </Link>
-              {i < 3 && (
+              {i < 4 && (
                 <span className="hidden lg:flex items-center text-charcoal text-lg font-bold select-none" aria-hidden="true">→</span>
               )}
             </React.Fragment>
@@ -729,179 +688,6 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
         {t("save_publish")}
       </p>
 
-      {/* Preview introduction */}
-      <p className="font-body text-sm text-charcoal leading-relaxed">
-        {t("preview_intro")}
-      </p>
-
-      {/* --- Site preview sections --- */}
-
-      {/* 1. Site Description */}
-      <DashboardPreviewSection
-        heading={t("preview.site_description_heading")}
-        explanation={t("preview.site_description_explanation")}
-      >
-        <div className="space-y-3">
-          <div>
-            <label className="block font-heading font-semibold text-xs text-gray-400 uppercase tracking-wider mb-1">
-              Title
-            </label>
-            <InlineTextField
-              initialValue={config?.title ?? ""}
-              fieldName="title"
-              entityId={project.id}
-              intent="autosave-config"
-              placeholder="Your site title"
-              className="font-bold text-xl"
-            />
-          </div>
-          <div>
-            <label className="block font-heading font-semibold text-xs text-gray-400 uppercase tracking-wider mb-1">
-              Description
-            </label>
-            <InlineTextArea
-              initialValue={stripHtml(config?.description ?? "")}
-              fieldName="description"
-              entityId={project.id}
-              intent="autosave-config"
-              placeholder="A brief description of your site"
-              className="text-sm text-gray-600"
-            />
-          </div>
-        </div>
-      </DashboardPreviewSection>
-
-      {/* 2. Welcome Message */}
-      <DashboardPreviewSection
-        heading={t("preview.welcome_heading")}
-        explanation={t("preview.welcome_explanation")}
-      >
-        <MarkdownEditor
-          key={`welcome-${project.id}`}
-          initialValue={landing?.welcome_body ?? ""}
-          fieldName="welcome_body"
-          projectId={project.id}
-          intent="autosave-landing"
-          objects={(projectObjects as ObjectItem[]).map((o) => ({
-            object_id: o.object_id,
-            title: o.title,
-            thumbnail: o.thumbnail,
-          }))}
-        />
-      </DashboardPreviewSection>
-
-      {/* 3. Stories */}
-      <DashboardPreviewSection
-        heading={t("preview.stories_heading")}
-        explanation={t("preview.stories_explanation")}
-      >
-        <div className="space-y-4">
-          {/* Editable stories section heading */}
-          <div>
-            <InlineTextField
-              initialValue={landing?.stories_heading ?? ""}
-              fieldName="stories_heading"
-              entityId={project.id}
-              intent="autosave-landing"
-              placeholder="Stories"
-              className="font-heading font-bold text-xl"
-            />
-          </div>
-
-          {/* Story grid with drag-to-reorder */}
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={items} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {sortedStories.map((story) => (
-                  <SortableStoryCard
-                    key={story.id}
-                    story={story}
-                    stepCount={storyStepCounts[story.id] ?? 0}
-                    lastSynced={project.last_synced_at ?? null}
-                    coverInfo={storyCoverMap[story.id]}
-                    siteBaseUrl={siteBaseUrl}
-                  />
-                ))}
-              </div>
-            </SortableContext>
-
-            <DragOverlay>
-              {activeStory && (
-                <StoryCard
-                  story={activeStory}
-                  stepCount={storyStepCounts[activeStory.id] ?? 0}
-                  lastSynced={project.last_synced_at ?? null}
-                  isDragOverlay
-                  coverInfo={storyCoverMap[activeStory.id]}
-                  siteBaseUrl={siteBaseUrl}
-                />
-              )}
-            </DragOverlay>
-          </DndContext>
-
-          {/* Manage + New Story actions */}
-          <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-            <Link
-              to="/stories"
-              className="font-body text-sm text-periwinkle hover:text-periwinkle-hover transition-colors"
-            >
-              {t("preview.stories_manage")}
-            </Link>
-            <button
-              type="button"
-              onClick={() => navigate("/stories?new=true")}
-              className="inline-flex items-center justify-center bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 transition-colors"
-            >
-              {t("new_story_button")}
-            </button>
-          </div>
-        </div>
-      </DashboardPreviewSection>
-
-      {/* 4. Objects */}
-      <DashboardPreviewSection
-        heading={t("preview.objects_heading")}
-        explanation={t("preview.objects_explanation")}
-      >
-        <div className="space-y-3">
-          {/* Editable objects section heading */}
-          <InlineTextField
-            initialValue={landing?.objects_heading ?? ""}
-            fieldName="objects_heading"
-            entityId={project.id}
-            intent="autosave-landing"
-            placeholder="Objects"
-            className="font-heading font-bold text-xl"
-          />
-          {/* Editable objects intro */}
-          <InlineTextArea
-            initialValue={landing?.objects_intro ?? ""}
-            fieldName="objects_intro"
-            entityId={project.id}
-            intent="autosave-landing"
-            placeholder="Browse the objects in this collection"
-            className="text-sm text-gray-600"
-          />
-
-          {/* Object cards grid — mirrors Telar landing page layout */}
-          {displayObjects.length > 0 ? (
-            <div className="grid grid-cols-3 md:grid-cols-5 gap-3 pt-2">
-              {displayObjects.map((obj) => (
-                <DashboardObjectCard key={obj.id} obj={obj} siteBaseUrl={siteBaseUrl} />
-              ))}
-            </div>
-          ) : (
-            <p className="font-body text-sm text-gray-400 italic pt-2">
-              No objects yet — use the Objects tab to add images to your collection.
-            </p>
-          )}
-        </div>
-      </DashboardPreviewSection>
     </div>
   );
 }

@@ -3,10 +3,9 @@
  *
  * Shows swatches for each available Telar theme (from the repo's
  * _data/themes/ folder). Selected theme gets a periwinkle ring.
- * Hidden input holds the value for form submission.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export interface ThemeOption {
   theme_id: string;
@@ -18,10 +17,12 @@ interface ThemeSwatchesProps {
   name: string;
   value: string;
   themes: ThemeOption[];
+  onChange?: (value: string) => void;
 }
 
-export function ThemeSwatches({ name, value: initialValue, themes }: ThemeSwatchesProps) {
+export function ThemeSwatches({ name, value: initialValue, themes, onChange }: ThemeSwatchesProps) {
   const [selected, setSelected] = useState(initialValue || themes[0]?.theme_id || "");
+  useEffect(() => { setSelected(initialValue || themes[0]?.theme_id || ""); }, [initialValue, themes]);
 
   if (themes.length === 0) {
     return (
@@ -39,7 +40,10 @@ export function ThemeSwatches({ name, value: initialValue, themes }: ThemeSwatch
           <button
             key={theme.theme_id}
             type="button"
-            onClick={() => setSelected(theme.theme_id)}
+            onClick={() => {
+              setSelected(theme.theme_id);
+              onChange?.(theme.theme_id);
+            }}
             className="flex flex-col items-center gap-1"
             aria-pressed={selected === theme.theme_id}
           >

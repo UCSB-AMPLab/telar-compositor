@@ -28,6 +28,17 @@ import { Dialog } from "~/components/ui/Dialog";
 import type { FullSyncDiff, FullSyncChanges } from "~/lib/sync.server";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared useFetcher key so the dashboard route can observe the same
+ * compute-full-sync-diff response and surface the version-change
+ * toast without duplicating the submission.
+ */
+export const SYNC_DIFF_FETCHER_KEY = "dashboard-sync-diff";
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -101,6 +112,11 @@ function buildAllOrNothingChanges(diff: FullSyncDiff): FullSyncChanges {
       accept: diff.config.changedFields.map((c) => c.key),
       reject: [],
     },
+    glossary: {
+      accept: diff.glossary.changed.map((t) => t.term_id),
+      reject: [],
+      insertNew: diff.glossary.added.map((t) => t.term_id),
+    },
   };
 }
 
@@ -150,7 +166,10 @@ function CategorySection({ label, items }: CategorySectionProps) {
 export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfirmModalProps) {
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
-  const diffFetcher = useFetcher();
+  // Stable fetcher key so the dashboard route can subscribe to the same
+  // sync-diff response via useFetcher({ key }) and surface the
+  // version-change toast (see _app.dashboard.tsx / useVersionChangeToast).
+  const diffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
   const applyFetcher = useFetcher();
 
   const [step, setStep] = useState<SyncStep>("confirm");
