@@ -25,6 +25,15 @@ interface SortableStepItemProps {
   onDelete: () => void;
   /** Pre-computed map from object_id to MediaType */
   objectsByType?: Record<string, MediaType>;
+  /** Stable dnd-kit identifier — defaults to step.id, override with Yjs _temp_id. */
+  sortableId?: string | number;
+  /** When false, the delete button is disabled and shows deleteTooltip. */
+  canDelete?: boolean;
+  deleteTooltip?: string;
+  /** Optional className applied to the row wrapper (animations). */
+  rowClassName?: string;
+  /** Optional inline style applied to the row wrapper (presence highlight). */
+  rowStyle?: React.CSSProperties;
 }
 
 function MediaTypeBadge({ mediaType }: { mediaType: MediaType }) {
@@ -64,7 +73,13 @@ export function SortableStepItem({
   onClick,
   onDelete,
   objectsByType,
+  sortableId,
+  canDelete = true,
+  deleteTooltip,
+  rowClassName,
+  rowStyle,
 }: SortableStepItemProps) {
+  const { t } = useTranslation("editor");
   const {
     attributes,
     listeners,
@@ -73,9 +88,10 @@ export function SortableStepItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: step.id });
+  } = useSortable({ id: sortableId ?? step.id });
 
   const style: React.CSSProperties = {
+    ...rowStyle,
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
@@ -91,7 +107,7 @@ export function SortableStepItem({
       {...attributes}
       className={`group flex items-center gap-1 px-2 py-2 cursor-pointer border-b border-gray-700 transition-colors ${
         isActive ? "bg-lavender/20" : "hover:bg-gray-700"
-      }`}
+      } ${rowClassName ?? ""}`}
       onClick={onClick}
     >
       {/* Drag handle — visible on hover */}
@@ -108,24 +124,31 @@ export function SortableStepItem({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-heading font-semibold text-cream">
-            Step {displayNumber}
+            {t("step.step_label", { number: displayNumber })}
           </span>
           {mediaType && <MediaTypeBadge mediaType={mediaType} />}
         </div>
         <div className="text-sm font-body text-gray-400 truncate">
-          {step.question || "No question yet"}
+          {step.question || t("step.no_question_yet")}
         </div>
       </div>
 
-      {/* Delete button — visible on hover */}
+      {/* Delete button — visible on hover; disabled with tooltip when canDelete is false */}
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
+          if (!canDelete) return;
           onDelete();
         }}
-        className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-red-400 shrink-0 transition-colors"
-        aria-label="Delete step"
+        disabled={!canDelete}
+        title={!canDelete ? deleteTooltip : undefined}
+        className={`opacity-0 group-hover:opacity-100 p-0.5 shrink-0 transition-colors ${
+          canDelete
+            ? "text-gray-500 hover:text-red-400"
+            : "text-gray-600 cursor-not-allowed"
+        }`}
+        aria-label={t("step.delete_aria")}
       >
         <Trash2 className="w-3.5 h-3.5" />
       </button>

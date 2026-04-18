@@ -41,6 +41,14 @@ interface LayerPanelProps {
   objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
   siteBaseUrl?: string | null;
   actionUrl: string;
+  /**
+   * When true, the trash button bypasses this component's internal Dialog and
+   * calls `onDelete` immediately — the parent renders a centralised
+   * DeleteConfirmationModal (content summary + red button).
+   */
+  skipInternalConfirm?: boolean;
+  /** Tooltip shown when canDelete is false. */
+  deleteTooltip?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +69,8 @@ export function LayerPanel({
   objects,
   siteBaseUrl,
   actionUrl,
+  skipInternalConfirm = false,
+  deleteTooltip,
 }: LayerPanelProps) {
   const { t } = useTranslation("editor");
   const titleFetcher = useFetcher();
@@ -146,6 +156,10 @@ export function LayerPanel({
 
   function handleDeleteClick() {
     if (!canDelete) return;
+    if (skipInternalConfirm) {
+      onDelete(layer.id);
+      return;
+    }
     setShowDeleteDialog(true);
   }
 
@@ -173,22 +187,30 @@ export function LayerPanel({
               <ArrowLeft className="w-3.5 h-3.5" />
               {t("layer.back")}
             </button>
-            {canDelete && (
-              <button
-                type="button"
-                onClick={handleDeleteClick}
-                className={`p-1.5 ${isLayer1 ? "text-charcoal/40 hover:text-red-600" : "text-cream/50 hover:text-red-300"} transition-colors rounded`}
-                aria-label={t("layer.delete_title")}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleDeleteClick}
+              disabled={!canDelete}
+              title={!canDelete ? deleteTooltip : undefined}
+              className={`p-1.5 transition-colors rounded ${
+                canDelete
+                  ? isLayer1
+                    ? "text-charcoal/40 hover:text-red-600"
+                    : "text-cream/50 hover:text-red-300"
+                  : isLayer1
+                  ? "text-charcoal/20 cursor-not-allowed"
+                  : "text-cream/25 cursor-not-allowed"
+              }`}
+              aria-label={t("layer.delete_title")}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
           <button
             type="button"
             onClick={onClose}
             className={`p-1.5 ${isLayer1 ? "text-charcoal/40 hover:text-charcoal" : "text-cream/50 hover:text-cream"} transition-colors rounded`}
-            aria-label="Close panel"
+            aria-label={t("layer.close_panel_aria")}
           >
             <X className="w-5 h-5" />
           </button>
@@ -204,7 +226,7 @@ export function LayerPanel({
             value={panelTitle}
             onChange={(e) => handleTitleChange(e.target.value)}
             className={`w-full px-4 py-2 font-heading font-semibold text-lg border rounded-lg focus:outline-none focus:ring-2 focus:ring-white/30 ${inputBg}`}
-            aria-label="Panel title"
+            aria-label={t("layer.panel_title_aria")}
           />
         </div>
 
@@ -227,6 +249,7 @@ export function LayerPanel({
               className="h-full flex flex-col"
               transparent
               darkTheme={!isLayer1}
+              enableGlossaryLinks
             />
           </div>
         </div>
@@ -257,10 +280,10 @@ export function LayerPanel({
                       }}
                       className="px-3 py-1.5 font-heading font-semibold text-sm text-charcoal bg-white border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-periwinkle/50 min-w-[8rem]"
                     />
-                    <button type="button" onClick={handleSaveL2Label} className="p-1 text-green-600 hover:text-green-700" aria-label="Save label">
+                    <button type="button" onClick={handleSaveL2Label} className="p-1 text-green-600 hover:text-green-700" aria-label={t("layer.save_label_aria")}>
                       <Check className="w-3.5 h-3.5" />
                     </button>
-                    <button type="button" onClick={() => { setL2Label(layer2ButtonLabel ?? t("layer.default_label_2")); setEditingL2Label(false); }} className="p-1 text-gray-400 hover:text-charcoal" aria-label="Cancel">
+                    <button type="button" onClick={() => { setL2Label(layer2ButtonLabel ?? t("layer.default_label_2")); setEditingL2Label(false); }} className="p-1 text-gray-400 hover:text-charcoal" aria-label={t("step.cancel_editing_aria")}>
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -269,7 +292,7 @@ export function LayerPanel({
                     type="button"
                     onClick={() => setEditingL2Label(true)}
                     className="group/pencil flex items-center gap-1 p-1.5 text-charcoal/30 hover:text-charcoal rounded hover:bg-charcoal/10 transition-all"
-                    aria-label="Edit button label"
+                    aria-label={t("layer.edit_button_label_aria")}
                   >
                     <Pencil className="w-3.5 h-3.5" />
                     <span className="font-body text-xs text-charcoal/40 opacity-0 group-hover/pencil:opacity-100 transition-opacity">

@@ -1,16 +1,19 @@
 /**
  * NarrativeColumn — switches between TitleCardView (step 0) and StepView (step 1-N).
  *
- * Receives story, active step, and layers from the editor route.
+ * Receives story, active step, layers, and Y.Text instances from the editor route.
  * Renders TitleCardView when activeStepIndex === 0, StepView otherwise.
- * Forwards layer props and callbacks to StepView.
+ * Forwards Y.Text props and callbacks to TitleCardView and StepView so both
+ * components write directly to the Yjs document instead of HTTP autosave.
  */
 
+import * as Y from "yjs";
 import { TitleCardView } from "~/components/features/editor/TitleCardView";
 import { StepView } from "~/components/features/editor/StepView";
 
 interface NarrativeColumnProps {
   activeStepIndex: number;
+  storyId: string;
   story: {
     id: number;
     title: string | null;
@@ -43,10 +46,19 @@ interface NarrativeColumnProps {
   onCreateLayer: (stepId: number, layerNumber: number, defaultLabel: string) => void;
   actionUrl: string;
   isFirstStep?: boolean;
+  // Y.Text props for TitleCardView
+  titleYText: Y.Text | null;
+  subtitleYText: Y.Text | null;
+  bylineYText: Y.Text | null;
+  // Y.Text props for StepView
+  questionYText: Y.Text | null;
+  answerYText: Y.Text | null;
+  altTextYText: Y.Text | null;
 }
 
 export function NarrativeColumn({
   activeStepIndex,
+  storyId,
   story,
   activeStep,
   layers,
@@ -54,9 +66,23 @@ export function NarrativeColumn({
   onCreateLayer,
   actionUrl,
   isFirstStep,
+  titleYText,
+  subtitleYText,
+  bylineYText,
+  questionYText,
+  answerYText,
+  altTextYText,
 }: NarrativeColumnProps) {
   if (activeStepIndex === 0) {
-    return <TitleCardView story={story} />;
+    return (
+      <TitleCardView
+        story={story}
+        storyId={storyId}
+        titleYText={titleYText}
+        subtitleYText={subtitleYText}
+        bylineYText={bylineYText}
+      />
+    );
   }
 
   if (!activeStep) return null;
@@ -69,6 +95,10 @@ export function NarrativeColumn({
       onCreateLayer={onCreateLayer}
       actionUrl={actionUrl}
       isFirstStep={isFirstStep}
+      questionYText={questionYText}
+      answerYText={answerYText}
+      altTextYText={altTextYText}
+      storySlug={storyId}
     />
   );
 }

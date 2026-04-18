@@ -247,7 +247,7 @@ export function AudioPlayer({
               type="button"
               onClick={handlePlayPause}
               className="flex items-center justify-center w-9 h-9 rounded-full bg-charcoal/10 hover:bg-charcoal/20 text-charcoal transition-colors"
-              aria-label={isPlaying ? "Pause" : "Play"}
+              aria-label={isPlaying ? t("media.pause_aria") : t("media.play_aria")}
             >
               {isPlaying ? (
                 <Pause className="w-4 h-4" />
@@ -259,7 +259,7 @@ export function AudioPlayer({
               type="button"
               onClick={handleRewind}
               className="flex items-center justify-center w-9 h-9 rounded-full bg-charcoal/10 hover:bg-charcoal/20 text-charcoal transition-colors"
-              aria-label="Restart from clip start"
+              aria-label={t("media.restart_clip_aria")}
             >
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -267,7 +267,7 @@ export function AudioPlayer({
               type="button"
               onClick={handleMuteToggle}
               className="flex items-center justify-center w-9 h-9 rounded-full bg-charcoal/10 hover:bg-charcoal/20 text-charcoal transition-colors"
-              aria-label={isMuted ? "Unmute" : "Mute"}
+              aria-label={isMuted ? t("media.unmute_aria") : t("media.mute_aria")}
             >
               {isMuted ? (
                 <VolumeX className="w-4 h-4" />

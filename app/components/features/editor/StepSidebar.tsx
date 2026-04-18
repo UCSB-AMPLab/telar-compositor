@@ -27,16 +27,43 @@ import {
 import { SortableStepItem } from "~/components/features/editor/SortableStepItem";
 import type { MediaType } from "~/lib/media-type";
 
+/**
+ * Step as rendered by the sidebar. Yjs-mode steps carry `_tempId`,
+ * `_createdBy`, and `_yMap` sentinels so the parent can compute
+ * dnd-kit ids and permission state. Pre-existing D1-mode callers
+ * pass only the numeric id. We intentionally accept `unknown` for
+ * `_yMap` to avoid importing Y here; the caller passes it back into
+ * its own ops.canDelete() closure.
+ */
+interface SidebarStep {
+  id: number;
+  step_number: number;
+  question: string | null;
+  object_id?: string | null;
+  _tempId?: string | null;
+  _createdBy?: number | null;
+  _yMap?: unknown;
+}
+
 interface StepSidebarProps {
-  steps: Array<{ id: number; step_number: number; question: string | null; object_id?: string | null }>;
+  steps: SidebarStep[];
   storyTitle: string | null;
   activeStepIndex: number;
   onStepSelect: (index: number) => void;
-  onReorderSteps: (orderedIds: number[]) => void;
+  /** Called with the dnd oldIndex/newIndex — positions in the steps array. */
+  onReorderSteps: (oldIndex: number, newIndex: number, orderedIds: Array<string | number>) => void;
   onAddStep: () => void;
-  onDeleteStep: (step: { id: number; step_number: number; question: string | null }) => void;
+  onDeleteStep: (step: { id: number; step_number: number; question: string | null; _tempId?: string | null }) => void;
   /** Pre-computed map from object_id to MediaType for media type badges */
   objectsByType?: Record<string, MediaType>;
+  /** Predicate evaluated per step — controls the delete button disabled state. */
+  canDeleteStep?: (step: SidebarStep) => boolean;
+  /** Tooltip shown when canDeleteStep returns false. */
+  deleteTooltip?: string;
+  /** Per-step highlight colour — keyed by sortableId. */
+  highlightColorByKey?: Record<string, string>;
+  /** Per-step fade-out flag — keyed by sortableId. */
+  fadingKeys?: Set<string>;
 }
 
 export function StepSidebar({
@@ -48,19 +75,29 @@ export function StepSidebar({
   onAddStep,
   onDeleteStep,
   objectsByType,
+  canDeleteStep,
+  deleteTooltip,
+  highlightColorByKey,
+  fadingKeys,
 }: StepSidebarProps) {
   const { t } = useTranslation("editor");
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
+  // Stable dnd-kit id per step: D1 id when available, `_temp_id` otherwise.
+  const keyFor = (s: SidebarStep): string | number =>
+    s.id > 0 ? s.id : s._tempId ?? `idx-${steps.indexOf(s)}`;
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const oldIndex = steps.findIndex((s) => s.id === active.id);
-    const newIndex = steps.findIndex((s) => s.id === over.id);
+    const keys = steps.map((s) => keyFor(s));
+    const oldIndex = keys.findIndex((k) => k === active.id);
+    const newIndex = keys.findIndex((k) => k === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
     const reordered = arrayMove(steps, oldIndex, newIndex);
-    onReorderSteps(reordered.map((s) => s.id));
+    onReorderSteps(oldIndex, newIndex, reordered.map((s) => keyFor(s)));
   }
 
   return (
@@ -91,20 +128,44 @@ export function StepSidebar({
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={steps.map((s) => s.id)}
+            items={steps.map((s) => keyFor(s))}
             strategy={verticalListSortingStrategy}
           >
-            {steps.map((step, idx) => (
-              <SortableStepItem
-                key={step.id}
-                step={step}
-                displayNumber={idx + 1}
-                isActive={activeStepIndex === idx + 1}
-                onClick={() => onStepSelect(idx + 1)}
-                onDelete={() => onDeleteStep(step)}
-                objectsByType={objectsByType}
-              />
-            ))}
+            {steps.map((step, idx) => {
+              const key = String(keyFor(step));
+              const highlightColor = highlightColorByKey?.[key];
+              const isFading = fadingKeys?.has(key) ?? false;
+              const canDelete = canDeleteStep ? canDeleteStep(step) : true;
+              return (
+                <SortableStepItem
+                  key={key}
+                  sortableId={keyFor(step)}
+                  step={step}
+                  displayNumber={idx + 1}
+                  isActive={activeStepIndex === idx + 1}
+                  onClick={() => onStepSelect(idx + 1)}
+                  onDelete={() => onDeleteStep(step)}
+                  objectsByType={objectsByType}
+                  canDelete={canDelete}
+                  deleteTooltip={deleteTooltip}
+                  rowClassName={
+                    [
+                      highlightColor ? "structural-highlight" : "",
+                      isFading ? "structural-fade-out" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined
+                  }
+                  rowStyle={
+                    highlightColor
+                      ? ({
+                          ["--structural-highlight-color" as never]: highlightColor,
+                        } as React.CSSProperties)
+                      : undefined
+                  }
+                />
+              );
+            })}
           </SortableContext>
         </DndContext>
 
