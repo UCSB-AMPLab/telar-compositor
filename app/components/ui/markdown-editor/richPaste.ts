@@ -23,6 +23,7 @@
  */
 
 import { EditorView } from "@codemirror/view";
+import type TurndownService from "turndown";
 
 /** Domains whose iframes are preserved as raw HTML on paste. */
 const VIDEO_EMBED_DOMAINS = [
@@ -44,7 +45,7 @@ function isVideoEmbed(src: string): boolean {
   }
 }
 
-let td: import("turndown").default | null = null;
+let td: TurndownService | null = null;
 
 /**
  * Resets the singleton Turndown instance. Exported for test teardown only —
@@ -63,34 +64,34 @@ export async function getTurndown() {
 
     // Rule 1: Preserve YouTube/Vimeo iframes as raw HTML
     td.addRule("videoIframe", {
-      filter: (node) =>
+      filter: (node: HTMLElement) =>
         node.nodeName === "IFRAME" &&
         isVideoEmbed((node as HTMLIFrameElement).getAttribute("src") ?? ""),
-      replacement: (_content, node) => {
+      replacement: (_content: string, node) => {
         return `\n\n${(node as HTMLElement).outerHTML}\n\n`;
       },
     });
 
     // Strip script, style, xml, and other non-content elements entirely
-    td.remove(["script", "style", "xml", "noscript", "title", "meta", "link"]);
+    td.remove(["script", "style", "xml", "noscript", "title", "meta", "link"] as Array<keyof HTMLElementTagNameMap>);
 
     // Rule 2: Google Docs outer bold wrapper — <b style="font-weight:normal"> surrounds the
     // entire pasted content and must be stripped without adding bold markers
     td.addRule("googleDocsOuterBold", {
-      filter: (node) =>
+      filter: (node: HTMLElement) =>
         node.nodeName === "B" &&
-        (node as HTMLElement).getAttribute("style")?.includes("font-weight:normal") === true,
-      replacement: (content) => content,
+        node.getAttribute("style")?.includes("font-weight:normal") === true,
+      replacement: (content: string) => content,
     });
 
     // Rule 3: Google Docs inline bold spans (font-weight:700 or bold)
     td.addRule("googleDocsInlineBold", {
-      filter: (node) => {
+      filter: (node: HTMLElement) => {
         if (node.nodeName !== "SPAN") return false;
-        const fw = (node as HTMLElement).style?.fontWeight;
+        const fw = node.style?.fontWeight;
         return fw === "700" || fw === "bold";
       },
-      replacement: (content) => {
+      replacement: (content: string) => {
         const trimmed = content.trim();
         return trimmed ? `**${trimmed}**` : "";
       },
@@ -98,11 +99,11 @@ export async function getTurndown() {
 
     // Rule 4: Google Docs inline italic spans (font-style:italic)
     td.addRule("googleDocsInlineItalic", {
-      filter: (node) => {
+      filter: (node: HTMLElement) => {
         if (node.nodeName !== "SPAN") return false;
-        return (node as HTMLElement).style?.fontStyle === "italic";
+        return node.style?.fontStyle === "italic";
       },
-      replacement: (content) => {
+      replacement: (content: string) => {
         const trimmed = content.trim();
         return trimmed ? `*${trimmed}*` : "";
       },
@@ -111,12 +112,11 @@ export async function getTurndown() {
     // Rule 5: Word empty paragraph markers — <o:p> tags and MsoNormal paragraphs
     // that contain only <o:p></o:p> produce empty string
     td.addRule("wordEmptyParagraph", {
-      filter: (node) => {
-        const el = node as HTMLElement;
+      filter: (node: HTMLElement) => {
         // Match <o:p> tags directly
         if (node.nodeName.toLowerCase() === "o:p") return true;
         // Match <p> whose only content is <o:p></o:p>
-        if (node.nodeName === "P" && el.innerHTML?.trim() === "<o:p></o:p>") return true;
+        if (node.nodeName === "P" && node.innerHTML?.trim() === "<o:p></o:p>") return true;
         return false;
       },
       replacement: () => "",
@@ -124,27 +124,27 @@ export async function getTurndown() {
 
     // Rule 6: Word MSO-styled spans (mso-* in style attribute) — strip wrapper, keep text
     td.addRule("wordMsoSpan", {
-      filter: (node) =>
+      filter: (node: HTMLElement) =>
         node.nodeName === "SPAN" &&
-        /mso-/.test((node as HTMLElement).getAttribute("style") ?? ""),
-      replacement: (content) => content,
+        /mso-/.test(node.getAttribute("style") ?? ""),
+      replacement: (content: string) => content,
     });
 
     // Rule 7: Word MsoNormal class paragraphs with no real text content
     td.addRule("wordMsoEmptyParagraph", {
-      filter: (node) => {
+      filter: (node: HTMLElement) => {
         if (node.nodeName !== "P") return false;
-        const cls = (node as HTMLElement).className ?? "";
-        return /^Mso/.test(cls) && !(node as HTMLElement).textContent?.trim();
+        const cls = node.className ?? "";
+        return /^Mso/.test(cls) && !node.textContent?.trim();
       },
       replacement: () => "",
     });
 
     // Rule 8: Empty spans (Google Docs detritus) — whitespace-only spans produce nothing
     td.addRule("emptySpan", {
-      filter: (node) =>
+      filter: (node: HTMLElement) =>
         node.nodeName === "SPAN" &&
-        !(node as HTMLElement).textContent?.trim(),
+        !node.textContent?.trim(),
       replacement: () => "",
     });
   }
@@ -185,28 +185,46 @@ function normaliseQuotesAndDashes(text: string): string {
 }
 
 /**
- * A CodeMirror extension that converts pasted HTML to markdown.
- * Handles rich text from web pages; plain text paste is unchanged.
+ * Synchronous paste event handler. MUST return `boolean` synchronously —
+ * CodeMirror checks the return for the literal `true` to decide the event
+ * was handled; a returned Promise is truthy-but-not-`true`, so CodeMirror
+ * used to run its own default paste afterwards and the markdown dispatch
+ * layered on top — inserting the same content twice. Reads clipboardData
+ * up-front (it is not accessible once the event has been dispatched),
+ * calls preventDefault synchronously, returns `true`, and does the async
+ * Turndown work inside a fire-and-forget IIFE.
+ *
+ * Exported so tests can exercise the return shape without standing up a
+ * full EditorView.
  */
-export const richPasteExtension = EditorView.domEventHandlers({
-  async paste(event, view) {
-    const html = event.clipboardData?.getData("text/html");
-    if (!html) return false; // Let CodeMirror handle plain text
+export function handleRichPaste(event: ClipboardEvent, view: EditorView): boolean {
+  const html = event.clipboardData?.getData("text/html");
+  if (!html) return false; // Let CodeMirror handle plain text
 
+  const plainFallback = event.clipboardData?.getData("text/plain") ?? "";
+  event.preventDefault();
+
+  void (async () => {
     try {
-      event.preventDefault();
       const turndown = await getTurndown();
       const cleanHtml = stripWordArtefacts(html);
       let markdown = turndown.turndown(cleanHtml);
       markdown = normaliseQuotesAndDashes(markdown);
       view.dispatch(view.state.replaceSelection(markdown));
     } catch {
-      // Fallback: insert plain text so content is not lost
-      const plain = event.clipboardData?.getData("text/plain") ?? "";
-      if (plain) {
-        view.dispatch(view.state.replaceSelection(plain));
+      if (plainFallback) {
+        view.dispatch(view.state.replaceSelection(plainFallback));
       }
     }
-    return true;
-  },
+  })();
+
+  return true;
+}
+
+/**
+ * A CodeMirror extension that converts pasted HTML to markdown.
+ * Handles rich text from web pages; plain text paste is unchanged.
+ */
+export const richPasteExtension = EditorView.domEventHandlers({
+  paste: handleRichPaste,
 });

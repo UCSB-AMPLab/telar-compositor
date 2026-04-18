@@ -5,8 +5,8 @@
  * Turndown uses its bundled @mixmark-io/domino DOM parser so no browser environment needed.
  */
 
-import { describe, it, expect } from "vitest";
-import { getTurndown } from "~/components/ui/markdown-editor/richPaste";
+import { describe, it, expect, vi } from "vitest";
+import { getTurndown, handleRichPaste } from "~/components/ui/markdown-editor/richPaste";
 
 describe("richPaste Turndown rules", () => {
   describe("Word artefacts", () => {
@@ -222,5 +222,66 @@ describe("richPaste Turndown rules", () => {
       expect(result).not.toContain("\u201C");
       expect(result).not.toContain("\u201D");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleRichPaste — CodeMirror DOM event handler contract
+// ---------------------------------------------------------------------------
+
+describe("handleRichPaste — synchronous return contract", () => {
+  type ClipboardDataStub = { getData: (type: string) => string };
+  function makeEvent(data: Record<string, string>) {
+    const preventDefault = vi.fn();
+    const event = {
+      clipboardData: { getData: (t: string) => data[t] ?? "" } as ClipboardDataStub,
+      preventDefault,
+    } as unknown as ClipboardEvent;
+    return { event, preventDefault };
+  }
+
+  function makeView() {
+    return {
+      state: {
+        replaceSelection: (s: string) => ({ changes: s }),
+      },
+      dispatch: vi.fn(),
+    } as unknown as import("@codemirror/view").EditorView;
+  }
+
+  it("returns boolean synchronously (not Promise) when HTML is present", () => {
+    const { event, preventDefault } = makeEvent({
+      "text/html": "<p>hello</p>",
+      "text/plain": "hello",
+    });
+    const result = handleRichPaste(event, makeView());
+    // CodeMirror treats only the literal `true` as "handled" — a Promise is
+    // truthy-but-not-true and used to cause double paste.
+    expect(typeof result).toBe("boolean");
+    expect(result).toBe(true);
+    // preventDefault must have fired synchronously so the browser/CodeMirror
+    // default paste can't insert the plain-text version on top.
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns false synchronously when no HTML (lets CodeMirror handle plain text)", () => {
+    const { event, preventDefault } = makeEvent({ "text/plain": "hello" });
+    const result = handleRichPaste(event, makeView());
+    expect(result).toBe(false);
+    // Must NOT preventDefault — CM needs the default paste path for plain text.
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("dispatches markdown to the view asynchronously after returning true", async () => {
+    const { event } = makeEvent({
+      "text/html": "<p>hello <strong>world</strong></p>",
+      "text/plain": "hello world",
+    });
+    const view = makeView();
+    const result = handleRichPaste(event, view);
+    expect(result).toBe(true);
+    // Dispatch happens after the Turndown await resolves — flush microtasks
+    await new Promise((r) => setTimeout(r, 0));
+    expect((view.dispatch as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
   });
 });
