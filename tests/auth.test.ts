@@ -23,7 +23,7 @@ function makeFakeEnv(overrides: Partial<Env> = {}): Env {
     SESSION_SECRET: "test-session-secret",
     ENVIRONMENT: "development",
     ...overrides,
-  };
+  } as Env;
 }
 
 /** Returns a date ISO string N minutes from now */
@@ -31,8 +31,24 @@ function minutesFromNow(n: number): string {
   return new Date(Date.now() + n * 60 * 1000).toISOString();
 }
 
+interface FakeUserRow {
+  id: number;
+  github_id: number;
+  github_login: string;
+  github_name: string | null;
+  github_email: string | null;
+  encrypted_access_token: string;
+  encrypted_refresh_token: string;
+  access_token_expires_at: string;
+  refresh_token_expires_at: string;
+  github_plan: string | null;
+  language_preference: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 /** A minimal user row with valid (not near expiry) tokens */
-function makeUser(overrides: Partial<ReturnType<typeof makeUser>> = {}) {
+function makeUser(overrides: Partial<FakeUserRow> = {}): FakeUserRow {
   return {
     id: 1,
     github_id: 12345,
@@ -43,6 +59,7 @@ function makeUser(overrides: Partial<ReturnType<typeof makeUser>> = {}) {
     encrypted_refresh_token: "encrypted-refresh-token",
     access_token_expires_at: minutesFromNow(60), // valid for 60 min
     refresh_token_expires_at: minutesFromNow(60 * 24 * 180), // 180 days
+    github_plan: null,
     language_preference: "en",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -124,8 +141,8 @@ describe("state validation", () => {
   it("callback returns 403 when state param does not match cookie", async () => {
     // The callback loader validates state inline; we test the pattern here
     // by confirming mismatched states produce a 403.
-    const storedState = "abc123";
-    const receivedState = "xyz789";
+    const storedState: string = "abc123";
+    const receivedState: string = "xyz789";
 
     // Simulate the validation logic from _auth.callback.tsx loader
     const isValid = storedState === receivedState;

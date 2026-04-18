@@ -118,7 +118,7 @@ describe("save-discard mode: autosave does not fire", () => {
   it("in save-discard mode, content changes set isDirty instead of triggering autosave", () => {
     // In save-discard mode the handleContentChange branch sets isDirty
     // and never calls fetcher.submit. We verify the logic branch here.
-    const mode = "save-discard";
+    const mode: "save-discard" | "autosave" = "save-discard";
     const submitCalled = vi.fn();
 
     function handleContentChange(doc: string, initialValue: string) {

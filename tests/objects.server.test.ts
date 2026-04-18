@@ -110,7 +110,7 @@ describe("generateUniqueObjectSlug", () => {
 function simulateUpdateObjectAltText(formDataValues: Record<string, string | undefined>) {
   const setCalls: Array<Record<string, unknown>> = [];
   const mockDb = {
-    update: vi.fn(() => mockDb),
+    update: vi.fn((_table: unknown) => mockDb),
     set: vi.fn((values: Record<string, unknown>) => {
       setCalls.push(values);
       return mockDb;
@@ -121,7 +121,7 @@ function simulateUpdateObjectAltText(formDataValues: Record<string, string | und
   const raw = formDataValues["alt_text"];
   const alt_text = raw?.trim() || null;
 
-  mockDb.update("objects" as any).set({ alt_text }).where();
+  mockDb.update("objects").set({ alt_text }).where();
 
   return { setCalls, alt_text };
 }
