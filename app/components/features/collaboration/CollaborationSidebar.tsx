@@ -78,10 +78,15 @@ export function CollaborationSidebar({
   className,
 }: CollaborationSidebarProps) {
   const { t } = useTranslation(["collaboration", "team", "common"]);
-  const { remoteCollaborators, contributionsByUser } = useCollaborationContext();
+  const { remoteCollaborators, contributionsByUser, isPublishing, isUpgrading } = useCollaborationContext();
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
   const removeFetcher = useFetcher();
+
+  // Auto-close when a freeze starts so the sidebar doesn't sit behind the modal
+  useEffect(() => {
+    if ((isPublishing || isUpgrading) && open) onClose();
+  }, [isPublishing, isUpgrading, open, onClose]);
 
   // Focus the close button when opening (a11y entry point)
   useEffect(() => {

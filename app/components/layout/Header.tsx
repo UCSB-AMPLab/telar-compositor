@@ -30,7 +30,8 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
   const { t: tCommon } = useTranslation("common");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { connectionStatus } = useCollaborationContext();
+  const { connectionStatus, isPublishing, isUpgrading } = useCollaborationContext();
+  const isFrozen = isPublishing || isUpgrading;
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -82,11 +83,11 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
             ref={usersIconRef}
             type="button"
             onClick={onToggleSidebar}
-            disabled={!hasProject}
+            disabled={!hasProject || isFrozen}
             aria-expanded={sidebarOpen}
             aria-label={sidebarOpen ? tCollab("sidebar_close_aria") : tCollab("sidebar_open_aria")}
             className={`p-1.5 rounded-full transition-colors ${
-              !hasProject
+              !hasProject || isFrozen
                 ? "text-gray-500 cursor-not-allowed"
                 : sidebarOpen
                   ? "bg-periwinkle/20 text-periwinkle"
