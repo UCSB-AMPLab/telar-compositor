@@ -4,7 +4,7 @@
  * Computes a three-way diff between the D1 objects table and the repo's
  * objects.csv, and applies the user's selected changes back to D1.
  *
- * Extended in Plan 06-03 to cover all content types:
+ * Extended to cover all content types:
  *   computeFullSyncDiff — diff for objects, stories, and config
  *   applyFullSyncChanges — apply for objects, stories, and config
  *
@@ -18,9 +18,10 @@
  */
 
 import { eq, and } from "drizzle-orm";
-import { objects, steps, stories, project_config } from "~/db/schema";
+import { objects, steps, stories, project_config, glossary_terms } from "~/db/schema";
 import { getFileContent, getRepoTree, getRepoHead } from "~/lib/github.server";
 import { parseTelarCsv, mapObjectsCsv, mapProjectCsv, mapStoryCsv } from "~/lib/import.server";
+import { compareVersions } from "~/lib/upgrade.server";
 import type { getDb } from "~/lib/db.server";
 
 // ---------------------------------------------------------------------------
@@ -503,7 +504,7 @@ export async function applySyncChanges(
 }
 
 // ===========================================================================
-// Full Sync (Plan 06-03) — stories, steps, and config
+// Full Sync — stories, steps, and config
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -514,7 +515,7 @@ export async function applySyncChanges(
  * Minimal publish snapshot type — a snapshot of the content state at the time
  * of the last publish. Used to distinguish "both sides changed" (conflict) from
  * "only repo changed" (auto-accept). Defined here to avoid a circular dependency
- * with publish.server.ts (added in Plan 06-01). When Plan 06-01 runs, the
+ * with publish.server.ts. When publish runs, the
  * PublishSnapshot type from publish.server.ts can be used as a drop-in
  * replacement since this interface is structurally compatible.
  */
@@ -555,12 +556,34 @@ export interface StorySyncDiff {
 
 export interface ConfigSyncDiff {
   changedFields: Array<{ key: string; d1Value: string | null; repoValue: string | null }>;
+  /** Set when repo telar.version differs from D1 telar_version. */
+  versionChange: {
+    direction: "ahead" | "behind";
+    repoVersion: string;
+    d1Version: string | null;
+  } | null;
+}
+
+export interface GlossarySyncDiff {
+  /** Terms in the repo CSV that are not in D1 */
+  added: Array<{ term_id: string; title: string; definition: string }>;
+  /** Terms in D1 that are not in the repo CSV */
+  removed: Array<{ term_id: string; title: string; dbId: number }>;
+  /** Terms in both but with differing definitions */
+  changed: Array<{
+    term_id: string;
+    title: string;
+    dbId: number;
+    d1Definition: string;
+    repoDefinition: string;
+  }>;
 }
 
 export interface FullSyncDiff {
   objects: SyncDiff;
   stories: StorySyncDiff;
   config: ConfigSyncDiff;
+  glossary: GlossarySyncDiff;
   /** True when at least one story or config field is a conflict (both sides changed) */
   hasConflicts: boolean;
 }
@@ -571,6 +594,8 @@ export interface FullSyncChanges {
   stories: { accept: string[]; reject: string[]; insertNew: string[] };
   /** config field keys where user accepted repo changes */
   config: { accept: string[]; reject: string[] };
+  /** term_ids where user accepted repo changes */
+  glossary: { accept: string[]; reject: string[]; insertNew: string[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +631,33 @@ function extractConfigFields(yamlContent: string): Record<ManagedConfigField, st
     result[key] = match ? match[1].trim() || null : null;
   }
   return result as Record<ManagedConfigField, string | null>;
+}
+
+/**
+ * Extract the `version:` value from the `telar:` block of a site's
+ * _config.yml. Returns null when absent or malformed. Mirrors the
+ * line-walker pattern in updateTelarVersionInConfig (upgrade.server.ts)
+ * to avoid a full YAML parse — keeps comments/whitespace-tolerance cheap
+ * and preserves behaviour on the same exotic inputs.
+ *
+ * Exported to enable direct unit testing (see tests/sync.server.test.ts).
+ */
+export function extractTelarVersion(yamlContent: string): string | null {
+  const lines = yamlContent.split("\n");
+  let inTelar = false;
+  for (const line of lines) {
+    if (/^telar:/.test(line)) {
+      inTelar = true;
+      continue;
+    }
+    if (inTelar) {
+      // End of telar: block when a non-indented, non-comment, non-empty line appears
+      if (/^[^\s#]/.test(line) && line.trim() !== "") break;
+      const m = line.match(/^\s+version:\s*["']?([^\s"'#]+)/);
+      if (m) return m[1];
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -760,16 +812,128 @@ export async function computeFullSyncDiff(
     }
   }
 
+  // Detect external version change. Compare repo _config.yml
+  // telar.version with D1 project_config.telar_version. Healed in
+  // applyFullSyncChanges when direction === "ahead". "behind" is
+  // surfaced to the dashboard but not auto-applied.
+  const repoTelarVersion = configYmlContent ? extractTelarVersion(configYmlContent) : null;
+  const d1TelarVersion =
+    (d1Config.telar_version as string | null | undefined) ?? null;
+
+  let versionChange: ConfigSyncDiff["versionChange"] = null;
+  if (repoTelarVersion && repoTelarVersion !== d1TelarVersion) {
+    if (!d1TelarVersion) {
+      // D1 value empty — treat any repo version as "ahead"
+      versionChange = {
+        direction: "ahead",
+        repoVersion: repoTelarVersion,
+        d1Version: null,
+      };
+    } else {
+      const repoTag = repoTelarVersion.startsWith("v") ? repoTelarVersion : `v${repoTelarVersion}`;
+      const d1Tag = d1TelarVersion.startsWith("v") ? d1TelarVersion : `v${d1TelarVersion}`;
+      const cmp = compareVersions(repoTag, d1Tag);
+      if (cmp > 0) {
+        versionChange = {
+          direction: "ahead",
+          repoVersion: repoTelarVersion,
+          d1Version: d1TelarVersion,
+        };
+      } else if (cmp < 0) {
+        versionChange = {
+          direction: "behind",
+          repoVersion: repoTelarVersion,
+          d1Version: d1TelarVersion,
+        };
+      }
+    }
+  }
+
   // 7. Determine if there are any conflicts
   const hasConflicts =
     publishSnapshot !== null && changedStories.some((s) => s.isConflict);
 
+  // 8. Compute glossary diff
+  const glossaryDiff = await computeGlossarySyncDiff(projectId, token, owner, repo, db);
+
   return {
     objects: objectsDiff,
     stories: { newStories, changedStories, missingStories },
-    config: { changedFields: configChangedFields },
+    config: { changedFields: configChangedFields, versionChange },
+    glossary: glossaryDiff,
     hasConflicts,
   };
+}
+
+// ---------------------------------------------------------------------------
+// computeGlossarySyncDiff
+// ---------------------------------------------------------------------------
+
+/**
+ * Computes a diff between D1 glossary_terms and the repo's glossary.csv.
+ *
+ * - added: terms in repo CSV not in D1
+ * - removed: terms in D1 not in repo CSV
+ * - changed: terms in both but with differing definitions
+ */
+export async function computeGlossarySyncDiff(
+  projectId: number,
+  token: string,
+  owner: string,
+  repo: string,
+  db: ReturnType<typeof import("~/lib/db.server").getDb>,
+): Promise<GlossarySyncDiff> {
+  // Fetch glossary CSV from repo
+  const glossaryCsvContent = await getFileContent(
+    token, owner, repo, "telar-content/spreadsheets/glossary.csv"
+  );
+  const repoTerms = glossaryCsvContent
+    ? parseTelarCsv(glossaryCsvContent)
+    : [];
+  const repoTermMap = new Map(
+    repoTerms
+      .filter((r) => r.term_id)
+      .map((r) => [
+        r.term_id,
+        { title: r.title ?? "", definition: r.definition ?? "" },
+      ]),
+  );
+
+  // Fetch D1 glossary terms for this project
+  const d1Terms = await db
+    .select()
+    .from(glossary_terms)
+    .where(eq(glossary_terms.project_id, projectId));
+  const d1TermMap = new Map(d1Terms.map((t) => [t.term_id, t]));
+
+  const added: GlossarySyncDiff["added"] = [];
+  const removed: GlossarySyncDiff["removed"] = [];
+  const changed: GlossarySyncDiff["changed"] = [];
+
+  // Find added and changed
+  for (const [termId, repoTerm] of repoTermMap.entries()) {
+    const d1Term = d1TermMap.get(termId);
+    if (!d1Term) {
+      added.push({ term_id: termId, title: repoTerm.title, definition: repoTerm.definition });
+    } else if ((d1Term.definition ?? "") !== repoTerm.definition) {
+      changed.push({
+        term_id: termId,
+        title: d1Term.title ?? repoTerm.title,
+        dbId: d1Term.id,
+        d1Definition: d1Term.definition ?? "",
+        repoDefinition: repoTerm.definition,
+      });
+    }
+  }
+
+  // Find removed
+  for (const [termId, d1Term] of d1TermMap.entries()) {
+    if (!repoTermMap.has(termId)) {
+      removed.push({ term_id: termId, title: d1Term.title ?? "", dbId: d1Term.id });
+    }
+  }
+
+  return { added, removed, changed };
 }
 
 // ---------------------------------------------------------------------------
@@ -798,6 +962,7 @@ export async function applyFullSyncChanges(
   owner: string,
   repo: string,
   db: ReturnType<typeof getDb>,
+  diff?: FullSyncDiff,
 ): Promise<{ newHeadSha: string }> {
   const { stories: storyChanges, config: configChanges } = changes;
 
@@ -905,7 +1070,67 @@ export async function applyFullSyncChanges(
     }
   }
 
-  // 6. Fetch current repo HEAD and update projects.head_sha
+  // 6. Apply accepted glossary changes
+  const glossaryChanges = changes.glossary ?? { accept: [], reject: [], insertNew: [] };
+  if (glossaryChanges.insertNew.length > 0 || glossaryChanges.accept.length > 0 || glossaryChanges.reject.length > 0) {
+    // Re-fetch glossary CSV to get current repo values
+    const glossaryCsvContent = await getFileContent(
+      token, owner, repo, "telar-content/spreadsheets/glossary.csv"
+    );
+    const repoTerms = glossaryCsvContent ? parseTelarCsv(glossaryCsvContent) : [];
+    const repoTermMap = new Map(
+      repoTerms.filter((r) => r.term_id).map((r) => [r.term_id, r])
+    );
+
+    // Insert new terms (accepted additions from repo)
+    for (const termId of glossaryChanges.insertNew) {
+      const repoTerm = repoTermMap.get(termId);
+      if (!repoTerm) continue;
+      await db
+        .insert(glossary_terms)
+        .values({
+          project_id: projectId,
+          term_id: termId,
+          title: repoTerm.title || undefined,
+          definition: repoTerm.definition || undefined,
+          updated_at: now,
+        });
+    }
+
+    // Update changed terms where user accepted repo version
+    for (const termId of glossaryChanges.accept) {
+      const repoTerm = repoTermMap.get(termId);
+      if (!repoTerm) continue;
+      await db
+        .update(glossary_terms)
+        .set({
+          definition: repoTerm.definition || null,
+          updated_at: now,
+        })
+        .where(
+          and(
+            eq(glossary_terms.project_id, projectId),
+            eq(glossary_terms.term_id, termId),
+          ),
+        );
+    }
+  }
+
+  // 6b. Silently heal D1 telar_version when repo is ahead (external
+  // upgrade performed via telar/scripts/upgrade.py or GitHub Actions).
+  // Do NOT auto-downgrade on "behind" — user decides via the
+  // dashboard. When no diff is provided (pre-Plan-11 callers), skip healing.
+  if (diff?.config.versionChange?.direction === "ahead") {
+    await db
+      .update(project_config)
+      .set({
+        telar_version: diff.config.versionChange.repoVersion,
+        updated_at: now,
+      })
+      .where(eq(project_config.project_id, projectId));
+  }
+
+  // 7. Fetch current repo HEAD and update projects.head_sha
   const { projects } = await import("~/db/schema");
   const newHeadSha = await getRepoHead(token, owner, repo);
 

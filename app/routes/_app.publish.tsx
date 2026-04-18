@@ -16,15 +16,18 @@
 
 import { eq } from "drizzle-orm";
 import { useEffect, useRef, useState } from "react";
-import { redirect, useFetcher } from "react-router";
+import { redirect, useFetcher, useRouteLoaderData } from "react-router";
 import { useTranslation } from "react-i18next";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
 import type { Route } from "./+types/_app.publish";
+import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { projects, stories, objects, steps, project_config, project_landing } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
+import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
 import {
   commitFilesToRepo,
   listWorkflowRunsBySha,
@@ -47,7 +50,7 @@ import { ValidationChecks } from "~/components/features/publish/ValidationChecks
 import { CommitMessageEditor } from "~/components/features/publish/CommitMessageEditor";
 import { BuildTracker } from "~/components/features/publish/BuildTracker";
 
-export const handle = { i18n: ["common", "publish"] };
+export const handle = { i18n: ["common", "publish", "team"] };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,17 +118,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  const allProjects = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.user_id, user.id));
-
-  if (allProjects.length === 0) {
+  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  if (!resolved) {
     return redirect("/dashboard");
   }
-
-  const activeProject =
-    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+  const { project: activeProject } = resolved;
 
   // Fetch D1 data needed for change summary
   const [storyRows, objectRows, configRow, landingRow] = await Promise.all([
@@ -211,17 +208,14 @@ export async function action({ request, context }: Route.ActionArgs) {
   const session = await sessionStorage.getSession(request.headers.get("Cookie"));
   const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-  const allProjects = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.user_id, user.id));
-
-  if (allProjects.length === 0) {
+  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  if (!resolved) {
     return { ok: false, intent, error: "no_project" };
   }
+  const { project: activeProject } = resolved;
 
-  const activeProject =
-    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+  // Guard: only owners may publish
+  await requireOwner(db, activeProject.id, user.id);
 
   const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
   const [owner, repo] = activeProject.github_repo_full_name.split("/");
@@ -284,6 +278,21 @@ export async function action({ request, context }: Route.ActionArgs) {
       const commitBody = (formData.get("commitBody") as string | null)?.trim() || undefined;
 
       try {
+        // Force a DO snapshot before the publish pipeline runs.
+        // Ensures the publish pipeline reads the absolute latest collaborative content.
+        // If no DO instance is alive (no active collaborators), this returns 200 without error.
+        try {
+          const doId = env.COLLABORATION.idFromName(String(activeProject.id));
+          const doStub = env.COLLABORATION.get(doId);
+          const snapshotReq = new Request(`https://internal/snapshot`, { method: "POST" });
+          const snapshotRes = await doStub.fetch(snapshotReq);
+          if (!snapshotRes.ok) {
+            return { ok: false, intent: "publish", error: "snapshot_failed" };
+          }
+        } catch {
+          // If the DO is unreachable, continue — D1 already has the last persisted state
+        }
+
         const files = await buildPublishFileSet({
           token,
           owner,
@@ -457,13 +466,34 @@ type PublishActionData =
 
 export default function PublishPage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("publish");
+  const { t: tTeam } = useTranslation("team");
   const { project, changeSummary } = loaderData;
+
+  const appData = useRouteLoaderData("routes/_app") as { userRole?: string } | null;
+  const isCollaborator = appData?.userRole === "collaborator";
+
+  if (isCollaborator) {
+    return (
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        <RestrictionBanner message={tTeam("restriction_publish")} />
+      </div>
+    );
+  }
+
+  const { provider } = useCollaborationContext();
 
   const [wizardStep, setWizardStep] = useState<PublishStep>("review");
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [publishResult, setPublishResult] = useState<{ newHeadSha: string; commitUrl: string } | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+
+  // Broadcast publish state to all connected clients via Yjs awareness
+  useEffect(() => {
+    if (!provider) return;
+    provider.awareness.setLocalStateField("publishing", isPublishing);
+    provider.awareness.setLocalStateField("publishError", publishError !== null);
+  }, [isPublishing, publishError, provider]);
 
   const validationFetcher = useFetcher();
   const publishFetcher = useFetcher();
@@ -654,7 +684,7 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
           // Fall back to the default GitHub Pages URL pattern when the
           // project doesn't have github_pages_url persisted yet (older
           // imports, sites that never went through configure-site, etc.).
-          // Phase 22 will populate this field reliably for newly-created
+          // A future iteration will populate this field reliably for newly-created
           // sites; until then, the default pattern is always correct for
           // project Pages sites and gives users a working "View site"
           // button immediately after a successful build.
