@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, unique, blob } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -28,6 +28,7 @@ export const projects = sqliteTable("projects", {
   last_synced_at: text("last_synced_at"),
   last_published_at: text("last_published_at"),
   publish_snapshot: text("publish_snapshot"),  // JSON: PublishSnapshot from publish.server.ts
+  yjs_state: blob("yjs_state"),  // Stores Y.encodeStateAsUpdate() binary output
   created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
@@ -56,6 +57,7 @@ export const project_config = sqliteTable("project_config", {
   show_sample_on_homepage: integer("show_sample_on_homepage", { mode: "boolean" }).default(false),
   featured_count: integer("featured_count").default(4),
   story_key: text("story_key"),
+  navigation_json: text("navigation_json"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -79,6 +81,7 @@ export const objects = sqliteTable("objects", {
   missing_from_repo: integer("missing_from_repo", { mode: "boolean" }).default(false),
   origin: text("origin").default("repo"),
   alt_text: text("alt_text"),
+  order: integer("order").notNull().default(0),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -153,3 +156,39 @@ export const project_landing = sqliteTable("project_landing", {
   welcome_body: text("welcome_body"),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
+
+export const project_members = sqliteTable("project_members", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  project_id: integer("project_id").notNull().references(() => projects.id),
+  user_id: integer("user_id").notNull().references(() => users.id),
+  role: text("role", { enum: ["convenor", "collaborator"] }).notNull(),
+  invited_at: text("invited_at").$defaultFn(() => new Date().toISOString()),
+  joined_at: text("joined_at"),
+  presence_color: text("presence_color"),
+  contributions: text("contributions"),
+}, (table) => [
+  unique("project_members_unique").on(table.project_id, table.user_id),
+]);
+
+export const project_invites = sqliteTable("project_invites", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  project_id: integer("project_id").notNull().references(() => projects.id),
+  token: text("token").notNull().unique(),
+  created_by: integer("created_by").notNull().references(() => users.id),
+  expires_at: text("expires_at").notNull(),
+  used_by: integer("used_by").references(() => users.id),
+  used_at: text("used_at"),
+});
+
+export const project_pages = sqliteTable("project_pages", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  project_id: integer("project_id").notNull().references(() => projects.id),
+  title: text("title").notNull().default("Untitled"),
+  slug: text("slug").notNull(),
+  body: text("body").default(""),
+  order: integer("order").notNull().default(0),
+  created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
+  updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  unique("project_pages_project_slug_unique").on(table.project_id, table.slug),
+]);
