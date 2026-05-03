@@ -123,7 +123,7 @@ describe("LayerPanel: canDelete", () => {
   it("shows delete button as disabled when canDelete is false", () => {
     render(<LayerPanel {...defaultProps} canDelete={false} />);
     const deleteBtn = screen.getByRole("button", { name: /layer.delete_title/i });
-    // Per D-03, delete buttons are visible but disabled with a tooltip so the
+    // Delete buttons are visible but disabled with a tooltip so the
     // permission system is discoverable rather than hidden.
     expect(deleteBtn).toBeDefined();
     expect((deleteBtn as HTMLButtonElement).disabled).toBe(true);
