@@ -8,7 +8,7 @@
  *   - Optional content summary ("2 layers, 450 words")
  *   - Optional contributor warning ("Contains edits by María, Carlos")
  *     when other team members have edited the item — uses authorship
- *     data from contributions
+ *     data from member contributions
  *   - Red destructive confirm button, grey Cancel
  *
  * Closes on Escape or backdrop click. On open, focus is moved to the
@@ -40,7 +40,7 @@ export interface DeleteConfirmationModalProps {
   /** Names of other contributors whose edits will be lost. */
   contributors?: string[];
   /**
-   * When true, the modal confirms undoing an add rather than deleting
+   * When true, the modal confirms undoing an add rather than deleting.
    * Title and body copy change accordingly.
    */
   isUndoConfirmation?: boolean;
