@@ -1,6 +1,6 @@
 # Telar Compositor
 
-![Version](https://img.shields.io/badge/version-1.0.0--beta-orange) ![License](https://img.shields.io/badge/license-MIT-blue)
+![Version](https://img.shields.io/badge/version-1.0.1--beta-orange) ![License](https://img.shields.io/badge/license-AGPL%20v3-blue)
 
 **[Versión en español abajo](#español)** | **[English version](#telar-compositor)**
 
@@ -12,7 +12,7 @@ A web-based visual editor for creating [Telar](https://github.com/UCSB-AMPLab/te
 
 ---
 
-> **⚠️ Beta Release — v1.0.0-beta**
+> **⚠️ Beta Release — v1.0.1-beta**
 > The compositor is in active development. It works with Telar sites running framework v0.9.2-beta or later, and ships with bundled migrations through v1.2.0.
 
 ## Overview
@@ -65,7 +65,15 @@ Other commands: `npm run build`, `npm run deploy`, `npm run typecheck`, `npx vit
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) file for details.
+Telar Compositor is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+Anyone may use, modify, and self-host Telar Compositor under AGPL terms. If you run a modified version as a network service for others, you must publish your modifications under the same license — this protects the upstream commons that AMPL, Neogranadina, and partner institutions depend on.
+
+The license governs the software. The stories, objects, and content you publish with Telar Compositor belong to you and your institution.
+
+## Trademarks
+
+"Telar", "Telar Compositor", "AMPL", and the associated logos are not covered by the AGPL-3.0 license. Forks may use the code freely under AGPL terms but should not present themselves as official Telar or AMPL releases.
 
 ## Credits
 
@@ -84,7 +92,7 @@ We gratefully acknowledge the support of the [Caribbean Digital Scholarship Coll
 
 # Español
 
-![Versión](https://img.shields.io/badge/versión-1.0.0--beta-orange) ![Licencia](https://img.shields.io/badge/licencia-MIT-blue)
+![Versión](https://img.shields.io/badge/versión-1.0.1--beta-orange) ![Licencia](https://img.shields.io/badge/licencia-AGPL%20v3-blue)
 
 **[Versión en español](#español)** | **[English version above](#telar-compositor)**
 
@@ -96,7 +104,7 @@ Un editor visual web para crear historias de [Telar](https://github.com/UCSB-AMP
 
 ---
 
-> **⚠️ Versión Beta — v1.0.0-beta**
+> **⚠️ Versión Beta — v1.0.1-beta**
 > El compositor está en desarrollo activo. Funciona con sitios Telar que usan el framework v0.9.2-beta o posterior, e incluye las migraciones para actualizar hasta la v1.2.0.
 
 ## Descripción general
@@ -127,7 +135,15 @@ Telar Compositor ofrece a estudiantes y usuarios no técnicos una interfaz visua
 
 ## Licencia
 
-Licencia MIT — ver el archivo [LICENSE](LICENSE) para más detalles.
+Telar Compositor se distribuye bajo la [Licencia Pública General Affero de GNU v3.0](LICENSE).
+
+Cualquier persona puede usar, modificar e instalar el Compositor de Telar en su propia infraestructura según los términos de la AGPL. Quien ofrezca una versión modificada como servicio en línea a terceros debe publicar esas modificaciones bajo la misma licencia — esto protege el ecosistema abierto que sostienen AMPL, Neogranadina y las instituciones aliadas.
+
+La licencia rige el software. Las historias, los objetos y el contenido que usted publique con Telar Compositor son suyos y de su institución.
+
+## Marcas
+
+"Telar", "Telar Compositor", "AMPL", y los logos asociados no están cubiertos por la licencia AGPL-3.0. Quien haga un fork puede usar el código libremente bajo los términos de la AGPL, pero no debe presentarse como versión oficial de Telar ni de AMPL.
 
 ## Créditos
 
