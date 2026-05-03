@@ -46,7 +46,7 @@ export interface CollaborationContextValue {
   /**
    * Per-user lifetime contribution data, keyed by userId (D1 integer ID).
    * Built from the authenticated projectMembers loader — only members with a
-   * project_members row appear here (defence-in-depth).
+   * project_members row appear here (T-28-03 defence-in-depth).
    * Consumed by the sidebar donut (plan 28-04).
    */
   contributionsByUser: Map<number, { fields_edited: number }>;
@@ -197,8 +197,9 @@ export function CollaborationProvider({
       let publishing = false;
       let hasError = false;
       // upgrading is display-only — any client can broadcast it, but the
-      // actual upgrade commit is gated by the owner role check in the upgrade route
-      // action. Spoofed upgrading=true can only trigger a freeze modal locally.
+      // actual upgrade commit is gated by the owner role check in the upgrade
+      // route action. Spoofed upgrading=true can only trigger a freeze modal
+      // locally.
       let upgrading = false;
       let hasUpgradeError = false;
       const collaborators: AwarenessUser[] = [];
@@ -221,7 +222,7 @@ export function CollaborationProvider({
       setIsUpgrading(upgrading);
       setUpgradeError(hasUpgradeError);
       setRemoteCollaborators(collaborators);
-      // Build lastEditorByField from awareness location state (session-scoped)
+      // Build lastEditorByField from awareness location state (D-07, session-scoped)
       const newEditorMap = new Map<string, { name: string; color: string }>();
       states.forEach((state: Record<string, unknown>, clientId: number) => {
         if (clientId !== awareness.clientID && state.user) {
@@ -242,7 +243,7 @@ export function CollaborationProvider({
   // operations (add/delete/reorder of stories, steps, layers, pages, objects, glossary)
   // and text edits inside those Y.Maps share one undo history per session.
   //
-  // The manager is created only after the provider reports `sync`: creating it
+  // The manager is created only after the provider reports `sync` — creating it
   // before the initial sync would make the cold-start population of the Y.Arrays
   // undoable, so a Ctrl+Z would wipe the project content.
   //

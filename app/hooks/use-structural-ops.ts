@@ -13,8 +13,8 @@
  *   - `_temp_id: <UUID>`      (stable UI key until `_id` is assigned)
  *   - `created_by: <userId>`  (permission tracking)
  *
- * Permission model: `canDelete` allows the convenor to delete
- * anything; collaborators can delete only items they created themselves.
+ * Permission model: `canDelete` allows the convenor to delete anything;
+ * collaborators can delete only items they created themselves.
  *
  * Exports: useStructuralOps, StructuralOps, StructuralRole
  */
@@ -66,7 +66,7 @@ export interface StructuralOps {
   deletePage: (id: number | null, tempId: string | null) => void;
   reorderPages: (oldIndex: number, newIndex: number) => void;
 
-  // Objects (IIIF only; self-hosted uploads stay as a route action).
+  // Objects (IIIF only per D-18; self-hosted uploads stay as a route action).
   addIiifObject: (objectId: string, title: string, sourceUrl: string) => void;
   deleteObject: (id: number | null, tempId: string | null) => void;
   reorderObjects: (oldIndex: number, newIndex: number) => void;
@@ -128,10 +128,9 @@ function reorderInPlace(
   if (newIndex < 0 || newIndex > yArray.length - 1) return;
   const clone = cloneYMap(yArray.get(oldIndex));
   yArray.delete(oldIndex, 1);
-  // dnd-kit's arrayMove(items, from, to) uses splice(to, 0, ...) on the
-  // post-splice array, so `newIndex` is already the intended index in the
-  // post-delete Y.Array. Matches Y.Array.insert(newIndex, [item]) directly.
-  yArray.insert(newIndex, [clone]);
+  // After deletion the array is one shorter — adjust for downward moves
+  const insertAt = newIndex > oldIndex ? newIndex - 1 : newIndex;
+  yArray.insert(insertAt, [clone]);
 }
 
 /**
@@ -315,7 +314,7 @@ export function useStructuralOps(
       });
     };
 
-    // ---- Objects (IIIF only) ----
+    // ---- Objects (IIIF only — see D-18) ----
 
     const addIiifObject: StructuralOps["addIiifObject"] = (
       objectId,
@@ -372,7 +371,7 @@ export function useStructuralOps(
         termMap.set("_temp_id", crypto.randomUUID());
         termMap.set("created_by", currentUserId);
         termMap.set("title", new Y.Text(title));
-        termMap.set("term_id", slugifyTermId(title));  // auto-slugify
+        termMap.set("term_id", slugifyTermId(title));  // D-11: auto-slugify
         termMap.set("definition", new Y.Text(""));
         glossaryArray.push([termMap]);
       });
