@@ -1,16 +1,15 @@
 /**
- * InstallationScopePrompt.
- *
- * Reusable polling prompt shown when the GitHub App cannot yet see a repository
- * the user needs access to. Opens the GitHub App installation settings in a new
- * tab and polls `/onboarding` with `intent=check-installation-scope` every 2s
- * until the server reports `inScope: true`, then calls `onResolved()`.
+ * InstallationScopePrompt — reusable polling prompt shown when the GitHub
+ * App cannot yet see a repository the user needs access to. Opens the
+ * GitHub App installation settings in a new tab and polls `/onboarding`
+ * with `intent=check-installation-scope` every 2s until the server reports
+ * `inScope: true`, then calls `onResolved()`.
  *
  * Used by:
- *  - CreateSiteForm — after repo creation, while
- *    waiting for the user to grant the GitHub App access to the new repo.
- *  - StepConnect — normal connect flow when the user picks
- *    an existing repo the App can't see.
+ *  - CreateSiteForm — after repo creation, while waiting for the user to
+ *    grant the GitHub App access to the new repo.
+ *  - StepConnect — normal connect flow when the user picks an existing
+ *    repo the App can't see.
  *
  * Safety:
  *  - setInterval is cleared on unmount.

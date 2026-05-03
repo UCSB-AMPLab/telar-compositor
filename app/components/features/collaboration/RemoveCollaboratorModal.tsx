@@ -9,7 +9,7 @@
  *   - z-index z-50 (sidebar is z-40 — modal must be above)
  *
  * Copy: "Remove @username? They'll lose access to this project.
- *              You can re-invite them anytime."
+ *        You can re-invite them anytime."
  */
 
 import { useEffect, useRef } from "react";

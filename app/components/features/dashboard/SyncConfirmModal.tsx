@@ -33,7 +33,7 @@ import type { FullSyncDiff, FullSyncChanges } from "~/lib/sync.server";
 
 /**
  * Shared useFetcher key so the dashboard route can observe the same
- * compute-full-sync-diff response and surface the version-change
+ * compute-full-sync-diff response and surface the SC-3 version-change
  * toast without duplicating the submission.
  */
 export const SYNC_DIFF_FETCHER_KEY = "dashboard-sync-diff";
@@ -167,7 +167,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
   // Stable fetcher key so the dashboard route can subscribe to the same
-  // sync-diff response via useFetcher({ key }) and surface the
+  // sync-diff response via useFetcher({ key }) and surface the SC-3
   // version-change toast (see _app.dashboard.tsx / useVersionChangeToast).
   const diffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
   const applyFetcher = useFetcher();
