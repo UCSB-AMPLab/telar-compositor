@@ -220,9 +220,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const slug = text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/\s+/g, "-").trim();
       return `<h${depth} id="${escapeAttr(slug)}">${text}</h${depth}>`;
     };
-    // Sanitise marked output before it reaches dangerouslySetInnerHTML.
-    // Heading IDs from the custom Renderer above survive sanitisation
-    // because the sanitiser allowlist permits id on h1-h6.
+    // Sanitise marked output before it reaches
+    // dangerouslySetInnerHTML. Heading IDs from the custom Renderer above
+    // survive sanitisation because the sanitiser allowlist permits id on h1-h6.
     const releaseNotesHtml = sanitiseHtml(
       (await marked.parse(releaseNotes, { async: false, gfm: true, renderer })) as string,
     );
@@ -317,9 +317,9 @@ export async function action({ request, context }: Route.ActionArgs) {
     try {
       const latestRelease = await fetchLatestRelease(token);
       const { tree: userTree } = await getRepoTree(token, owner, repo);
-      // Capture HEAD OID here; pass to commitFilesToRepo below to prevent
-      // a second upgrade path (e.g. GitHub Actions, another client) from
-      // racing this commit.
+      // Capture HEAD OID here; pass to commitFilesToRepo below to
+      // prevent a second upgrade path (e.g. GitHub Actions, another client)
+      // from racing this commit.
       const expectedHeadOid = await getRepoHead(token, owner, repo, "main");
       const diff = await computeUpgradeDiff(token, userTree, latestRelease.tagName);
 
@@ -1001,14 +1001,14 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     };
   }, []);
 
-  // Broadcast upgrade state to all connected clients via Yjs awareness.
-  // Collaborators see a freeze modal driven by state.upgrading;
+  // D-11 / SC-1: Broadcast upgrade state to all connected clients via Yjs
+  // awareness. Collaborators see a freeze modal driven by state.upgrading;
   // error state surfaces a dismissable error modal.
   //
-  // This broadcast is owner-only in practice because the upgrade route
-  // loader already redirects non-convenors (RestrictionBanner path).
-  // Even if a collaborator spoofed upgrading=true elsewhere, the commit
-  // itself is server-gated by the role check in this route's action.
+  // This broadcast is owner-only in practice because the upgrade
+  // route loader already redirects non-convenors (RestrictionBanner path).
+  // Even if a collaborator spoofed upgrading=true elsewhere, the commit itself
+  // is server-gated by the role check in this route's action.
   useEffect(() => {
     if (!provider) return;
     const isActive = stage === "upgrading" || stage === "building";
@@ -1416,11 +1416,11 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
                           <li key={i} className="font-body text-sm text-charcoal">
                             <div
                               dangerouslySetInnerHTML={{
-                                // Manual-step descriptions come from
-                                // bundled / release-asset manifests authored
-                                // by the framework maintainer; route through
-                                // sanitiseHtml to harden against an upstream
-                                // compromise.
+                                // Manual-step descriptions come
+                                // from bundled / release-asset manifests
+                                // authored by the framework maintainer; route
+                                // through sanitiseHtml to harden against an
+                                // upstream compromise.
                                 __html: sanitiseHtml(
                                   marked.parse(step.description, {
                                     async: false,
