@@ -269,12 +269,12 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // from D1 entity rows, and close all connected sockets so clients reconnect
     // with clean state. Convenor-only — gating happens in workers/app.ts; here
     // we verify the signed internal marker the worker entry sets so the DO
-    // cannot be reached directly from outside.
+    // cannot be reached directly from outside (T-32-03b mitigation).
     if (url.pathname.endsWith("/reset") && request.method === "POST") {
       // Verify the signed internal marker workers/app.ts attaches via the
       // X-Internal-Auth / X-Internal-Timestamp / X-Internal-Project headers.
       // Direct reaches that bypass the worker entry lack the marker and are
-      // rejected with 401.
+      // rejected with 401 — T-32-03b mitigation.
       const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
       if (markerError) return markerError;
 
