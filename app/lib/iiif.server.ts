@@ -220,6 +220,33 @@ export async function fetchAndParseManifest(
 ): Promise<IiifFetchResult> {
   let manifest: Record<string, unknown>;
 
+  // Scheme + userinfo allowlist. Defence-in-depth against SSRF /
+  // scheme-confusion / credential leak.
+  //
+  // Rejects:
+  //   - non-https schemes (http:, file:, data:, etc.)
+  //   - userinfo-bearing URLs (https://user:pass@host/...) — credentials
+  //     in the URL leak to whatever host fetch() resolves
+  //   - unparseable URL strings
+  //
+  // Does NOT protect against:
+  //   - DNS rebinding (https://localhost.attacker.com/...)
+  //   - IDN homograph attacks
+  //
+  // Cloudflare Workers blocks RFC1918/loopback at the runtime layer.
+  // Reuses the existing `fetch_failed` error code.
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      return { ok: false, error: "fetch_failed" };
+    }
+    if (parsed.username !== "" || parsed.password !== "") {
+      return { ok: false, error: "fetch_failed" };
+    }
+  } catch {
+    return { ok: false, error: "fetch_failed" };
+  }
+
   try {
     const response = await fetch(url);
     if (!response.ok) {

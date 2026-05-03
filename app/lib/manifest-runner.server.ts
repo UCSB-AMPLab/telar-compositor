@@ -14,14 +14,14 @@
  *     and whitespace exactly. Never yaml.load/yaml.dump for mutation.
  *   - CSV mutations use papaparse (same stack as parseTelarCsv in
  *     import.server.ts). Idempotency checks honour both language variants of
- *     the column name (Pitfall 3).
+ *     the column name.
  *   - Bilingual fields ({ en, es }) resolve via resolveBilingual using the
  *     site's `telar_language` — passed in as `lang` on applyManifestChain.
  *   - Unknown operation type throws — exhaustive switch is enforced at compile
  *     time via the Operation union, and fail-closed at runtime.
- *   - regex_replace enforces a scope allowlist to prevent (arbitrary
- *     file corruption via a malicious glob). Paths containing `..`, starting
- *     with `/`, or under `.git/` are rejected with a hard error.
+ *   - regex_replace enforces a scope allowlist to prevent arbitrary file
+ *     corruption via a malicious glob. Paths containing `..`, starting with
+ *     `/`, or under `.git/` are rejected with a hard error.
  */
 
 import Papa from "papaparse";
@@ -401,7 +401,7 @@ function opGitignoreAdd(
 /**
  * For each file matching `file_glob` AND passing the scope allowlist, applies
  * `content.replace(new RegExp(search, "g"), replace)`. Paths outside the
- * allowlist cause a hard throw (defense-in-depth).
+ * allowlist cause a hard throw (defence-in-depth against arbitrary writes).
  */
 function opRegexReplace(
   files: Map<string, string>,
@@ -437,8 +437,8 @@ function opCreateDirectory(
 
 /**
  * Dispatches a single operation to its implementation. Throws for unknown
- * operation types (fail-closed). The exhaustive switch is also
- * enforced at compile time via the `never` check in the default branch.
+ * operation types (fail-closed). The exhaustive switch is also enforced at
+ * compile time via the `never` check in the default branch.
  */
 export function applyOperation(
   files: Map<string, string>,
@@ -479,8 +479,8 @@ export function applyOperation(
  * manual steps in the requested language. Returns a new Map so callers can
  * mutate the result without affecting the input.
  *
- * The validator guarantees each manifest is well-formed before it
- * reaches this function; the runner does not re-validate.
+ * The validator guarantees each manifest is well-formed before it reaches
+ * this function; the runner does not re-validate.
  */
 export function applyManifestChain(
   manifests: Manifest[],
