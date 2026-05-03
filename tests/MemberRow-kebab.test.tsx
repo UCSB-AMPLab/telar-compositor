@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * MemberRow-kebab.test.tsx — kebab menu replaces hover X button.
+ * MemberRow-kebab.test.tsx — SC-5 kebab menu replaces hover X button.
  *
  * Tests: always-visible MoreVertical icon, dropdown open/close,
  * Remove callback, defence-in-depth isConvenor guard.
@@ -31,7 +31,7 @@ const defaultProps = {
 };
 
 describe("MemberRow kebab menu", () => {
-  it("renders MoreVertical icon always (no opacity-0 class)", () => {
+  it("SC-5: renders MoreVertical icon always (no opacity-0 class)", () => {
     const { container } = render(<MemberRow {...defaultProps} isConvenor={true} />);
     // The kebab button must be present in the DOM
     const btn = screen.getByRole("button", { name: /row menu/i });
@@ -40,12 +40,12 @@ describe("MemberRow kebab menu", () => {
     expect(container.innerHTML).not.toContain("opacity-0");
   });
 
-  it("kebab button has no group-hover:opacity-100 modifier", () => {
+  it("SC-5: kebab button has no group-hover:opacity-100 modifier", () => {
     const { container } = render(<MemberRow {...defaultProps} isConvenor={true} />);
     expect(container.innerHTML).not.toContain("group-hover:opacity-100");
   });
 
-  it("clicking the kebab opens a dropdown with a Remove item", () => {
+  it("SC-5: clicking the kebab opens a dropdown with a Remove item", () => {
     render(<MemberRow {...defaultProps} isConvenor={true} />);
     const btn = screen.getByRole("button", { name: /row menu/i });
     fireEvent.click(btn);
@@ -55,12 +55,12 @@ describe("MemberRow kebab menu", () => {
     expect(item.textContent?.toLowerCase()).toContain("remove");
   });
 
-  it("kebab is only rendered when isConvenor=true (defence-in-depth)", () => {
+  it("SC-5: kebab is only rendered when isConvenor=true (defence-in-depth for T-28-01)", () => {
     render(<MemberRow {...defaultProps} isConvenor={false} />);
     expect(screen.queryByRole("button", { name: /row menu/i })).toBeNull();
   });
 
-  it("Remove item triggers onRemove prop", () => {
+  it("SC-5: Remove item triggers onRemove prop", () => {
     const onRemove = vi.fn();
     render(<MemberRow {...defaultProps} isConvenor={true} onRemove={onRemove} />);
     const btn = screen.getByRole("button", { name: /row menu/i });
@@ -70,7 +70,7 @@ describe("MemberRow kebab menu", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it("menu closes on outside click", () => {
+  it("SC-5: menu closes on outside click", () => {
     render(
       <div>
         <MemberRow {...defaultProps} isConvenor={true} />

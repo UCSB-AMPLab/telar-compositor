@@ -13,6 +13,7 @@ import { authMiddleware, userContext } from "~/middleware/auth.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { listUserInstallations, listInstallationRepos, getFileContent } from "~/lib/github.server";
+import { checkTelarVersion } from "~/lib/upgrade.server";
 import type { Repository } from "~/lib/github.server";
 import { importRepo } from "~/lib/import.server";
 import { commitFilesToRepo, disableGoogleSheetsInConfig, verifySiteUrl, enableGitHubPages } from "~/lib/commit.server";
@@ -26,7 +27,6 @@ import {
   project_landing,
   project_members,
   project_invites,
-  project_pages,
   objects,
   stories,
   steps,
@@ -46,6 +46,69 @@ export const handle = { i18n: ["onboarding", "common"] };
 
 export interface RepoWithInstallation extends Repository {
   installationId: number;
+}
+
+// ---------------------------------------------------------------------------
+// Cascade-delete helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Cascade-delete every row that depends on `projectId`, in dependency order:
+ * layers → steps → stories → objects → glossary_terms → project_config →
+ * project_themes → project_landing → project_members → project_invites →
+ * projects. Exported so the unit tests can record the delete-table sequence
+ * without bootstrapping the full route action.
+ *
+ * The deletes are issued as a single `db.batch([...])` so D1 executes them
+ * atomically; a worker that's evicted mid-cascade can no longer leave behind
+ * orphan rows referencing a deleted parent.
+ */
+export async function unlinkProjectCascade(
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle DB type is route-scoped
+  db: any,
+  projectId: number,
+): Promise<void> {
+  // Resolve dependent ids before the batch — these are reads, not writes,
+  // so they don't need to be inside the atomic group.
+  const storyIds = await db
+    .select({ id: stories.id })
+    .from(stories)
+    .where(eq(stories.project_id, projectId));
+  const ids = storyIds.map((s: { id: number }) => s.id);
+
+  let stepIds: { id: number }[] = [];
+  if (ids.length > 0) {
+    stepIds = await db
+      .select({ id: steps.id })
+      .from(steps)
+      .where(inArray(steps.story_id, ids));
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle batch tuple typing
+  const batchOps: any[] = [];
+  if (stepIds.length > 0) {
+    batchOps.push(
+      db
+        .delete(layers)
+        .where(inArray(layers.step_id, stepIds.map((s: { id: number }) => s.id))),
+    );
+  }
+  if (ids.length > 0) {
+    batchOps.push(db.delete(steps).where(inArray(steps.story_id, ids)));
+  }
+  batchOps.push(
+    db.delete(stories).where(eq(stories.project_id, projectId)),
+    db.delete(objects).where(eq(objects.project_id, projectId)),
+    db.delete(glossary_terms).where(eq(glossary_terms.project_id, projectId)),
+    db.delete(project_config).where(eq(project_config.project_id, projectId)),
+    db.delete(project_themes).where(eq(project_themes.project_id, projectId)),
+    db.delete(project_landing).where(eq(project_landing.project_id, projectId)),
+    db.delete(project_members).where(eq(project_members.project_id, projectId)),
+    db.delete(project_invites).where(eq(project_invites.project_id, projectId)),
+    db.delete(projects).where(eq(projects.id, projectId)),
+  );
+
+  await db.batch(batchOps);
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +219,12 @@ export async function action({ request, context }: Route.ActionArgs) {
         env,
         overrideGoogleSheetsUrl: sheetsUrl || undefined,
       });
+      if (result.valid && result.telarVersion) {
+        const versionCheck = await checkTelarVersion(token, result.telarVersion);
+        if (versionCheck.needsUpgrade) {
+          return redirect("/upgrade?from=/dashboard");
+        }
+      }
       return result;
     }
 
@@ -166,6 +235,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       userId: user.id,
       env,
     });
+    if (result.valid && result.telarVersion) {
+      const versionCheck = await checkTelarVersion(token, result.telarVersion);
+      if (versionCheck.needsUpgrade) {
+        return redirect("/upgrade?from=/dashboard");
+      }
+    }
     return result;
   }
 
@@ -366,34 +441,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     // Cascade delete: layers → steps → stories, then other project tables, then project
-    const storyIds = await db
-      .select({ id: stories.id })
-      .from(stories)
-      .where(eq(stories.project_id, projectId));
-
-    if (storyIds.length > 0) {
-      const ids = storyIds.map((s) => s.id);
-      const stepIds = await db
-        .select({ id: steps.id })
-        .from(steps)
-        .where(inArray(steps.story_id, ids));
-
-      if (stepIds.length > 0) {
-        await db.delete(layers).where(inArray(layers.step_id, stepIds.map((s) => s.id)));
-      }
-      await db.delete(steps).where(inArray(steps.story_id, ids));
-    }
-
-    await db.delete(stories).where(eq(stories.project_id, projectId));
-    await db.delete(objects).where(eq(objects.project_id, projectId));
-    await db.delete(glossary_terms).where(eq(glossary_terms.project_id, projectId));
-    await db.delete(project_pages).where(eq(project_pages.project_id, projectId));
-    await db.delete(project_invites).where(eq(project_invites.project_id, projectId));
-    await db.delete(project_members).where(eq(project_members.project_id, projectId));
-    await db.delete(project_config).where(eq(project_config.project_id, projectId));
-    await db.delete(project_themes).where(eq(project_themes.project_id, projectId));
-    await db.delete(project_landing).where(eq(project_landing.project_id, projectId));
-    await db.delete(projects).where(eq(projects.id, projectId));
+    await unlinkProjectCascade(db, projectId);
 
     return { ok: true, intent: "unlink-project" };
   }

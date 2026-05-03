@@ -581,7 +581,7 @@ export async function fetchReleaseManifest(
 /**
  * Build the sequential chain of manifests that upgrades a site from
  * `fromVersion` to `toVersion`. Uses EXACT string equality on from_version
- * and to_version — no version normalisation (Pitfall 1).
+ * and to_version — no version normalisation.
  *
  * Returns manifests in application order. Throws if no chain reaches
  * toVersion, or if a loop is detected.

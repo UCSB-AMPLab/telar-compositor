@@ -15,6 +15,42 @@ import { syntaxTree } from "@codemirror/language";
 import { RangeSetBuilder } from "@codemirror/state";
 
 // ---------------------------------------------------------------------------
+// URL scheme allowlist (defence-in-depth XSS hardening)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true only for URL schemes that are safe to assign to `<img src>` in
+ * the editor preview. Allowed: `http:`, `https:`, `data:image/<png|jpeg|gif|webp>;...`
+ * (raster types only — SVG dropped per WR-07 to remove residual XSS surface
+ * via `<foreignObject>` / animation events / parser quirks), and same-origin
+ * relative paths starting with a single slash. Rejects `javascript:`,
+ * `vbscript:`, `data:text/html`, `data:image/svg+xml`, protocol-relative
+ * `//host/...`, and any malformed input.
+ */
+export function isSafeImageUrl(url: string): boolean {
+  if (typeof url !== "string" || url.length === 0) return false;
+  // Reject protocol-relative URLs explicitly.
+  if (url.startsWith("//")) return false;
+  // Same-origin relative path: starts with single slash.
+  if (url.startsWith("/")) return true;
+  // Otherwise the URL must be absolute. Parse without a base so relative or
+  // malformed strings throw and are rejected.
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return true;
+    if (
+      parsed.protocol === "data:" &&
+      /^data:image\/(png|jpe?g|gif|webp);/i.test(url)
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Decoration factories
 // ---------------------------------------------------------------------------
 
@@ -47,7 +83,9 @@ class ImageWidget extends WidgetType {
     const wrapper = document.createElement("span");
     wrapper.className = "cm-md-image-preview";
     const img = document.createElement("img");
-    img.src = this.url;
+    if (isSafeImageUrl(this.url)) {
+      img.src = this.url;
+    }
     img.alt = this.alt;
     img.style.maxWidth = "100%";
     img.style.maxHeight = "200px";

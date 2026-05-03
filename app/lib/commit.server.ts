@@ -99,9 +99,9 @@ export async function commitFilesToRepo(
   skipCi?: boolean,
   expectedHeadOidOverride?: string,
 ): Promise<{ newHeadSha: string }> {
-  // 1. Resolve expectedHeadOid — prefer caller-supplied override (
-  //    captured earlier in a multi-step pipeline to guard against TOCTOU), fall
-  //    back to a fresh lookup to keep single-step callers backward-compatible.
+  // 1. Resolve expectedHeadOid — prefer caller-supplied override (captured
+  //    earlier in a multi-step pipeline to guard against TOCTOU), fall back
+  //    to a fresh lookup to keep single-step callers backward-compatible.
   let expectedHeadOid: string;
   if (expectedHeadOidOverride) {
     expectedHeadOid = expectedHeadOidOverride;

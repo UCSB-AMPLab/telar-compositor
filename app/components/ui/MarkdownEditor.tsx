@@ -105,6 +105,15 @@ interface MarkdownEditorProps {
    * Not available in config fields or metadata.
    */
   enableGlossaryLinks?: boolean;
+  /**
+   * Override the form-field name used by the autosave fetcher (non-collaborative
+   * fallback). Defaults to "projectId" to preserve all existing call sites.
+   * LayerPanel passes "layerId" so the autosave-layer action handler — which
+   * reads `formData.get("layerId")` — sees the correctly-named field.
+   * The `projectId` prop value is still used as the form value; only the field
+   * key changes.
+   */
+  formFieldName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +175,7 @@ export function MarkdownEditor({
   yText = null,
   alwaysShowToolbar = false,
   enableGlossaryLinks = false,
+  formFieldName = "projectId",
 }: MarkdownEditorProps) {
   const [mounted, setMounted] = useState(false);
   const { t } = useTranslation("editor");
@@ -284,7 +294,7 @@ export function MarkdownEditor({
     // Collaborative mode: build extensions with yCollab; remove history() and autosave.
     // The shared doc-level UndoManager from CollaborationContext is passed to yCollab so
     // that undo/redo for text edits in this editor is interleaved with structural ops on
-    // the same history stack. Per-editor UndoManagers were removed.
+    // the same history stack. Per-editor UndoManagers were removed earlier.
     if (yText) {
       const view = new EditorView({
         state: EditorState.create({
@@ -381,7 +391,7 @@ export function MarkdownEditor({
               intent,
               field: fieldName,
               value: doc,
-              projectId: String(projectId),
+              [formFieldName]: String(projectId),
             },
             { method: "post", action: actionUrl }
           );

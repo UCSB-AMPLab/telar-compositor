@@ -69,6 +69,7 @@ import {
 import { getInstallationToken } from "~/lib/github-app.server";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
 import { marked, Renderer } from "marked";
+import { sanitiseHtml } from "~/lib/sanitise-html";
 import { Button } from "~/components/ui/Button";
 
 export const handle = { i18n: ["common", "upgrade", "team"] };
@@ -206,11 +207,25 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
     // Convert markdown release notes to HTML (with heading IDs for anchor links)
     const renderer = new Renderer();
+    // Defence-in-depth: even though the slug regex below restricts characters
+    // to letters/digits/hyphens, escape the value before inlining it into an
+    // attribute so a future regex change can't open an injection path.
+    const escapeAttr = (s: string) =>
+      s.replace(
+        /[&<>"']/g,
+        (c) =>
+          ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
+      );
     renderer.heading = ({ text, depth }: { text: string; depth: number }) => {
       const slug = text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/\s+/g, "-").trim();
-      return `<h${depth} id="${slug}">${text}</h${depth}>`;
+      return `<h${depth} id="${escapeAttr(slug)}">${text}</h${depth}>`;
     };
-    const releaseNotesHtml = await marked.parse(releaseNotes, { async: false, gfm: true, renderer });
+    // Sanitise marked output before it reaches
+    // dangerouslySetInnerHTML. Heading IDs from the custom Renderer above
+    // survive sanitisation because the sanitiser allowlist permits id on h1-h6.
+    const releaseNotesHtml = sanitiseHtml(
+      (await marked.parse(releaseNotes, { async: false, gfm: true, renderer })) as string,
+    );
 
     // Group file paths by category for the expandable file list
     const filesByCategory: Record<string, string[]> = {};
@@ -302,7 +317,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     try {
       const latestRelease = await fetchLatestRelease(token);
       const { tree: userTree } = await getRepoTree(token, owner, repo);
-      // capture HEAD OID here; pass to commitFilesToRepo below to
+      // Capture HEAD OID here; pass to commitFilesToRepo below to
       // prevent a second upgrade path (e.g. GitHub Actions, another client)
       // from racing this commit.
       const expectedHeadOid = await getRepoHead(token, owner, repo, "main");
@@ -378,7 +393,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       try {
         manifestResult = applyManifestChain(manifestChain, manifestFiles, language);
       } catch (err) {
-        // runner scope allowlist or other runtime error — fail closed.
+        // Runner scope allowlist or other runtime error — fail closed.
         console.error(
           `[runUpgradePrepare] applyManifestChain failed (${fromVersion} -> ${toVersion}):`,
           err,
@@ -515,7 +530,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
   }
 
-  // owner gate — enforced above via requireOwner(). No spoofable path.
+  // Owner gate — enforced above via requireOwner(). No spoofable path.
   switch (intent) {
     case "upgrade-prepare": {
       const res = await runUpgradePrepare();
@@ -986,7 +1001,7 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     };
   }, []);
 
-  // Broadcast upgrade state to all connected clients via Yjs
+  // D-11 / SC-1: Broadcast upgrade state to all connected clients via Yjs
   // awareness. Collaborators see a freeze modal driven by state.upgrading;
   // error state surfaces a dismissable error modal.
   //
@@ -1401,10 +1416,17 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
                           <li key={i} className="font-body text-sm text-charcoal">
                             <div
                               dangerouslySetInnerHTML={{
-                                __html: marked.parse(step.description, {
-                                  async: false,
-                                  gfm: true,
-                                }) as string,
+                                // Manual-step descriptions come
+                                // from bundled / release-asset manifests
+                                // authored by the framework maintainer; route
+                                // through sanitiseHtml to harden against an
+                                // upstream compromise.
+                                __html: sanitiseHtml(
+                                  marked.parse(step.description, {
+                                    async: false,
+                                    gfm: true,
+                                  }) as string,
+                                ),
                               }}
                             />
                             {step.doc_url && (

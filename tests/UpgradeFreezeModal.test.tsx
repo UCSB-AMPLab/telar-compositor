@@ -43,8 +43,10 @@ describe("UpgradeFreezeModal", () => {
     expect(screen.getByText("upgrade_freeze_body_collaborator")).toBeTruthy();
   });
 
-  it("renders upgrade_freeze_body_owner when isOwner=true", () => {
-    render(
+  it("renders nothing when isOwner=true", () => {
+    // The wrapper passes through to FreezeModal, which returns null for
+    // owners regardless of isUpgrading.
+    const { container } = render(
       <UpgradeFreezeModal
         isUpgrading={true}
         upgradeError={false}
@@ -52,8 +54,7 @@ describe("UpgradeFreezeModal", () => {
         onDismiss={() => {}}
       />,
     );
-    expect(screen.getByText("upgrade_freeze_body_owner")).toBeTruthy();
-    expect(screen.queryByText("upgrade_freeze_body_collaborator")).toBeNull();
+    expect(container.firstChild).toBeNull();
   });
 
   it("renders error state when upgradeError=true", () => {

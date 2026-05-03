@@ -71,7 +71,7 @@
 .cm-dark-theme .cm-md-link { color: var(--color-cream); }
 .cm-editor.cm-focused { outline: none; }
 
-/* y-codemirror.next remote cursor labels */
+/* y-codemirror.next remote cursor labels (per D-14, D-15) */
 .cm-ySelectionInfo {
   font-family: var(--font-heading);
   font-size: 11px;
@@ -110,7 +110,7 @@
 .cm-md-ul .cm-line,
 .cm-md-ol .cm-line { margin-bottom: 0.125em; }
 
-/* Structural ops animations (highlight + fade-out) */
+/* Structural ops animations (highlight, fade-out) */
 /* Uses CSS custom property --structural-highlight-color set inline from the
    remote collaborator's presence colour so the pulse takes their identity. */
 @keyframes structural-highlight-pulse {

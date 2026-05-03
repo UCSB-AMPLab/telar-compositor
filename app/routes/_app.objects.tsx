@@ -40,6 +40,7 @@ import { createSessionStorage } from "~/lib/session.server";
 import { resolveActiveProject } from "~/lib/membership.server";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
+import { findYMapById } from "~/lib/yjs-helpers";
 import { useToast } from "~/hooks/use-toast";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { fetchAndParseManifest } from "~/lib/iiif.server";
@@ -63,7 +64,7 @@ import {
 import type { BuildPhaseStatus, WorkflowRun } from "~/lib/commit.server";
 import { githubHeaders } from "~/lib/github.server";
 import { getInstallationToken } from "~/lib/github-app.server";
-import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
+import { serializeObjectsCsv } from "~/lib/csv-export.server";
 import { ObjectRow } from "~/components/features/objects/ObjectRow";
 import { ObjectsEmptyState } from "~/components/features/objects/ObjectsEmptyState";
 import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
@@ -100,8 +101,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
   const { project: activeProject, userRole } = resolved;
 
-  // Fetch all objects ordered by `order` ASC — legacy rows may all
-  // default to 0, which still sorts consistently before newly-ordered items.
+  // Fetch all objects ordered by `order` ASC — pre-existing rows default
+  // to 0, which still sorts consistently before newly-ordered items.
   const projectObjects = await db
     .select()
     .from(objects)
@@ -413,16 +414,16 @@ export async function action({ request, context }: Route.ActionArgs) {
       return { ok: true, intent: "fetch-iiif-preview", result };
     }
 
-    // add-iiif-object migrated to Yjs. IIIF objects
-    // now flow through ops.addIiifObject → Y.Array with _validation_state.
-    // The snapshotToD1 cycle INSERTs them once validation succeeds. Any
-    // clients on old code that still submit this intent hit the 400 default
-    // below. Self-hosted uploads continue to use upload-image.
+    // add-iiif-object: migrated to Yjs. IIIF objects now flow through
+    // ops.addIiifObject → Y.Array with _validation_state. The snapshotToD1
+    // cycle INSERTs them once validation succeeds. Any clients on old code
+    // that still submit this intent hit the 400 default below. Self-hosted
+    // uploads continue to use upload-image.
 
     case "delete-object": {
       // Convenor-only deletion of self-hosted objects requiring repo cleanup.
       // IIIF / external objects are deleted client-side via the Y.Array only
-      // ; snapshotToD1 handles the D1 row removal on the next cycle.
+      // snapshotToD1 handles the D1 row removal on the next cycle.
       const objectDbId = Number(formData.get("objectDbId"));
       if (!objectDbId) {
         return { ok: false, intent: "delete-object", error: "missing_id" };
@@ -556,7 +557,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
         imagePayloads.push({ imagePath, imageBase64 });
 
-        // 7. Build pending object (NOT inserted to D1 yet)
+        // 7. Build pending object (D-13: NOT inserted to D1 yet)
         uploadPendingObjects.push({
           object_id: uploadObjectId,
           title: metadata.title.trim(),
@@ -576,7 +577,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         });
       }
 
-      // 8. Serialise objects.csv — merge ALL new objects in a single pass (Pitfall 4)
+      // 8. Serialise objects.csv — merge ALL new objects in a single pass
       const uploadExistingCsv = await getFileContent(uploadToken, uploadOwner, uploadRepo, "telar-content/spreadsheets/objects.csv");
 
       const uploadProjectObjects = await db.select().from(objects)
@@ -593,7 +594,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         })),
       ].sort((a, b) => a.object_id.localeCompare(b.object_id));
 
-      const uploadCsvContent = serializeObjectsCsv(uploadAllObjectsForCsv.map(dbObjectToCsvRow), uploadExistingCsv ?? undefined);
+      const uploadCsvContent = serializeObjectsCsv(uploadAllObjectsForCsv, uploadExistingCsv ?? undefined);
 
       // 9. Commit all images + CSV atomically in a single Git commit
       const commitLabel = uploadPendingObjects.map((p) => p.object_id).join(", ");
@@ -647,7 +648,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           dispatchHtmlUrl,
         };
       } catch (err) {
-        // No D1 rollback needed — nothing was inserted
+        // No D1 rollback needed — nothing was inserted (D-13 pattern)
         if (err instanceof StaleHeadError) {
           return { ok: false, intent: "upload-image", error: "stale_head" };
         }
@@ -739,7 +740,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // Read existing CSV to preserve comment/instruction rows
       const existingCsv = await getFileContent(token, owner, repo, "telar-content/spreadsheets/objects.csv");
-      const csvContent = serializeObjectsCsv(allObjectsForCsv.map(dbObjectToCsvRow), existingCsv ?? undefined);
+      const csvContent = serializeObjectsCsv(allObjectsForCsv, existingCsv ?? undefined);
 
       const files: Array<{ path: string; content: string }> = [
         { path: "telar-content/spreadsheets/objects.csv", content: csvContent },
@@ -994,7 +995,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // D1 batch limit: 100 bindings per INSERT, 18 columns → max 5 rows.
       // Collect inserted rows so the client can mirror them into the Yjs
-      // Y.Array with canonical D1 ids — self-hosted objects appear in
+      // Y.Array with canonical D1 ids (D-18 — self-hosted objects appear in
       // the shared doc only after the repo build succeeds and D1 INSERT
       // completes; the snapshot writes them as UPDATEs on the next cycle).
       const maxRows = Math.floor(100 / 18);
@@ -1067,8 +1068,8 @@ function filterObjects(
 // ---------------------------------------------------------------------------
 // SortableObjectRow — dnd-kit sortable wrapper around ObjectRow for the Yjs
 // collaborative mode. Adds a grip handle for reorder, a delete button
-// (visible-but-disabled when canDelete is false), and a
-// validation-state badge for pending / invalid IIIF manifests.
+// (visible-but-disabled when canDelete is false per D-03), and a
+// validation-state badge for pending / invalid IIIF manifests (D-16 / D-17).
 // ---------------------------------------------------------------------------
 
 interface SortableObjectRowProps {
@@ -1129,7 +1130,7 @@ function SortableObjectRow({
         )}
       </div>
 
-      {/* Delete button (visible-but-disabled) */}
+      {/* Delete button (D-03 visible-but-disabled) */}
       <div className="shrink-0 px-2 flex items-center">
         <button
           type="button"
@@ -1147,7 +1148,7 @@ function SortableObjectRow({
 }
 
 // ---------------------------------------------------------------------------
-// IIIF manifest validation — client-side fetch that marks the
+// IIIF manifest validation (D-16 / D-17) — client-side fetch that marks the
 // Y.Map's _validation_state as "valid" or "error" so all connected users see
 // the outcome via Yjs sync. Runs outside React so it survives rerenders.
 // ---------------------------------------------------------------------------
@@ -1398,7 +1399,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       setUploadError(null);
       setUploadSubmitted(false);
       // Pass pending objects to CommitAndBuildModal — it will call insert-pending-objects
-      // after build success, inserting them to D1 (pending objects pattern).
+      // after build success, inserting them to D1 (D-13 pending objects pattern).
       // Images + CSV are already committed by the action; no pre-commit-check needed here.
       setPendingObjects(uploadFetcherData.pendingObjects ?? [uploadFetcherData.pendingObject]);
       setDispatchRunId(uploadFetcherData.dispatchRunId ?? null);
@@ -1421,6 +1422,18 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   }, [uploadFetcherData, uploadDialogOpen, t]);
 
   function handleToggleFeatured(object: ObjectRowObject) {
+    // Y.Doc is the source of truth for object metadata in collaborative mode;
+    // snapshotToD1 reconciles. The D1-only fetcher would be clobbered.
+    if (useYjs && ydoc) {
+      const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+      const objYMap = findYMapById(objectsArray, object.id);
+      if (objYMap) {
+        ydoc.transact(() => {
+          objYMap.set("featured", !(object.featured ?? false));
+        });
+        return;
+      }
+    }
     featuredFetcher.submit(
       {
         intent: "toggle-featured",
@@ -1455,7 +1468,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   }
 
   function handleIiifConfirm(payload: AddIiifConfirmPayload) {
-    // IIIF objects flow through the Y.Array with a "pending" validation
+    // D-16: IIIF objects flow through the Y.Array with a "pending" validation
     // state. The DO snapshot (plan 27-03) skips pending objects, so they do
     // not reach D1 until this client-side fetch marks them valid.
     if (!ops || !ydoc) {
@@ -1498,7 +1511,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         justAdded.set("image_available", payload.image_available);
       });
 
-      // Fire-and-forget client-side manifest validation.
+      // Fire-and-forget client-side manifest validation (D-16 / D-17).
       // Success → `_validation_state: "valid"`, failure → `"error"`.
       validateManifestOnYMap(justAdded, payload.manifestUrl);
     }
@@ -1645,7 +1658,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   } | null>(null);
 
   function openDeleteModalFor(object: YjsObjectRow) {
-    // Contributors: objects_edited from contributions, plus the
+    // Contributors: objects_edited from member contributions, plus the
     // creator (unless it's the current user).
     const names = new Set<string>();
     const typedMembers = members as ObjectsMember[];
@@ -1753,7 +1766,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   }
 
   // --------------------------------------------------------------------
-  // dnd-kit sensors (reorder)
+  // dnd-kit sensors (reorder — D-20)
   // --------------------------------------------------------------------
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -2069,7 +2082,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         onInserted={handleInsertedToD1}
       />
 
-      {/* Delete confirmation */}
+      {/* Delete confirmation (D-07 / D-08) */}
       <DeleteConfirmationModal
         open={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}

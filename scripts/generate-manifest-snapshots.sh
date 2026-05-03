@@ -8,7 +8,7 @@
 #   - A Python migration script changes in telar/
 #   - A new fixture is added
 #
-# Snapshot tests run in CI only when manifest or runner code changes,
+# Per D-18: snapshot tests run in CI only when manifest or runner code changes,
 # so regeneration is rare.
 #
 # Why we do not invoke scripts/upgrade.py directly: upgrade.py runs the full

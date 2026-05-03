@@ -17,7 +17,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { getFileContent } from "~/lib/github.server";
 import { slugify } from "~/lib/slugify";
-import { extractCommentRows, serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
+import { extractCommentRows, serializeObjectsCsv } from "~/lib/csv-export.server";
 import type { CommitFile } from "~/lib/commit.server";
 import {
   projects,
@@ -365,7 +365,7 @@ export function layerFileContent(
   if (!title || title.trim() === "") {
     return content;
   }
-  return `---\ntitle: ${yamlQuote(title)}\n---\n\n${content}`;
+  return `---\ntitle: "${title}"\n---\n\n${content}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -698,13 +698,13 @@ export async function buildPublishFileSet(
   // --- _config.yml ---
   if (existingConfigYml && config) {
     const managedFields: Record<string, string> = {};
-    if (config.title != null) managedFields["title"] = yamlQuote(config.title);
-    if (config.url != null) managedFields["url"] = yamlQuote(config.url);
-    if (config.baseurl != null) managedFields["baseurl"] = yamlQuote(config.baseurl);
-    if (config.description != null) managedFields["description"] = yamlQuote(config.description);
-    if (config.author != null) managedFields["author"] = yamlQuote(config.author);
-    if (config.email != null) managedFields["email"] = yamlQuote(config.email);
-    if (config.logo != null) managedFields["logo"] = yamlQuote(config.logo);
+    if (config.title != null) managedFields["title"] = `"${config.title}"`;
+    if (config.url != null) managedFields["url"] = `"${config.url}"`;
+    if (config.baseurl != null) managedFields["baseurl"] = `"${config.baseurl}"`;
+    if (config.description != null) managedFields["description"] = `"${config.description}"`;
+    if (config.author != null) managedFields["author"] = `"${config.author}"`;
+    if (config.email != null) managedFields["email"] = `"${config.email}"`;
+    if (config.logo != null) managedFields["logo"] = `"${config.logo}"`;
     if (config.story_key != null) managedFields["story_key"] = config.story_key;
 
     const updatedConfig = updateConfigFields(existingConfigYml, managedFields);
@@ -730,7 +730,22 @@ export async function buildPublishFileSet(
 
   // --- objects.csv ---
   const objectsCsvContent = serializeObjectsCsv(
-    objectRows.map(dbObjectToCsvRow),
+    objectRows.map((o) => ({
+      object_id: o.object_id,
+      title: o.title ?? null,
+      featured: o.featured ?? null,
+      creator: o.creator ?? null,
+      description: o.description ?? null,
+      source_url: o.source_url ?? null,
+      period: o.period ?? null,
+      year: o.year ?? null,
+      medium_genre: o.object_type ?? null, // D1 stores as object_type; CSV exports as medium_genre (v1.0.0)
+      subjects: o.subjects ?? null,
+      source: o.source ?? null,
+      credit: o.credit ?? null,
+      thumbnail: o.thumbnail ?? null,
+      alt_text: o.alt_text ?? null,
+    })),
     existingObjectsCsv ?? undefined,
   );
   files.push({
@@ -841,13 +856,13 @@ export async function buildPublishFileSet(
 
         const managedLines: string[] = [];
         if (landing.stories_heading)
-          managedLines.push(`stories_heading: ${yamlQuote(landing.stories_heading)}`);
+          managedLines.push(`stories_heading: "${landing.stories_heading}"`);
         if (landing.stories_intro)
-          managedLines.push(`stories_intro: ${yamlQuote(landing.stories_intro)}`);
+          managedLines.push(`stories_intro: "${landing.stories_intro}"`);
         if (landing.objects_heading)
-          managedLines.push(`objects_heading: ${yamlQuote(landing.objects_heading)}`);
+          managedLines.push(`objects_heading: "${landing.objects_heading}"`);
         if (landing.objects_intro)
-          managedLines.push(`objects_intro: ${yamlQuote(landing.objects_intro)}`);
+          managedLines.push(`objects_intro: "${landing.objects_intro}"`);
 
         const allFrontmatterLines = [...preservedLines, ...managedLines].filter(
           (l) => l.trim() !== "",
@@ -1010,10 +1025,10 @@ function buildIndexMd(
   },
 ): string {
   const lines: string[] = [];
-  if (landing.stories_heading) lines.push(`stories_heading: ${yamlQuote(landing.stories_heading)}`);
-  if (landing.stories_intro) lines.push(`stories_intro: ${yamlQuote(landing.stories_intro)}`);
-  if (landing.objects_heading) lines.push(`objects_heading: ${yamlQuote(landing.objects_heading)}`);
-  if (landing.objects_intro) lines.push(`objects_intro: ${yamlQuote(landing.objects_intro)}`);
+  if (landing.stories_heading) lines.push(`stories_heading: "${landing.stories_heading}"`);
+  if (landing.stories_intro) lines.push(`stories_intro: "${landing.stories_intro}"`);
+  if (landing.objects_heading) lines.push(`objects_heading: "${landing.objects_heading}"`);
+  if (landing.objects_intro) lines.push(`objects_intro: "${landing.objects_intro}"`);
 
   const frontmatter = lines.length > 0 ? `---\n${lines.join("\n")}\n---\n\n` : "";
   return `${frontmatter}${landing.welcome_body ?? ""}`;

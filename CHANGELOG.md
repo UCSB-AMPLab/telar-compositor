@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.0.1-beta (2026-05-03)
+
+Security hardening and stability fixes following the v1.0.0-beta launch. Tightens authorisation across every authenticated route, sanitises rendered markdown and image URLs, locks down the collaboration Durable Object's internal endpoints, and relicenses the compositor under AGPL-3.0.
+
+### Relicense
+
+- **AGPL-3.0** — Telar Compositor is now licensed under the GNU Affero General Public License v3.0. Anyone may use, modify, and self-host the compositor; running a modified version as a network service for others requires publishing the modifications under the same license. The trademarks "Telar", "Telar Compositor", "AMPL", and the associated logos remain outside the AGPL grant
+
+### Security hardening
+
+- **Per-project membership enforcement** — Every authenticated route loader and action now resolves the active project via a shared `requireProjectMember` helper; non-members get a 403 instead of seeing other projects' data
+- **HTML sanitisation in markdown previews** — `marked.parse` output is run through `isomorphic-dompurify` before reaching React, blocking script injection and unsafe attributes in narrative previews and glossary bodies
+- **Image URL allowlist** — Markdown image refs and IIIF manifest URLs reject `userinfo`-bearing URLs and `data:image/svg+xml`; only safe http(s) and `data:image/{png,jpeg,gif,webp}` schemes are accepted
+- **Shared session-cookie helpers** — Cookie parsing and user-id resolution moved into `workers/auth.ts`, so the worker, can-delete handler, and snapshot endpoint all run the same hardened path
+- **Signed internal marker on Durable Object endpoints** — `/snapshot` and `/reset` now require an HMAC-signed marker from the worker; outside callers cannot reach them even with a valid session
+- **Server-side `canDelete` on Yjs deletes** — Structural deletes through the collaborative editor route through a server-side handler that re-checks role and project membership; reorder and clone integrity preserved across concurrent edits
+- **Atomic cascade unlink** — Removing a project's members, invites, pages, and project link is now issued as a single D1 batch, so a partial failure can no longer leave dangling rows
+
+### Reliability
+
+- **Yjs revert flag** — Structural ops are guarded by an `isReverting` flag so they cannot double-apply against a Y.Doc after a server-side revert
+- **Navigation editor** — Config tab now hosts a dedicated editor for the site's top navigation
+- **Feature UI refresh** — Collaborator modals, dashboard rows, onboarding forms, and story rows reworked for clearer affordances and consistent layout
+
+### Bug fixes
+
+- **Onboarding wizard done-step** — Fixed a `ReferenceError` on `createSessionStorage` that crashed the final step of the onboarding flow
+
+### Toolchain
+
+- New dependency: `isomorphic-dompurify`
+- Tighter `Uint8Array<ArrayBuffer>` typing on Web Crypto helpers
+- `npm run typecheck` now passes `--noEmit` to `tsc`
+
 ## v1.0.0-beta (2026-04-17)
 
 Real-time multi-user editing, in-app framework upgrades, and the pages and glossary editors that bring the compositor to feature parity with Telar 1.2.0. The largest release in the compositor's history.

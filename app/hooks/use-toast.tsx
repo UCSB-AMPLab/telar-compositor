@@ -1,10 +1,10 @@
 /**
  * use-toast — React context, provider, and hook for toast notifications.
  *
- * Provides a lightweight toast system used by structural operations
- * and other features. Toasts auto-dismiss after 5s by default
- * or can be dismissed manually via the close button. Convenor
- * delete toasts include an optional "Undo" action link.
+ * Provides a lightweight toast system used by structural operations and
+ * other features. Toasts auto-dismiss after 5s by default or can be
+ * dismissed manually via the close button. Convenor delete toasts include
+ * an optional "Undo" action link.
  *
  * Up to 5 toasts are kept in the queue at once; older ones are evicted
  * as new ones arrive. Rendering lives in ToastContainer (see Toast.tsx).

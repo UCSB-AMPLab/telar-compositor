@@ -5,12 +5,12 @@
  *   - create-site
  *   - check-installation-scope
  *
- * FALLBACK (Task 1 spike): Mocking the full onboarding.tsx import graph
- * (auth middleware, drizzle/D1, crypto, github libs, commit/import/upgrade
- * helpers) in isolation is brittle. Per plan 20-01 Task 1 escape hatch and
- * We exercise a pure helper `handleCreateSiteIntents(intent,
- * formData, token, env)` exported from `~/routes/onboarding` that each of
- * the three new `if (intent === ...)` branches delegates to.
+ * FALLBACK: Mocking the full onboarding.tsx import graph (auth middleware,
+ * drizzle/D1, crypto, github libs, commit/import/upgrade helpers) in
+ * isolation is brittle. We exercise a pure helper
+ * `handleCreateSiteIntents(intent, formData, token, env)` exported from
+ * `~/routes/onboarding` that each of the three new `if (intent === ...)`
+ * branches delegates to.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -37,7 +37,7 @@ vi.mock("~/lib/github-app.server", () => ({
   getInstallationToken: vi.fn(),
 }));
 
-// getDb must never be called by the three new branches.
+// getDb must never be called by the three new branches (CSITE-06 invariant).
 vi.mock("~/lib/db.server", () => ({
   getDb: vi.fn(() => {
     throw new Error("getDb should not be called in create-site intent branches");
@@ -283,5 +283,106 @@ describe("onboarding action — check-installation-scope intent", () => {
       message: "Failed to get installation token: 404 not found",
     });
     expect(isRepoInInstallation).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// unlinkProjectCascade — cascade-delete coverage
+// ---------------------------------------------------------------------------
+//
+// Imports the helper directly from the route module. The helper takes a db
+// and a projectId, so we can unit-test the cascade order without booting the
+// full route action (which requires authMiddleware + session storage).
+
+import { unlinkProjectCascade } from "~/routes/onboarding";
+import {
+  layers,
+  steps,
+  stories,
+  objects,
+  glossary_terms,
+  project_config,
+  project_themes,
+  project_landing,
+  project_members,
+  project_invites,
+  projects,
+} from "~/db/schema";
+
+describe("unlink project cascade includes member + invite tables", () => {
+  it("deletes project_members and project_invites after per-entity cascades and before projects", async () => {
+    const visited: unknown[] = [];
+    const db = {
+      delete: vi.fn((table: unknown) => {
+        visited.push(table);
+        return { where: vi.fn().mockResolvedValue(undefined) };
+      }),
+      // unlinkProjectCascade selects stories first; return [] to skip the
+      // step/layer branch (covered by other tests; not the focus here).
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([]),
+        })),
+      })),
+      // The cascade is issued as a single atomic batch.
+      batch: vi.fn().mockResolvedValue([]),
+    };
+
+    await unlinkProjectCascade(db, 7);
+
+    // Presence
+    expect(visited).toContain(project_members);
+    expect(visited).toContain(project_invites);
+
+    // Per-entity cascades still run before the new deletes
+    expect(visited.indexOf(project_members)).toBeGreaterThan(visited.indexOf(project_landing));
+    expect(visited.indexOf(project_members)).toBeGreaterThan(visited.indexOf(project_themes));
+    expect(visited.indexOf(project_invites)).toBeGreaterThan(visited.indexOf(project_landing));
+
+    // project_members before project_invites (helper's insertion order)
+    expect(visited.indexOf(project_members)).toBeLessThan(visited.indexOf(project_invites));
+
+    // Both run BEFORE the project row delete
+    expect(visited.indexOf(project_members)).toBeLessThan(visited.indexOf(projects));
+    expect(visited.indexOf(project_invites)).toBeLessThan(visited.indexOf(projects));
+
+    // The project row is deleted last
+    expect(visited[visited.length - 1]).toBe(projects);
+  });
+
+  it("hits every per-entity cascade table including the new member/invite deletes", async () => {
+    const visited: unknown[] = [];
+    const db = {
+      delete: vi.fn((table: unknown) => {
+        visited.push(table);
+        return { where: vi.fn().mockResolvedValue(undefined) };
+      }),
+      // Return one story id so the layers/steps branch also runs and we can
+      // assert the full cascade (including layers + steps).
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([{ id: 1 }]),
+        })),
+      })),
+      batch: vi.fn().mockResolvedValue([]),
+    };
+
+    await unlinkProjectCascade(db, 7);
+
+    for (const t of [
+      layers,
+      steps,
+      stories,
+      objects,
+      glossary_terms,
+      project_config,
+      project_themes,
+      project_landing,
+      project_members,
+      project_invites,
+      projects,
+    ]) {
+      expect(visited).toContain(t);
+    }
   });
 });

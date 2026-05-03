@@ -30,10 +30,13 @@ describe("FreezeModal", () => {
     expect(svg).toBeTruthy();
   });
 
-  it("shows bodyOwner when isOwner=true", () => {
-    render(<FreezeModal {...baseProps} isActive={true} isOwner={true} />);
-    expect(screen.getByText("Body for owner")).toBeTruthy();
-    expect(screen.queryByText("Body for collaborator")).toBeNull();
+  it("renders nothing when isOwner=true", () => {
+    // FreezeModal returns null for owners regardless of isActive — see the
+    // component's block comment.
+    const { container } = render(
+      <FreezeModal {...baseProps} isActive={true} isOwner={true} />,
+    );
+    expect(container.firstChild).toBeNull();
   });
 
   it("shows bodyCollaborator when isOwner=false", () => {

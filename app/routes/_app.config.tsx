@@ -25,6 +25,7 @@ import { ConfigSection } from "~/components/features/config/ConfigSection";
 import { FieldWithHelp } from "~/components/features/config/FieldWithHelp";
 import { ToggleField } from "~/components/features/config/ToggleField";
 import { ThemeSwatches } from "~/components/features/config/ThemeSwatches";
+// NavigationEditor removed — navigation is managed from the Pages tab
 import { Button } from "~/components/ui/Button";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 

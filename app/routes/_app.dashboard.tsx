@@ -20,7 +20,7 @@ import { projects, stories, steps, project_config, project_members, project_invi
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
-import { getUserProjects, requireOwner } from "~/lib/membership.server";
+import { getUserProjects, requireOwner, requireProjectMember } from "~/lib/membership.server";
 import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
 import type { FullSyncChanges } from "~/lib/sync.server";
 import { ProjectStatusBar } from "~/components/features/dashboard/ProjectStatusBar";
@@ -186,12 +186,11 @@ export async function action({ request, context }: Route.ActionArgs) {
   const intent = formData.get("intent") as string;
 
   // Helper to get active project from session
-  const userId = user.id;
   async function getActiveProject() {
     const sessionStorage = createSessionStorage(env.SESSION_SECRET);
     const session = await sessionStorage.getSession(request.headers.get("Cookie"));
     const sessionActiveId = session.get("activeProjectId") as number | undefined;
-    const allProjects = await getUserProjects(db, userId);
+    const allProjects = await getUserProjects(db, user.id);
     if (allProjects.length === 0) return null;
     return allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
   }
@@ -256,6 +255,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       const projectId = Number(formData.get("entityId") ?? formData.get("projectId"));
       const allowedFields = ["title", "description"];
       if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
+
+      if (!Number.isFinite(projectId) || projectId <= 0) {
+        throw new Response("Bad request", { status: 400 });
+      }
+      await requireProjectMember(db, projectId, user.id);
 
       await db
         .update(project_config)
@@ -512,15 +516,15 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
   const docsUrl = i18n.language === "es" ? "https://telar.org/guia" : "https://telar.org/docs";
   const fetcher = useFetcher();
 
-  // Surface external version drift as a toast. The
+  // SC-3: surface external version drift as a toast. The
   // compute-full-sync-diff submission happens inside SyncConfirmModal via
   // useFetcher({ key: SYNC_DIFF_FETCHER_KEY }); we subscribe to the same
   // fetcher here so the toast fires once at the dashboard level and stays
   // visible after the modal closes. The hook calls showToast with "info"
   // for direction="ahead" (externalUpgradeToast — D1 was silently healed
-  // by applyFullSyncChanges) and "warning" for
+  // by applyFullSyncChanges per D-15) and "warning" for
   // direction="behind" (externalDowngradeToast — user must verify per
-  // When there is no versionChange the hook is a no-op.
+  // D-16). When there is no versionChange the hook is a no-op.
   const syncDiffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
   const syncDiffData = syncDiffFetcher.data as
     | { ok?: boolean; diff?: { config?: { versionChange?: unknown } } }

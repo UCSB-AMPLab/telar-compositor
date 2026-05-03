@@ -1,13 +1,13 @@
 /**
  * ReloadOnUpgradeComplete — collaborators reload when the upgrade finishes
- * successfully. Owner stays on the "upgrade complete" screen (Pitfall 8).
+ * successfully. Owner stays on the "upgrade complete" screen.
  *
- * Reload only fires on true -> false transition (prevRef.current=true
- * while isUpgrading just became false), with no upgradeError and provider
- * already connected. Owner identified via isOwner prop.
+ * Reload only fires on true -> false transition (prevRef.current=true while
+ * isUpgrading just became false), with no upgradeError and provider already
+ * connected. Owner identified via isOwner prop.
  *
- * Extracted from _app.tsx so edge-transition behaviour can be
- * covered by upgrade-reload.test.tsx without rendering the full layout route.
+ * Extracted from _app.tsx so edge-transition behaviour can be covered by
+ * upgrade-reload.test.tsx without rendering the full layout route.
  */
 
 import { useEffect, useRef } from "react";

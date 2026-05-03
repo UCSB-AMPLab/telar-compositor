@@ -68,8 +68,8 @@ interface Props {
   dispatchHtmlUrl?: string | null;
   /**
    * Called after insert-pending-objects succeeds with the D1 ids and
-   * object_ids. Used by plan 27-06 so the objects page can mirror
-   * self-hosted uploads into the Yjs Y.Array.
+   * object_ids. Used so the objects page can mirror self-hosted uploads
+   * into the Yjs Y.Array.
    */
   onInserted?: (inserted: Array<{ id: number; object_id: string }>) => void;
 }

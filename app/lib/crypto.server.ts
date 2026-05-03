@@ -8,7 +8,7 @@
  * Key format: 64-character hex string (256-bit / 32-byte key)
  */
 
-function hexToBytes(hex: string): Uint8Array {
+function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
   if (hex.length % 2 !== 0) {
     throw new Error("Invalid hex string: odd length");
   }
@@ -26,7 +26,7 @@ async function importKey(
   const keyBytes = hexToBytes(keyHex);
   return crypto.subtle.importKey(
     "raw",
-    keyBytes as BufferSource,
+    keyBytes,
     { name: "AES-GCM" },
     false,
     [usage],

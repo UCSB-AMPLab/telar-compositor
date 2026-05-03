@@ -7,10 +7,10 @@
  *
  *   direction="ahead"  -> info toast — repo moved forward of D1 (external
  *                         upgrade via scripts/upgrade.py or GitHub Actions;
- *                         D1 will be silently healed by applyFullSyncChanges
+ *                         D1 will be silently healed by applyFullSyncChanges).
  *                         The toast simply informs the user.
  *   direction="behind" -> warning toast — compositor has a newer version
- *                         than the repo. Auto-apply is deliberately blocked
+ *                         than the repo. Auto-apply is deliberately blocked;
  *                         the toast asks the user to verify.
  *
  * The effect is keyed on the `syncFetcherData` reference, so passing the

@@ -133,7 +133,7 @@ export function SortableStepItem({
         </div>
       </div>
 
-      {/* Delete button — visible on hover; disabled with tooltip when canDelete is false */}
+      {/* Delete button — visible on hover; disabled with tooltip when D-03 denies */}
       <button
         type="button"
         onClick={(e) => {

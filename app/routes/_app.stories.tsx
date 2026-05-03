@@ -78,7 +78,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .where(eq(stories.project_id, activeProject.id))
     .orderBy(asc(stories.order));
 
-  // Fetch team members (for delete confirmation contributor warning)
+  // Fetch team members (for delete confirmation contributor warning — D-07)
   const memberRows = await db
     .select({
       userId: project_members.user_id,
@@ -174,7 +174,7 @@ interface StoryItem {
   updated_at: string | null;
   /** Y.Map sentinel: null when the item has not yet been backfilled to D1. */
   _tempId?: string | null;
-  /** Y.Map sentinel: the user id that created this item (permission tracking). */
+  /** Y.Map sentinel: the user id that created this item (D-02 permissions). */
   _createdBy?: number | null;
   /** Index in the Y.Array (used for reorder). */
   _yIndex?: number;
@@ -386,7 +386,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   }
 
   // ------------------------------------------------------------------
-  // Animations (highlight + fade) — Yjs mode only
+  // Animations (D-22 highlight, D-24 fade) — Yjs mode only
   // ------------------------------------------------------------------
   const seenKeysRef = useRef<Set<string>>(new Set());
   const [highlightedKeys, setHighlightedKeys] = useState<Record<string, string>>(
@@ -435,10 +435,10 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayStories, useYjs]);
 
-  // Remote-delete detection for cascade toast: fires when an id
-  // disappears from the Yjs array that was previously in the seen set.
-  // The stories-list page is the parent list, so no redirect is needed —
-  // the story editor (Task 2) handles the nested redirect case.
+  // Remote-delete detection for cascade toast: fires when an id disappears
+  // from the Yjs array that was previously in the seen set. The
+  // stories-list page is the parent list, so no redirect is needed —
+  // the story editor handles the nested redirect case.
   const prevTitlesRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!useYjs) return;
@@ -548,6 +548,15 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   }
 
   function handleToggleDraft(story: StoryItem) {
+    // Y.Doc is the source of truth in collaborative mode; snapshotToD1
+    // reconciles. The D1-only fetcher would be clobbered.
+    if (useYjs && ydoc && story._yMap) {
+      const storyYMap = story._yMap;
+      ydoc.transact(() => {
+        storyYMap.set("draft", !(story.draft ?? false));
+      });
+      return;
+    }
     fetcher.submit(
       {
         intent: "toggle-draft",
@@ -559,6 +568,13 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   }
 
   function handleTogglePrivate(story: StoryItem) {
+    if (useYjs && ydoc && story._yMap) {
+      const storyYMap = story._yMap;
+      ydoc.transact(() => {
+        storyYMap.set("private", !(story.private ?? false));
+      });
+      return;
+    }
     fetcher.submit(
       {
         intent: "toggle-private",

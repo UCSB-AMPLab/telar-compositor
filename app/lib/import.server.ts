@@ -15,7 +15,7 @@
 import Papa from "papaparse";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
-import { getFileContent, getRepoHead, getRepoTree } from "~/lib/github.server";
+import { getFileContent, getRepoTree } from "~/lib/github.server";
 import { discoverSheetTabs, fetchSheetCsv } from "~/lib/sheets.server";
 import { parseYaml } from "~/lib/yaml.server";
 import {
@@ -29,6 +29,7 @@ import {
   layers,
   glossary_terms,
   project_members,
+  project_invites,
   project_pages,
 } from "~/db/schema";
 
@@ -479,6 +480,62 @@ export function mapStoryCsv(
  * 7. Write everything to D1 via db.batch()
  * 8. Return structured ImportResult for the wizard to render
  */
+
+/**
+ * Rollback helper: cascade-delete every child row that may have been written
+ * during a partial import, in dependency order, then delete the project row
+ * itself. Exported so unit tests can record the delete-table sequence
+ * directly. Mirrors the unlink cascade in app/routes/onboarding.tsx — keep
+ * the two in sync.
+ */
+export async function rollbackProjectImport(
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle DB type is route-scoped
+  db: any,
+  projectId: number,
+): Promise<void> {
+  // Resolve dependent ids first so the cascade can run as a single atomic
+  // batch — a worker evicted mid-cascade no longer leaves orphan rows.
+  const storyIds = await db
+    .select({ id: stories.id })
+    .from(stories)
+    .where(eq(stories.project_id, projectId));
+  const ids = storyIds.map((s: { id: number }) => s.id);
+
+  let stepIds: { id: number }[] = [];
+  if (ids.length > 0) {
+    stepIds = await db
+      .select({ id: steps.id })
+      .from(steps)
+      .where(inArray(steps.story_id, ids));
+  }
+
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle batch tuple typing
+  const batchOps: any[] = [];
+  if (stepIds.length > 0) {
+    batchOps.push(
+      db
+        .delete(layers)
+        .where(inArray(layers.step_id, stepIds.map((s: { id: number }) => s.id))),
+    );
+  }
+  if (ids.length > 0) {
+    batchOps.push(db.delete(steps).where(inArray(steps.story_id, ids)));
+  }
+  batchOps.push(
+    db.delete(glossary_terms).where(eq(glossary_terms.project_id, projectId)),
+    db.delete(stories).where(eq(stories.project_id, projectId)),
+    db.delete(objects).where(eq(objects.project_id, projectId)),
+    db.delete(project_themes).where(eq(project_themes.project_id, projectId)),
+    db.delete(project_landing).where(eq(project_landing.project_id, projectId)),
+    db.delete(project_config).where(eq(project_config.project_id, projectId)),
+    db.delete(project_members).where(eq(project_members.project_id, projectId)),
+    db.delete(project_invites).where(eq(project_invites.project_id, projectId)),
+    db.delete(projects).where(eq(projects.id, projectId)),
+  );
+
+  await db.batch(batchOps);
+}
+
 export async function importRepo({
   token,
   installationId,
@@ -849,17 +906,13 @@ export async function importRepo({
     };
   }
 
-  // Insert project record — initial import counts as a sync. head_sha is
-  // captured so the _app loader's sync-diff and version checks have a
-  // baseline; without it the loader's gates short-circuit.
-  const initialHeadSha = await getRepoHead(token, owner, repo);
+  // Insert project record — initial import counts as a sync
   const [projectRecord] = await db
     .insert(projects)
     .values({
       user_id: userId,
       github_repo_full_name: repoFullName,
       installation_id: installationId,
-      head_sha: initialHeadSha,
       last_synced_at: new Date().toISOString(),
     })
     .returning();
@@ -1013,27 +1066,7 @@ export async function importRepo({
 
   } catch (importError) {
     // Clean up partial data — delete project and all child records
-    await db.delete(layers).where(
-      inArray(layers.step_id,
-        db.select({ id: steps.id }).from(steps).where(
-          inArray(steps.story_id,
-            db.select({ id: stories.id }).from(stories).where(eq(stories.project_id, projectId))
-          )
-        )
-      )
-    );
-    await db.delete(steps).where(
-      inArray(steps.story_id,
-        db.select({ id: stories.id }).from(stories).where(eq(stories.project_id, projectId))
-      )
-    );
-    await db.delete(glossary_terms).where(eq(glossary_terms.project_id, projectId));
-    await db.delete(stories).where(eq(stories.project_id, projectId));
-    await db.delete(objects).where(eq(objects.project_id, projectId));
-    await db.delete(project_themes).where(eq(project_themes.project_id, projectId));
-    await db.delete(project_landing).where(eq(project_landing.project_id, projectId));
-    await db.delete(project_config).where(eq(project_config.project_id, projectId));
-    await db.delete(projects).where(eq(projects.id, projectId));
+    await rollbackProjectImport(db, projectId);
     throw importError;
   }
 

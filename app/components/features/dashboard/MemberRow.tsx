@@ -3,12 +3,11 @@
  *
  * Shows GitHub avatar, username, role badge, and (for convenors only) an
  * always-visible kebab menu (MoreVertical) that opens a Remove dropdown item.
- * The kebab is only rendered when isConvenor=true (defence-in-depth;
- * the server-side requireOwner guard is the primary control).
+ * The kebab is only rendered when isConvenor=true (defence-in-depth; the
+ * server-side requireOwner guard is the primary control).
  *
- * NOTE: The modal confirmation flow and TeamPanel retirement land
- * in plan 28-04. This plan wires the kebab to the existing onRemove callback so
- * the Remove action is always accessible (including on touch devices).
+ * The kebab is wired to the existing onRemove callback so the Remove action
+ * is always accessible (including on touch devices).
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -32,7 +31,7 @@ interface MemberRowProps {
   /** Legacy: called when the Remove item is clicked (TeamPanel pattern). */
   onRemove?: () => void;
   /**
-   * Preferred for sidebar usage (plan 28-04): called with the member's identity
+   * Preferred for sidebar usage: called with the member's identity
    * so the sidebar can open the centred RemoveCollaboratorModal.
    */
   onRemoveRequest?: (target: RemoveTarget) => void;

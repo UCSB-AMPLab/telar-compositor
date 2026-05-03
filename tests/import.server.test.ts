@@ -11,8 +11,22 @@ import {
   mapStoryCsv,
   parseIndexMd,
   parsePageMarkdown,
+  rollbackProjectImport,
 } from "~/lib/import.server";
 import { parseYaml } from "~/lib/yaml.server";
+import {
+  layers,
+  steps,
+  stories,
+  objects,
+  glossary_terms,
+  project_config,
+  project_themes,
+  project_landing,
+  project_members,
+  project_invites,
+  projects,
+} from "~/db/schema";
 
 const fixturesDir = resolve(__dirname, "fixtures");
 
@@ -554,5 +568,92 @@ describe("importRepo - sheetsAccessError blocking path", () => {
         (call[0].includes("objects.csv") || call[0].includes("project.csv"))
     );
     expect(csvFetchCalls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rollbackProjectImport — cascade-delete coverage
+// ---------------------------------------------------------------------------
+
+describe("rollbackProjectImport — cascade-delete order", () => {
+  it("deletes project_members and project_invites after per-entity cascades and before projects", async () => {
+    const visited: unknown[] = [];
+
+    // Mock db.delete to record the table reference passed in. The real drizzle
+    // chain is `.delete(table).where(condition)` — we return a stub whose
+    // `where` resolves to undefined so the await chain completes.
+    const db = {
+      delete: vi.fn((table: unknown) => {
+        visited.push(table);
+        return {
+          where: vi.fn().mockResolvedValue(undefined),
+        };
+      }),
+      // rollbackProjectImport now resolves dependent ids before the batch.
+      // Returning [] skips the layers/steps branch — covered by the next test.
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([]),
+        })),
+      })),
+      // The cascade is issued as a single atomic batch.
+      batch: vi.fn().mockResolvedValue([]),
+    };
+
+    await rollbackProjectImport(db, 42);
+
+    // Presence
+    expect(visited).toContain(project_members);
+    expect(visited).toContain(project_invites);
+
+    // Per-entity cascades still run before the new deletes
+    expect(visited.indexOf(project_members)).toBeGreaterThan(visited.indexOf(project_landing));
+    expect(visited.indexOf(project_members)).toBeGreaterThan(visited.indexOf(project_config));
+    expect(visited.indexOf(project_invites)).toBeGreaterThan(visited.indexOf(project_landing));
+
+    // project_members deleted before project_invites (insertion order in helper)
+    expect(visited.indexOf(project_members)).toBeLessThan(visited.indexOf(project_invites));
+
+    // Both run BEFORE the project row delete
+    expect(visited.indexOf(project_members)).toBeLessThan(visited.indexOf(projects));
+    expect(visited.indexOf(project_invites)).toBeLessThan(visited.indexOf(projects));
+
+    // The project row is deleted last
+    expect(visited[visited.length - 1]).toBe(projects);
+  });
+
+  it("retains the existing per-entity cascade order", async () => {
+    const visited: unknown[] = [];
+    const db = {
+      delete: vi.fn((table: unknown) => {
+        visited.push(table);
+        return { where: vi.fn().mockResolvedValue(undefined) };
+      }),
+      // Return one id so the layers/steps branch runs and we can assert the
+      // full cascade (including layers + steps).
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({ where: vi.fn().mockResolvedValue([{ id: 1 }]) })),
+      })),
+      batch: vi.fn().mockResolvedValue([]),
+    };
+
+    await rollbackProjectImport(db, 99);
+
+    // Sanity: the rollback hits each entity table at least once
+    for (const t of [
+      layers,
+      steps,
+      stories,
+      objects,
+      glossary_terms,
+      project_config,
+      project_themes,
+      project_landing,
+      project_members,
+      project_invites,
+      projects,
+    ]) {
+      expect(visited).toContain(t);
+    }
   });
 });

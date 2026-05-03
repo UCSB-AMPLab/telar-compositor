@@ -1,4 +1,5 @@
 import { createRequestHandler, RouterContextProvider } from "react-router";
+import { parseSessionCookie, getUserIdFromToken, signInternalMarker } from "./auth";
 
 export { ProjectCollaborationDO } from "./collaboration";
 
@@ -26,12 +27,47 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Admin: POST /ws/:projectId/reset — reset Yjs state for a project
+    // Admin: POST /ws/:projectId/reset — reset Yjs state for a project.
+    // Require an authenticated convenor session before forwarding to the DO.
+    // Sign an internal marker so the DO can reject requests that don't come
+    // through this gate.
     if (url.pathname.match(/^\/ws\/\d+\/reset$/) && request.method === "POST") {
-      const projectId = url.pathname.split("/")[2];
-      const id = env.COLLABORATION.idFromName(projectId);
+      const projectIdStr = url.pathname.split("/")[2];
+      const projectId = Number(projectIdStr);
+      if (!Number.isFinite(projectId) || projectId <= 0) {
+        return new Response("Bad request", { status: 400 });
+      }
+
+      const token = parseSessionCookie(request.headers.get("Cookie"));
+      if (!token) return new Response("Unauthorized", { status: 401 });
+
+      const userId = await getUserIdFromToken(token, env.SESSION_SECRET);
+      if (!userId) return new Response("Unauthorized", { status: 401 });
+
+      const memberRow = await env.DB
+        .prepare("SELECT role FROM project_members WHERE project_id = ? AND user_id = ?")
+        .bind(projectId, userId)
+        .first<{ role: string }>();
+      if (!memberRow) return new Response("Not a project member", { status: 403 });
+      if (memberRow.role !== "convenor") return new Response("Forbidden", { status: 403 });
+
+      // Sign an internal marker so the DO can reject direct reaches.
+      // T-32-03b mitigation: HMAC-SHA256(SESSION_SECRET, "ws-reset:<projectId>:<timestamp>").
+      // Replay within the 30s window is accepted (T-32-03c) — DO routing is internal.
+      const { sigHex, timestamp } = await signInternalMarker(projectId, env.SESSION_SECRET);
+
+      const id = env.COLLABORATION.idFromName(projectIdStr);
       const stub = env.COLLABORATION.get(id);
-      return stub.fetch(new Request("https://internal/reset", { method: "POST" }));
+      return stub.fetch(
+        new Request("https://internal/reset", {
+          method: "POST",
+          headers: {
+            "X-Internal-Auth": sigHex,
+            "X-Internal-Timestamp": String(timestamp),
+            "X-Internal-Project": projectIdStr,
+          },
+        }),
+      );
     }
 
     // Route WebSocket upgrades to the Collaboration Durable Object

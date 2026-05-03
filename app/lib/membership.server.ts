@@ -104,6 +104,24 @@ export async function requireOwner(
 }
 
 /**
+ * Throw 403 if the user has no membership in the given project.
+ *
+ * Any non-null role (convenor or collaborator) passes. Use this for actions
+ * that any project member is allowed to perform — e.g. autosaving project
+ * config copy that collaborators are permitted to edit per CONTEXT D-01.
+ */
+export async function requireProjectMember(
+  db: DbInstance,
+  projectId: number,
+  userId: number,
+): Promise<void> {
+  const role = await getUserRole(db, projectId, userId);
+  if (role === null) {
+    throw new Response("Forbidden", { status: 403 });
+  }
+}
+
+/**
  * Six-colour palette for presence indicators.
  * Colours are distinct enough to be distinguishable against cream and charcoal backgrounds.
  */

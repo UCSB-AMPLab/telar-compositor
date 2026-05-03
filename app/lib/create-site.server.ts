@@ -7,7 +7,7 @@
  * isRepoInInstallation) and passes it in. Errors are thrown as typed
  * Error subclasses so route handlers can branch with instanceof.
  *
- * This file is the initial skeleton:
+ * This file is the Wave 0 skeleton from phase 19 plan 01:
  *   - TEMPLATE_OWNER / TEMPLATE_REPO constants
  *   - Typed error subclasses (RepoNameTakenError, PermissionDeniedError,
  *     GitHubError, RepoNotReadyError)

@@ -1,8 +1,7 @@
 /**
- * CreateSiteForm.
- *
- * Single-field debounced create-site form plus its inline progress view.
- * Mirrors existing onboarding patterns (StepConnect / SiteConfigConfirmation / StepSync).
+ * CreateSiteForm — single-field debounced create-site form plus its inline
+ * progress view. Mirrors existing onboarding patterns (StepConnect /
+ * SiteConfigConfirmation / StepSync).
  *
  * Theme token: uses `periwinkle` accent (matches existing StepConnect usage).
  * Both --color-lavender and --color-periwinkle exist at #C6D0F8 in app.css; we keep
@@ -11,8 +10,7 @@
  * i18n note: `create_site.progress.*` currently ships with `creating`, `still_setting_up`,
  * and `success`. A dedicated `checking_access` key does not yet exist; this file uses
  * `create_site.installation_scope.waiting` as the closest existing key for the second
- * progress row. Future iterations should add `create_site.progress.checking_access` via the
- * i18n approval gate and swap the reference here.
+ * progress row.
  */
 
 import { useEffect, useRef, useState } from "react";

@@ -299,9 +299,8 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     return () => config.unobserveDeep(recomputeNav);
   }, [ydoc]);
 
-  // Site title from Yjs config — initialised empty; recomputeTitle below
-  // hydrates from the Y.Map<"config"> as soon as ydoc is ready.
-  const [siteTitle, setSiteTitle] = useState("");
+  // Site title from Yjs config
+  const [siteTitle, setSiteTitle] = useState(project.title || "");
 
   useEffect(() => {
     if (!ydoc) return;
@@ -582,13 +581,17 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     if (!(navArray instanceof Y.Array)) return;
 
     ydoc.transact(() => {
-      // Nav items are plain JS objects (not Y.Maps) — shallow-clone so Yjs
-      // sees a fresh value on the insert side, avoiding any shared-reference
-      // ambiguity between the delete and insert events in the same transact.
+      // Clone the nav item before delete to avoid Yjs tombstone corruption
       const source = navArray.get(oldIndex);
-      const clone = source && typeof source === "object" ? { ...source } : source;
+      const clone = new Y.Map<unknown>();
+      if (source instanceof Y.Map) {
+        for (const [key, value] of source.entries()) {
+          clone.set(key, value instanceof Y.Text ? new Y.Text(value.toString()) : value);
+        }
+      }
       navArray.delete(oldIndex, 1);
-      navArray.insert(newIndex, [clone]);
+      const insertAt = newIndex > oldIndex ? newIndex - 1 : newIndex;
+      navArray.insert(insertAt, [clone]);
     });
 
     // If the moved item was a page, also reorder pages array to match

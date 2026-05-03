@@ -65,7 +65,7 @@ describe("MarkdownEditor module", () => {
 });
 
 // ---------------------------------------------------------------------------
-// autosave action routing
+// Autosave action routing
 //
 // These tests verify that the MarkdownEditor's autosave fetcher routes to the
 // correct action URL based on the `actionUrl` prop.
@@ -81,7 +81,7 @@ describe("MarkdownEditor module", () => {
 import enTeam from "~/i18n/locales/en/team.json";
 import esTeam from "~/i18n/locales/es/team.json";
 
-describe("autosave action routing", () => {
+describe("Autosave action routing", () => {
   it("MarkdownEditor actionUrl prop defaults to /dashboard", async () => {
     // Verify the default is /dashboard so other call sites are unaffected by the pages fix.
     const source = await import("~/components/ui/MarkdownEditor?raw").catch(() => null);
@@ -95,7 +95,7 @@ describe("autosave action routing", () => {
     expect(content).toMatch('actionUrl = "/dashboard"');
   });
 
-  it("pages route passes actionUrl='/pages' to MarkdownEditor", async () => {
+  it("SC-1: pages route passes actionUrl='/pages' to MarkdownEditor", async () => {
     // Verify the one-line fix is present in _app.pages.tsx
     const fs = await import("fs");
     const path = await import("path");
