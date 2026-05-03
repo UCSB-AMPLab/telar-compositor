@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * CreateSiteForm.test.tsx — component tests.
+ * CreateSiteForm.test.tsx — component tests for the create-site form.
  *
- * Covers cases:
+ * Covers:
  *  1. renders with empty field, submit disabled
  *  2. invalid name → immediate invalid_format, no availability fetch
  *  3. valid name → debounced availability check → checking → available

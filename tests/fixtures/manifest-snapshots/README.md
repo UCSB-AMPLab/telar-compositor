@@ -67,4 +67,5 @@ normalised form (line endings unified to LF, trailing-whitespace trimmed,
 regressions in the runner still fail, while known structural divergences do
 not cause false positives.
 
-These tests run in CI only when manifest files or the runner code change.
+Per D-17 / D-18, these tests run in CI only when manifest files or the runner
+code change.

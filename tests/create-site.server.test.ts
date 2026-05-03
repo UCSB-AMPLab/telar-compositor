@@ -1,9 +1,9 @@
 /**
  * Unit tests for app/lib/create-site.server.ts.
  *
- * Initial test skeleton: full coverage for
+ * Wave 0 test skeleton (phase 19 plan 01): full coverage for
  * isValidRepoName plus describe-block placeholders for the four async
- * exports. Uses the same
+ * exports that plans 19-02, 19-03, and 19-04 fill in. Uses the same
  * globalThis.fetch mocking pattern as tests/github.server.test.ts — no
  * MSW, no nock, no new dependencies.
  */

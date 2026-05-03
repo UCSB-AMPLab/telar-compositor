@@ -11,14 +11,14 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-describe("RoleBadge alignment", () => {
-  it("RoleBadge wrapper span includes shrink-0 class for flex alignment", () => {
+describe("SC-4: RoleBadge alignment", () => {
+  it("SC-4: RoleBadge wrapper span includes shrink-0 class for flex alignment", () => {
     const { container } = render(<RoleBadge role="collaborator" />);
     const span = container.querySelector("span.shrink-0");
     expect(span).not.toBeNull();
   });
 
-  it("RoleBadge convenor variant also has shrink-0", () => {
+  it("SC-4: RoleBadge convenor variant also has shrink-0", () => {
     const { container } = render(<RoleBadge role="convenor" />);
     const span = container.querySelector("span.shrink-0");
     expect(span).not.toBeNull();

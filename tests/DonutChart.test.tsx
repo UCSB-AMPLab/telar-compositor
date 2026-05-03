@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Donut chart visualisation tests
+// Donut chart visualisation
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { readFileSync } from "fs";
@@ -25,14 +25,14 @@ const BASE_MEMBERS: DonutMember[] = [
 ];
 
 describe("DonutChart", () => {
-  it("renders one SVG circle slice per member (+1 for background track)", () => {
+  it("SC-8: renders one SVG circle slice per member (+1 for background track)", () => {
     const { container } = render(<DonutChart members={BASE_MEMBERS} />);
     const circles = container.querySelectorAll("circle");
     // +1 for the background track circle
     expect(circles.length).toBe(BASE_MEMBERS.length + 1);
   });
 
-  it("slice colour matches member.color (PRESENCE_PALETTE)", () => {
+  it("SC-8: slice colour matches member.color (PRESENCE_PALETTE)", () => {
     const { container } = render(<DonutChart members={BASE_MEMBERS} />);
     const circles = container.querySelectorAll("circle");
     // Skip the first circle (background track); check the remaining slices
@@ -44,7 +44,7 @@ describe("DonutChart", () => {
     expect(sliceColors).toContain("#6B8E23");
   });
 
-  it("member with rawPercent < 3% is clamped to 3% visual width", () => {
+  it("SC-8: member with rawPercent < 3% is clamped to 3% visual width", () => {
     // tiny has count=1 out of total=1000, rawPercent=0.1% — should be clamped to 3%
     const members: DonutMember[] = [
       { userId: 1, name: "big", color: "#aaa", count: 999, isConvenor: false },
@@ -63,7 +63,7 @@ describe("DonutChart", () => {
     expect(firstVal).toBeCloseTo(clampedVisual, 0);
   });
 
-  it("legend displays actual rawPercent (e.g. 0.1%), not clamped value", () => {
+  it("SC-8: legend displays actual rawPercent (e.g. 0.1%), not clamped value", () => {
     const members: DonutMember[] = [
       { userId: 1, name: "big", color: "#aaa", count: 999, isConvenor: false },
       { userId: 2, name: "tiny", color: "#bbb", count: 1, isConvenor: false },
@@ -77,13 +77,13 @@ describe("DonutChart", () => {
     expect(tinyLegend?.textContent).toContain("0.1%");
   });
 
-  it("donut centre text equals sum of all member counts", () => {
+  it("SC-8: donut centre text equals sum of all member counts", () => {
     const total = BASE_MEMBERS.reduce((sum, m) => sum + m.count, 0); // 1000
     render(<DonutChart members={BASE_MEMBERS} />);
     expect(screen.getByText(String(total))).toBeTruthy();
   });
 
-  it("legend is sorted by count DESCENDING", () => {
+  it("SC-8: legend is sorted by count DESCENDING", () => {
     render(<DonutChart members={BASE_MEMBERS} />);
     const items = document.querySelectorAll("li");
     const names = Array.from(items).map((li) => {
@@ -98,7 +98,7 @@ describe("DonutChart", () => {
     expect(bobIdx).toBeLessThan(tinyIdx);
   });
 
-  it("convenor legend row shows role label next to name", () => {
+  it("SC-8: convenor legend row shows role label next to name", () => {
     render(<DonutChart members={BASE_MEMBERS} />);
     const items = document.querySelectorAll("li");
     const aliceLi = Array.from(items).find((li) => li.textContent?.includes("alice"));
@@ -106,7 +106,7 @@ describe("DonutChart", () => {
     expect(aliceLi?.textContent).toContain("team:role_convenor");
   });
 
-  it("chart uses no library — only SVG primitives (assertion: no recharts import)", () => {
+  it("SC-8: chart uses no library — only SVG primitives (assertion: no recharts import)", () => {
     const src = readFileSync(
       resolve(__dirname, "../app/components/features/collaboration/DonutChart.tsx"),
       "utf-8"

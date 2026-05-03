@@ -159,3 +159,114 @@ describe("fetchAndParseManifest", () => {
     expect(result.error).toBe("fetch_failed");
   });
 });
+
+// ---------------------------------------------------------------------------
+// fetchAndParseManifest scheme guard
+// ---------------------------------------------------------------------------
+//
+// Defence-in-depth: reject non-https schemes and unparseable URL strings
+// before fetch() is invoked. Cloudflare Workers blocks RFC1918/loopback at
+// the runtime layer; this is the additional scheme-allowlist check.
+
+describe("fetchAndParseManifest scheme guard", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects http:// URLs without invoking fetch()", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAndParseManifest(
+      "http://example.org/manifest.json"
+    );
+
+    expect(result).toEqual({ ok: false, error: "fetch_failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects file:// URLs without invoking fetch()", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAndParseManifest("file:///etc/passwd");
+
+    expect(result).toEqual({ ok: false, error: "fetch_failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unparseable URL strings without invoking fetch()", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAndParseManifest("not a url");
+
+    expect(result).toEqual({ ok: false, error: "fetch_failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows https:// URLs through to fetch()", async () => {
+    const minimalV3Manifest = {
+      "@context": "http://iiif.io/api/presentation/3/context.json",
+      id: "https://example.org/manifest.json",
+      type: "Manifest",
+      label: { en: ["Test"] },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => minimalV3Manifest,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAndParseManifest(
+      "https://example.org/manifest.json"
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.org/manifest.json"
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected ok");
+    expect(result.metadata.title).toBe("Test");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchAndParseManifest userinfo guard
+// ---------------------------------------------------------------------------
+//
+// Defence-in-depth: reject userinfo-bearing https URLs before fetch().
+// Embedded credentials (https://user:pass@host/...) would otherwise leak to
+// whatever host fetch() resolves. DNS rebinding and IDN homograph remain out
+// of scope per WR-08 wording.
+
+describe("fetchAndParseManifest userinfo guard", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects https URLs with user:pass@ userinfo without invoking fetch()", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAndParseManifest(
+      "https://user:pass@example.org/manifest.json"
+    );
+
+    expect(result).toEqual({ ok: false, error: "fetch_failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects https URLs with username-only userinfo without invoking fetch()", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAndParseManifest(
+      "https://user@example.org/manifest.json"
+    );
+
+    expect(result).toEqual({ ok: false, error: "fetch_failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

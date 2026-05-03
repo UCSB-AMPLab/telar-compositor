@@ -2,9 +2,7 @@
  * snapshot-insert-delete.test.ts — unit tests for the snapshotToD1 extension.
  *
  * Tests: INSERT for Y.Maps with _id === null, DELETE for D1 rows absent from
- * Y.Array, ID backfill broadcast.
- *
- * Also covers unique-field Set semantics.
+ * Y.Array, ID backfill broadcast. Also covers unique-field Set semantics.
  */
 
 import { describe, it, expect } from "vitest";
@@ -56,7 +54,7 @@ describe("A2 verification: tr.origin is the origin passed to Y.applyUpdate", () 
 });
 
 // ---------------------------------------------------------------------------
-// unique-field Set semantics
+// Unique-field Set semantics
 // ---------------------------------------------------------------------------
 
 /**
@@ -95,7 +93,7 @@ function seedStory(ydoc: Y.Doc, id: number | null, tempId?: string): Y.Map<unkno
   return storyMap;
 }
 
-describe("unique-field Set semantics", () => {
+describe("Unique-field Set semantics", () => {
   it("re-editing the same Y.Map key twice keeps Set size at 1", () => {
     const { ydoc, userFieldSets } = makeTestDoc();
     const fakeWs = { deserializeAttachment: () => ({ userId: 42 }) };
@@ -110,7 +108,7 @@ describe("unique-field Set semantics", () => {
     expect(userFieldSets.get(42)?.size).toBe(1);
   });
 
-  it("editing two distinct fields on same entity produces Set size = 2", () => {
+  it("SC-9: editing two distinct fields on same entity produces Set size = 2", () => {
     const { ydoc, userFieldSets } = makeTestDoc();
     const fakeWs = { deserializeAttachment: () => ({ userId: 42 }) };
 
@@ -124,7 +122,7 @@ describe("unique-field Set semantics", () => {
     expect(userFieldSets.get(42)?.size).toBe(2);
   });
 
-  it("field path format is 'stories:<id>:title' for story title", () => {
+  it("SC-9: field path format is 'stories:<id>:title' for story title", () => {
     const { ydoc, userFieldSets } = makeTestDoc();
     const fakeWs = { deserializeAttachment: () => ({ userId: 42 }) };
 
@@ -137,7 +135,7 @@ describe("unique-field Set semantics", () => {
     expect([...fieldSet!].some(p => p === "stories:42:title")).toBe(true);
   });
 
-  it("field path uses _temp_id when _id is null", () => {
+  it("SC-9: field path uses _temp_id when _id is null", () => {
     const { ydoc, userFieldSets } = makeTestDoc();
     const fakeWs = { deserializeAttachment: () => ({ userId: 42 }) };
 
@@ -150,7 +148,7 @@ describe("unique-field Set semantics", () => {
     expect([...fieldSet!].some(p => p.includes("temp-uuid-123") && p.endsWith(":title"))).toBe(true);
   });
 
-  it("afterTransaction callback ignores transactions with no tr.origin userId", () => {
+  it("SC-9: afterTransaction callback ignores transactions with no tr.origin userId", () => {
     const { ydoc, userFieldSets } = makeTestDoc();
 
     // All mutations with null origin — nothing should be attributed
@@ -160,7 +158,7 @@ describe("unique-field Set semantics", () => {
     expect(userFieldSets.size).toBe(0);
   });
 
-  it("cold-start DO wake starts with an empty per-user Set", () => {
+  it("SC-9: cold-start DO wake starts with an empty per-user Set (pitfall 5 accepted behaviour)", () => {
     // Simulated by just creating a new userFieldSets map (represents fresh DO instance)
     const freshUserFieldSets = new Map<number, Set<string>>();
     expect(freshUserFieldSets.size).toBe(0);
@@ -183,8 +181,8 @@ describe("snapshotToD1 writes fields.size to contributions.fields_edited", () =>
     expect(result.last_active).toBe("2026-01-01");
   });
 
-  it("userFieldSets entry NOT cleared after snapshot — accumulator keeps growing", () => {
-    // The set is NOT reset between snapshots.
+  it("SC-9c: userFieldSets entry NOT cleared after snapshot — accumulator keeps growing", () => {
+    // The set is NOT reset between snapshots (D-11 / pitfall 5 design).
     // buildContributionUpdate uses fields.size directly (not an increment).
     const fieldSet = new Set(["stories:1:title", "stories:1:subtitle"]);
     buildContributionUpdate({ fields_edited: 0, sessions: 1, last_active: null }, fieldSet, false);
@@ -192,7 +190,7 @@ describe("snapshotToD1 writes fields.size to contributions.fields_edited", () =>
     expect(fieldSet.size).toBe(2);
   });
 
-  it("a second snapshot after one more distinct field writes fields_edited = 3", () => {
+  it("SC-9c: a second snapshot after one more distinct field writes fields_edited = 3", () => {
     const fieldSet = new Set(["stories:1:title", "stories:1:subtitle"]);
     const prev1 = { fields_edited: 0, sessions: 1, last_active: null };
     const result1 = buildContributionUpdate(prev1, fieldSet, false);
@@ -204,7 +202,7 @@ describe("snapshotToD1 writes fields.size to contributions.fields_edited", () =>
     expect(result2.fields_edited).toBe(3);
   });
 
-  it("user with userTouches but no userFieldSets entry writes fields_edited = 0 (edge case)", () => {
+  it("SC-9c: user with userTouches but no userFieldSets entry writes fields_edited = 0 (edge case)", () => {
     // No fieldSet entry (e.g. session started before this code landed)
     const prev = { fields_edited: 5, sessions: 1, last_active: "2026-01-01" };
     const result = buildContributionUpdate(prev, undefined, false);
@@ -215,7 +213,7 @@ describe("snapshotToD1 writes fields.size to contributions.fields_edited", () =>
     expect(result.last_active).toBe("2026-01-01");
   });
 
-  it("isNewSession increments sessions count by 1", () => {
+  it("SC-9c: isNewSession increments sessions count by 1", () => {
     const prev = { fields_edited: 0, sessions: 3, last_active: "2026-01-01" };
     const result = buildContributionUpdate(prev, new Set(["stories:1:title"]), true);
     expect(result.sessions).toBe(4);

@@ -8,10 +8,10 @@
  *     enforcement, Accept: application/octet-stream on asset fetch,
  *     per-tag in-memory cache.
  *   - loadManifestChain: bundled-only success, release-asset fallback,
- *     fail-closed when asset missing (Pitfall 6 / A3).
+ *     fail-closed when asset missing.
  *
  * BUNDLED_MANIFESTS is mocked via vi.hoisted + vi.mock so tests control which
- * manifests are "bundled" independently of bundle contents.
+ * manifests are "bundled" independently of the eventual contents.
  */
 
 import {
@@ -142,7 +142,7 @@ describe("chainManifests", () => {
     expect(result).toEqual([a, b, c]);
   });
 
-  it("uses exact string equality — prerelease suffix not normalised (Pitfall 1)", () => {
+  it("uses exact string equality — prerelease suffix not normalised", () => {
     // from "1.0.0-beta" must match to "1.0.0-beta", not "1.0.0"
     const a = m("1.0.0-beta", "1.0.0");
     const result = chainManifests("1.0.0-beta", "1.0.0", [a]);
@@ -382,7 +382,7 @@ describe("loadManifestChain", () => {
     );
   });
 
-  it("fails closed when a release exists but has no migration.json asset (Pitfall 6)", async () => {
+  it("fails closed when a release exists but has no migration.json asset", async () => {
     bundledHolder.manifests = [m("1.0.0", "1.1.0")];
     // Every candidate tag: release exists, but no migration.json asset.
     fetchMock.mockResolvedValue(

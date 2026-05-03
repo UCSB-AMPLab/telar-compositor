@@ -35,7 +35,7 @@
  * To keep the snapshot test meaningful despite these known divergences, both
  * sides are passed through normalise() before comparison. Any new divergence
  * beyond what normalise() handles will still fail the test — the whole point
- * The intent is that undocumented drift between JS and Python becomes a visible
+ * of D-17 is that undocumented drift between JS and Python becomes a visible
  * regression.
  */
 import { describe, it, expect } from "vitest";

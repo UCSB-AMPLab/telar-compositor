@@ -77,14 +77,14 @@ beforeEach(() => {
 describe("LayerPanel: basic rendering", () => {
   it("renders panel title input with layer's title value", () => {
     render(<LayerPanel {...defaultProps} />);
-    const input = screen.getByRole("textbox", { name: /panel title/i });
+    const input = screen.getByRole("textbox", { name: /panel_title/i });
     expect(input).toBeDefined();
     expect((input as HTMLInputElement).value).toBe("Weaving Techniques");
   });
 
   it("renders close button", () => {
     render(<LayerPanel {...defaultProps} />);
-    const closeBtn = screen.getByRole("button", { name: /close panel/i });
+    const closeBtn = screen.getByRole("button", { name: /close_panel/i });
     expect(closeBtn).toBeDefined();
   });
 
@@ -108,7 +108,7 @@ describe("LayerPanel: basic rendering", () => {
   it("calls onClose directly when close button is clicked", () => {
     const onClose = vi.fn();
     render(<LayerPanel {...defaultProps} onClose={onClose} />);
-    fireEvent.click(screen.getByRole("button", { name: /close panel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /close_panel/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
@@ -123,7 +123,7 @@ describe("LayerPanel: canDelete", () => {
   it("shows delete button as disabled when canDelete is false", () => {
     render(<LayerPanel {...defaultProps} canDelete={false} />);
     const deleteBtn = screen.getByRole("button", { name: /layer.delete_title/i });
-    // Delete buttons are visible but disabled with a tooltip so the
+    // Per D-03, delete buttons are visible but disabled with a tooltip so the
     // permission system is discoverable rather than hidden.
     expect(deleteBtn).toBeDefined();
     expect((deleteBtn as HTMLButtonElement).disabled).toBe(true);

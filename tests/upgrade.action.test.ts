@@ -388,7 +388,7 @@ describe("upgrade action: manifest pipeline", () => {
     expect(configEntry!.content).toMatch(/collection_mode:\s*false/);
   });
 
-  it("normalises fromVersion and toVersion symmetrically (Pitfall 1) — v0.9.2-beta -> 0.9.2-beta, v1.2.0 -> 1.2.0", async () => {
+  it("normalises fromVersion and toVersion symmetrically — v0.9.2-beta -> 0.9.2-beta, v1.2.0 -> 1.2.0", async () => {
     vi.mocked(fetchLatestRelease).mockResolvedValue(latestRelease("v1.2.0"));
     vi.mocked(computeUpgradeDiff).mockResolvedValue(emptyDiff());
     vi.mocked(loadManifestChain).mockResolvedValue(FULL_CHAIN);
@@ -467,7 +467,7 @@ describe("upgrade action: manifest pipeline", () => {
     expect(configSetCalls).toHaveLength(0);
   });
 
-  it("returns upgradeError when applyManifestChain throws (scope violation)", async () => {
+  it("returns upgradeError when applyManifestChain throws on a scope violation", async () => {
     vi.mocked(fetchLatestRelease).mockResolvedValue(latestRelease("v1.2.0"));
     vi.mocked(computeUpgradeDiff).mockResolvedValue(emptyDiff());
     // Chain includes a regex_replace op targeting a path outside the allowlist.

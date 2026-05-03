@@ -176,7 +176,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("connecting");
   });
 
-  it("y-websocket status='connected' maps to connectionStatus='connected'", () => {
+  it("SC-6: y-websocket status='connected' maps to connectionStatus='connected'", () => {
     renderWithProvider();
     act(() => {
       capturedStatusHandler?.({ status: "connected" });
@@ -184,7 +184,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("connected");
   });
 
-  it("y-websocket status='connecting' maps to connectionStatus='connecting'", () => {
+  it("SC-6: y-websocket status='connecting' maps to connectionStatus='connecting'", () => {
     renderWithProvider();
     // First go connected, then back to connecting
     act(() => {
@@ -196,7 +196,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("connecting");
   });
 
-  it("y-websocket status='disconnected' maps to connectionStatus='offline'", () => {
+  it("SC-6: y-websocket status='disconnected' maps to connectionStatus='offline' (D-14 label)", () => {
     renderWithProvider();
     act(() => {
       capturedStatusHandler?.({ status: "disconnected" });
@@ -204,7 +204,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("offline");
   });
 
-  it("legacy `connected` boolean remains true when status==='connected' (backwards compat)", () => {
+  it("SC-6: legacy `connected` boolean remains true when status==='connected' (backwards compat)", () => {
     renderWithProvider();
     act(() => {
       capturedStatusHandler?.({ status: "connected" });
@@ -274,13 +274,13 @@ describe("isUpgrading / upgradeError awareness fields", () => {
     expect(capturedIsUpgrading).toBe(true);
   });
 
-  it("upgradeError becomes true when any client broadcasts state.upgradeError=true", () => {
+  it("SC-1: upgradeError becomes true when any client broadcasts state.upgradeError=true", () => {
     renderForUpgradeFields();
     simulateAwarenessStates(new Map([[2, { upgradeError: true }]]));
     expect(capturedUpgradeError).toBe(true);
   });
 
-  it("isUpgrading clears to false when no client has state.upgrading set", () => {
+  it("SC-1: isUpgrading clears to false when no client has state.upgrading set", () => {
     renderForUpgradeFields();
     simulateAwarenessStates(new Map([[2, { upgrading: true }]]));
     expect(capturedIsUpgrading).toBe(true);

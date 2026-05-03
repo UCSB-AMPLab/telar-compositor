@@ -3,7 +3,7 @@
  * use-structural-ops.test.ts — unit tests for the useStructuralOps hook.
  *
  * Tests: canDelete permission logic, UndoManager stack tracking on
- * Y.Array mutation.
+ * Y.Array mutation. Stubs created in Wave 0; implemented in Plans 01/04.
  */
 
 import { describe, it } from "vitest";

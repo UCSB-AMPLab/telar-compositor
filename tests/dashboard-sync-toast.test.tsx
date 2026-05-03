@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * dashboard-sync-toast.test.tsx — external version-change toast.
+ * dashboard-sync-toast.test.tsx — SC-3 external version-change toast.
  *
  * Tests the useVersionChangeToast hook extracted from the dashboard's
  * post-sync useEffect. The hook observes syncFetcher.data and fires a

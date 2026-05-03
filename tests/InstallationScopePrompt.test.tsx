@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * InstallationScopePrompt.test.tsx.
+ * InstallationScopePrompt.test.tsx — installation scope prompt tests.
  *
  * Covers:
  *  - Renders title / body / grant button / waiting copy (via translation keys)

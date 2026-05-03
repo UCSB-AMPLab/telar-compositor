@@ -70,7 +70,7 @@ describe("ReloadOnUpgradeComplete", () => {
     expect(reloadSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT reload owner on same transition (Pitfall 8)", () => {
+  it("does NOT reload owner on same transition", () => {
     mockContext.isUpgrading = true;
     const { rerender } = render(<ReloadOnUpgradeComplete isOwner={true} />);
     mockContext.isUpgrading = false;

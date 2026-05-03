@@ -2,8 +2,8 @@
  * Unit tests for manifest-runner.server.ts
  *
  * Covers behaviour of each of the 9 operation types, chaining across multiple
- * manifests, bilingual field resolution, and scope-allowlist
- * enforcement for regex_replace.
+ * manifests, bilingual field resolution, and scope-allowlist enforcement
+ * for regex_replace.
  *
  * All tests are pure: no I/O, no network, no DB. Fixtures are inline strings.
  */
