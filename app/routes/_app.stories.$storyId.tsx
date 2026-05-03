@@ -782,6 +782,17 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     // For step 0, changing the object changes step 1's object
     const targetStep = isStepZero ? (sidebarSteps[0] ?? null) : activeStep;
     if (!targetStep) return;
+    // When the Y.Doc is the source of truth (sidebarSteps comes from yjsSteps),
+    // mutate the step's Y.Map so the UI updates immediately and snapshotToD1
+    // reconciles the change back to D1. The D1-only fetcher would be silently
+    // overwritten by the next snapshotToD1 cycle.
+    if (useYjs && ydoc && targetStep._yMap) {
+      const stepYMap = targetStep._yMap;
+      ydoc.transact(() => {
+        stepYMap.set("object_id", objectId);
+      });
+      return;
+    }
     changeObjectFetcher.submit(
       { intent: "change-object", stepId: String(targetStep.id), objectId },
       { method: "post" }
