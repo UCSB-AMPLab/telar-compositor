@@ -11,9 +11,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useFetcher } from "react-router";
+import * as Y from "yjs";
 import { Trash2, X, ArrowLeft, ChevronRight, Pencil, Check } from "lucide-react";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
 import { Dialog } from "~/components/ui/Dialog";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -41,6 +43,17 @@ interface LayerPanelProps {
   objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
   siteBaseUrl?: string | null;
   actionUrl: string;
+  /**
+   * Yjs-backed bindings for layer fields. When provided, edits write directly
+   * to the shared Y.Text instances instead of the D1-only autosave-layer
+   * fetcher (which posts the layer id as a `layerId` form field per R10, and
+   * would be silently overwritten by snapshotToD1 on the next cycle). Pass
+   * null in non-Yjs fallback mode.
+   */
+  titleYText?: Y.Text | null;
+  contentYText?: Y.Text | null;
+  /** Y.Text for layer 2's button_label, when layer 2 exists. */
+  layer2ButtonLabelYText?: Y.Text | null;
   /**
    * When true, the trash button bypasses this component's internal Dialog and
    * calls `onDelete` immediately — the parent renders a centralised
@@ -71,10 +84,29 @@ export function LayerPanel({
   actionUrl,
   skipInternalConfirm = false,
   deleteTooltip,
+  titleYText = null,
+  contentYText = null,
+  layer2ButtonLabelYText = null,
 }: LayerPanelProps) {
   const { t } = useTranslation("editor");
+  const { ydoc } = useCollaborationContext();
   const titleFetcher = useFetcher();
   const l2LabelFetcher = useFetcher();
+
+  // Replace the contents of a Y.Text without losing the shared identity (so
+  // remote observers see a single update, not a destroy+create). Falls back
+  // to the D1 fetcher when no Y.Text is available (non-Yjs mode).
+  const writeYText = useCallback(
+    (yText: Y.Text | null, value: string): boolean => {
+      if (!ydoc || !yText) return false;
+      ydoc.transact(() => {
+        if (yText.length > 0) yText.delete(0, yText.length);
+        if (value.length > 0) yText.insert(0, value);
+      });
+      return true;
+    },
+    [ydoc]
+  );
 
   const defaultTitle =
     layer.layer_number === 1
@@ -105,31 +137,33 @@ export function LayerPanel({
       setPanelTitle(value);
       if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
       titleTimerRef.current = setTimeout(() => {
+        if (writeYText(titleYText, value)) return;
         titleFetcher.submit(
           {
             intent: "autosave-layer",
             field: "title",
             value,
-            projectId: String(layer.id),
+            layerId: String(layer.id),
           },
           { method: "post", action: actionUrl }
         );
       }, 1500);
     },
-    [layer.id, actionUrl, titleFetcher]
+    [layer.id, actionUrl, titleFetcher, titleYText, writeYText]
   );
 
   function handleSaveL2Label() {
     setEditingL2Label(false);
     const trimmed = l2Label.trim() || t("layer.default_label_2");
     setL2Label(trimmed);
+    if (writeYText(layer2ButtonLabelYText, trimmed)) return;
     if (layer2Id) {
       l2LabelFetcher.submit(
         {
           intent: "autosave-layer",
           field: "button_label",
           value: trimmed,
-          projectId: String(layer2Id),
+          layerId: String(layer2Id),
         },
         { method: "post", action: actionUrl }
       );
@@ -241,9 +275,11 @@ export function LayerPanel({
               initialValue={layer.content ?? ""}
               fieldName="content"
               projectId={layer.id}
+              formFieldName="layerId"
               intent="autosave-layer"
               actionUrl={actionUrl}
               mode="autosave"
+              yText={contentYText}
               objects={objects}
               siteBaseUrl={siteBaseUrl}
               className="h-full flex flex-col"
