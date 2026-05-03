@@ -34,7 +34,7 @@ import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server"
 import { commitFilesToRepo, StaleHeadError, dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
 import type { WorkflowRun } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
-import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
+import { serializeObjectsCsv } from "~/lib/csv-export.server";
 import { asc } from "drizzle-orm";
 
 export const handle = { i18n: ["common", "objects"] };
@@ -296,7 +296,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         const existingCsv = await getFileContent(
           token, owner, repo, "telar-content/spreadsheets/objects.csv"
         );
-        const updatedCsv = serializeObjectsCsv(filteredObjects.map(dbObjectToCsvRow), existingCsv ?? undefined);
+        const updatedCsv = serializeObjectsCsv(filteredObjects, existingCsv ?? undefined);
 
         // Commit: updated CSV + deletions
         try {
@@ -304,7 +304,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
             token, owner, repo, "main",
             [{ path: "telar-content/spreadsheets/objects.csv", content: updatedCsv }],
             `Remove ${targetObject.object_id} via Telar Compositor`,
-            undefined,
             deletions.length > 0 ? deletions : undefined,
           );
 
@@ -503,6 +502,14 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
 
   function handleFeaturedToggle(checked: boolean) {
     setFeatured(checked);
+    // Y.Doc is the source of truth for object metadata; snapshotToD1 reconciles.
+    // The D1-only fetcher would be clobbered.
+    if (ydoc && objectYMap) {
+      ydoc.transact(() => {
+        objectYMap.set("featured", checked);
+      });
+      return;
+    }
     featuredFetcher.submit(
       { intent: "autosave-object-featured", entityId: String(object.id), value: String(checked) },
       { method: "post" },

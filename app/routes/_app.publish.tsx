@@ -28,6 +28,7 @@ import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
 import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
+import { signInternalMarker } from "../../workers/auth";
 import {
   commitFilesToRepo,
   listWorkflowRunsBySha,
@@ -284,7 +285,22 @@ export async function action({ request, context }: Route.ActionArgs) {
         try {
           const doId = env.COLLABORATION.idFromName(String(activeProject.id));
           const doStub = env.COLLABORATION.get(doId);
-          const snapshotReq = new Request(`https://internal/snapshot`, { method: "POST" });
+          // Sign an internal marker so the DO can reject direct reaches the
+          // same way it does for /reset. Without this, the /snapshot path is
+          // a defence-in-depth gap if a future code path obtains a stub from
+          // outside this server-only action.
+          const { sigHex, timestamp } = await signInternalMarker(
+            activeProject.id,
+            env.SESSION_SECRET,
+          );
+          const snapshotReq = new Request(`https://internal/snapshot`, {
+            method: "POST",
+            headers: {
+              "X-Internal-Auth": sigHex,
+              "X-Internal-Timestamp": String(timestamp),
+              "X-Internal-Project": String(activeProject.id),
+            },
+          });
           const snapshotRes = await doStub.fetch(snapshotReq);
           if (!snapshotRes.ok) {
             return { ok: false, intent: "publish", error: "snapshot_failed" };

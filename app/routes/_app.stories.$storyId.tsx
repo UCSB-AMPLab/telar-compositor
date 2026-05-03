@@ -22,7 +22,7 @@ import type { Route } from "./+types/_app.stories.$storyId";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { stories, steps, layers, objects, project_config, project_members, users as usersTable } from "~/db/schema";
-import { resolveActiveProject } from "~/lib/membership.server";
+import { resolveActiveProject, requireProjectMember } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { EditorShell } from "~/components/features/editor/EditorShell";
 import { StepSidebar } from "~/components/features/editor/StepSidebar";
@@ -164,6 +164,26 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       .where(eq(stories.story_id, params.storyId));
   }
 
+  // Resolve the owning project for a layer via the layers → steps →
+  // stories join, so save-layer / autosave-layer can gate on project
+  // membership before any mutation. 400 for non-finite layerId, 404 for
+  // unknown layerId.
+  async function resolveLayerProjectId(layerId: number): Promise<number> {
+    if (!Number.isFinite(layerId) || layerId <= 0) {
+      throw new Response("Bad request", { status: 400 });
+    }
+    const rows = await db
+      .select({ projectId: stories.project_id })
+      .from(layers)
+      .innerJoin(steps, eq(layers.step_id, steps.id))
+      .innerJoin(stories, eq(steps.story_id, stories.id))
+      .where(eq(layers.id, layerId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) throw new Response("Not found", { status: 404 });
+    return row.projectId;
+  }
+
   switch (intent) {
     case "capture-position": {
       const stepId = Number(formData.get("stepId"));
@@ -200,6 +220,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
     case "save-layer": {
       const layerId = Number(formData.get("layerId"));
+      const projectId = await resolveLayerProjectId(layerId);
+      await requireProjectMember(db, projectId, user.id);
       const content = (formData.get("content") as string) ?? "";
       const buttonLabel = (formData.get("buttonLabel") as string) || null;
       await db
@@ -211,7 +233,9 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     }
 
     case "autosave-layer": {
-      const layerId = Number(formData.get("projectId"));
+      const layerId = Number(formData.get("layerId"));
+      const projectId = await resolveLayerProjectId(layerId);
+      await requireProjectMember(db, projectId, user.id);
       const field = formData.get("field") as string;
       const value = (formData.get("value") as string) ?? "";
       const updateData: Record<string, unknown> = { updated_at: now };
@@ -365,8 +389,8 @@ function layerFromYMap(yMap: Y.Map<unknown>, parentStepId: number): EditorLayer 
 
 /**
  * Compute contributor names for a step's delete-confirmation modal.
- * Uses contribution data (stories_edited per member) — the step
- * belongs to a story, so any member who has edited this story counts.
+ * Uses contribution data (stories_edited per member) — the step belongs
+ * to a story, so any member who has edited this story counts.
  */
 function computeStepContributors(
   storyDbId: number,
@@ -484,7 +508,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sidebarSteps: EditorStep[] = useYjs
     ? yjsSteps!.filter((s) => (s.step_number ?? 0) > 0 || s.id > 0 || s._tempId)
-    : (storySteps as unknown as EditorStep[])
+    : (storySteps as EditorStep[])
         .filter((s) => s.step_number > 0)
         .map((s) => ({
           ...s,
@@ -680,7 +704,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   const altTextYText = getYText(activeStepYMap, "alt_text");
 
   // ---------------------------------------------------------------------------
-  // Highlight / fade state for steps
+  // Highlight / fade state for steps (D-22, D-24)
   // ---------------------------------------------------------------------------
   const seenStepKeysRef = useRef<Set<string>>(new Set());
   const [highlightedStepKeys, setHighlightedStepKeys] = useState<
@@ -765,6 +789,18 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
   function handleCapturePosition(pos: { x: number; y: number; zoom: number; page: string }) {
     if (!activeStep) return;
+    // Y.Doc is the source of truth for step state in collaborative mode;
+    // snapshotToD1 reconciles. The D1-only fetcher would be clobbered.
+    if (useYjs && ydoc && activeStep._yMap) {
+      const stepYMap = activeStep._yMap;
+      ydoc.transact(() => {
+        stepYMap.set("x", pos.x);
+        stepYMap.set("y", pos.y);
+        stepYMap.set("zoom", pos.zoom);
+        stepYMap.set("page", pos.page);
+      });
+      return;
+    }
     captureFetcher.submit(
       {
         intent: "capture-position",
@@ -801,6 +837,17 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
   function handleCaptureClip(field: "clip_start" | "clip_end", value: string) {
     if (!activeStep) return;
+    // The "autosave-step-field" action handler does not exist; clip values
+    // live only in the Y.Doc and reach D1 via snapshotToD1. In non-Yjs
+    // fallback mode there is no save path, but useYjs is effectively always
+    // true once the collab connection is up.
+    if (useYjs && ydoc && activeStep._yMap) {
+      const stepYMap = activeStep._yMap;
+      ydoc.transact(() => {
+        stepYMap.set(field, value);
+      });
+      return;
+    }
     clipFetcher.submit(
       { intent: "autosave-step-field", field, value, entityId: String(activeStep.id) },
       { method: "post" }
@@ -809,6 +856,13 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
   function handleToggleLoop(value: string) {
     if (!activeStep) return;
+    if (useYjs && ydoc && activeStep._yMap) {
+      const stepYMap = activeStep._yMap;
+      ydoc.transact(() => {
+        stepYMap.set("loop", value);
+      });
+      return;
+    }
     clipFetcher.submit(
       { intent: "autosave-step-field", field: "loop", value, entityId: String(activeStep.id) },
       { method: "post" }
@@ -950,7 +1004,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
             else setLayer2Open(true);
           }}
           onCreateLayer={handleCreateLayer}
-          actionUrl={`/stories/${story.story_id}`}
+          actionUrl={`/stories/${story.slug}`}
           isFirstStep={activeStepIndex === 1}
           titleYText={titleYText}
           subtitleYText={subtitleYText}
@@ -990,7 +1044,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               open={layer1Open}
               onClose={() => { setLayer1Open(false); setLayer2Open(false); }}
               onDelete={handleDeleteLayer}
-              actionUrl={`/stories/${story.story_id}`}
+              actionUrl={`/stories/${story.slug}`}
               canDelete={
                 canDeleteLayer1 &&
                 (useYjs && activeLayer1._yMap
@@ -1013,6 +1067,9 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               onOpenLayer2={() => setLayer2Open(true)}
               objects={editorObjects}
               siteBaseUrl={siteBaseUrl}
+              titleYText={getYText(activeLayer1._yMap, "title")}
+              contentYText={getYText(activeLayer1._yMap, "content")}
+              layer2ButtonLabelYText={getYText(activeLayer2?._yMap ?? null, "button_label")}
             />
           )}
           {/* Layer 2 panel — stacked on top of layer 1 */}
@@ -1028,7 +1085,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               open={layer2Open}
               onClose={() => setLayer2Open(false)}
               onDelete={handleDeleteLayer}
-              actionUrl={`/stories/${story.story_id}`}
+              actionUrl={`/stories/${story.slug}`}
               canDelete={
                 useYjs && activeLayer2._yMap
                   ? ops!.canDelete(activeLayer2._yMap)
@@ -1036,6 +1093,8 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               }
               deleteTooltip={tStructural("tooltip_cannot_delete")}
               skipInternalConfirm={useYjs}
+              titleYText={getYText(activeLayer2._yMap, "title")}
+              contentYText={getYText(activeLayer2._yMap, "content")}
               hasLayer2={false}
               objects={editorObjects}
               siteBaseUrl={siteBaseUrl}

@@ -3,12 +3,13 @@
  *
  * Relocated from _app.dashboard.tsx: all four DashboardPreviewSection blocks
  * (Site Description, Welcome Message, Stories showcase, Objects showcase).
+ * Adds a "View live site" link at the top using the project's github_pages_url.
  *
  * Loader: fetches project_config, project_landing, stories, objects, siteBaseUrl.
  * Action: handles autosave-landing, autosave-config, reorder intents.
  *
- * NOTE: The preview sections remain on _app.dashboard.tsx until a future cleanup
- * up the dashboard. This route duplicates them for now.
+ * NOTE: The preview sections remain on _app.dashboard.tsx until a future
+ * dashboard cleanup. This route duplicates them for now.
  */
 
 import { asc, desc, eq, and, gt, inArray } from "drizzle-orm";
@@ -31,11 +32,12 @@ import {
   rectSortingStrategy,
   arrayMove,
 } from "@dnd-kit/sortable";
+import { ExternalLink } from "lucide-react";
 import type { Route } from "./+types/_app.homepage";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { stories, steps, project_config, objects, project_landing } from "~/db/schema";
-import { resolveActiveProject } from "~/lib/membership.server";
+import { resolveActiveProject, requireProjectMember } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { DashboardPreviewSection } from "~/components/features/dashboard/DashboardPreviewSection";
 import { StoryCard } from "~/components/features/dashboard/StoryCard";
@@ -184,6 +186,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       const allowedFields = ["stories_heading", "stories_intro", "objects_heading", "objects_intro", "welcome_body"];
       if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
 
+      if (!Number.isFinite(projectId) || projectId <= 0) {
+        throw new Response("Bad request", { status: 400 });
+      }
+      await requireProjectMember(db, projectId, user.id);
+
       const existing = await db
         .select({ id: project_landing.id })
         .from(project_landing)
@@ -210,6 +217,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       const projectId = Number(formData.get("entityId") ?? formData.get("projectId"));
       const allowedFields = ["title", "description"];
       if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
+
+      if (!Number.isFinite(projectId) || projectId <= 0) {
+        throw new Response("Bad request", { status: 400 });
+      }
+      await requireProjectMember(db, projectId, user.id);
 
       await db
         .update(project_config)
@@ -328,6 +340,7 @@ function stripHtml(html: string): string {
 
 export default function HomepagePage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("dashboard");
+  const { t: tHome } = useTranslation("homepage");
   const navigate = useNavigate();
   const fetcher = useFetcher();
   const { ydoc } = useCollaborationContext();
@@ -404,6 +417,18 @@ export default function HomepagePage({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {/* View live site link */}
+      {project.github_pages_url && (
+        <a
+          href={project.github_pages_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 font-body text-sm text-charcoal underline"
+        >
+          <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+          {tHome("view_live_site")}
+        </a>
+      )}
 
       {/* 1. Site Description */}
       <DashboardPreviewSection
