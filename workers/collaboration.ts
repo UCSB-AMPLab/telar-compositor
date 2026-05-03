@@ -26,6 +26,16 @@ import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { DurableObject } from "cloudflare:workers";
 import { makeAfterTransactionHandler, buildContributionUpdate } from "./collaboration-helpers";
+import {
+  parseSessionCookie,
+  getUserIdFromToken as getUserIdFromTokenShared,
+  verifyInternalMarker,
+} from "./auth";
+import {
+  getUserContext,
+  makeCanDeleteHandler,
+  makeViolationCounter,
+} from "./can-delete";
 
 // y-websocket message type constants (must match client)
 const messageSync = 0;
@@ -148,23 +158,11 @@ interface LandingRow {
 
 /**
  * Return the string value of a Y.Text or plain string/number/null.
- * Prevents "[object Object]" in D1 rows (Pitfall 4).
+ * Prevents "[object Object]" in D1 rows.
  */
 function yTextToString(val: unknown): string {
   if (val instanceof Y.Text) return val.toString();
   return String(val ?? "");
-}
-
-/**
- * Parse a cookie header and return the value for the given name, or null.
- */
-function parseCookie(cookieHeader: string | null, name: string): string | null {
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(";")) {
-    const [k, ...rest] = part.trim().split("=");
-    if (k.trim() === name) return decodeURIComponent(rest.join("="));
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,29 +177,50 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
   private userFieldSets: Map<number, Set<string>> = new Map();
   private newSessions: Set<number> = new Set();
   private isSnapshotting = false;
+  // Re-entrancy guard for the unauthorised-delete revert handler. The
+  // revert itself fires afterTransaction; we must not recurse into the
+  // canDelete check on our own revert transaction.
+  private isReverting = false;
+  // Per-socket sliding-window violation tracker. Initialised in the
+  // constructor so the WeakMap state is owned by the factory and the DO
+  // exposes a stable function reference to the canDelete handler.
+  private recordViolation: (ws: WebSocket) => boolean = () => false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ydoc = new Y.Doc();
     this.awareness = new awarenessProtocol.Awareness(this.ydoc);
 
-    // Attach afterTransaction field-path accumulator.
-    // Uses the WebSocket reference in tr.origin (set by readSyncMessage) to
-    // recover the userId via socket attachment (A2 verified in plan 28-03 tests).
+    // Attach afterTransaction field-path accumulator. Uses the WebSocket
+    // reference in tr.origin (set by readSyncMessage) to recover the userId
+    // via socket attachment.
     this.ydoc.on("afterTransaction", makeAfterTransactionHandler(
       this.ydoc,
       this.userFieldSets,
-      (origin: unknown) => {
-        if (!origin || typeof origin !== "object") return null;
-        try {
-          const att = (origin as { deserializeAttachment?: () => SocketAttachment | null })
-            .deserializeAttachment?.() as SocketAttachment | null;
-          return att?.userId ?? null;
-        } catch {
-          return null;
-        }
-      }
+      (origin: unknown) => getUserContext(origin)?.userId ?? null,
     ));
+
+    // Server-side canDelete enforcement. Walks tr.deleteSet and reverts
+    // unauthorised collaborator deletes. Registered
+    // AFTER the contribution-tracking handler so the contribution handler
+    // runs first; both are independent (contribution reads tr.changed; this
+    // reads tr.deleteSet). Convenor deletes pass through unchanged. The
+    // re-entrancy guard (this.isReverting) prevents the revert transaction
+    // from re-firing this handler on itself.
+    this.recordViolation = makeViolationCounter();
+    this.ydoc.on("afterTransaction", makeCanDeleteHandler({
+      ydoc: this.ydoc,
+      isSnapshotting: () => this.isSnapshotting,
+      isReverting: () => this.isReverting,
+      setReverting: (v) => { this.isReverting = v; },
+      getSockets: () => this.ctx.getWebSockets(),
+      broadcastUpdate: (msg) => {
+        for (const client of this.ctx.getWebSockets()) {
+          try { client.send(msg); } catch { /* client may have disconnected */ }
+        }
+      },
+      recordViolation: (ws) => this.recordViolation(ws),
+    }));
 
     // Restore in-memory state after hibernation wake.
     // If sockets are present, the DO was evicted and is now waking up —
@@ -232,6 +251,11 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // Returns 200 OK on success; the DO must have a projectId set (i.e. at least
     // one client has connected) otherwise we skip — the doc is not dirty.
     if (url.pathname.endsWith("/snapshot") && request.method === "POST") {
+      // Same signed-marker check as /reset — direct reaches that bypass the
+      // worker entry lack the marker and are rejected with 401.
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      if (markerError) return markerError;
+
       if (this.projectId !== null) {
         await this.ctx.blockConcurrencyWhile(async () => {
           await this.ensureDocLoaded();
@@ -243,8 +267,17 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
     // POST /reset — destroy the in-memory Y.Doc, clear the D1 blob, rebuild
     // from D1 entity rows, and close all connected sockets so clients reconnect
-    // with clean state. Convenor-only (checked via session cookie).
+    // with clean state. Convenor-only — gating happens in workers/app.ts; here
+    // we verify the signed internal marker the worker entry sets so the DO
+    // cannot be reached directly from outside.
     if (url.pathname.endsWith("/reset") && request.method === "POST") {
+      // Verify the signed internal marker workers/app.ts attaches via the
+      // X-Internal-Auth / X-Internal-Timestamp / X-Internal-Project headers.
+      // Direct reaches that bypass the worker entry lack the marker and are
+      // rejected with 401.
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      if (markerError) return markerError;
+
       if (this.projectId !== null) {
         await this.ctx.blockConcurrencyWhile(async () => {
           // 1. Clear the D1 blob so a future cold-start also gets clean state
@@ -286,10 +319,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // Authenticate via session cookie or query-string token fallback.
     // The browser sends the httpOnly __compositor_session cookie on WebSocket
     // upgrade requests automatically. Query-string ?token= is kept as a fallback.
-    const cookieHeader = request.headers.get("Cookie") ?? "";
-    const cookieMatch = cookieHeader.match(/(?:^|;\s*)__compositor_session=([^;]+)/);
-    const rawCookieValue = cookieMatch?.[1] ?? null;
-    const token = rawCookieValue ? decodeURIComponent(rawCookieValue) : url.searchParams.get("token");
+    const cookieToken = parseSessionCookie(request.headers.get("Cookie"));
+    const token = cookieToken ?? url.searchParams.get("token");
     if (!token) {
       return new Response("Missing auth token", { status: 401 });
     }
@@ -316,7 +347,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       this.projectId = projectId;
     }
 
-    // Serialise cold-start initialisation to prevent race conditions (Pitfall 3)
+    // Serialise cold-start initialisation to prevent race conditions
     await this.ctx.blockConcurrencyWhile(async () => {
       await this.ensureDocLoaded();
     });
@@ -526,7 +557,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
   /**
    * Ensure the Y.Doc is loaded. Must be called inside blockConcurrencyWhile()
-   * to prevent race conditions on cold start (Pitfall 3).
+   * to prevent race conditions on cold start.
    */
   private async ensureDocLoaded(): Promise<void> {
     if (this.docLoaded) return;
@@ -785,7 +816,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
   /**
    * Snapshot the Y.Doc to D1 — writes both the binary blob and all entity rows.
-   * Uses D1 batch for atomicity.
+   * Uses D1 batch for atomicity (Pitfall 6, T-24-04).
    *
    * Handles INSERT for new Y.Array items (with _id === null) and DELETE for D1
    * rows absent from the Y.Array. For INSERTs, the auto-incremented D1 ID is
@@ -836,7 +867,9 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           yArray.delete(indicesToDelete[i], 1);
         }
       });
-      console.log(
+      // Dedup runs as a recovery path; surface as a warning so a real bug
+      // producing dupes is distinguishable from idle snapshot traffic.
+      console.warn(
         `[snapshot] Deduplicated ${arrayName}: removed ${indicesToDelete.length} duplicate(s)`,
       );
     }
@@ -1192,7 +1225,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       const objMap = objectsArray.get(oi);
       let objId = objMap.get("_id") as number | null;
 
-      // skip pending-validation IIIF objects — they are not yet ready to persist
+      // Skip pending-validation IIIF objects — they are not yet ready to persist
       if (objMap.get("_validation_state") === "pending") {
         // If a previously-inserted object has regressed to "pending", leave its
         // D1 row alone (unlikely path, but be conservative).
@@ -1395,11 +1428,11 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       );
     }
 
-    // 9. Snapshot contribution data to project_members
+    // 9. Snapshot contribution data to project_members.
     // fields_edited is sourced from userFieldSets.get(userId).size (unique-field
     // Set semantics). The Set is NOT cleared after snapshot — it keeps accumulating
-    // within the DO's lifetime (pitfall 5 accepted behaviour).
-    // Contribution UPDATE statements are added to the same batch for atomicity (Pitfall 6).
+    // within the DO's lifetime (accepted behaviour).
+    // Contribution UPDATE statements are added to the same batch for atomicity.
     if (this.projectId) {
       const allUserIds = new Set<number>([...this.userFieldSets.keys(), ...this.newSessions]);
       // Include all users with field edits or new sessions
@@ -1408,7 +1441,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       );
 
       if (activeUserIds.length > 0) {
-        // CR-01 fix: batch all contribution reads into a single query
+        // Batch all contribution reads into a single query
         const placeholders = activeUserIds.map(() => "?").join(", ");
         const existingRows = await this.env.DB
           .prepare(
@@ -1450,7 +1483,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         .bind(blob, now, this.projectId),
     );
 
-    // Execute all updates atomically (Pitfall 6)
+    // Execute all updates atomically
     await this.env.DB.batch(statements);
 
     // Broadcast ID-backfill updates to all connected clients.
@@ -1482,78 +1515,12 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
   /**
    * Validate the session token from the WebSocket query string.
    *
-   * The token is the raw value of the __compositor_session cookie.
-   * React Router's cookie session storage uses HMAC-signed cookies whose payload
-   * is base64-encoded JSON. We parse it directly here since the DO runs outside
-   * React Router context.
-   *
-   * Format: base64url(<json payload>).<base64url(<hmac signature>)>
-   *
-   * Returns userId if valid, null if invalid or expired.
+   * Thin wrapper around the shared `getUserIdFromToken` helper in
+   * `workers/auth.ts`; kept as a method so existing call sites remain
+   * unchanged. The shared helper accepts the SESSION_SECRET as an argument
+   * so the module is decoupled from `this.env`.
    */
   private async getUserIdFromToken(token: string): Promise<number | null> {
-    try {
-      // React Router's createCookieSessionStorage produces cookies in the format:
-      // <base64url(JSON)>.<base64url(HMAC-SHA256 signature)>
-      // Split on the last dot to separate payload from signature
-      const lastDot = token.lastIndexOf(".");
-      if (lastDot === -1) return null;
-
-      const payloadB64 = token.slice(0, lastDot);
-      const sigB64 = token.slice(lastDot + 1);
-
-      // Verify HMAC-SHA256 signature
-      const secret = this.env.SESSION_SECRET;
-      const keyData = new TextEncoder().encode(secret);
-      const key = await crypto.subtle.importKey(
-        "raw",
-        keyData,
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["verify"],
-      );
-
-      const signedData = new TextEncoder().encode(payloadB64);
-      const signature = base64urlDecode(sigB64);
-
-      const valid = await crypto.subtle.verify("HMAC", key, signature as BufferSource, signedData);
-      if (!valid) return null;
-
-      // Decode payload
-      const payloadJson = new TextDecoder().decode(base64urlDecode(payloadB64));
-      const payload = JSON.parse(payloadJson) as Record<string, unknown>;
-
-      // Check session expiry if present in the payload
-      const expires = payload["expires"] as string | undefined;
-      if (expires && new Date(expires) < new Date()) return null;
-
-      // Fallback: reject tokens older than 7 days (matches cookie maxAge)
-      const createdAt = payload["createdAt"] as string | undefined;
-      if (createdAt && Date.now() - new Date(createdAt).getTime() > 7 * 24 * 60 * 60 * 1000) return null;
-
-      // Extract userId — React Router stores it under the key used in the session
-      const userId = payload["userId"] as number | undefined;
-      if (typeof userId !== "number") return null;
-
-      return userId;
-    } catch {
-      return null;
-    }
+    return getUserIdFromTokenShared(token, this.env.SESSION_SECRET);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Utility — base64url decode (no Node.js Buffer available in Workers)
-// ---------------------------------------------------------------------------
-
-function base64urlDecode(input: string): Uint8Array {
-  // Convert base64url to standard base64
-  const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
