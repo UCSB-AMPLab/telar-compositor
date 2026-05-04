@@ -162,7 +162,7 @@ describe("dashboard action: autosave-config (R1 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(403);
 
     // Critical: the DB mutation must NOT have run.
@@ -210,7 +210,7 @@ describe("dashboard action: autosave-config (R1 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(400);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
@@ -229,7 +229,7 @@ describe("dashboard action: autosave-config (R1 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(400);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();

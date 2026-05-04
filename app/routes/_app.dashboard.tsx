@@ -179,6 +179,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export async function action({ request, context }: Route.ActionArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
+  // Rebind narrowed user.id as a primitive const so inner async closures
+  // (getActiveProject) can capture it without losing the null-guard narrowing.
+  const userId = user.id;
 
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
@@ -190,7 +193,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     const sessionStorage = createSessionStorage(env.SESSION_SECRET);
     const session = await sessionStorage.getSession(request.headers.get("Cookie"));
     const sessionActiveId = session.get("activeProjectId") as number | undefined;
-    const allProjects = await getUserProjects(db, user.id);
+    const allProjects = await getUserProjects(db, userId);
     if (allProjects.length === 0) return null;
     return allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
   }
