@@ -8,7 +8,9 @@
     "dev": "react-router dev",
     "start": "wrangler dev",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "deploy": "npm run build && wrangler deploy",
+    "smoke": "node scripts/smoke.mjs --config build/server/wrangler.json",
+    "predeploy": "npm run build && npm run smoke",
+    "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
