@@ -47,7 +47,9 @@
     "subtitle_placeholder": "Subtitle (optional)",
     "byline_label": "Byline (optional)",
     "byline_placeholder": "By...",
-    "story_number": "Story {{number}}"
+    "story_number": "Story {{number}}",
+    "show_sections_label": "Show table of contents on title card",
+    "show_sections_empty_helper": "No section titles yet — add one in the sidebar to populate the TOC."
   },
   "step": {
     "question_placeholder": "Question",
@@ -59,12 +61,17 @@
     "click_to_edit": "Click to edit",
     "title_card_label": "Title card",
     "add_step": "+ Add step",
+    "add_section_break": "Add section title",
     "step_label": "Step {{number}}",
     "no_question_yet": "No question yet",
+    "section_no_heading_yet": "(no section title yet)",
     "delete_aria": "Delete step",
     "save_label_aria": "Save label",
     "cancel_editing_aria": "Cancel editing",
     "edit_button_label_aria": "Edit button label"
+  },
+  "section_card": {
+    "heading_label": "Section title"
   },
   "viewer": {
     "capture_position": "Capture position",

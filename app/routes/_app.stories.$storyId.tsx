@@ -6,13 +6,17 @@
  *         project config for constructing IIIF URLs, and team members
  *         (for delete-confirmation contributor warnings).
  * Action: handles capture-position, change-object, and save-layer only.
- *         Structural ops (add-step, delete-step, reorder-steps,
- *         create-layer, delete-layer) migrated to Yjs via
+ *         Structural ops (add-step, add-section-card, delete-step,
+ *         reorder-steps, create-layer, delete-layer) migrated to Yjs via
  *         useStructuralOps — snapshotToD1 reconciles Y.Array state back
  *         to D1 entity tables every 30 seconds.
- * Component: wires EditorShell, StepSidebar, NarrativeColumn, and
+ * Component: wires EditorShell, StepSidebar, NarrativeColumn or
+ *            SectionCardView (depending on the active step's `kind`), and
  *            ViewerColumn. Reads steps/layers from the Y.Array when a
  *            Y.Doc is available, otherwise falls back to loader data.
+ *            Also owns the per-story `show_sections` toggle that controls
+ *            whether section headings appear as a TOC on the published
+ *            title card.
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -27,6 +31,7 @@ import { createSessionStorage } from "~/lib/session.server";
 import { EditorShell } from "~/components/features/editor/EditorShell";
 import { StepSidebar } from "~/components/features/editor/StepSidebar";
 import { NarrativeColumn } from "~/components/features/editor/NarrativeColumn";
+import { SectionCardView } from "~/components/features/editor/SectionCardView";
 import { ViewerColumn } from "~/components/features/editor/ViewerColumn";
 import { LayerPanel } from "~/components/features/editor/LayerPanel";
 import { DeleteStepDialog } from "~/components/features/editor/DeleteStepDialog";
@@ -301,6 +306,7 @@ function resolveIiifUrls(
 interface EditorStep {
   id: number;
   step_number: number;
+  kind: "media" | "section";
   question: string | null;
   answer: string | null;
   alt_text: string | null;
@@ -349,25 +355,28 @@ function readScalarText(yMap: Y.Map<unknown>, key: string): string | null {
   return typeof val === "string" ? (val.length === 0 ? null : val) : null;
 }
 
-function stepFromYMap(yMap: Y.Map<unknown>): EditorStep {
-  const layersArr = yMap.get("layers");
+function stepFromYMap(s: Y.Map<unknown>): EditorStep {
+  const layersArr = s.get("layers");
   return {
-    id: (yMap.get("_id") as number | null) ?? 0,
-    step_number: (yMap.get("step_number") as number) ?? 0,
-    question: readScalarText(yMap, "question"),
-    answer: readScalarText(yMap, "answer"),
-    alt_text: readScalarText(yMap, "alt_text"),
-    object_id: (yMap.get("object_id") as string | null) ?? null,
-    x: (yMap.get("x") as number | null) ?? null,
-    y: (yMap.get("y") as number | null) ?? null,
-    zoom: (yMap.get("zoom") as number | null) ?? null,
-    page: (yMap.get("page") as string | null) ?? null,
-    clip_start: (yMap.get("clip_start") as string | null) ?? null,
-    clip_end: (yMap.get("clip_end") as string | null) ?? null,
-    loop: (yMap.get("loop") as string | null) ?? null,
-    _tempId: (yMap.get("_temp_id") as string | null) ?? null,
-    _createdBy: (yMap.get("created_by") as number | null) ?? null,
-    _yMap: yMap,
+    id: (s.get("_id") as number | null) ?? 0,
+    step_number: (s.get("step_number") as number) ?? 0,
+    // Hydration always sets an explicit `kind` on each step Y.Map;
+    // `?? "media"` guards against legacy Y.Maps from before sections shipped.
+    kind: ((s.get("kind") as string | undefined) ?? "media") as "media" | "section",
+    question: readScalarText(s, "question"),
+    answer: readScalarText(s, "answer"),
+    alt_text: readScalarText(s, "alt_text"),
+    object_id: (s.get("object_id") as string | null) ?? null,
+    x: (s.get("x") as number | null) ?? null,
+    y: (s.get("y") as number | null) ?? null,
+    zoom: (s.get("zoom") as number | null) ?? null,
+    page: (s.get("page") as string | null) ?? null,
+    clip_start: (s.get("clip_start") as string | null) ?? null,
+    clip_end: (s.get("clip_end") as string | null) ?? null,
+    loop: (s.get("loop") as string | null) ?? null,
+    _tempId: (s.get("_temp_id") as string | null) ?? null,
+    _createdBy: (s.get("created_by") as number | null) ?? null,
+    _yMap: s,
     _yLayerCount:
       layersArr instanceof Y.Array ? (layersArr as Y.Array<unknown>).length : 0,
   };
@@ -508,7 +517,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sidebarSteps: EditorStep[] = useYjs
     ? yjsSteps!.filter((s) => (s.step_number ?? 0) > 0 || s.id > 0 || s._tempId)
-    : (storySteps as EditorStep[])
+    : storySteps
         .filter((s) => s.step_number > 0)
         .map((s) => ({
           ...s,
@@ -566,7 +575,31 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     : [];
 
   const isStepZero = activeStepIndex === 0;
+  const isSectionCard = !isStepZero && activeStep?.kind === "section";
   const totalSteps = sidebarSteps.length;
+
+  // Section-card count drives the helper-text visibility on the title-card
+  // show_sections toggle.
+  const sectionCardCount = sidebarSteps.filter((s) => s.kind === "section").length;
+
+  // ---------------------------------------------------------------------------
+  // show_sections toggle state — Y.Map source of truth in collaborative mode,
+  // loader fallback otherwise. Subscribe to storyYMap so a remote peer's
+  // toggle change re-renders the title card immediately.
+  // ---------------------------------------------------------------------------
+  const [showSectionsYjsValue, setShowSectionsYjsValue] = useState<boolean>(() =>
+    storyYMap ? Boolean(storyYMap.get("show_sections")) : Boolean(story?.show_sections ?? false),
+  );
+  useEffect(() => {
+    if (!useYjs || !storyYMap) return;
+    const recompute = () => setShowSectionsYjsValue(Boolean(storyYMap.get("show_sections")));
+    recompute();
+    storyYMap.observe(recompute);
+    return () => storyYMap.unobserve(recompute);
+  }, [useYjs, storyYMap]);
+  const showSectionsValue = useYjs && storyYMap
+    ? showSectionsYjsValue
+    : Boolean(story?.show_sections ?? false);
 
   // ---------------------------------------------------------------------------
   // Remote-delete detection for steps and parent story
@@ -611,8 +644,8 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               action: {
                 label: tStructural("toast_item_deleted_undo"),
                 onClick: () => {
-                  // The global TabNav Undo button / Ctrl+Z (plan 27-04) drives
-                  // the shared UndoManager — no direct call here.
+                  // The global TabNav Undo button / Ctrl+Z drives the shared
+                  // UndoManager — no direct call here.
                 },
               },
             }
@@ -704,7 +737,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   const altTextYText = getYText(activeStepYMap, "alt_text");
 
   // ---------------------------------------------------------------------------
-  // Highlight / fade state for steps (D-22, D-24)
+  // Highlight / fade state for steps
   // ---------------------------------------------------------------------------
   const seenStepKeysRef = useRef<Set<string>>(new Set());
   const [highlightedStepKeys, setHighlightedStepKeys] = useState<
@@ -757,6 +790,32 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     // D1-mode fallback no longer supported. Log for visibility.
     // eslint-disable-next-line no-console
     console.warn("[story-editor] add-step without active ydoc; ignored");
+  }
+
+  // Mirrors handleAddStep exactly — same control flow, same ydoc gate, same
+  // log-on-missing-ydoc behaviour. Only the ops method differs (B-01 parity).
+  function handleAddSectionCard() {
+    if (useYjs && storyYMap) {
+      ops!.addSectionCard(storyYMap);
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.warn("[story-editor] add-section-card without active ydoc; ignored");
+  }
+
+  // Per-story show_sections toggle. Mirrors the existing
+  // storyYMap.set("draft", ...) / storyYMap.set("private", ...) patterns
+  // in app/routes/_app.stories.tsx — Y.Doc is the source of truth and
+  // snapshotToD1 reconciles the boolean back to D1.
+  function handleToggleShowSections(value: boolean) {
+    if (useYjs && storyYMap && ydoc) {
+      ydoc.transact(() => {
+        storyYMap.set("show_sections", value);
+      });
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.warn("[story-editor] toggle-show-sections without active ydoc; ignored");
   }
 
   function handleReorderSteps(
@@ -955,7 +1014,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     <>
     <EditorShell
       storyTitle={story.title ?? ""}
-      hideViewer={isStepZero}
+      hideViewer={isStepZero || isSectionCard}
       sidebar={
         <StepSidebar
           steps={sidebarSteps}
@@ -964,6 +1023,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
           onStepSelect={(idx: number) => { setActiveStepIndex(idx); setLayer1Open(false); setLayer2Open(false); }}
           onReorderSteps={handleReorderSteps}
           onAddStep={handleAddStep}
+          onAddSectionCard={handleAddSectionCard}
           onDeleteStep={(s) => {
             // Route step deletes through the centralised DeleteConfirmationModal
             // in Yjs mode; fall back to the legacy DeleteStepDialog
@@ -993,26 +1053,47 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
         />
       }
       narrative={
-        <NarrativeColumn
-          activeStepIndex={activeStepIndex}
-          storyId={story.story_id}
-          story={story}
-          activeStep={activeStep}
-          layers={activeLayers}
-          onOpenLayer={(layer) => {
-            if (layer.layer_number === 1) setLayer1Open(true);
-            else setLayer2Open(true);
-          }}
-          onCreateLayer={handleCreateLayer}
-          actionUrl={`/stories/${story.slug}`}
-          isFirstStep={activeStepIndex === 1}
-          titleYText={titleYText}
-          subtitleYText={subtitleYText}
-          bylineYText={bylineYText}
-          questionYText={questionYText}
-          answerYText={answerYText}
-          altTextYText={altTextYText}
-        />
+        isSectionCard && activeStep ? (
+          <SectionCardView
+            step={{
+              id: activeStep.id,
+              step_number: activeStep.step_number,
+              question: activeStep.question ?? null,
+            }}
+            storyId={String(story.story_id ?? story.id)}
+            questionYText={questionYText}
+          />
+        ) : (
+          <NarrativeColumn
+            activeStepIndex={activeStepIndex}
+            storyId={story.story_id}
+            story={{
+              id: story.id,
+              title: story.title,
+              subtitle: story.subtitle,
+              byline: story.byline,
+              order: story.order,
+              show_sections: showSectionsValue,
+            }}
+            activeStep={activeStep}
+            layers={activeLayers}
+            onOpenLayer={(layer) => {
+              if (layer.layer_number === 1) setLayer1Open(true);
+              else setLayer2Open(true);
+            }}
+            onCreateLayer={handleCreateLayer}
+            actionUrl={`/stories/${story.story_id}`}
+            isFirstStep={activeStepIndex === 1}
+            titleYText={titleYText}
+            subtitleYText={subtitleYText}
+            bylineYText={bylineYText}
+            sectionCardCount={sectionCardCount}
+            onToggleShowSections={handleToggleShowSections}
+            questionYText={questionYText}
+            answerYText={answerYText}
+            altTextYText={altTextYText}
+          />
+        )
       }
       viewer={
         <ViewerColumn
@@ -1044,7 +1125,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               open={layer1Open}
               onClose={() => { setLayer1Open(false); setLayer2Open(false); }}
               onDelete={handleDeleteLayer}
-              actionUrl={`/stories/${story.slug}`}
+              actionUrl={`/stories/${story.story_id}`}
               canDelete={
                 canDeleteLayer1 &&
                 (useYjs && activeLayer1._yMap
@@ -1085,7 +1166,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               open={layer2Open}
               onClose={() => setLayer2Open(false)}
               onDelete={handleDeleteLayer}
-              actionUrl={`/stories/${story.slug}`}
+              actionUrl={`/stories/${story.story_id}`}
               canDelete={
                 useYjs && activeLayer2._yMap
                   ? ops!.canDelete(activeLayer2._yMap)

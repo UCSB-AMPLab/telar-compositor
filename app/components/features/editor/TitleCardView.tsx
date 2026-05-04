@@ -6,6 +6,12 @@
  * initialValue (from D1 SSR render) when yText is null (pre-connection).
  *
  * Each field has a pencil icon that darkens on hover with "Click to edit" text.
+ *
+ * Below the byline sits the "show table of contents" toggle: when a story
+ * contains section-card steps, this toggle controls whether their headings
+ * appear as a TOC on the published title card. Writes to the story Y.Map's
+ * `show_sections` boolean. A small helper line is shown when no section
+ * cards exist yet so authors know how to populate the TOC.
  */
 
 import { useRef } from "react";
@@ -21,11 +27,50 @@ interface TitleCardViewProps {
     subtitle: string | null;
     byline: string | null;
     order: number | null;
+    show_sections: boolean;
   };
   storyId: string;
   titleYText: Y.Text | null;
   subtitleYText: Y.Text | null;
   bylineYText: Y.Text | null;
+  /** Number of kind='section' steps in this story — controls helper-text visibility */
+  sectionCardCount: number;
+  /** Called immediately on toggle; writes to the story Y.Map.show_sections boolean */
+  onToggleShowSections: (value: boolean) => void;
+}
+
+/**
+ * ShowSectionsSwitch — slimmer inline variant of ToggleField sized for the
+ * centred max-w-lg title card chrome. Reuses the same role="switch" /
+ * aria-checked semantics as ToggleField.
+ */
+function ShowSectionsSwitch({
+  checked,
+  onChange,
+  ariaLabel,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      onClick={() => onChange(!checked)}
+      className={`relative w-9 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-periwinkle focus:ring-offset-1 shrink-0 ${
+        checked ? "bg-periwinkle" : "bg-gray-200"
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transform transition-transform ${
+          checked ? "translate-x-4" : "translate-x-0"
+        }`}
+      />
+    </button>
+  );
 }
 
 function EditableField({
@@ -59,7 +104,15 @@ function EditableField({
   );
 }
 
-export function TitleCardView({ story, storyId, titleYText, subtitleYText, bylineYText }: TitleCardViewProps) {
+export function TitleCardView({
+  story,
+  storyId,
+  titleYText,
+  subtitleYText,
+  bylineYText,
+  sectionCardCount,
+  onToggleShowSections,
+}: TitleCardViewProps) {
   const { t } = useTranslation("editor");
   const titleRef = useRef<HTMLDivElement>(null);
   const subtitleRef = useRef<HTMLDivElement>(null);
@@ -119,6 +172,25 @@ export function TitleCardView({ story, storyId, titleYText, subtitleYText, bylin
               fieldKey={`story-${storyId}-byline`}
             />
           </EditableField>
+        </div>
+
+        {/* show_sections toggle — inline below byline */}
+        <div className="border-t border-gray-100 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-body text-sm text-charcoal flex-1">
+              {t("title_card.show_sections_label")}
+            </span>
+            <ShowSectionsSwitch
+              checked={story.show_sections}
+              onChange={onToggleShowSections}
+              ariaLabel={t("title_card.show_sections_label")}
+            />
+          </div>
+          {sectionCardCount === 0 && (
+            <p className="font-body text-xs text-gray-400 mt-2">
+              {t("title_card.show_sections_empty_helper")}
+            </p>
+          )}
         </div>
       </div>
     </div>

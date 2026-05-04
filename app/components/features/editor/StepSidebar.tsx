@@ -4,10 +4,15 @@
  * Displays the title card (step 0, not reorderable) and all regular steps
  * (1-N) in a dnd-kit SortableContext for drag-to-reorder. Each step row is
  * a SortableStepItem with a GripVertical handle and a Trash2 delete button.
- * "+ Add step" button at the bottom appends a new step via onAddStep.
+ *
+ * Two add buttons sit below the list:
+ *   - "+ Add step" (primary, yellow): appends a media-kind step via
+ *     onAddStep
+ *   - "+ Add section title" (secondary, outlined): appends a section-kind
+ *     step via onAddSectionCard, used to break the story into chapters
  *
  * When objectsByType is provided, SortableStepItem shows a media type badge
- * (Video/Music/Text icon) for non-image steps.
+ * (Video/Music/Text icon) for non-image media steps.
  */
 
 import { useTranslation } from "react-i18next";
@@ -38,6 +43,7 @@ import type { MediaType } from "~/lib/media-type";
 interface SidebarStep {
   id: number;
   step_number: number;
+  kind?: "media" | "section";
   question: string | null;
   object_id?: string | null;
   _tempId?: string | null;
@@ -53,6 +59,7 @@ interface StepSidebarProps {
   /** Called with the dnd oldIndex/newIndex — positions in the steps array. */
   onReorderSteps: (oldIndex: number, newIndex: number, orderedIds: Array<string | number>) => void;
   onAddStep: () => void;
+  onAddSectionCard: () => void;
   onDeleteStep: (step: { id: number; step_number: number; question: string | null; _tempId?: string | null }) => void;
   /** Pre-computed map from object_id to MediaType for media type badges */
   objectsByType?: Record<string, MediaType>;
@@ -73,6 +80,7 @@ export function StepSidebar({
   onStepSelect,
   onReorderSteps,
   onAddStep,
+  onAddSectionCard,
   onDeleteStep,
   objectsByType,
   canDeleteStep,
@@ -169,14 +177,24 @@ export function StepSidebar({
           </SortableContext>
         </DndContext>
 
-        {/* Add step button */}
+        {/* Add step + Insert section break buttons */}
         <div className="pl-7 pr-3 py-3">
+          {/* Add step (primary, yellow) */}
           <button
             type="button"
             onClick={onAddStep}
             className="w-full px-4 py-2 font-heading font-semibold text-sm text-charcoal bg-[#DAB95C] hover:bg-yellow-300 rounded-full transition-colors uppercase tracking-wider"
           >
             {t("step.add_step")}
+          </button>
+
+          {/* Insert section break (secondary, smaller, less visual weight) */}
+          <button
+            type="button"
+            onClick={onAddSectionCard}
+            className="mt-2 w-full px-4 py-1.5 font-heading font-medium text-xs text-cream/80 bg-transparent border border-gray-600 hover:bg-gray-700 hover:text-cream rounded-full transition-colors uppercase tracking-wider"
+          >
+            {t("step.add_section_break")}
           </button>
         </div>
       </div>

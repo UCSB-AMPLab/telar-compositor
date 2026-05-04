@@ -47,7 +47,9 @@
     "subtitle_placeholder": "Subtítulo (opcional)",
     "byline_label": "Firma (opcional)",
     "byline_placeholder": "Por...",
-    "story_number": "Historia {{number}}"
+    "story_number": "Historia {{number}}",
+    "show_sections_label": "Mostrar tabla de contenidos en la portada",
+    "show_sections_empty_helper": "Aún no hay títulos de sección — agrega uno en la barra lateral para llenar la tabla de contenidos."
   },
   "step": {
     "question_placeholder": "Pregunta",
@@ -59,12 +61,17 @@
     "click_to_edit": "Clic para editar",
     "title_card_label": "Portada",
     "add_step": "+ Agregar paso",
+    "add_section_break": "Agregar título de sección",
     "step_label": "Paso {{number}}",
     "no_question_yet": "Sin pregunta aún",
+    "section_no_heading_yet": "(sin título de sección aún)",
     "delete_aria": "Eliminar paso",
     "save_label_aria": "Guardar etiqueta",
     "cancel_editing_aria": "Cancelar edición",
     "edit_button_label_aria": "Editar etiqueta del botón"
+  },
+  "section_card": {
+    "heading_label": "Título de la sección"
   },
   "viewer": {
     "capture_position": "Capturar posición",

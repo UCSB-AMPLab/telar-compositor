@@ -6,7 +6,7 @@
  * Replaces D1 route actions with direct Yjs mutations so structural
  * changes propagate to all connected collaborators in real time. The
  * Durable Object's snapshotToD1 cycle reconciles Y.Array state back to
- * D1 entity tables (handled in plan 27-03).
+ * D1 entity tables.
  *
  * Every newly-created Y.Map carries three sentinel fields:
  *   - `_id: null`             (will be backfilled by snapshotToD1)
@@ -38,6 +38,7 @@ export interface StructuralOps {
 
   // Steps.
   addStep: (storyYMap: Y.Map<unknown>) => void;
+  addSectionCard: (storyYMap: Y.Map<unknown>) => void;
   deleteStep: (
     storyYMap: Y.Map<unknown>,
     stepId: number | null,
@@ -66,7 +67,7 @@ export interface StructuralOps {
   deletePage: (id: number | null, tempId: string | null) => void;
   reorderPages: (oldIndex: number, newIndex: number) => void;
 
-  // Objects (IIIF only per D-18; self-hosted uploads stay as a route action).
+  // Objects: IIIF only — self-hosted uploads stay as a route action.
   addIiifObject: (objectId: string, title: string, sourceUrl: string) => void;
   deleteObject: (id: number | null, tempId: string | null) => void;
   reorderObjects: (oldIndex: number, newIndex: number) => void;
@@ -205,6 +206,7 @@ export function useStructuralOps(
         stepMap.set("_temp_id", crypto.randomUUID());
         stepMap.set("created_by", currentUserId);
         stepMap.set("step_number", stepsArray.length + 1);
+        stepMap.set("kind", "media");
         stepMap.set("object_id", "");
         stepMap.set("x", null);
         stepMap.set("y", null);
@@ -216,6 +218,35 @@ export function useStructuralOps(
         stepMap.set("clip_start", "");
         stepMap.set("clip_end", "");
         stepMap.set("loop", "");
+        stepMap.set("layers", new Y.Array<Y.Map<unknown>>());
+        stepsArray.push([stepMap]);
+      });
+    };
+
+    const addSectionCard: StructuralOps["addSectionCard"] = (storyYMap) => {
+      ydoc.transact(() => {
+        const stepsArray = storyYMap.get("steps") as Y.Array<Y.Map<unknown>>;
+        if (!(stepsArray instanceof Y.Array)) return;
+        const stepMap = new Y.Map<unknown>();
+        stepMap.set("_id", null);
+        stepMap.set("_temp_id", crypto.randomUUID());
+        stepMap.set("created_by", currentUserId);
+        stepMap.set("step_number", stepsArray.length + 1);
+        stepMap.set("kind", "section");
+        // Section cards have no media — empty object_id signals a section card to the framework on publish
+        stepMap.set("object_id", "");
+        stepMap.set("x", null);
+        stepMap.set("y", null);
+        stepMap.set("zoom", null);
+        stepMap.set("page", "");
+        // The heading text lives in the existing `question` field — Y.Text so collaborative edits work
+        stepMap.set("question", new Y.Text(""));
+        stepMap.set("answer", new Y.Text(""));
+        stepMap.set("alt_text", new Y.Text(""));
+        stepMap.set("clip_start", "");
+        stepMap.set("clip_end", "");
+        stepMap.set("loop", "");
+        // Section cards never carry layers; store an empty Y.Array for shape consistency
         stepMap.set("layers", new Y.Array<Y.Map<unknown>>());
         stepsArray.push([stepMap]);
       });
@@ -314,7 +345,7 @@ export function useStructuralOps(
       });
     };
 
-    // ---- Objects (IIIF only — see D-18) ----
+    // ---- Objects (IIIF only — self-hosted uploads stay as a route action) ----
 
     const addIiifObject: StructuralOps["addIiifObject"] = (
       objectId,
@@ -371,7 +402,7 @@ export function useStructuralOps(
         termMap.set("_temp_id", crypto.randomUUID());
         termMap.set("created_by", currentUserId);
         termMap.set("title", new Y.Text(title));
-        termMap.set("term_id", slugifyTermId(title));  // D-11: auto-slugify
+        termMap.set("term_id", slugifyTermId(title));  // auto-slugify
         termMap.set("definition", new Y.Text(""));
         glossaryArray.push([termMap]);
       });
@@ -391,6 +422,7 @@ export function useStructuralOps(
       deleteStory,
       reorderStories,
       addStep,
+      addSectionCard,
       deleteStep,
       reorderSteps,
       addLayer,

@@ -95,6 +95,7 @@ export const stories = sqliteTable("stories", {
   order: integer("order").default(0),
   private: integer("private", { mode: "boolean" }).default(false),
   draft: integer("draft", { mode: "boolean" }).default(false),
+  show_sections: integer("show_sections", { mode: "boolean" }).notNull().default(false),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -102,6 +103,7 @@ export const steps = sqliteTable("steps", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   story_id: integer("story_id").notNull().references(() => stories.id),
   step_number: integer("step_number").notNull(),
+  kind: text("kind", { enum: ["media", "section"] }).notNull().default("media"),
   object_id: text("object_id"),
   x: real("x"),
   y: real("y"),

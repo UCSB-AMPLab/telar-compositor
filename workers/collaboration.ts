@@ -62,12 +62,14 @@ interface StoryRow {
   order: number;
   private: number;
   draft: number;
+  show_sections: number;
 }
 
 interface StepRow {
   id: number;
   story_id: number;
   step_number: number;
+  kind: string;
   object_id: string | null;
   x: number | null;
   y: number | null;
@@ -734,6 +736,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         storyMap.set("order", story.order ?? 0);
         storyMap.set("private", story.private === 1);
         storyMap.set("draft", story.draft === 1);
+        storyMap.set("show_sections", story.show_sections === 1);
 
         // ---- steps ----
         const stepsArray = new Y.Array<Y.Map<unknown>>();
@@ -741,6 +744,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           const stepMap = new Y.Map<unknown>();
           stepMap.set("_id", step.id);
           stepMap.set("step_number", step.step_number);
+          stepMap.set("kind", step.kind ?? "media");
           stepMap.set("object_id", step.object_id ?? "");
           stepMap.set("x", step.x ?? null);
           stepMap.set("y", step.y ?? null);
@@ -996,8 +1000,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         // INSERT — await individually so we can capture last_row_id for backfill
         const storyResult = await this.env.DB
           .prepare(
-            'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, updated_at) ' +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, updated_at) ' +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .bind(
             this.projectId,
@@ -1008,6 +1012,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             si, // order from Y.Array index
             storyMap.get("private") ? 1 : 0,
             storyMap.get("draft") ? 1 : 0,
+            storyMap.get("show_sections") ? 1 : 0,
             now,
           )
           .run();
@@ -1021,7 +1026,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           this.env.DB
             .prepare(
               "UPDATE stories SET title = ?, subtitle = ?, byline = ?, " +
-              "\"order\" = ?, private = ?, draft = ?, updated_at = ? WHERE id = ?",
+              "\"order\" = ?, private = ?, draft = ?, show_sections = ?, updated_at = ? WHERE id = ?",
             )
             .bind(
               yTextToString(storyMap.get("title")),
@@ -1030,6 +1035,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
               si, // order from Y.Array index (keeps D1 aligned with Yjs position)
               storyMap.get("private") ? 1 : 0,
               storyMap.get("draft") ? 1 : 0,
+              storyMap.get("show_sections") ? 1 : 0,
               now,
               storyId,
             ),
@@ -1053,12 +1059,13 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           if (stepId === null || stepId === undefined) {
             const stepResult = await this.env.DB
               .prepare(
-                "INSERT INTO steps (story_id, step_number, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, updated_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               )
               .bind(
                 storyId,
                 sti + 1, // step_number is 1-based
+                String(stepMap.get("kind") ?? "media"),
                 String(stepMap.get("object_id") ?? ""),
                 stepMap.get("x") as number | null,
                 stepMap.get("y") as number | null,
@@ -1081,12 +1088,13 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             statements.push(
               this.env.DB
                 .prepare(
-                  "UPDATE steps SET step_number = ?, object_id = ?, x = ?, y = ?, zoom = ?, " +
+                  "UPDATE steps SET step_number = ?, kind = ?, object_id = ?, x = ?, y = ?, zoom = ?, " +
                   "page = ?, question = ?, answer = ?, alt_text = ?, " +
                   "clip_start = ?, clip_end = ?, loop = ?, updated_at = ? WHERE id = ?",
                 )
                 .bind(
                   sti + 1, // step_number normalised from Y.Array index
+                  String(stepMap.get("kind") ?? "media"),
                   String(stepMap.get("object_id") ?? ""),
                   stepMap.get("x") as number | null,
                   stepMap.get("y") as number | null,
