@@ -48,6 +48,8 @@
       "field_browse_and_search": "Enable Browse & Search",
       "field_show_link_on_homepage": "Show Collection Link on Homepage",
       "field_show_sample_on_homepage": "Show Sample on Homepage",
+      "field_collection_mode": "Show objects first on homepage (collection mode)",
+      "field_collection_mode_help": "When enabled, your homepage shows objects with large thumbnails first and stories below. When disabled (default), stories appear first.",
       "field_featured_count": "Featured Count",
       "field_featured_count_help": "Number of featured objects to display."
     },

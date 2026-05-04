@@ -304,6 +304,8 @@ export function mapConfigToProjectConfig(
     // google_sheets
     google_sheets_enabled: googleSheets.enabled as boolean | undefined,
     google_sheets_published_url: googleSheets.published_url as string | undefined,
+    // collection_mode — top-level YAML scalar
+    collection_mode: config.collection_mode as boolean | undefined,
   };
 }
 

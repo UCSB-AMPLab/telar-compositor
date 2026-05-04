@@ -145,6 +145,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       browse_and_search: formData.get("browse_and_search") === "true",
       show_link_on_homepage: formData.get("show_link_on_homepage") === "true",
       show_sample_on_homepage: formData.get("show_sample_on_homepage") === "true",
+      collection_mode: formData.get("collection_mode") === "true",
       featured_count: parseInt(formData.get("featured_count") as string) || 4,
       story_key: formData.get("story_key") as string,
       updated_at: new Date().toISOString(),
@@ -179,7 +180,7 @@ function syncFormToYjs(form: HTMLFormElement, yConfig: Y.Map<unknown>) {
   const booleans = [
     "include_demo_content", "show_on_homepage", "show_story_steps",
     "show_object_credits", "browse_and_search", "show_link_on_homepage",
-    "show_sample_on_homepage",
+    "show_sample_on_homepage", "collection_mode",
   ];
   for (const key of booleans) {
     yConfig.set(key, fd.get(key) === "true");
@@ -424,6 +425,13 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
             label={t("sections.collection_interface.field_show_sample_on_homepage")}
             name="show_sample_on_homepage"
             checked={config?.show_sample_on_homepage ?? false}
+            onChange={onBooleanChange}
+          />
+          <ToggleField
+            label={t("sections.collection_interface.field_collection_mode")}
+            name="collection_mode"
+            checked={config?.collection_mode ?? false}
+            help={t("sections.collection_interface.field_collection_mode_help")}
             onChange={onBooleanChange}
           />
           <FieldWithHelp

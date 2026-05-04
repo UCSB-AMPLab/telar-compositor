@@ -55,6 +55,7 @@ export const project_config = sqliteTable("project_config", {
   browse_and_search: integer("browse_and_search", { mode: "boolean" }).default(true),
   show_link_on_homepage: integer("show_link_on_homepage", { mode: "boolean" }).default(true),
   show_sample_on_homepage: integer("show_sample_on_homepage", { mode: "boolean" }).default(false),
+  collection_mode: integer("collection_mode", { mode: "boolean" }).notNull().default(false),
   featured_count: integer("featured_count").default(4),
   story_key: text("story_key"),
   navigation_json: text("navigation_json"),

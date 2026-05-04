@@ -720,6 +720,10 @@ export async function buildPublishFileSet(
     if (config.email != null) managedFields["email"] = `"${config.email}"`;
     if (config.logo != null) managedFields["logo"] = `"${config.logo}"`;
     if (config.story_key != null) managedFields["story_key"] = config.story_key;
+    // collection_mode — emit unquoted boolean to satisfy js-yaml round-trip on framework re-read
+    if (config.collection_mode != null) {
+      managedFields["collection_mode"] = config.collection_mode ? "true" : "false";
+    }
 
     const updatedConfig = updateConfigFields(existingConfigYml, managedFields);
     files.push({ path: "_config.yml", content: updatedConfig });
