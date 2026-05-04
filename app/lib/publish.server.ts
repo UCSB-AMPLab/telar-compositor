@@ -95,6 +95,7 @@ const PROJECT_CSV_COLUMNS = [
   "subtitle",
   "byline",
   "private",
+  "show_sections",
 ] as const;
 
 const PROJECT_BILINGUAL_ROW: Record<string, string> = {
@@ -104,6 +105,7 @@ const PROJECT_BILINGUAL_ROW: Record<string, string> = {
   subtitle: "subtitulo",
   byline: "firma",
   private: "privada",
+  show_sections: "mostrar_secciones",
 };
 
 interface StoryRow {
@@ -114,6 +116,7 @@ interface StoryRow {
   order: number;
   private: boolean;
   draft: boolean;
+  show_sections: boolean;
 }
 
 /** Normalises PapaParse output to LF-only line endings */
@@ -154,6 +157,8 @@ export function serializeProjectCsv(storyRows: StoryRow[], existingCsv?: string)
     subtitle: s.subtitle ?? "",
     byline: s.byline ?? "",
     private: s.private ? "yes" : "",
+    // show_sections — same boolean -> "yes" | "" convention as private
+    show_sections: s.show_sections ? "yes" : "",
   }));
 
   const dataCsv = normalise(Papa.unparse(dataRows, { columns }))
@@ -215,6 +220,12 @@ export interface LayerData {
 
 export interface StepWithLayers {
   step_number: number;
+  /**
+   * Distinguishes a section-card step (chapter heading) from a regular media
+   * step. The framework signal in stories.csv is an empty `object` column;
+   * the writer enforces that signal defensively when kind === "section".
+   */
+  kind: "media" | "section";
   object_id: string | null;
   x: number | null;
   y: number | null;
@@ -286,7 +297,10 @@ export function serializeStoryCsv(
 
     return {
       step: String(step.step_number),
-      object: step.object_id ?? "",
+      // Defensive empty-object write for kind='section' steps — guarantees the
+      // framework's section-card signal even if internal kind/object_id state
+      // has drifted.
+      object: step.kind === "section" ? "" : (step.object_id ?? ""),
       x: String(step.x ?? 0.5),
       y: String(step.y ?? 0.5),
       zoom: String(step.zoom ?? 1),
@@ -721,6 +735,8 @@ export async function buildPublishFileSet(
       order: s.order ?? 0,
       private: s.private ?? false,
       draft: s.draft ?? false,
+      // show_sections column from stories table
+      show_sections: s.show_sections ?? false,
     })),
   );
   files.push({
@@ -781,6 +797,9 @@ export async function buildPublishFileSet(
     // Build StepWithLayers
     const stepsWithLayers: StepWithLayers[] = stepRows.map((step) => ({
       step_number: step.step_number,
+      // kind from D1; defaults to "media" for any pre-existing rows where
+      // the schema default did not apply.
+      kind: (step.kind as "media" | "section") ?? "media",
       object_id: step.object_id ?? null,
       x: step.x ?? null,
       y: step.y ?? null,

@@ -40,18 +40,19 @@ describe("serializeProjectCsv", () => {
     order: 1,
     private: false,
     draft: false,
+    show_sections: false,
   };
 
   it("produces header as first line", () => {
     const csv = serializeProjectCsv([baseStory]);
     const lines = csv.split("\n");
-    expect(lines[0]).toBe("order,story_id,title,subtitle,byline,private");
+    expect(lines[0]).toBe("order,story_id,title,subtitle,byline,private,show_sections");
   });
 
   it("produces bilingual row as second line", () => {
     const csv = serializeProjectCsv([baseStory]);
     const lines = csv.split("\n");
-    expect(lines[1]).toBe("orden,id_historia,titulo,subtitulo,firma,privada");
+    expect(lines[1]).toBe("orden,id_historia,titulo,subtitulo,firma,privada,mostrar_secciones");
   });
 
   it("omits draft stories entirely", () => {
@@ -69,11 +70,12 @@ describe("serializeProjectCsv", () => {
 
   it("maps private: false to empty string", () => {
     const csv = serializeProjectCsv([baseStory]);
-    // The private cell should be empty (last column)
+    // Both private and show_sections are last/penultimate columns and should
+    // be empty for baseStory (private:false, show_sections:false)
     const dataLine = csv.split("\n").find((l) => l.includes("weavers"));
     expect(dataLine).toBeDefined();
-    // Row ends with comma then empty (private is empty)
-    expect(dataLine).toMatch(/,$/);
+    // Row ends with two trailing empty columns
+    expect(dataLine).toMatch(/,,$/);
   });
 
   it("sorts stories by order ascending", () => {
@@ -94,14 +96,62 @@ describe("serializeProjectCsv", () => {
     // Data row after bilingual row — should have empty fields but not throw
     expect(csv).toContain("weavers");
     const dataLine = csv.split("\n").find((l) => l.includes("weavers"));
-    // title, subtitle, byline, private columns should all be empty (6 columns total)
-    expect(dataLine).toBe("1,weavers,,,,");
+    // title, subtitle, byline, private, show_sections all empty (7 columns total)
+    expect(dataLine).toBe("1,weavers,,,,,");
   });
 
   it("preserves comment rows from existing CSV", () => {
     const existingCsv = "order,story_id,title,subtitle,byline,private\n# This is a comment\n";
     const csv = serializeProjectCsv([baseStory], existingCsv);
     expect(csv).toContain("# This is a comment");
+  });
+
+  // --- show_sections / mostrar_secciones ---
+  describe("show_sections column", () => {
+    it("emits 'yes' in show_sections column when story.show_sections is true", () => {
+      const story = { ...baseStory, show_sections: true };
+      const csv = serializeProjectCsv([story]);
+      const dataLine = csv.split("\n").find((l) => l.includes("weavers"));
+      expect(dataLine).toBeDefined();
+      // 7 columns: order,story_id,title,subtitle,byline,private,show_sections
+      const fields = dataLine!.split(",");
+      expect(fields[6]).toBe("yes");
+    });
+
+    it("emits empty string in show_sections column when story.show_sections is false", () => {
+      const csv = serializeProjectCsv([baseStory]);
+      const dataLine = csv.split("\n").find((l) => l.includes("weavers"));
+      const fields = dataLine!.split(",");
+      expect(fields[6]).toBe("");
+    });
+
+    it("preserves column order: show_sections appended at end", () => {
+      const csv = serializeProjectCsv([baseStory]);
+      expect(csv.split("\n")[0]).toBe(
+        "order,story_id,title,subtitle,byline,private,show_sections",
+      );
+    });
+
+    it("round-trips show_sections: true via mapProjectCsv", async () => {
+      const story = { ...baseStory, show_sections: true };
+      const csv = serializeProjectCsv([story]);
+      const { parseTelarCsv, mapProjectCsv } = await import("~/lib/import.server");
+      const rows = parseTelarCsv(csv);
+      const mapped = mapProjectCsv(rows);
+      expect(mapped).toHaveLength(1);
+      expect(mapped[0].story_id).toBe("weavers");
+      expect(mapped[0].show_sections).toBe(true);
+    });
+
+    it("round-trips show_sections: false via mapProjectCsv", async () => {
+      const csv = serializeProjectCsv([baseStory]);
+      const { parseTelarCsv, mapProjectCsv } = await import("~/lib/import.server");
+      const rows = parseTelarCsv(csv);
+      const mapped = mapProjectCsv(rows);
+      expect(mapped).toHaveLength(1);
+      expect(mapped[0].story_id).toBe("weavers");
+      expect(mapped[0].show_sections).toBe(false);
+    });
   });
 });
 
@@ -115,6 +165,7 @@ describe("serializeStoryCsv", () => {
 
   const baseStep = {
     step_number: 1,
+    kind: "media" as "media" | "section",
     object_id: "my-object",
     x: 0.5,
     y: 0.3,
@@ -178,6 +229,7 @@ describe("serializeStoryCsv", () => {
   it("skips fully empty steps", () => {
     const emptyStep = {
       step_number: 2,
+      kind: "media" as "media" | "section",
       object_id: null,
       x: null,
       y: null,
@@ -309,6 +361,74 @@ describe("serializeStoryCsv", () => {
     expect(dataRow.clip_start).toBe("");
     expect(dataRow.clip_end).toBe("");
     expect(dataRow.loop).toBe("");
+  });
+
+  // --- defensive empty-object write for kind='section' ---
+  // Framework signal in stories.csv: empty `object` column = section card.
+  // Even if internal kind/object_id state has drifted (kind='section' with
+  // a stale object_id), the writer must emit empty `object` so the framework
+  // still renders the row as a section card.
+  describe("kind='section' defensive empty-object write", () => {
+    it("kind='section' with stale object_id => CSV `object` column is empty", () => {
+      const step = {
+        ...baseStep,
+        kind: "section" as "media" | "section",
+        object_id: "obj-A", // stale — should NOT be written to CSV
+        question: "Chapter One",
+      };
+      const csv = serializeStoryCsv([step], "weavers");
+      const parsed = Papa.parse<Record<string, string>>(csv, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      const dataRow = parsed.data[1]; // skip bilingual row
+      expect(dataRow.object).toBe("");
+      expect(dataRow.question).toBe("Chapter One");
+    });
+
+    it("kind='media' with object_id => CSV `object` column is the object_id verbatim", () => {
+      const step = {
+        ...baseStep,
+        kind: "media" as "media" | "section",
+        object_id: "obj-A",
+      };
+      const csv = serializeStoryCsv([step], "weavers");
+      const parsed = Papa.parse<Record<string, string>>(csv, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      const dataRow = parsed.data[1];
+      expect(dataRow.object).toBe("obj-A");
+    });
+
+    it("kind='section' with empty object_id => CSV `object` column is empty (idempotent on common path)", () => {
+      const step = {
+        ...baseStep,
+        kind: "section" as "media" | "section",
+        object_id: null,
+        question: "Chapter Two",
+      };
+      const csv = serializeStoryCsv([step], "weavers");
+      const parsed = Papa.parse<Record<string, string>>(csv, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      const dataRow = parsed.data[1];
+      expect(dataRow.object).toBe("");
+      expect(dataRow.question).toBe("Chapter Two");
+    });
+
+    it("regression: existing media-step CSV output unchanged for default baseStep", () => {
+      const csv = serializeStoryCsv([baseStep], "weavers");
+      const parsed = Papa.parse<Record<string, string>>(csv, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      const dataRow = parsed.data[1];
+      expect(dataRow.object).toBe("my-object");
+      expect(dataRow.question).toBe("What do you see?");
+      expect(dataRow.answer).toBe("A weaving.");
+    });
   });
 });
 
