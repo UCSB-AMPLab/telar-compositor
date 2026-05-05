@@ -85,8 +85,8 @@ export async function getUserIdFromToken(
 
 // ---------------------------------------------------------------------------
 // Internal-marker signing/verification for the worker -> DO /reset flow.
-// T-32-03b: workers/app.ts signs a HMAC marker the DO recomputes; the DO
-// rejects direct reaches that don't carry a fresh signed marker.
+// workers/app.ts signs a HMAC marker the DO recomputes; the DO rejects
+// direct reaches that don't carry a fresh signed marker.
 // ---------------------------------------------------------------------------
 
 export interface SignedInternalMarker {

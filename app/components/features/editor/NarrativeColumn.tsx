@@ -20,6 +20,7 @@ interface NarrativeColumnProps {
     subtitle: string | null;
     byline: string | null;
     order: number | null;
+    show_sections: boolean;
   };
   activeStep: {
     id: number;
@@ -50,6 +51,9 @@ interface NarrativeColumnProps {
   titleYText: Y.Text | null;
   subtitleYText: Y.Text | null;
   bylineYText: Y.Text | null;
+  // show_sections plumbing for TitleCardView
+  sectionCardCount: number;
+  onToggleShowSections: (value: boolean) => void;
   // Y.Text props for StepView
   questionYText: Y.Text | null;
   answerYText: Y.Text | null;
@@ -69,6 +73,8 @@ export function NarrativeColumn({
   titleYText,
   subtitleYText,
   bylineYText,
+  sectionCardCount,
+  onToggleShowSections,
   questionYText,
   answerYText,
   altTextYText,
@@ -81,6 +87,8 @@ export function NarrativeColumn({
         titleYText={titleYText}
         subtitleYText={subtitleYText}
         bylineYText={bylineYText}
+        sectionCardCount={sectionCardCount}
+        onToggleShowSections={onToggleShowSections}
       />
     );
   }

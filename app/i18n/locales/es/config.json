@@ -48,6 +48,8 @@
       "field_browse_and_search": "Activar exploración y búsqueda",
       "field_show_link_on_homepage": "Mostrar enlace a la colección en la página de inicio",
       "field_show_sample_on_homepage": "Mostrar muestra en la página de inicio",
+      "field_collection_mode": "Mostrar objetos primero en la página de inicio (modo colección)",
+      "field_collection_mode_help": "Cuando está activo, tu página de inicio muestra los objetos primero con miniaturas grandes y las historias debajo. Cuando está inactivo (predeterminado), aparecen primero las historias.",
       "field_featured_count": "Cantidad de destacados",
       "field_featured_count_help": "Cantidad de objetos destacados a mostrar."
     },

@@ -62,12 +62,14 @@ interface StoryRow {
   order: number;
   private: number;
   draft: number;
+  show_sections: number;
 }
 
 interface StepRow {
   id: number;
   story_id: number;
   step_number: number;
+  kind: string;
   object_id: string | null;
   x: number | null;
   y: number | null;
@@ -269,12 +271,12 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // from D1 entity rows, and close all connected sockets so clients reconnect
     // with clean state. Convenor-only — gating happens in workers/app.ts; here
     // we verify the signed internal marker the worker entry sets so the DO
-    // cannot be reached directly from outside (T-32-03b mitigation).
+    // cannot be reached directly from outside.
     if (url.pathname.endsWith("/reset") && request.method === "POST") {
       // Verify the signed internal marker workers/app.ts attaches via the
       // X-Internal-Auth / X-Internal-Timestamp / X-Internal-Project headers.
       // Direct reaches that bypass the worker entry lack the marker and are
-      // rejected with 401 — T-32-03b mitigation.
+      // rejected with 401.
       const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
       if (markerError) return markerError;
 
@@ -734,6 +736,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         storyMap.set("order", story.order ?? 0);
         storyMap.set("private", story.private === 1);
         storyMap.set("draft", story.draft === 1);
+        storyMap.set("show_sections", story.show_sections === 1);
 
         // ---- steps ----
         const stepsArray = new Y.Array<Y.Map<unknown>>();
@@ -741,6 +744,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           const stepMap = new Y.Map<unknown>();
           stepMap.set("_id", step.id);
           stepMap.set("step_number", step.step_number);
+          stepMap.set("kind", step.kind ?? "media");
           stepMap.set("object_id", step.object_id ?? "");
           stepMap.set("x", step.x ?? null);
           stepMap.set("y", step.y ?? null);
@@ -816,7 +820,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
   /**
    * Snapshot the Y.Doc to D1 — writes both the binary blob and all entity rows.
-   * Uses D1 batch for atomicity (Pitfall 6, T-24-04).
+   * Uses D1 batch for atomicity.
    *
    * Handles INSERT for new Y.Array items (with _id === null) and DELETE for D1
    * rows absent from the Y.Array. For INSERTs, the auto-incremented D1 ID is
@@ -996,8 +1000,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         // INSERT — await individually so we can capture last_row_id for backfill
         const storyResult = await this.env.DB
           .prepare(
-            'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, updated_at) ' +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, updated_at) ' +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .bind(
             this.projectId,
@@ -1008,6 +1012,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             si, // order from Y.Array index
             storyMap.get("private") ? 1 : 0,
             storyMap.get("draft") ? 1 : 0,
+            storyMap.get("show_sections") ? 1 : 0,
             now,
           )
           .run();
@@ -1021,7 +1026,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           this.env.DB
             .prepare(
               "UPDATE stories SET title = ?, subtitle = ?, byline = ?, " +
-              "\"order\" = ?, private = ?, draft = ?, updated_at = ? WHERE id = ?",
+              "\"order\" = ?, private = ?, draft = ?, show_sections = ?, updated_at = ? WHERE id = ?",
             )
             .bind(
               yTextToString(storyMap.get("title")),
@@ -1030,6 +1035,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
               si, // order from Y.Array index (keeps D1 aligned with Yjs position)
               storyMap.get("private") ? 1 : 0,
               storyMap.get("draft") ? 1 : 0,
+              storyMap.get("show_sections") ? 1 : 0,
               now,
               storyId,
             ),
@@ -1053,12 +1059,13 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           if (stepId === null || stepId === undefined) {
             const stepResult = await this.env.DB
               .prepare(
-                "INSERT INTO steps (story_id, step_number, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, updated_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               )
               .bind(
                 storyId,
                 sti + 1, // step_number is 1-based
+                String(stepMap.get("kind") ?? "media"),
                 String(stepMap.get("object_id") ?? ""),
                 stepMap.get("x") as number | null,
                 stepMap.get("y") as number | null,
@@ -1081,12 +1088,13 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             statements.push(
               this.env.DB
                 .prepare(
-                  "UPDATE steps SET step_number = ?, object_id = ?, x = ?, y = ?, zoom = ?, " +
+                  "UPDATE steps SET step_number = ?, kind = ?, object_id = ?, x = ?, y = ?, zoom = ?, " +
                   "page = ?, question = ?, answer = ?, alt_text = ?, " +
                   "clip_start = ?, clip_end = ?, loop = ?, updated_at = ? WHERE id = ?",
                 )
                 .bind(
                   sti + 1, // step_number normalised from Y.Array index
+                  String(stepMap.get("kind") ?? "media"),
                   String(stepMap.get("object_id") ?? ""),
                   stepMap.get("x") as number | null,
                   stepMap.get("y") as number | null,
@@ -1430,8 +1438,9 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
     // 9. Snapshot contribution data to project_members.
     // fields_edited is sourced from userFieldSets.get(userId).size (unique-field
-    // Set semantics). The Set is NOT cleared after snapshot — it keeps accumulating
-    // within the DO's lifetime (accepted behaviour).
+    // Set semantics). The Set is NOT cleared after snapshot — it keeps
+    // accumulating within the DO's lifetime, so each snapshot writes the
+    // cumulative count for the lifetime, not a per-snapshot delta.
     // Contribution UPDATE statements are added to the same batch for atomicity.
     if (this.projectId) {
       const allUserIds = new Set<number>([...this.userFieldSets.keys(), ...this.newSessions]);

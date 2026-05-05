@@ -55,6 +55,7 @@ export const project_config = sqliteTable("project_config", {
   browse_and_search: integer("browse_and_search", { mode: "boolean" }).default(true),
   show_link_on_homepage: integer("show_link_on_homepage", { mode: "boolean" }).default(true),
   show_sample_on_homepage: integer("show_sample_on_homepage", { mode: "boolean" }).default(false),
+  collection_mode: integer("collection_mode", { mode: "boolean" }).notNull().default(false),
   featured_count: integer("featured_count").default(4),
   story_key: text("story_key"),
   navigation_json: text("navigation_json"),
@@ -95,6 +96,7 @@ export const stories = sqliteTable("stories", {
   order: integer("order").default(0),
   private: integer("private", { mode: "boolean" }).default(false),
   draft: integer("draft", { mode: "boolean" }).default(false),
+  show_sections: integer("show_sections", { mode: "boolean" }).notNull().default(false),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -102,6 +104,7 @@ export const steps = sqliteTable("steps", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   story_id: integer("story_id").notNull().references(() => stories.id),
   step_number: integer("step_number").notNull(),
+  kind: text("kind", { enum: ["media", "section"] }).notNull().default("media"),
   object_id: text("object_id"),
   x: real("x"),
   y: real("y"),

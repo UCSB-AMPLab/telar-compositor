@@ -334,6 +334,48 @@ describe("mapProjectCsv", () => {
     expect(mapped[0].order).toBe(1);
     expect(mapped[0].private).toBe(false);
   });
+
+  // --- show_sections / mostrar_secciones ---
+  // Mirrors the framework's csv_utils.py alias-on-read (mostrar_secciones ->
+  // show_sections) and project.py truthy whitelist (yes/true/sí/si).
+  describe("show_sections", () => {
+    it("reads show_sections='true' as true", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", show_sections: "true" }]);
+      expect(mapped[0].show_sections).toBe(true);
+    });
+
+    it("reads mostrar_secciones='yes' as true (alias-on-read)", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", mostrar_secciones: "yes" }]);
+      expect(mapped[0].show_sections).toBe(true);
+    });
+
+    it("reads mostrar_secciones='sí' as true (Spanish truthy with accent)", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", mostrar_secciones: "sí" }]);
+      expect(mapped[0].show_sections).toBe(true);
+    });
+
+    it("reads mostrar_secciones='si' as true (Spanish truthy without accent)", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", mostrar_secciones: "si" }]);
+      expect(mapped[0].show_sections).toBe(true);
+    });
+
+    it("reads show_sections='false' as false", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", show_sections: "false" }]);
+      expect(mapped[0].show_sections).toBe(false);
+    });
+
+    it("defaults to false when neither show_sections nor mostrar_secciones is present", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1" }]);
+      expect(mapped[0].show_sections).toBe(false);
+    });
+
+    it("English show_sections wins over Spanish mostrar_secciones when both present", () => {
+      const mapped = mapProjectCsv([
+        { story_id: "s1", show_sections: "false", mostrar_secciones: "true" },
+      ]);
+      expect(mapped[0].show_sections).toBe(false);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -399,6 +441,46 @@ describe("mapStoryCsv", () => {
     expect(result.steps[0].clip_start).toBeUndefined();
     expect(result.steps[0].clip_end).toBeUndefined();
     expect(result.steps[0].loop).toBeUndefined();
+  });
+
+  // --- kind derivation ---
+  // Empty `object` column on a meaningful row signals a section card (Telar
+  // framework contract). Non-empty `object` => media step.
+  describe("kind derivation", () => {
+    it("derives kind='media' when object is non-empty", () => {
+      const rows = [{ step: "1", object: "obj-A", question: "What is this?" }];
+      const result = mapStoryCsv(rows, 1);
+      expect(result.steps).toHaveLength(1);
+      expect(result.steps[0].kind).toBe("media");
+    });
+
+    it("derives kind='section' when object is empty and question has content", () => {
+      const rows = [{ step: "1", object: "", question: "Chapter One" }];
+      const result = mapStoryCsv(rows, 1);
+      expect(result.steps).toHaveLength(1);
+      expect(result.steps[0].kind).toBe("section");
+      expect(result.steps[0].object_id).toBeUndefined();
+    });
+
+    it("treats whitespace-only object column as empty (kind='section')", () => {
+      const rows = [{ step: "1", object: "   ", question: "Chapter One" }];
+      const result = mapStoryCsv(rows, 1);
+      expect(result.steps).toHaveLength(1);
+      expect(result.steps[0].kind).toBe("section");
+    });
+
+    it("kind='media' when object is present and question is empty (object presence wins)", () => {
+      const rows = [{ step: "1", object: "obj-A", question: "" }];
+      const result = mapStoryCsv(rows, 1);
+      expect(result.steps).toHaveLength(1);
+      expect(result.steps[0].kind).toBe("media");
+    });
+
+    it("filters out rows with both object and question empty (regression on meaningfulFields)", () => {
+      const rows = [{ step: "1", object: "", question: "" }];
+      const result = mapStoryCsv(rows, 1);
+      expect(result.steps).toHaveLength(0);
+    });
   });
 });
 

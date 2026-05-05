@@ -1001,7 +1001,7 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     };
   }, []);
 
-  // D-11 / SC-1: Broadcast upgrade state to all connected clients via Yjs
+  // Broadcast upgrade state to all connected clients via Yjs
   // awareness. Collaborators see a freeze modal driven by state.upgrading;
   // error state surfaces a dismissable error modal.
   //

@@ -144,7 +144,7 @@ beforeEach(() => {
 
 const ALLOWED_FIELDS = ["title", "description"] as const;
 
-describe("homepage action: autosave-config (CR-01 — IDOR guard)", () => {
+describe("homepage action: autosave-config (IDOR guard)", () => {
   it("returns 403 when the signed-in user is not a member of the forged projectId", async () => {
     // Forged projectId — user 7 is NOT a member of project 999.
     vi.mocked(requireProjectMember).mockRejectedValueOnce(
@@ -163,7 +163,7 @@ describe("homepage action: autosave-config (CR-01 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(403);
 
     // Critical: the DB mutation must NOT have run.
@@ -214,7 +214,7 @@ describe("homepage action: autosave-config (CR-01 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(400);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
@@ -233,7 +233,7 @@ describe("homepage action: autosave-config (CR-01 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(400);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();

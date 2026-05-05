@@ -6,18 +6,24 @@
  * Trash2 delete button on hover. Both are hidden by default and revealed
  * via the group-hover CSS pattern.
  *
- * Optionally displays a media type badge (Image/Video/Music/FileText icon)
- * when objectsByType is provided and the step has an object_id.
+ * Renders one of two layouts depending on `step.kind`:
+ *   - "media" (default): step number + optional media-type badge
+ *     (Image/Video/Music/FileText icon, when objectsByType is provided)
+ *     + question preview text
+ *   - "section": Heading icon + the section heading text from `question`
+ *
+ * The media-type badge is suppressed for section-kind steps since they
+ * never carry an object_id.
  */
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Trash2, ImageIcon, Video, Music, FileText } from "lucide-react";
+import { GripVertical, Trash2, ImageIcon, Video, Music, FileText, Heading } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { MediaType } from "~/lib/media-type";
 
 interface SortableStepItemProps {
-  step: { id: number; step_number: number; question: string | null; object_id?: string | null };
+  step: { id: number; step_number: number; kind?: "media" | "section"; question: string | null; object_id?: string | null };
   /** 1-indexed display number (position in list, not step_number from DB) */
   displayNumber: number;
   isActive: boolean;
@@ -97,8 +103,9 @@ export function SortableStepItem({
     opacity: isDragging ? 0.5 : 1,
   };
 
+  const isSection = step.kind === "section";
   const mediaType =
-    step.object_id && objectsByType ? objectsByType[step.object_id] : undefined;
+    !isSection && step.object_id && objectsByType ? objectsByType[step.object_id] : undefined;
 
   return (
     <div
@@ -122,18 +129,29 @@ export function SortableStepItem({
 
       {/* Step label */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-heading font-semibold text-cream">
-            {t("step.step_label", { number: displayNumber })}
-          </span>
-          {mediaType && <MediaTypeBadge mediaType={mediaType} />}
-        </div>
-        <div className="text-sm font-body text-gray-400 truncate">
-          {step.question || t("step.no_question_yet")}
-        </div>
+        {isSection ? (
+          <div className="flex items-center gap-1.5">
+            <Heading className="w-3.5 h-3.5 text-cream/70 shrink-0" aria-hidden="true" />
+            <div className="font-heading font-semibold text-sm text-cream truncate">
+              {step.question || t("step.section_no_heading_yet")}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-heading font-semibold text-cream">
+                {t("step.step_label", { number: displayNumber })}
+              </span>
+              {mediaType && <MediaTypeBadge mediaType={mediaType} />}
+            </div>
+            <div className="text-sm font-body text-gray-400 truncate">
+              {step.question || t("step.no_question_yet")}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Delete button — visible on hover; disabled with tooltip when D-03 denies */}
+      {/* Delete button — visible on hover; disabled with tooltip when canDelete is false */}
       <button
         type="button"
         onClick={(e) => {

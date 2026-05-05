@@ -300,7 +300,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   }, [ydoc]);
 
   // Site title from Yjs config
-  const [siteTitle, setSiteTitle] = useState(project.title || "");
+  const [siteTitle, setSiteTitle] = useState("");
 
   useEffect(() => {
     if (!ydoc) return;

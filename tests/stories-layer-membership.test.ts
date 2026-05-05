@@ -139,7 +139,7 @@ beforeEach(() => {
 
 const AUTOSAVE_FIELDS = ["content", "title", "button_label"] as const;
 
-describe("stories action: save-layer / autosave-layer (CR-02 — IDOR guard)", () => {
+describe("stories action: save-layer / autosave-layer (IDOR guard)", () => {
   it("returns 403 on autosave-layer when user is not a member of the layer's project", async () => {
     vi.mocked(requireProjectMember).mockRejectedValueOnce(
       new Response("Forbidden", { status: 403 }),
@@ -157,7 +157,7 @@ describe("stories action: save-layer / autosave-layer (CR-02 — IDOR guard)", (
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(403);
 
     // Critical: the layer mutation must not have run.
@@ -181,7 +181,7 @@ describe("stories action: save-layer / autosave-layer (CR-02 — IDOR guard)", (
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(403);
 
     expect(updateMock).not.toHaveBeenCalled();
@@ -259,7 +259,7 @@ describe("stories action: save-layer / autosave-layer (CR-02 — IDOR guard)", (
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(400);
 
     // The layer-project lookup must not have been invoked, and neither the
@@ -284,7 +284,7 @@ describe("stories action: save-layer / autosave-layer (CR-02 — IDOR guard)", (
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(404);
 
     // Lookup did run, but membership check and mutation must not have.

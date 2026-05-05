@@ -67,6 +67,8 @@ const KNOWN_BILINGUAL_VALUES = new Set([
   "subtitulo",
   "firma",
   "privado",
+  "privada",
+  "mostrar_secciones",
   // story CSV bilingual row 1 values
   "paso",
   "objeto",
@@ -302,6 +304,8 @@ export function mapConfigToProjectConfig(
     // google_sheets
     google_sheets_enabled: googleSheets.enabled as boolean | undefined,
     google_sheets_published_url: googleSheets.published_url as string | undefined,
+    // collection_mode — top-level YAML scalar
+    collection_mode: config.collection_mode as boolean | undefined,
   };
 }
 
@@ -352,6 +356,19 @@ export function mapProjectCsv(
   return rows.map((row) => {
     const privateRaw = (row.private ?? "").toLowerCase().trim();
     const isPrivate = privateRaw === "true" || privateRaw === "yes" || privateRaw === "1";
+
+    // show_sections — canonical English column wins over the Spanish
+    // mostrar_secciones alias when both are present. Truthy whitelist matches
+    // the framework's processors/project.py: yes/true/sí/si (case-insensitive,
+    // trimmed). "1" preserved for parity with the private column convention.
+    const showSectionsRaw = (row.show_sections ?? row.mostrar_secciones ?? "").toLowerCase().trim();
+    const showSections =
+      showSectionsRaw === "true" ||
+      showSectionsRaw === "yes" ||
+      showSectionsRaw === "sí" ||
+      showSectionsRaw === "si" ||
+      showSectionsRaw === "1";
+
     return {
       project_id: projectId ?? 0,
       story_id: row.story_id ?? "",
@@ -360,6 +377,7 @@ export function mapProjectCsv(
       byline: row.byline || undefined,
       order: parseInt(row.order ?? "0", 10) || 0,
       private: isPrivate,
+      show_sections: showSections,
     };
   });
 }
@@ -416,9 +434,15 @@ export function mapStoryCsv(
 
   nonBlankRows.forEach((row, index) => {
     const stepNumber = parseInt(row.step ?? String(index + 1), 10) || index + 1;
+    // Derive kind from object column emptiness. Framework signal in
+    // stories.csv is that an empty `object` column on a meaningful row marks
+    // the step as a section card; any non-empty object means a media step.
+    const objectTrimmed = (row.object ?? "").trim();
+    const stepKind: "media" | "section" = objectTrimmed === "" ? "section" : "media";
     const stepRow: typeof steps.$inferInsert = {
       story_id: storyDbId,
       step_number: stepNumber,
+      kind: stepKind,
       object_id: row.object || undefined,
       x: row.x ? parseFloat(row.x) : undefined,
       y: row.y ? parseFloat(row.y) : undefined,

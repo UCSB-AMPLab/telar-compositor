@@ -56,4 +56,29 @@ describe("sanitiseHtml", () => {
     expect(out).toContain("<p>");
     expect(out).toContain("<strong>");
   });
+
+  it("rejects data:image/svg+xml in img src", () => {
+    const out = sanitiseHtml('<img src="data:image/svg+xml;base64,PHN2Zw==">');
+    expect(out).not.toContain("data:image/svg");
+  });
+
+  // The rejection must hold under whitespace,
+  // control-char, HTML-entity, and embedded-comment evasion, because
+  // sanitize-html's downstream naughtyHref normalises the URL the same
+  // way browsers do before the scheme allowlist runs. If the
+  // transformTags hook only matches the canonical form, all the shapes
+  // below leak the SVG src into the SSR HTML response.
+  it.each([
+    '<img src=" data:image/svg+xml;base64,PHN2Zw==">',
+    '<img src="\tdata:image/svg+xml;base64,PHN2Zw==">',
+    '<img src="\ndata:image/svg+xml;base64,PHN2Zw==">',
+    '<img src="&#x20;data:image/svg+xml;base64,PHN2Zw==">',
+    '<img src="&#x09;data:image/svg+xml;base64,PHN2Zw==">',
+    '<img src="data: image/svg+xml;base64,PHN2Zw==">',
+    '<img src="da<!---->ta:image/svg+xml;base64,PHN2Zw==">',
+  ])("rejects data:image/svg+xml under whitespace/comment evasion: %s", (input) => {
+    const out = sanitiseHtml(input);
+    expect(out).not.toContain("svg+xml");
+    expect(out.toLowerCase()).not.toMatch(/data:\s*image\/svg/);
+  });
 });

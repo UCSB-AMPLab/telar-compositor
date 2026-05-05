@@ -179,6 +179,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export async function action({ request, context }: Route.ActionArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
+  // Rebind narrowed user.id as a primitive const so inner async closures
+  // (getActiveProject) can capture it without losing the null-guard narrowing.
+  const userId = user.id;
 
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
@@ -190,7 +193,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     const sessionStorage = createSessionStorage(env.SESSION_SECRET);
     const session = await sessionStorage.getSession(request.headers.get("Cookie"));
     const sessionActiveId = session.get("activeProjectId") as number | undefined;
-    const allProjects = await getUserProjects(db, user.id);
+    const allProjects = await getUserProjects(db, userId);
     if (allProjects.length === 0) return null;
     return allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
   }
@@ -522,9 +525,9 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
   // fetcher here so the toast fires once at the dashboard level and stays
   // visible after the modal closes. The hook calls showToast with "info"
   // for direction="ahead" (externalUpgradeToast — D1 was silently healed
-  // by applyFullSyncChanges per D-15) and "warning" for
-  // direction="behind" (externalDowngradeToast — user must verify per
-  // D-16). When there is no versionChange the hook is a no-op.
+  // by applyFullSyncChanges) and "warning" for direction="behind"
+  // (externalDowngradeToast — user must verify). When there is no
+  // versionChange the hook is a no-op.
   const syncDiffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
   const syncDiffData = syncDiffFetcher.data as
     | { ok?: boolean; diff?: { config?: { versionChange?: unknown } } }

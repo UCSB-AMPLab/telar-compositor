@@ -78,7 +78,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .where(eq(stories.project_id, activeProject.id))
     .orderBy(asc(stories.order));
 
-  // Fetch team members (for delete confirmation contributor warning — D-07)
+  // Fetch team members (for delete confirmation contributor warning)
   const memberRows = await db
     .select({
       userId: project_members.user_id,
@@ -174,7 +174,7 @@ interface StoryItem {
   updated_at: string | null;
   /** Y.Map sentinel: null when the item has not yet been backfilled to D1. */
   _tempId?: string | null;
-  /** Y.Map sentinel: the user id that created this item (D-02 permissions). */
+  /** Y.Map sentinel: the user id that created this item (used for permission checks). */
   _createdBy?: number | null;
   /** Index in the Y.Array (used for reorder). */
   _yIndex?: number;
@@ -211,7 +211,7 @@ function readScalar(yMap: Y.Map<unknown>, key: string): string | null {
 
 /**
  * Convert a Y.Map for a story into a StoryItem suitable for the UI.
- * Handles the _id: null / _temp_id sentinel from plan 27-01.
+ * Handles the _id: null / _temp_id sentinel for items not yet backfilled to D1.
  */
 function yMapToStoryItem(yMap: Y.Map<unknown>, yIndex: number): StoryItem {
   const id = (yMap.get("_id") as number | null) ?? 0;
@@ -386,7 +386,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   }
 
   // ------------------------------------------------------------------
-  // Animations (D-22 highlight, D-24 fade) — Yjs mode only
+  // Animations (highlight on add, fade on delete) — Yjs mode only
   // ------------------------------------------------------------------
   const seenKeysRef = useRef<Set<string>>(new Set());
   const [highlightedKeys, setHighlightedKeys] = useState<Record<string, string>>(
@@ -472,7 +472,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
               action: {
                 label: tStructural("toast_item_deleted_undo"),
                 onClick: () => {
-                  // The shared UndoManager (plan 27-04) covers Y.Array deletes.
+                  // The shared UndoManager covers Y.Array deletes.
                   // Pop the top undo stack item — this re-inserts the Y.Map.
                   // We cannot call undo() here without the context ref; the
                   // TabNav Undo button is the authoritative path.

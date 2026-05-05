@@ -7,13 +7,13 @@
  * WebSocket connects (yText is null).
  *
  * Fields are disabled during publish to enforce the isPublishing lock from
- * CollaborationContext (per D-08 / UI-SPEC field locking spec).
+ * CollaborationContext (per the field-locking spec).
  *
  * When fieldKey is provided, the field shows a coloured border and floating
  * name pill when another user is editing the same field (PRES-02).
  *
  * Shows an authorship indicator ("Last edit: {name}") on hover when no live
- * presence is active on the field (CONT-02, D-05, D-06, D-07, D-08).
+ * presence is active on the field.
  */
 
 import { useState } from "react";

@@ -180,7 +180,7 @@ export function TabNav({ className = "", pagesUrl = null }: TabNavProps) {
           )}
         </ul>
         <div className="flex items-center">
-          {/* Undo/redo buttons (D-10, D-11). Always rendered; disabled state uses
+          {/* Undo/redo buttons. Always rendered; disabled state uses
               greyed-out charcoal tone per Telar identity. No terracotta. */}
           <div className="flex items-center gap-1 mr-3">
             <button

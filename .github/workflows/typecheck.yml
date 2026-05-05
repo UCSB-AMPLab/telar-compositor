@@ -1,0 +1,25 @@
+# Typecheck
+# Runs `tsc --noEmit` on every push to main and every pull request so that
+# strict TypeScript regressions never reach a deploy. Catches the kinds of
+# errors that vitest can't surface — type-level issues that don't trip a
+# runtime test path.
+# Version: v1.1.0-beta
+
+name: Typecheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck

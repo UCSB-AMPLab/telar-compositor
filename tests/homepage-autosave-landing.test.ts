@@ -177,7 +177,7 @@ describe("homepage action: autosave-landing (R2 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(403);
 
     // Critical: neither DB mutation must have run.
@@ -251,7 +251,7 @@ describe("homepage action: autosave-landing (R2 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(400);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
@@ -271,7 +271,7 @@ describe("homepage action: autosave-landing (R2 — IDOR guard)", () => {
     } as never);
 
     await expect(result).rejects.toBeInstanceOf(Response);
-    const err = await result.catch((e: unknown) => e as Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
     expect(err.status).toBe(400);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();

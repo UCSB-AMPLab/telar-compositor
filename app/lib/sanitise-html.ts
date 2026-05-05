@@ -1,5 +1,5 @@
 /**
- * sanitise-html — wraps isomorphic-dompurify with the project policy
+ * sanitise-html — wraps sanitize-html with the project policy
  * applied to marked.parse() output before it reaches dangerouslySetInnerHTML.
  *
  * The upgrade page renders maintainer-controlled markdown (release notes
@@ -13,55 +13,77 @@
  * inline emphasis, anchors, code blocks, lists, blockquotes, images,
  * line and horizontal rules.
  *
- * Allowed URI schemes are restricted to http(s) and mailto via an
- * explicit ALLOWED_URI_REGEXP rather than DOMPurify's default (which
- * also permits tel: and ftp:). This keeps the policy auditable. For
- * <img> src specifically, DOMPurify's built-in handling permits
- * data:image/* independently of ALLOWED_URI_REGEXP — that is intentional
- * here so embedded images in release notes still render.
+ * Allowed URI schemes are restricted to http(s) and mailto via the
+ * sanitize-html `allowedSchemes` option, with a per-tag override that
+ * also permits `data:` for <img src> so embedded images in release
+ * notes still render. The data:image/svg+xml rejection is enforced
+ * via a `transformTags.img` hook that strips the `src` attribute when
+ * the value matches `^data:image/svg+xml`, since sanitize-html's scheme
+ * allowlist does not discriminate by data: MIME type on its own.
  */
 
-import DOMPurify from "isomorphic-dompurify";
+import sanitizeHtml from "sanitize-html";
 
 const ALLOWED_TAGS = [
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "p",
-  "a",
-  "code",
-  "pre",
-  "ul",
-  "ol",
-  "li",
-  "strong",
-  "em",
-  "blockquote",
-  "img",
-  "br",
-  "hr",
+  "h1", "h2", "h3", "h4", "h5", "h6",
+  "p", "a", "code", "pre", "ul", "ol", "li",
+  "strong", "em", "blockquote", "img", "br", "hr",
 ];
 
-const ALLOWED_ATTR = ["id", "href", "src", "alt", "title", "class"];
+const ALLOWED_ATTRIBUTES = {
+  "*": ["id", "class", "title", "alt"],
+  a: ["href"],
+  img: ["src", "alt"],
+};
 
-// Restrict the URI scheme allowlist to http(s) and mailto so the policy is
-// auditable. DOMPurify's default ALLOWED_URI_REGEXP also permits tel:, sms:,
-// callto: and others; we narrow it explicitly. The pattern matches the
-// scheme prefix at the start of the URL (DOMPurify tests the whole href/src
-// against this regex). Same-document fragments like '#install' match the
-// trailing alternation. Note: for <img> src, DOMPurify's built-in handling
-// permits data:image/* independently of ALLOWED_URI_REGEXP.
-const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+const ALLOWED_SCHEMES = ["http", "https", "mailto"];
+const ALLOWED_SCHEMES_BY_TAG = {
+  img: ["http", "https", "data"],
+};
+
+// Reject data:image/svg+xml on <img src> while allowing
+// other data:image/* MIME types (png, jpeg, gif, webp, avif). The SVG
+// attack surface (foreignObject, animation events, parser quirks) is
+// closed by stripping the src attribute outright when the value matches.
+//
+// Normalise the value the way sanitize-html's downstream `naughtyHref`
+// gate does — browsers ignore characters ≤ 0x20 when resolving URLs
+// (OWASP XSS Filter Evasion Cheat Sheet — embedded tab), and HTML
+// comments embedded mid-scheme can be used to fragment scheme detection.
+// Without this normalisation, ` data:image/svg+xml`, `\tdata:...`,
+// `&#x20;data:...`, and `da<!---->ta:image/svg+xml` all bypass the
+// regex while still hitting the data: branch of the per-tag scheme
+// allowlist downstream.
+function rejectSvgDataUri(
+  tagName: string,
+  attribs: Record<string, string>,
+): { tagName: string; attribs: Record<string, string> } {
+  if (tagName === "img" && typeof attribs.src === "string") {
+    let normalised = attribs.src.replace(/[\x00-\x20]+/g, "");
+    while (true) {
+      const start = normalised.indexOf("<!--");
+      if (start === -1) break;
+      const end = normalised.indexOf("-->", start + 4);
+      if (end === -1) break;
+      normalised = normalised.slice(0, start) + normalised.slice(end + 3);
+    }
+    if (/^data:image\/svg\+xml/i.test(normalised)) {
+      const { src: _src, ...rest } = attribs;
+      return { tagName, attribs: rest };
+    }
+  }
+  return { tagName, attribs };
+}
 
 export function sanitiseHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS,
-    ALLOWED_ATTR,
-    ALLOWED_URI_REGEXP,
-    ALLOW_DATA_ATTR: false,
-    USE_PROFILES: { html: true },
+  return sanitizeHtml(html, {
+    allowedTags: ALLOWED_TAGS,
+    allowedAttributes: ALLOWED_ATTRIBUTES,
+    allowedSchemes: ALLOWED_SCHEMES,
+    allowedSchemesByTag: ALLOWED_SCHEMES_BY_TAG,
+    allowedSchemesAppliedToAttributes: ["href", "src", "cite"],
+    allowProtocolRelative: false,
+    disallowedTagsMode: "discard",
+    transformTags: { img: rejectSvgDataUri },
   });
 }
