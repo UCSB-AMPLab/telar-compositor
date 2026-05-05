@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.1.0-beta (2026-05-04)
+
+Story sections with a table of contents, a collection-first homepage layout, a deploy smoke test that catches bundle-time crashes vitest can't see, and a swap from `isomorphic-dompurify` to `sanitize-html` for cleaner worker-bundle compatibility.
+
+### New features
+
+- **Story sections** — Stories can be broken into chapters with a new section-card step kind. The story sidebar gains a "+ Add section title" button alongside "+ Add step", and each section card renders as a centred heading-only step in the editor (no IIIF viewer, no layers)
+- **Table of contents on title cards** — Per-story toggle on the title card surfaces section headings as a TOC on the published story; the toggle sits inline below the byline and shows a helper line when no section cards exist yet
+- **Collection mode** — New homepage layout option that leads with objects (large thumbnails) and shows stories below. Toggle lives on the Config tab under Collection interface
+
+### Data layer
+
+- D1 migrations 0022–0024: `steps.kind` (media | section), `stories.show_sections` boolean, `project_config.collection_mode` boolean
+- Bilingual CSV columns: `show_sections` / `mostrar_secciones` on `project.csv`; `kind` derivation from the empty-`object` column convention on `stories.csv`
+- Defensive empty-object write for kind=section steps in publish output, so the framework's section-card signal is preserved even if internal state has drifted
+- `collection_mode` round-trips through `_config.yml` as an unquoted boolean
+
+### Security and stability
+
+- **HTML sanitiser swap** — Replaces `isomorphic-dompurify` with `sanitize-html`. The policy preserves the same allowlist behaviour and continues to reject `data:image/svg+xml` on `<img src>`. `sanitize-html` runs natively in the worker without pulling Node-only dependencies into the bundle
+- **Predeploy smoke test** — `npm run deploy` now runs `npm run build && npm run smoke` before `wrangler deploy`. The smoke harness boots `wrangler dev` against the built bundle, hits `GET /`, and aborts deploy on any 5xx — catching the class of bundle-time errors that typecheck and vitest can't surface
+
+### Toolchain
+
+- Typecheck CI workflow runs `tsc --noEmit` on every push to main and every PR
+- TypeScript strict-narrowing fixes in `_app.dashboard.tsx`, `_app.objects.tsx`, `_app.objects.$objectId.tsx`, `_app.pages.tsx`, and four IDOR-guard tests so the codebase passes typecheck cleanly
+- New dependencies: `sanitize-html`, `@types/sanitize-html`
+- Removed: `isomorphic-dompurify`
+
 ## v1.0.1-beta (2026-05-03)
 
 Security hardening and stability fixes following the v1.0.0-beta launch. Tightens authorisation across every authenticated route, sanitises rendered markdown and image URLs, locks down the collaboration Durable Object's internal endpoints, and relicenses the compositor under AGPL-3.0.
