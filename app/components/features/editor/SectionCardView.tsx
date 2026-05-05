@@ -1,10 +1,10 @@
 /**
  * SectionCardView — editor panel for a section-card step (kind='section').
  *
- * Renders a heading-only preview: a centred large editable heading input
- * bound to the step's `question` Y.Text. No IIIF viewer, no narrative
- * column, no layers/panels — section cards are chapter breaks in published
- * stories.
+ * Renders the chapter-break preview: a centred large editable heading bound
+ * to the step's `question` Y.Text plus an optional subtitle bound to the
+ * step's `answer` Y.Text. No IIIF viewer, no narrative column, no
+ * layers/panels — section cards are chapter breaks in published stories.
  *
  * Mirrors TitleCardView's centred-card chrome so authors get a consistent
  * editor shape across the two heading-only step types.
@@ -15,23 +15,32 @@ import { useTranslation } from "react-i18next";
 import { PencilLine } from "lucide-react";
 import * as Y from "yjs";
 import { InlineTextField } from "~/components/ui/InlineTextField";
+import { InlineTextArea } from "~/components/ui/InlineTextArea";
 
 interface SectionCardViewProps {
   step: {
     id: number;
     step_number: number;
     question: string | null;
+    answer: string | null;
   };
   storyId: string;
   questionYText: Y.Text | null;
+  answerYText: Y.Text | null;
 }
 
-export function SectionCardView({ step, storyId, questionYText }: SectionCardViewProps) {
+export function SectionCardView({ step, storyId, questionYText, answerYText }: SectionCardViewProps) {
   const { t } = useTranslation("editor");
   const headingRef = useRef<HTMLDivElement>(null);
+  const subtitleRef = useRef<HTMLDivElement>(null);
 
-  function focusField() {
+  function focusHeading() {
     const el = headingRef.current?.querySelector("input, textarea") as HTMLElement | null;
+    el?.focus();
+  }
+
+  function focusSubtitle() {
+    const el = subtitleRef.current?.querySelector("input, textarea") as HTMLElement | null;
     el?.focus();
   }
 
@@ -45,7 +54,7 @@ export function SectionCardView({ step, storyId, questionYText }: SectionCardVie
           <div className="group/field relative" ref={headingRef}>
             <button
               type="button"
-              onClick={focusField}
+              onClick={focusHeading}
               className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
               aria-label={t("step.click_to_edit")}
             >
@@ -60,6 +69,33 @@ export function SectionCardView({ step, storyId, questionYText }: SectionCardVie
               placeholder=""
               inputClassName="font-heading text-3xl font-semibold text-charcoal"
               fieldKey={`step-${step.id}-section-heading`}
+            />
+          </div>
+        </div>
+
+        <div>
+          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
+            {t("section_card.subtitle_label")}
+          </span>
+          <div className="group/field relative" ref={subtitleRef}>
+            <button
+              type="button"
+              onClick={focusSubtitle}
+              className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
+              aria-label={t("step.click_to_edit")}
+            >
+              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
+                {t("step.click_to_edit")}
+              </span>
+              <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
+            </button>
+            <InlineTextArea
+              initialValue={step.answer ?? ""}
+              yText={answerYText}
+              placeholder=""
+              inputClassName="font-body text-base text-charcoal"
+              rows={2}
+              fieldKey={`step-${step.id}-section-subtitle`}
             />
           </div>
         </div>

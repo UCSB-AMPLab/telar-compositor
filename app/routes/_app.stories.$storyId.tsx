@@ -1059,9 +1059,11 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               id: activeStep.id,
               step_number: activeStep.step_number,
               question: activeStep.question ?? null,
+              answer: activeStep.answer ?? null,
             }}
             storyId={String(story.story_id ?? story.id)}
             questionYText={questionYText}
+            answerYText={answerYText}
           />
         ) : (
           <NarrativeColumn

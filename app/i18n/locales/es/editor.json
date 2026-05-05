@@ -48,8 +48,8 @@
     "byline_label": "Firma (opcional)",
     "byline_placeholder": "Por...",
     "story_number": "Historia {{number}}",
-    "show_sections_label": "Mostrar tabla de contenidos en la portada",
-    "show_sections_empty_helper": "Aún no hay títulos de sección — agrega uno en la barra lateral para llenar la tabla de contenidos."
+    "show_sections_label": "Mostrar lista de secciones en la portada",
+    "show_sections_empty_helper": "Aún no hay títulos de sección — agrega uno en la barra lateral para llenar la lista."
   },
   "step": {
     "question_placeholder": "Pregunta",
@@ -71,7 +71,8 @@
     "edit_button_label_aria": "Editar etiqueta del botón"
   },
   "section_card": {
-    "heading_label": "Título de la sección"
+    "heading_label": "Título de la sección",
+    "subtitle_label": "Subtítulo de sección (opcional)"
   },
   "viewer": {
     "capture_position": "Capturar posición",
