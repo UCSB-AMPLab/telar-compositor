@@ -55,7 +55,7 @@ describe("MemberRow kebab menu", () => {
     expect(item.textContent?.toLowerCase()).toContain("remove");
   });
 
-  it("SC-5: kebab is only rendered when isConvenor=true (defence-in-depth for T-28-01)", () => {
+  it("SC-5: kebab is only rendered when isConvenor=true (defence-in-depth)", () => {
     render(<MemberRow {...defaultProps} isConvenor={false} />);
     expect(screen.queryByRole("button", { name: /row menu/i })).toBeNull();
   });

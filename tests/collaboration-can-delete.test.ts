@@ -436,7 +436,7 @@ describe("makeCanDeleteHandler — mandatory cases", () => {
     expect(h.warns).toEqual([]);
   });
 
-  it("(3) allows a convenor to delete any story (D-02 bypass)", () => {
+  it("(3) allows a convenor to delete any story (convenor bypass)", () => {
     const h = makeHarness();
     const conv = fakeSocket(1, "convenor");
     h.sockets.push(conv);

@@ -4,7 +4,7 @@
  * ToastContainer renders a fixed-position stack at bottom-right of the
  * viewport (z-50). ToastItem is an individual toast card with a
  * left-border accent colour based on type, optional action link (e.g.
- * "Undo" for convenor delete toasts per D-26), and a close button.
+ * "Undo" for convenor delete toasts), and a close button.
  *
  * Entry animation: slide-in-from-right (Tailwind v4 animate-in).
  * Exit animation: 200ms fade before the container removes the toast

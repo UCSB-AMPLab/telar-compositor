@@ -205,7 +205,7 @@ describe("/ws/:projectId/reset — worker-entry auth gate", () => {
 // without going through workers/app.ts. Expectation: 401.
 // ---------------------------------------------------------------------------
 
-describe("DO /reset marker check (T-32-03b)", () => {
+describe("DO /reset marker check", () => {
   it("Case 6: DO rejects a direct call missing the internal marker with 401", async () => {
     const bareRequest = new Request("https://internal/reset", { method: "POST" });
 

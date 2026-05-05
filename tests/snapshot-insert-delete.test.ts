@@ -158,7 +158,7 @@ describe("Unique-field Set semantics", () => {
     expect(userFieldSets.size).toBe(0);
   });
 
-  it("SC-9: cold-start DO wake starts with an empty per-user Set (pitfall 5 accepted behaviour)", () => {
+  it("SC-9: cold-start DO wake starts with an empty per-user Set", () => {
     // Simulated by just creating a new userFieldSets map (represents fresh DO instance)
     const freshUserFieldSets = new Map<number, Set<string>>();
     expect(freshUserFieldSets.size).toBe(0);
@@ -182,7 +182,8 @@ describe("snapshotToD1 writes fields.size to contributions.fields_edited", () =>
   });
 
   it("SC-9c: userFieldSets entry NOT cleared after snapshot — accumulator keeps growing", () => {
-    // The set is NOT reset between snapshots (D-11 / pitfall 5 design).
+    // The set is NOT reset between snapshots — each one writes the cumulative
+    // count for the DO's lifetime, not a per-snapshot delta.
     // buildContributionUpdate uses fields.size directly (not an increment).
     const fieldSet = new Set(["stories:1:title", "stories:1:subtitle"]);
     buildContributionUpdate({ fields_edited: 0, sessions: 1, last_active: null }, fieldSet, false);

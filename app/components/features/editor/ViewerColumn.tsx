@@ -281,8 +281,8 @@ export function ViewerColumn({
         const seconds = await getTime();
         onCaptureClip?.(field, String(seconds));
       } catch {
-        // If API fails, user sees no response — plan D-06 describes manual fallback
-        // handled by the inline input rendered when getCurrentTimeRef.current is null
+        // If API fails, user sees no response — manual fallback handled by
+        // the inline input rendered when getCurrentTimeRef.current is null
       }
     }
   }

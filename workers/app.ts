@@ -52,8 +52,8 @@ export default {
       if (memberRow.role !== "convenor") return new Response("Forbidden", { status: 403 });
 
       // Sign an internal marker so the DO can reject direct reaches.
-      // T-32-03b mitigation: HMAC-SHA256(SESSION_SECRET, "ws-reset:<projectId>:<timestamp>").
-      // Replay within the 30s window is accepted (T-32-03c) — DO routing is internal.
+      // HMAC-SHA256(SESSION_SECRET, "ws-reset:<projectId>:<timestamp>").
+      // Replay within the 30s window is accepted — DO routing is internal.
       const { sigHex, timestamp } = await signInternalMarker(projectId, env.SESSION_SECRET);
 
       const id = env.COLLABORATION.idFromName(projectIdStr);

@@ -46,8 +46,8 @@ export interface CollaborationContextValue {
   /**
    * Per-user lifetime contribution data, keyed by userId (D1 integer ID).
    * Built from the authenticated projectMembers loader — only members with a
-   * project_members row appear here (T-28-03 defence-in-depth).
-   * Consumed by the sidebar donut (plan 28-04).
+   * project_members row appear here (defence-in-depth).
+   * Consumed by the sidebar donut.
    */
   contributionsByUser: Map<number, { fields_edited: number }>;
 }
@@ -222,7 +222,7 @@ export function CollaborationProvider({
       setIsUpgrading(upgrading);
       setUpgradeError(hasUpgradeError);
       setRemoteCollaborators(collaborators);
-      // Build lastEditorByField from awareness location state (D-07, session-scoped)
+      // Build lastEditorByField from awareness location state (session-scoped)
       const newEditorMap = new Map<string, { name: string; color: string }>();
       states.forEach((state: Record<string, unknown>, clientId: number) => {
         if (clientId !== awareness.clientID && state.user) {

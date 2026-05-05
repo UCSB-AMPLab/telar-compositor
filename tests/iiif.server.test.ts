@@ -238,8 +238,8 @@ describe("fetchAndParseManifest scheme guard", () => {
 //
 // Defence-in-depth: reject userinfo-bearing https URLs before fetch().
 // Embedded credentials (https://user:pass@host/...) would otherwise leak to
-// whatever host fetch() resolves. DNS rebinding and IDN homograph remain out
-// of scope per WR-08 wording.
+// whatever host fetch() resolves. DNS rebinding and IDN homograph attacks
+// are not addressed by this guard.
 
 describe("fetchAndParseManifest userinfo guard", () => {
   beforeEach(() => {

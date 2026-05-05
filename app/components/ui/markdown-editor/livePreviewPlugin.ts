@@ -21,7 +21,7 @@ import { RangeSetBuilder } from "@codemirror/state";
 /**
  * Returns true only for URL schemes that are safe to assign to `<img src>` in
  * the editor preview. Allowed: `http:`, `https:`, `data:image/<png|jpeg|gif|webp>;...`
- * (raster types only — SVG dropped per WR-07 to remove residual XSS surface
+ * (raster types only — SVG dropped to remove residual XSS surface
  * via `<foreignObject>` / animation events / parser quirks), and same-origin
  * relative paths starting with a single slash. Rejects `javascript:`,
  * `vbscript:`, `data:text/html`, `data:image/svg+xml`, protocol-relative

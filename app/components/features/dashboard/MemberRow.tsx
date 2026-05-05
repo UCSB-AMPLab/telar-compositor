@@ -42,7 +42,7 @@ interface MemberRowProps {
  * MemberRowKebab — always-visible three-dot menu for a collaborator row.
  *
  * Rendered only when isConvenor=true. Contains a single "Remove" menu item
- * that fires onRemoveRequest (plan 28-04 sidebar modal) or falls back to
+ * that fires onRemoveRequest (sidebar modal) or falls back to
  * onRemove (legacy TeamPanel pattern).
  */
 function MemberRowKebab({

@@ -139,7 +139,7 @@ beforeEach(() => {
 
 const AUTOSAVE_FIELDS = ["content", "title", "button_label"] as const;
 
-describe("stories action: save-layer / autosave-layer (CR-02 — IDOR guard)", () => {
+describe("stories action: save-layer / autosave-layer (IDOR guard)", () => {
   it("returns 403 on autosave-layer when user is not a member of the layer's project", async () => {
     vi.mocked(requireProjectMember).mockRejectedValueOnce(
       new Response("Forbidden", { status: 403 }),

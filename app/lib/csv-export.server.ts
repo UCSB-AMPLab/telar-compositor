@@ -83,7 +83,7 @@ export interface ObjectRow {
  * Shape of a D1 objects row (or a pending-upload row that shadows the D1
  * shape). The only CSV-relevant departure from ObjectRow is the object_type
  * column, which Telar v1.0.0 renamed to medium_genre at the CSV layer
- * (D1 keeps the original name — see PROJECT.md key decisions).
+ * while D1 keeps the original `object_type` column name internally.
  */
 export interface ObjectDbRow {
   object_id: string;
@@ -105,8 +105,7 @@ export interface ObjectDbRow {
 /**
  * Maps a D1 objects row to the ObjectRow shape expected by serializeObjectsCsv.
  * Centralises the object_type ↔ medium_genre column rename so every call site
- * uses the same transform. See PROJECT.md "D1 object_type column (not
- * medium_genre)" decision.
+ * uses the same transform.
  */
 export function dbObjectToCsvRow(row: ObjectDbRow): ObjectRow {
   return {

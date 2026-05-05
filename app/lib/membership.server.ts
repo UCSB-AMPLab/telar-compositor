@@ -108,7 +108,7 @@ export async function requireOwner(
  *
  * Any non-null role (convenor or collaborator) passes. Use this for actions
  * that any project member is allowed to perform — e.g. autosaving project
- * config copy that collaborators are permitted to edit per CONTEXT D-01.
+ * config copy that collaborators are permitted to edit.
  */
 export async function requireProjectMember(
   db: DbInstance,

@@ -557,7 +557,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
         imagePayloads.push({ imagePath, imageBase64 });
 
-        // 7. Build pending object (D-13: NOT inserted to D1 yet)
+        // 7. Build pending object — NOT inserted to D1 yet
         uploadPendingObjects.push({
           object_id: uploadObjectId,
           title: metadata.title.trim(),
@@ -648,7 +648,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           dispatchHtmlUrl,
         };
       } catch (err) {
-        // No D1 rollback needed — nothing was inserted (D-13 pattern)
+        // No D1 rollback needed — nothing was inserted (pending-object pattern)
         if (err instanceof StaleHeadError) {
           return { ok: false, intent: "upload-image", error: "stale_head" };
         }
@@ -995,9 +995,9 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // D1 batch limit: 100 bindings per INSERT, 18 columns → max 5 rows.
       // Collect inserted rows so the client can mirror them into the Yjs
-      // Y.Array with canonical D1 ids (D-18 — self-hosted objects appear in
-      // the shared doc only after the repo build succeeds and D1 INSERT
-      // completes; the snapshot writes them as UPDATEs on the next cycle).
+      // Y.Array with canonical D1 ids — self-hosted objects appear in the
+      // shared doc only after the repo build succeeds and D1 INSERT
+      // completes; the snapshot writes them as UPDATEs on the next cycle.
       const maxRows = Math.floor(100 / 18);
       type InsertedRow = { id: number; object_id: string };
       const inserted: InsertedRow[] = [];
@@ -1068,8 +1068,8 @@ function filterObjects(
 // ---------------------------------------------------------------------------
 // SortableObjectRow — dnd-kit sortable wrapper around ObjectRow for the Yjs
 // collaborative mode. Adds a grip handle for reorder, a delete button
-// (visible-but-disabled when canDelete is false per D-03), and a
-// validation-state badge for pending / invalid IIIF manifests (D-16 / D-17).
+// (visible-but-disabled when canDelete is false), and a validation-state
+// badge for pending / invalid IIIF manifests.
 // ---------------------------------------------------------------------------
 
 interface SortableObjectRowProps {
@@ -1130,7 +1130,7 @@ function SortableObjectRow({
         )}
       </div>
 
-      {/* Delete button (D-03 visible-but-disabled) */}
+      {/* Delete button (visible-but-disabled when canDelete is false) */}
       <div className="shrink-0 px-2 flex items-center">
         <button
           type="button"
@@ -1148,7 +1148,7 @@ function SortableObjectRow({
 }
 
 // ---------------------------------------------------------------------------
-// IIIF manifest validation (D-16 / D-17) — client-side fetch that marks the
+// IIIF manifest validation — client-side fetch that marks the
 // Y.Map's _validation_state as "valid" or "error" so all connected users see
 // the outcome via Yjs sync. Runs outside React so it survives rerenders.
 // ---------------------------------------------------------------------------
@@ -1399,7 +1399,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       setUploadError(null);
       setUploadSubmitted(false);
       // Pass pending objects to CommitAndBuildModal — it will call insert-pending-objects
-      // after build success, inserting them to D1 (D-13 pending objects pattern).
+      // after build success, inserting them to D1 (pending-objects pattern).
       // Images + CSV are already committed by the action; no pre-commit-check needed here.
       setPendingObjects(uploadFetcherData.pendingObjects ?? [uploadFetcherData.pendingObject]);
       setDispatchRunId(uploadFetcherData.dispatchRunId ?? null);
@@ -1468,9 +1468,9 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   }
 
   function handleIiifConfirm(payload: AddIiifConfirmPayload) {
-    // D-16: IIIF objects flow through the Y.Array with a "pending" validation
-    // state. The DO snapshot (plan 27-03) skips pending objects, so they do
-    // not reach D1 until this client-side fetch marks them valid.
+    // IIIF objects flow through the Y.Array with a "pending" validation
+    // state. The DO snapshot skips pending objects, so they do not reach
+    // D1 until this client-side fetch marks them valid.
     if (!ops || !ydoc) {
       // No active ydoc — silently drop; reconnect will let the user retry.
       // eslint-disable-next-line no-console
@@ -1511,7 +1511,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         justAdded.set("image_available", payload.image_available);
       });
 
-      // Fire-and-forget client-side manifest validation (D-16 / D-17).
+      // Fire-and-forget client-side manifest validation.
       // Success → `_validation_state: "valid"`, failure → `"error"`.
       validateManifestOnYMap(justAdded, payload.manifestUrl);
     }
@@ -1766,7 +1766,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   }
 
   // --------------------------------------------------------------------
-  // dnd-kit sensors (reorder — D-20)
+  // dnd-kit sensors (reorder)
   // --------------------------------------------------------------------
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -2082,7 +2082,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         onInserted={handleInsertedToD1}
       />
 
-      {/* Delete confirmation (D-07 / D-08) */}
+      {/* Delete confirmation */}
       <DeleteConfirmationModal
         open={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}

@@ -196,7 +196,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("connecting");
   });
 
-  it("SC-6: y-websocket status='disconnected' maps to connectionStatus='offline' (D-14 label)", () => {
+  it("SC-6: y-websocket status='disconnected' maps to connectionStatus='offline'", () => {
     renderWithProvider();
     act(() => {
       capturedStatusHandler?.({ status: "disconnected" });

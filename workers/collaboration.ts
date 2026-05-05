@@ -271,12 +271,12 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // from D1 entity rows, and close all connected sockets so clients reconnect
     // with clean state. Convenor-only — gating happens in workers/app.ts; here
     // we verify the signed internal marker the worker entry sets so the DO
-    // cannot be reached directly from outside (T-32-03b mitigation).
+    // cannot be reached directly from outside.
     if (url.pathname.endsWith("/reset") && request.method === "POST") {
       // Verify the signed internal marker workers/app.ts attaches via the
       // X-Internal-Auth / X-Internal-Timestamp / X-Internal-Project headers.
       // Direct reaches that bypass the worker entry lack the marker and are
-      // rejected with 401 — T-32-03b mitigation.
+      // rejected with 401.
       const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
       if (markerError) return markerError;
 
@@ -820,7 +820,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
   /**
    * Snapshot the Y.Doc to D1 — writes both the binary blob and all entity rows.
-   * Uses D1 batch for atomicity (Pitfall 6, T-24-04).
+   * Uses D1 batch for atomicity.
    *
    * Handles INSERT for new Y.Array items (with _id === null) and DELETE for D1
    * rows absent from the Y.Array. For INSERTs, the auto-incremented D1 ID is
@@ -1438,8 +1438,9 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
     // 9. Snapshot contribution data to project_members.
     // fields_edited is sourced from userFieldSets.get(userId).size (unique-field
-    // Set semantics). The Set is NOT cleared after snapshot — it keeps accumulating
-    // within the DO's lifetime (accepted behaviour).
+    // Set semantics). The Set is NOT cleared after snapshot — it keeps
+    // accumulating within the DO's lifetime, so each snapshot writes the
+    // cumulative count for the lifetime, not a per-snapshot delta.
     // Contribution UPDATE statements are added to the same batch for atomicity.
     if (this.projectId) {
       const allUserIds = new Set<number>([...this.userFieldSets.keys(), ...this.newSessions]);

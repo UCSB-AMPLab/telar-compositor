@@ -71,7 +71,7 @@
 .cm-dark-theme .cm-md-link { color: var(--color-cream); }
 .cm-editor.cm-focused { outline: none; }
 
-/* y-codemirror.next remote cursor labels (per D-14, D-15) */
+/* y-codemirror.next remote cursor labels */
 .cm-ySelectionInfo {
   font-family: var(--font-heading);
   font-size: 11px;
