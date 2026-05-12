@@ -1,23 +1,34 @@
 /**
- * Import pipeline for Telar Compositor.
+ * This file orchestrates the full repo import — validating the Telar site,
+ * parsing CSVs (or Google Sheets), scanning for IIIF tiles, and writing
+ * everything to D1 in a single batched insert.
  *
- * Orchestrates the full repo import: validates the Telar site, parses CSVs
- * or Google Sheets, scans for IIIF tiles, and writes all content to D1 in
- * a single batch insert.
+ * The entry point is `importRepo`. Every helper used along the way is
+ * exported for unit testing — CSV row classifiers, the Sheets-vs-repo
+ * branch, the YAML config mapper, the per-table column mappers, the
+ * orphan-story detector, and the rollback cascade. They are split out
+ * because the import path is the single largest surface where a
+ * malformed user repo or an unreachable Google Sheet can corrupt project
+ * state, and exhaustive unit coverage was easier than reasoning about
+ * the end-to-end flow.
  *
- * Entry point: importRepo(). All helper functions are exported for unit
- * testing. The sheetsAccessError blocking path is critical: when
- * google_sheets.enabled is true and the Sheet is inaccessible, the import
- * is aborted — there is no fallback to repo CSVs (the Sheet IS the source
- * of truth for Sheets-based sites).
+ * One blocking path is critical: when `google_sheets.enabled` is true
+ * and the Sheet is inaccessible, the import is aborted and the wizard
+ * surfaces an error — there is no fallback to repo CSVs. For sites
+ * that use Google Sheets, the Sheet is the source of truth; silently
+ * importing whatever stale rows happen to sit in the repo would
+ * desynchronise the user's content without them noticing.
+ *
+ * @version v1.2.0-beta
  */
 
 import Papa from "papaparse";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
-import { getFileContent, getRepoTree } from "~/lib/github.server";
+import { getFileContent, getRepoTree, getRepoHead } from "~/lib/github.server";
 import { discoverSheetTabs, fetchSheetCsv } from "~/lib/sheets.server";
 import { parseYaml } from "~/lib/yaml.server";
+import { isV130WelcomeLiquidBlock } from "~/lib/v130-ingest.server";
 import {
   projects,
   project_config,
@@ -122,6 +133,14 @@ export interface ImportResult {
   audioObjectIds: string[];
   videoObjectCount: number;
   configFields: Record<string, unknown>;
+  /**
+   * Story IDs that exist as {id}.csv in telar-content/spreadsheets/ on GitHub
+   * but are absent from project.csv AND absent from .compositor-ignored.
+   * Consumed by the dashboard loader to drive the orphan-stories banner.
+   * Empty when google_sheets is enabled (Sheets-based sites have no per-story
+   * CSV files to scan).
+   */
+  orphanStoryIds: string[];
 }
 
 interface ImportParams {
@@ -160,12 +179,17 @@ export function parseIndexMd(content: string | null | undefined): LandingData {
   const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!match) return {};
   const frontmatter = (parseYaml(match[1]) as Record<string, unknown>) ?? {};
+  // Recognise the canonical v1.3.0 welcome liquid block and store
+  // welcome_body: undefined so the framework default keeps rendering on the
+  // live site and the editor textarea stays empty (rather than showing the
+  // liquid syntax as if it were user content).
+  const rawBody = match[2].trim();
   return {
     stories_heading: frontmatter.stories_heading as string | undefined,
     stories_intro: frontmatter.stories_intro as string | undefined,
     objects_heading: frontmatter.objects_heading as string | undefined,
     objects_intro: frontmatter.objects_intro as string | undefined,
-    welcome_body: match[2].trim() || undefined,
+    welcome_body: isV130WelcomeLiquidBlock(rawBody) ? undefined : (rawBody || undefined),
   };
 }
 
@@ -192,6 +216,164 @@ export function parsePageMarkdown(
     ? titleMatch[1].trim().replace(/^["']|["']$/g, "")
     : fallbackSlug;
   return { title, body };
+}
+
+// ---------------------------------------------------------------------------
+// Repo page scan
+// ---------------------------------------------------------------------------
+
+/**
+ * Scans a repository for `telar-content/texts/pages/*.md` files and returns
+ * parsed page records. Used by the initial repo import path AND by the Pages
+ * editor's empty-state import variant, so projects connected
+ * before the page-import path landed — or repos where pages were
+ * added externally — can surface their existing pages for explicit import.
+ *
+ * `order` matches the index in the filtered tree; entries whose content
+ * cannot be fetched are skipped without re-indexing the rest, preserving the
+ * original order semantics expected by the import path.
+ */
+export async function scanRepoPages(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<Array<{ slug: string; title: string; body: string; order: number }>> {
+  const { tree } = await getRepoTree(token, owner, repo);
+  const pagesTree = tree.filter(
+    (entry) =>
+      entry.type === "blob" &&
+      entry.path.startsWith("telar-content/texts/pages/") &&
+      entry.path.endsWith(".md"),
+  );
+  const out: Array<{ slug: string; title: string; body: string; order: number }> = [];
+  for (let i = 0; i < pagesTree.length; i++) {
+    const entry = pagesTree[i];
+    const filename = entry.path.split("/").pop()!;
+    const slug = filename.replace(/\.md$/, "");
+    const content = await getFileContent(token, owner, repo, entry.path);
+    if (content === null) continue;
+    const { title, body } = parsePageMarkdown(content, slug);
+    out.push({ slug, title, body, order: i });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Orphan story detection + .compositor-ignored
+// ---------------------------------------------------------------------------
+
+/**
+ * Names of CSV files inside `telar-content/spreadsheets/` that are NOT
+ * per-story files (the importer treats them as registry files). Anything
+ * else with a `.csv` extension in that directory is a story candidate.
+ */
+const SPREADSHEET_REGISTRY_FILENAMES = new Set([
+  "project.csv",
+  "objects.csv",
+  "glossary.csv",
+]);
+
+/**
+ * Parses the `.compositor-ignored` newline-delimited list of
+ * story IDs that the user has explicitly told the compositor to suppress
+ * (per the "Ignore" CTA in the orphan-stories banner).
+ *
+ * Rules:
+ *  - Split on `\n` (CR-LF handled by stripping `\r` per-line via trim).
+ *  - Trim each line; drop empty lines.
+ *  - Drop lines starting with `#` (allows hand-edited notes in the file).
+ *  - Dedupe (preserve first-seen order).
+ *  - `contents === null` (missing file) → `[]` (graceful default, no throw).
+ */
+export function parseCompositorIgnored(contents: string | null): string[] {
+  if (!contents) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const rawLine of contents.split("\n")) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+    if (line.startsWith("#")) continue;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
+  }
+  return out;
+}
+
+/**
+ * Pure orphan-detection logic.
+ *
+ * Given:
+ *  - the story IDs in `project.csv` (the published-stories registry),
+ *  - a listing of file names inside `telar-content/spreadsheets/` on GitHub,
+ *  - and the IDs the user has previously chosen to ignore,
+ *
+ * returns the candidate orphan story IDs — those for which a
+ * `{story_id}.csv` file exists on GitHub but no corresponding row sits in
+ * `project.csv` and no entry sits in `.compositor-ignored`.
+ *
+ * The function does NOT fetch orphan content; fetches are lazy
+ * and happen only when the user clicks "Restore as drafts".
+ */
+export function detectOrphanStoryIds(opts: {
+  projectCsvStoryIds: Set<string>;
+  spreadsheetDirListing: string[];
+  ignoredIds: Set<string>;
+}): string[] {
+  const { projectCsvStoryIds, spreadsheetDirListing, ignoredIds } = opts;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const filename of spreadsheetDirListing) {
+    if (SPREADSHEET_REGISTRY_FILENAMES.has(filename)) continue;
+    if (!filename.endsWith(".csv")) continue;
+    const storyId = filename.slice(0, -".csv".length);
+    if (storyId === "") continue;
+    if (projectCsvStoryIds.has(storyId)) continue;
+    if (ignoredIds.has(storyId)) continue;
+    if (seen.has(storyId)) continue;
+    seen.add(storyId);
+    out.push(storyId);
+  }
+  return out;
+}
+
+/**
+ * Combined I/O wrapper that fetches the repo tree,
+ * filters to direct children of `telar-content/spreadsheets/`, reads
+ * `.compositor-ignored` from the repo root (404 = empty list), and returns
+ * the orphan story IDs. The published-stories set is supplied by the
+ * caller (it knows the parsed `project.csv` row set).
+ *
+ * Exists as a single export so the importer call site stays a one-liner
+ * and the integration is unit-testable against `vi.spyOn` of the two
+ * `github.server.ts` helpers.
+ *
+ * NO content fetch of orphan files happens here — that is lazy until the
+ * user clicks "Restore as drafts" in the orphan-stories banner.
+ */
+export async function scanRepoOrphanStoryIds(
+  token: string,
+  owner: string,
+  repo: string,
+  projectCsvStoryIds: Set<string>,
+): Promise<string[]> {
+  const { tree } = await getRepoTree(token, owner, repo);
+  const dirPrefix = "telar-content/spreadsheets/";
+  const directChildren: string[] = [];
+  for (const entry of tree) {
+    if (entry.type !== "blob") continue;
+    if (!entry.path.startsWith(dirPrefix)) continue;
+    const rest = entry.path.slice(dirPrefix.length);
+    if (rest === "" || rest.includes("/")) continue; // nested paths excluded
+    directChildren.push(rest);
+  }
+  const ignoredRaw = await getFileContent(token, owner, repo, ".compositor-ignored");
+  const ignoredIds = new Set(parseCompositorIgnored(ignoredRaw));
+  return detectOrphanStoryIds({
+    projectCsvStoryIds,
+    spreadsheetDirListing: directChildren,
+    ignoredIds,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -506,13 +688,23 @@ export function mapStoryCsv(
  */
 
 /**
- * Rollback helper: cascade-delete every child row that may have been written
- * during a partial import, in dependency order, then delete the project row
- * itself. Exported so unit tests can record the delete-table sequence
- * directly. Mirrors the unlink cascade in app/routes/onboarding.tsx — keep
- * the two in sync.
+ * Cascade-delete every child row for a project, in dependency order, then
+ * the project row itself. Issued as a single `db.batch([...])` for
+ * atomicity (D1 documents batched statements as one transaction).
+ *
+ * Supersedes the prior 6-table enumeration with the
+ * comprehensive 12-table cascade — adds
+ * `project_pages` (FK to projects, populated by importRepo at line ~1046)
+ * which the historical `rollbackProjectImport` body omitted. Without
+ * this, deleting a project that had imported pages would leave orphan
+ * rows in `project_pages`.
+ *
+ * Used by:
+ *   - rollbackProjectImport (partial-import cleanup; legacy path)
+ *   - The delete-project action
+ *   - The reimportRepo wipe step
  */
-export async function rollbackProjectImport(
+export async function deleteProjectCascade(
   // biome-ignore lint/suspicious/noExplicitAny: drizzle DB type is route-scoped
   db: any,
   projectId: number,
@@ -552,12 +744,34 @@ export async function rollbackProjectImport(
     db.delete(project_themes).where(eq(project_themes.project_id, projectId)),
     db.delete(project_landing).where(eq(project_landing.project_id, projectId)),
     db.delete(project_config).where(eq(project_config.project_id, projectId)),
+    // project_pages — added to close an orphan-rows gap.
+    // The legacy rollbackProjectImport body omitted this table; importRepo
+    // populates it (line ~1046) so any rollback or delete that skipped it
+    // left orphan rows.
+    db.delete(project_pages).where(eq(project_pages.project_id, projectId)),
     db.delete(project_members).where(eq(project_members.project_id, projectId)),
     db.delete(project_invites).where(eq(project_invites.project_id, projectId)),
     db.delete(projects).where(eq(projects.id, projectId)),
   );
 
   await db.batch(batchOps);
+}
+
+/**
+ * Rollback helper: cascade-delete every child row that may have been written
+ * during a partial import, in dependency order, then delete the project row
+ * itself. Exported so unit tests can record the delete-table sequence
+ * directly. Mirrors the unlink cascade in app/routes/onboarding.tsx — keep
+ * the two in sync.
+ *
+ * Now delegates to `deleteProjectCascade` (the shared helper).
+ */
+export async function rollbackProjectImport(
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle DB type is route-scoped
+  db: any,
+  projectId: number,
+): Promise<void> {
+  await deleteProjectCascade(db, projectId);
 }
 
 export async function importRepo({
@@ -592,6 +806,7 @@ export async function importRepo({
       audioObjectIds: [],
       videoObjectCount: 0,
       configFields: {},
+      orphanStoryIds: [],
     };
   }
 
@@ -616,6 +831,7 @@ export async function importRepo({
       audioObjectIds: [],
       videoObjectCount: 0,
       configFields: {},
+      orphanStoryIds: [],
     };
   }
 
@@ -772,6 +988,7 @@ export async function importRepo({
         audioObjectIds: [...audioObjectFiles.keys()],
         videoObjectCount: 0,
         configFields,
+        orphanStoryIds: [],
       };
     }
   } else {
@@ -819,20 +1036,17 @@ export async function importRepo({
     }
 
     // ---- Pages import ----
-    const pagesTree = tree.filter(
-      (entry) =>
-        entry.type === "blob" &&
-        entry.path.startsWith("telar-content/texts/pages/") &&
-        entry.path.endsWith(".md"),
-    );
-    for (let i = 0; i < pagesTree.length; i++) {
-      const entry = pagesTree[i];
-      const filename = entry.path.split("/").pop()!;
-      const slug = filename.replace(/\.md$/, "");
-      const content = await getFileContent(token, owner, repo, entry.path);
-      if (content === null) continue;
-      const { title, body } = parsePageMarkdown(content, slug);
-      pageRows.push({ title, slug, body, order: i });
+    // Reuses scanRepoPages (extracted for the Pages editor's empty-state import variant). The
+    // helper preserves the original index-based order semantics that the
+    // import path relies on for navigation slot assignment.
+    const scannedPages = await scanRepoPages(token, owner, repo);
+    for (const page of scannedPages) {
+      pageRows.push({
+        title: page.title,
+        slug: page.slug,
+        body: page.body,
+        order: page.order,
+      });
     }
   }
 
@@ -927,6 +1141,7 @@ export async function importRepo({
       audioObjectIds: [],
       videoObjectCount: 0,
       configFields: {},
+      orphanStoryIds: [],
     };
   }
 
@@ -991,7 +1206,7 @@ export async function importRepo({
     await db.insert(glossary_terms).values(chunk);
   }
 
-  // Insert pages (INSERT OR REPLACE to handle re-imports — Pitfall 3)
+  // Insert pages (INSERT OR REPLACE to handle re-imports)
   const now = new Date().toISOString();
   if (pageRows.length > 0) {
     const pagesWithProjectId = pageRows.map((p) => ({
@@ -1094,6 +1309,21 @@ export async function importRepo({
     throw importError;
   }
 
+  // Detect {story_id}.csv files on GitHub not referenced by project.csv
+  // and not user-ignored. Returned to caller for the orphan-stories
+  // banner. NO content fetch here — lazy until user clicks
+  // "Restore as drafts". Skipped for Google-Sheets-backed sites: those
+  // sites have no per-story CSV files in telar-content/spreadsheets/ to scan.
+  let orphanStoryIds: string[] = [];
+  if (!googleSheetsEnabled) {
+    const projectCsvStoryIds = new Set(
+      storyRows
+        .map((r) => (r.story_id as string | undefined) ?? "")
+        .filter((id) => id.trim() !== ""),
+    );
+    orphanStoryIds = await scanRepoOrphanStoryIds(token, owner, repo, projectCsvStoryIds);
+  }
+
   return {
     valid: true,
     telarVersion,
@@ -1124,5 +1354,7 @@ export async function importRepo({
       return src && (/youtube|youtu\.be/.test(src) || /vimeo/.test(src) || /drive\.google/.test(src));
     }).length,
     configFields,
+    orphanStoryIds,
   };
 }
+

@@ -32,7 +32,8 @@
     "stories_explanation": "Tu colección de historias tal como aparece en la página de inicio. Arrastra para reordenar — esto controla el orden de visualización en tu sitio publicado.",
     "stories_manage": "Gestionar →",
     "objects_heading": "Objetos",
-    "objects_explanation": "Objetos destacados de tu colección, mostrados en la página de inicio."
+    "objects_explanation": "Objetos destacados de tu colección, mostrados en la página de inicio.",
+    "empty_default_hint": "Si lo dejas vacío, tu sitio mostrará un texto predeterminado."
   },
   "inline_edit": {
     "click_to_edit": "Haz clic para editar",
@@ -40,8 +41,8 @@
     "saved": "Guardado"
   },
   "status_bar": {
-    "last_synced": "Última sincronización (pull) de GitHub",
-    "last_published": "Último envío (push) a GitHub Pages",
+    "last_synced": "Última sincronización (pull)",
+    "last_published": "Última publicación (push)",
     "synced_short": "Sincronizado",
     "published_short": "Publicado",
     "unpublished_changes_one": "{{count}} cambio sin publicar",
@@ -50,7 +51,6 @@
     "never_hint": "Edita aquí, luego publica en tu sitio cuando quieras",
     "manage_repos": "Cambiar, agregar o eliminar repositorios",
     "current": "actual",
-    "view_site": "Ver sitio",
     "view_on_github": "Ver en GitHub"
   },
   "story_card": {
@@ -101,7 +101,8 @@
     "sync_anyway": "Sincronizar de todos modos",
     "publish_first": "Publicar primero",
     "changes_found": "Cambios encontrados",
-    "no_changes": "No se encontraron diferencias",
+    "no_changes": "Nada para sincronizar",
+    "no_changes_body": "GitHub tiene cambios en archivos que el compositor no gestiona (README, /docs, LICENSE). Tu punto de partida ya está al día — no hace falta hacer nada.",
     "objects_category": "Objetos",
     "stories_category": "Historias",
     "config_category": "Configuración",
@@ -109,10 +110,20 @@
     "changed_items": "{{count}} modificado(s)",
     "removed_items": "{{count}} eliminado(s)",
     "apply_sync": "Aplicar cambios",
+    "use_compositor_version": "Mantener mi versión",
+    "use_compositor_helper": "Actualiza el punto de partida de la sincronización al HEAD de GitHub sin re-importar. Tu trabajo en el compositor y las ediciones de GitHub se publican juntos la próxima vez.",
     "applying": "Aplicando cambios...",
+    "accepting": "Aceptando...",
     "success": "Sincronización completa",
+    "accepted_success": "Punto de partida actualizado",
     "retry": "Intentar de nuevo",
     "sync_now": "Sincronizar ahora",
     "close": "Cerrar"
+  },
+  "orphan_banner": {
+    "count_text": "Hay {{count}} archivo(s) de historia sin referencia en GitHub.",
+    "primary_cta": "Recuperar como borradores",
+    "secondary_cta": "Ignorar",
+    "success_toast": "Se recuperaron {{count}} historia(s) como borradores."
   }
 }

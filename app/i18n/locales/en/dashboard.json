@@ -32,7 +32,8 @@
     "stories_explanation": "Your story collection as it appears on the landing page. Drag to reorder — this controls the display order on your published site.",
     "stories_manage": "Manage \u2192",
     "objects_heading": "Objects",
-    "objects_explanation": "Featured objects from your collection, displayed on the landing page."
+    "objects_explanation": "Featured objects from your collection, displayed on the landing page.",
+    "empty_default_hint": "Empty fields show your site's localised default."
   },
   "inline_edit": {
     "click_to_edit": "Click to edit",
@@ -40,8 +41,8 @@
     "saved": "Saved"
   },
   "status_bar": {
-    "last_synced": "Last synced (pulled) from GitHub",
-    "last_published": "Last sent (pushed) to GitHub Pages",
+    "last_synced": "Last synced (pulled)",
+    "last_published": "Last published (pushed)",
     "synced_short": "Synced",
     "published_short": "Published",
     "unpublished_changes_one": "{{count}} unpublished change",
@@ -50,7 +51,6 @@
     "never_hint": "Edit here, then publish to your site when ready",
     "manage_repos": "Switch, add, or remove GitHub Repos",
     "current": "current",
-    "view_site": "View site",
     "view_on_github": "View on GitHub"
   },
   "story_card": {
@@ -100,7 +100,8 @@
     "sync_anyway": "Sync anyway",
     "publish_first": "Publish first",
     "changes_found": "Changes found",
-    "no_changes": "No differences found",
+    "no_changes": "Nothing to sync",
+    "no_changes_body": "GitHub has commits to files the compositor doesn't manage (README, /docs, LICENSE). Your sync baseline has been updated — no action needed.",
     "objects_category": "Objects",
     "stories_category": "Stories",
     "config_category": "Config",
@@ -108,10 +109,20 @@
     "changed_items": "{{count}} changed",
     "removed_items": "{{count}} removed",
     "apply_sync": "Apply changes",
+    "use_compositor_version": "Keep my version",
+    "use_compositor_helper": "Updates the sync baseline to GitHub's HEAD without re-importing. Your compositor work and the GitHub edits will land together at the next publish.",
     "applying": "Applying changes...",
+    "accepting": "Accepting...",
     "success": "Sync complete",
+    "accepted_success": "Sync baseline updated",
     "retry": "Try again",
     "sync_now": "Sync now",
     "close": "Close"
+  },
+  "orphan_banner": {
+    "count_text": "Found {{count}} unreferenced story file(s) on GitHub.",
+    "primary_cta": "Restore as drafts",
+    "secondary_cta": "Ignore",
+    "success_toast": "Restored {{count}} story(ies) as drafts."
   }
 }
