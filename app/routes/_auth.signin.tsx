@@ -1,9 +1,14 @@
 /**
- * Sign-in page — GitHub OAuth entry point.
+ * This file renders the sign-in page — the GitHub OAuth entry
+ * point. Every unauthenticated user lands here before they can
+ * reach the rest of the app.
  *
  * Split layout: pattern left panel + branded sign-in right panel.
- * loader: redirects to /dashboard if already authenticated.
- * action: generates CSRF state, stores in cookie, redirects to GitHub authorize URL.
+ * Loader redirects to `/dashboard` if a session already exists.
+ * Action generates CSRF state, stores it in a cookie, and redirects
+ * to the GitHub authorise URL.
+ *
+ * @version v1.2.0-beta
  */
 
 import { redirect, Form, useNavigation, useSearchParams } from "react-router";
@@ -119,14 +124,21 @@ export default function SignIn() {
                 {t("signin.pitch")}
               </p>
 
-              {/* Error/session banners */}
-              {(reason === "session_expired" || errorParam) && (
+              {/* Error/session banners — the account_deleted branch is handled here.
+                  Amber chrome stays: amber is
+                  informational here; terracotta is reserved for destructive
+                  primary action surfaces. */}
+              {(reason === "session_expired" ||
+                reason === "account_deleted" ||
+                errorParam) && (
                 <div className="mb-6 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800">
                   <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <span>
                     {reason === "session_expired"
                       ? t("signin.session_expired")
-                      : t("signin.error")}
+                      : reason === "account_deleted"
+                        ? t("signin.account_deleted")
+                        : t("signin.error")}
                   </span>
                 </div>
               )}

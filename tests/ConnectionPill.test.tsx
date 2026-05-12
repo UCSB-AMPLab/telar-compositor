@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 /**
- * ConnectionPill.test.tsx — SC-6 three-state connection status pill.
+ * This file pins the `ConnectionPill` three-state status indicator — the
+ * coloured dot in the header that surfaces whether the live-collab
+ * websocket is connected, connecting, or offline.
  *
  * Tests: dot colour classes, hover-expand label, tooltip, i18n copy.
+ *
+ * @version v1.0.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -24,32 +28,32 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("ConnectionPill", () => {
-  it("SC-6: status='connected' renders a green dot at rest", () => {
+  it("status='connected' renders a green dot at rest", () => {
     const { container } = render(<ConnectionPill status="connected" />);
     const dot = container.querySelector(".bg-green-500");
     expect(dot).not.toBeNull();
   });
 
-  it("SC-6: status='connecting' renders an amber animated dot at rest", () => {
+  it("status='connecting' renders an amber animated dot at rest", () => {
     const { container } = render(<ConnectionPill status="connecting" />);
     const dot = container.querySelector(".bg-amber-500");
     expect(dot).not.toBeNull();
     expect(dot?.className).toContain("animate-pulse");
   });
 
-  it("SC-6: status='offline' renders a red dot at rest", () => {
+  it("status='offline' renders a red dot at rest", () => {
     const { container } = render(<ConnectionPill status="offline" />);
     const dot = container.querySelector(".bg-red-500");
     expect(dot).not.toBeNull();
   });
 
-  it("SC-6: label text is present in the DOM (visible on hover via CSS)", () => {
+  it("label text is present in the DOM (visible on hover via CSS)", () => {
     render(<ConnectionPill status="connected" />);
     // The label is rendered but hidden at rest via CSS — it must be in the DOM
     expect(screen.getByText("Connected")).toBeTruthy();
   });
 
-  it("SC-6: Spanish copy uses 'Conectado' — confirmed via i18n mock key", () => {
+  it("Spanish copy uses 'Conectado' — confirmed via i18n mock key", () => {
     // The component uses the collaboration:connection_status_connected key
     // which resolves to 'Conectado' in ES. Verified via the key in collaboration.json.
     const { container } = render(<ConnectionPill status="connected" />);
@@ -58,13 +62,13 @@ describe("ConnectionPill", () => {
     expect(container.textContent).toContain("Connected");
   });
 
-  it("SC-6: offline tooltip includes the connection_status_tooltip string", () => {
+  it("offline tooltip includes the connection_status_tooltip string", () => {
     const { container } = render(<ConnectionPill status="offline" />);
     const tooltip = container.querySelector("[role='status']");
     expect(tooltip?.textContent).toContain("Your edits are saved locally");
   });
 
-  it("SC-6: wrapper div has group class so hover CSS can show tooltip", () => {
+  it("wrapper div has group class so hover CSS can show tooltip", () => {
     const { container } = render(<ConnectionPill status="connected" />);
     const wrapper = container.firstElementChild;
     expect(wrapper?.className).toContain("group");

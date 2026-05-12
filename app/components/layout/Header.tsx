@@ -1,18 +1,20 @@
 /**
- * Header — authenticated app header bar.
+ * This file renders the authenticated app header bar — charcoal
+ * background (#333333) with the Telar wordmark, presence indicator,
+ * bug-report button, user avatar, and the avatar dropdown.
  *
- * Charcoal background (#333333) with Telar brand, user avatar, and avatar dropdown.
- * Per Figma: no language toggle in header — language is set in Settings only.
+ * @version v1.2.0-beta
  */
 
 import { useState, useRef, useEffect } from "react";
 import { Form, Link } from "react-router";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Settings, LogOut, Github, Users } from "lucide-react";
+import { ChevronDown, User, LogOut, Github, Users } from "lucide-react";
 import type { AuthenticatedUser } from "~/middleware/auth.server";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { PresenceBar } from "~/components/ui/PresenceBar";
 import { ConnectionPill } from "~/components/ui/ConnectionPill";
+import { BugReportButton } from "~/components/features/bug-report/BugReportButton";
 
 interface HeaderProps {
   user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email">;
@@ -28,6 +30,7 @@ interface HeaderProps {
 export function Header({ user, environment, presenceColor, sidebarOpen, onToggleSidebar, usersIconRef, hasProject = false, className = "" }: HeaderProps) {
   const { t: tCollab } = useTranslation("collaboration");
   const { t: tCommon } = useTranslation("common");
+  const { t: tAccount } = useTranslation("account");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { connectionStatus, isPublishing, isUpgrading } = useCollaborationContext();
@@ -167,14 +170,14 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
                 GitHub
               </a>
 
-              {/* Settings */}
+              {/* Account */}
               <Link
-                to="/config"
+                to="/account"
                 onClick={() => setDropdownOpen(false)}
                 className="flex items-center gap-2 px-4 py-2.5 text-sm font-body text-charcoal hover:bg-cream transition-colors"
               >
-                <Settings className="w-4 h-4 text-gray-400" />
-                Settings
+                <User className="w-4 h-4 text-gray-400" />
+                {tAccount("user_menu_item")}
               </Link>
 
               {/* Sign out */}
@@ -191,6 +194,9 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
           </>
         )}
         </div>
+
+        {/* Report a bug — rightmost */}
+        <BugReportButton userLogin={user.github_login} />
       </div>
     </header>
   );
