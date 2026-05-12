@@ -1,21 +1,24 @@
 /**
- * Create-site server module for the Telar Compositor.
+ * This file is the server-side scaffolding for the "Create a new Telar
+ * site" path of the onboarding wizard.
  *
- * Five pure server functions wrapping GitHub REST endpoints used by the
- * "Create a new Telar site" onboarding flow. Caller resolves the GitHub
- * token (user-to-server for most, installation token for
- * isRepoInInstallation) and passes it in. Errors are thrown as typed
- * Error subclasses so route handlers can branch with instanceof.
+ * It bundles the small set of GitHub REST calls that path needs —
+ * checking whether the user's chosen repo name is available, generating
+ * the new repo from the Telar template, polling until the new repo is
+ * actually ready (template generation is asynchronous on GitHub's side),
+ * confirming the GitHub App installation can see the new repo, and
+ * patching the freshly-created repo's `_config.yml` with the user's
+ * chosen language.
  *
- * This file is the Wave 0 skeleton from phase 19 plan 01:
- *   - TEMPLATE_OWNER / TEMPLATE_REPO constants
- *   - Typed error subclasses (RepoNameTakenError, PermissionDeniedError,
- *     GitHubError, RepoNotReadyError)
- *   - Fully implemented isValidRepoName
- *   - Async function stubs filled in by plans 19-02, 19-03, 19-04
+ * Callers resolve the GitHub token themselves (user-to-server for most
+ * operations, installation token for `isRepoInInstallation`) and pass it
+ * in. Errors are thrown as typed subclasses so route handlers can branch
+ * with `instanceof` rather than parsing error messages.
  *
- * Style mirrors app/lib/github.server.ts: raw fetch against
- * https://api.github.com, pinned API version header, throws on failure.
+ * Style mirrors `app/lib/github.server.ts`: raw fetch against
+ * `https://api.github.com`, pinned API version header, throws on non-2xx.
+ *
+ * @version v1.2.0-beta
  */
 
 // Constants
@@ -259,4 +262,110 @@ export async function isRepoInInstallation(
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// patchSiteConfigLanguage
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the new repo's `_config.yml`, returning its decoded body and current SHA.
+ * Helper for `patchSiteConfigLanguage`.
+ */
+async function readConfig(
+  token: string,
+  owner: string,
+  name: string,
+): Promise<{ sha: string; body: string }> {
+  const res = await fetch(
+    `${GITHUB_API}/repos/${owner}/${encodeURIComponent(name)}/contents/_config.yml`,
+    { method: "GET", headers: authHeaders(token) },
+  );
+  if (!res.ok) {
+    const errBody = await safeJson(res);
+    throw new GitHubError(`readConfig: status ${res.status}`, res.status, errBody);
+  }
+  const data = (await res.json()) as { content: string; sha: string; encoding: string };
+  if (data.encoding !== "base64") {
+    throw new GitHubError(`readConfig: unexpected encoding ${data.encoding}`);
+  }
+  // Workers V8 supports atob natively; strip the \n every 60 chars that GitHub inserts.
+  const body = atob(data.content.replace(/\n/g, ""));
+  return { sha: data.sha, body };
+}
+
+/**
+ * Write the patched body back to `_config.yml`. Requires the original SHA;
+ * GitHub returns 409 if it has moved (rare but possible if the user races us).
+ */
+async function putConfig(
+  token: string,
+  owner: string,
+  name: string,
+  newBody: string,
+  sha: string,
+): Promise<void> {
+  const res = await fetch(
+    `${GITHUB_API}/repos/${owner}/${encodeURIComponent(name)}/contents/_config.yml`,
+    {
+      method: "PUT",
+      headers: { ...authHeaders(token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "compositor: seed telar_language from user locale",
+        content: btoa(newBody),
+        sha,
+      }),
+    },
+  );
+  if (!res.ok) {
+    const errBody = await safeJson(res);
+    throw new GitHubError(`putConfig: status ${res.status}`, res.status, errBody);
+  }
+}
+
+/**
+ * Seed `telar_language` in a newly-created site's `_config.yml` from the
+ * authenticated user's `ui_locale`. Short-circuits for `"en"` (the template
+ * default — no patch needed).
+ *
+ * Stability check: after `waitForRepoReady` returns, the file exists but its
+ * body may briefly arrive without the `telar_language:` line populated. If the
+ * line is absent on the first GET, sleep 1s and re-read once. If still absent,
+ * throw `GitHubError` — the caller soft-fails to `langPatchFailed: true`.
+ *
+ * Regex: anchored line match preserving leading whitespace, normalising quote
+ * style to double quotes, and preserving any trailing inline comment.
+ * Threat-model gate: the token is never logged. Errors carry the
+ * GitHub status + body only.
+ */
+export async function patchSiteConfigLanguage(
+  token: string,
+  owner: string,
+  name: string,
+  locale: "en" | "es",
+): Promise<void> {
+  if (locale === "en") return; // template default; no patch needed
+
+  let { sha, body } = await readConfig(token, owner, name);
+  if (!body.includes("telar_language:")) {
+    await new Promise((r) => setTimeout(r, 1000));
+    ({ sha, body } = await readConfig(token, owner, name));
+    if (!body.includes("telar_language:")) {
+      throw new GitHubError(
+        "patchSiteConfigLanguage: _config.yml present but telar_language line not found after retry",
+      );
+    }
+  }
+
+  const patched = body.replace(
+    /^(\s*telar_language:\s*)["']?([a-z]{2})["']?(\s*(?:#.*)?)$/m,
+    `$1"${locale}"$3`,
+  );
+  if (patched === body) {
+    throw new GitHubError(
+      "patchSiteConfigLanguage: regex did not match telar_language line",
+    );
+  }
+
+  await putConfig(token, owner, name, patched, sha);
 }

@@ -1,9 +1,14 @@
 /**
- * OAuth callback handler.
+ * This file handles the OAuth callback — the route GitHub redirects
+ * back to after the user authorises the compositor's GitHub App.
  *
- * Validates state, exchanges code for tokens, fetches GitHub user,
- * encrypts tokens, upserts user in D1, migrates locale cookie to D1,
- * creates session, redirects to /dashboard.
+ * Validates the CSRF state, exchanges the code for access + refresh
+ * tokens, fetches the GitHub user, encrypts the tokens, upserts the
+ * user row in D1, hydrates the locale cookie from `users.ui_locale`
+ * (D1 is the cross-browser source of truth for language), creates
+ * the session, and redirects to /dashboard.
+ *
+ * @version v1.2.0-beta
  */
 
 import { redirect } from "react-router";
@@ -14,6 +19,7 @@ import { createSessionStorage, createStateCookieStorage } from "~/lib/session.se
 import { getDb } from "~/lib/db.server";
 import { users } from "~/db/schema";
 import { eq } from "drizzle-orm";
+import { localeCookie } from "~/i18n/i18next.server";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
@@ -60,12 +66,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     now + tokens.refresh_token_expires_in * 1000,
   ).toISOString();
 
-  // Detect locale from cookie (migrated to D1 on first sign-in)
-  const localeCookieHeader = request.headers.get("Cookie") ?? "";
-  const localeMatch = localeCookieHeader.match(/locale=([a-z]{2})/);
-  const cookieLocale = localeMatch ? localeMatch[1] : null;
-  const languagePreference = cookieLocale ?? "en";
-
   // Upsert user in D1
   const db = getDb(env.DB);
 
@@ -95,7 +95,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       .where(eq(users.github_id, githubUser.id));
     userId = existingUsers[0].id;
   } else {
-    // Insert new user — migrate locale cookie preference to D1
+    // Insert new user
     const [newUser] = await db
       .insert(users)
       .values({
@@ -108,7 +108,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         encrypted_refresh_token: encRefreshToken,
         access_token_expires_at: accessTokenExpiresAt,
         refresh_token_expires_at: refreshTokenExpiresAt,
-        language_preference: languagePreference,
       })
       .returning({ id: users.id });
     userId = newUser.id;
@@ -119,6 +118,15 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = await sessionStorage.getSession();
   session.set("userId", userId);
 
+  // Hydrate locale cookie from D1 — D1 is the cross-browser source of truth.
+  // If ui_locale is set, override any incoming cookie; if null, leave it alone.
+  const userRowAfterUpsert = await db
+    .select({ ui_locale: users.ui_locale })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const uiLocale = userRowAfterUpsert[0]?.ui_locale ?? null;
+
   // Support post-OAuth redirect to the page that triggered sign-in (e.g. invite accept)
   const returnTo = stateSession.get("returnTo") as string | undefined;
   const safeRedirect =
@@ -128,6 +136,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const headers = new Headers();
   headers.append("Set-Cookie", await sessionStorage.commitSession(session));
+  // Hydrate locale cookie from D1 when set; leave cookie untouched when null.
+  if (uiLocale) {
+    headers.append("Set-Cookie", await localeCookie.serialize(uiLocale));
+  }
   // Clear the OAuth state cookie
   headers.append(
     "Set-Cookie",

@@ -1,11 +1,13 @@
 /**
- * Unit tests for app/lib/create-site.server.ts.
+ * This file pins unit tests for `app/lib/create-site.server.ts` — the
+ * helpers that validate a desired repo name, check it's available on
+ * GitHub, create a new repo from the Telar template, and patch its
+ * `_config.yml` language during onboarding.
  *
- * Wave 0 test skeleton (phase 19 plan 01): full coverage for
- * isValidRepoName plus describe-block placeholders for the four async
- * exports that plans 19-02, 19-03, and 19-04 fill in. Uses the same
- * globalThis.fetch mocking pattern as tests/github.server.test.ts — no
- * MSW, no nock, no new dependencies.
+ * Uses the same `globalThis.fetch` mocking pattern as
+ * `tests/github.server.test.ts` — no MSW, no nock, no new dependencies.
+ *
+ * @version v1.2.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -15,6 +17,7 @@ import {
   createSiteFromTemplate,
   waitForRepoReady,
   isRepoInInstallation,
+  patchSiteConfigLanguage,
   TEMPLATE_OWNER,
   TEMPLATE_REPO,
   RepoNameTakenError,
@@ -371,3 +374,155 @@ describe("isRepoInInstallation", () => {
 });
 
 void TOKEN;
+
+// ---------------------------------------------------------------------------
+// patchSiteConfigLanguage
+// ---------------------------------------------------------------------------
+//
+// RED scaffold. Implementation lands in Task 3.
+
+describe("patchSiteConfigLanguage", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function b64(s: string): string {
+    // Workers' atob/btoa accept ASCII; the template body is ASCII-safe.
+    return Buffer.from(s, "utf-8").toString("base64");
+  }
+
+  function makeGetConfig(body: string, sha = "sha-1") {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ content: b64(body), sha, encoding: "base64" }),
+    };
+  }
+
+  function makePut(status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => ({}),
+    };
+  }
+
+  it("Test 1 (skip-on-en): short-circuits without calling fetch", async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock;
+    await patchSiteConfigLanguage(TOKEN, "me", "my-site", "en");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("Test 2 (happy path): GETs, regex-substitutes, PUTs patched body with same SHA", async () => {
+    const original = '  telar_language: "en" # Options: "en" (English), "es" (Spanish)';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeGetConfig(original, "abc123"))
+      .mockResolvedValueOnce(makePut());
+    globalThis.fetch = fetchMock;
+
+    await patchSiteConfigLanguage(TOKEN, "me", "my-site", "es");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const putCall = fetchMock.mock.calls[1];
+    const putBody = JSON.parse(putCall[1].body as string);
+    expect(putBody.sha).toBe("abc123");
+    const patchedBody = Buffer.from(putBody.content as string, "base64").toString("utf-8");
+    expect(patchedBody).toContain('telar_language: "es"');
+    // Trailing comment preserved
+    expect(patchedBody).toContain('# Options: "en" (English), "es" (Spanish)');
+    // PUT method
+    expect(putCall[1].method).toBe("PUT");
+  });
+
+  it("Test 3 (stability retry): first GET missing line, sleep 1s, second GET has it, PUT proceeds", async () => {
+    vi.useFakeTimers();
+    const bodyWithout = "title: My Site\nurl: https://example.com";
+    const bodyWith = 'title: My Site\ntelar_language: "en"\nurl: https://example.com';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeGetConfig(bodyWithout))
+      .mockResolvedValueOnce(makeGetConfig(bodyWith))
+      .mockResolvedValueOnce(makePut());
+    globalThis.fetch = fetchMock;
+
+    const p = patchSiteConfigLanguage(TOKEN, "me", "my-site", "es");
+    // Allow the first GET microtask to resolve
+    await vi.advanceTimersByTimeAsync(0);
+    // Advance through the 1s sleep
+    await vi.advanceTimersByTimeAsync(1000);
+    await p;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("Test 4 (retry exhausted): both GETs missing line, throws GitHubError, no PUT", async () => {
+    vi.useFakeTimers();
+    const bodyWithout = "title: My Site\nurl: https://example.com";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeGetConfig(bodyWithout))
+      .mockResolvedValueOnce(makeGetConfig(bodyWithout));
+    globalThis.fetch = fetchMock;
+
+    const p = patchSiteConfigLanguage(TOKEN, "me", "my-site", "es");
+    // Attach the rejection assertion synchronously, before advancing timers.
+    // The second GET rejects while timers are still being advanced; without
+    // a handler attached at that point, node fires unhandledRejection and
+    // vitest reports a spurious "Errors 1 error" on an otherwise-passing test.
+    const assertion = expect(p).rejects.toBeInstanceOf(GitHubError);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(2); // 2 GETs, no PUT
+  });
+
+  it("Test 5 (regex non-match): body has telar_language: in unparseable form → GitHubError, no PUT", async () => {
+    // Use a body where the line itself is not in `key: <2-letter>` form.
+    // Realistic shape: a value that doesn't satisfy [a-z]{2}.
+    const body = 'title: My Site\ntelar_language: invalid_value_too_long\n';
+    const fetchMock = vi.fn().mockResolvedValueOnce(makeGetConfig(body));
+    globalThis.fetch = fetchMock;
+
+    await expect(patchSiteConfigLanguage(TOKEN, "me", "my-site", "es")).rejects.toBeInstanceOf(
+      GitHubError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1); // only the GET, no PUT
+  });
+
+  it("Test 6 (PUT 409 SHA stale): throws GitHubError, no retry", async () => {
+    const original = '  telar_language: "en" # Options: ...';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeGetConfig(original, "stale-sha"))
+      .mockResolvedValueOnce(makePut(409));
+    globalThis.fetch = fetchMock;
+
+    await expect(patchSiteConfigLanguage(TOKEN, "me", "my-site", "es")).rejects.toBeInstanceOf(
+      GitHubError,
+    );
+    // Exactly one GET + one PUT (no retry)
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("Test 7 (regex preserves trailing comment + quote style across single + double quotes)", async () => {
+    // Single-quote variant
+    const original = "  telar_language: 'en' # Trailing comment";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeGetConfig(original, "s"))
+      .mockResolvedValueOnce(makePut());
+    globalThis.fetch = fetchMock;
+
+    await patchSiteConfigLanguage(TOKEN, "me", "my-site", "es");
+
+    const putBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    const patched = Buffer.from(putBody.content as string, "base64").toString("utf-8");
+    // Helper normalises to double quotes (the locked replacement string is `$1"${locale}"$3`).
+    expect(patched).toContain('telar_language: "es" # Trailing comment');
+  });
+});
