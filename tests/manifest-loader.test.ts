@@ -401,4 +401,52 @@ describe("loadManifestChain", () => {
       /Missing migration manifest/,
     );
   });
+
+  it("walks skip-version chains by listing releases (e.g. 1.2.0 → 1.2.1 → 1.3.0)", async () => {
+    // Production regression: bundled ends at 1.2.0, target is 1.3.0, but
+    // v1.3.0's manifest starts at 1.2.1 (skip-version). The discovery has
+    // to find v1.2.1 as the intermediate hop via the release listing.
+    bundledHolder.manifests = [m("1.1.0", "1.2.0")];
+
+    fetchMock.mockImplementation((url: string) => {
+      // 1. Direct fast-path probe: v1.3.0 release + its asset.
+      if (url.endsWith("/releases/tags/v1.3.0")) {
+        return Promise.resolve(
+          okResponse({
+            assets: [{ name: "migration.json", url: "https://api/asset/v1.3.0" }],
+          }),
+        );
+      }
+      if (url === "https://api/asset/v1.3.0") {
+        return Promise.resolve(okResponse(rawManifest("1.2.1", "1.3.0")));
+      }
+      // 2. Release listing.
+      if (url.endsWith("/releases?per_page=100")) {
+        return Promise.resolve(
+          okResponse([{ tag_name: "v1.3.0" }, { tag_name: "v1.2.1" }]),
+        );
+      }
+      // 3. v1.2.1 release + its asset (the intermediate hop).
+      if (url.endsWith("/releases/tags/v1.2.1")) {
+        return Promise.resolve(
+          okResponse({
+            assets: [{ name: "migration.json", url: "https://api/asset/v1.2.1" }],
+          }),
+        );
+      }
+      if (url === "https://api/asset/v1.2.1") {
+        return Promise.resolve(okResponse(rawManifest("1.2.0", "1.2.1")));
+      }
+      return Promise.resolve(errorResponse(404));
+    });
+
+    const result = await loadManifestChain(TOKEN, "1.1.0", "1.3.0");
+    expect(result).toHaveLength(3);
+    expect(result[0].from_version).toBe("1.1.0");
+    expect(result[0].to_version).toBe("1.2.0");
+    expect(result[1].from_version).toBe("1.2.0");
+    expect(result[1].to_version).toBe("1.2.1");
+    expect(result[2].from_version).toBe("1.2.1");
+    expect(result[2].to_version).toBe("1.3.0");
+  });
 });

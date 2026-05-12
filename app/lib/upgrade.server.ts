@@ -620,23 +620,87 @@ export function chainManifests(
 }
 
 /**
+ * Find the migration manifest whose `from_version === deadEnd` by walking
+ * candidate release tags between `deadEnd` and `toVersion`.
+ *
+ * Strategy, in order:
+ *   1. Try `v{toVersion}` directly — the common single-hop case.
+ *   2. List the framework's releases and filter to semver tags in the half-
+ *      open range (deadEnd, toVersion]. Try each ascending; first manifest
+ *      whose `from_version` matches the dead-end wins. This covers skip-
+ *      version chains (e.g. v1.2.0 → v1.2.1 → v1.3.0 where v1.3.0's manifest
+ *      starts at 1.2.1, not 1.2.0).
+ *   3. Legacy fallback (`v{deadEnd}`, bare `deadEnd`, bare `toVersion`) for
+ *      non-semver tags or transient list-API failures.
+ *
+ * Returns null when no candidate yields a matching manifest.
+ */
+async function discoverNextManifest(
+  token: string,
+  deadEnd: string,
+  toVersion: string,
+): Promise<Manifest | null> {
+  const tryTag = async (tag: string): Promise<Manifest | null> => {
+    try {
+      const m = await fetchReleaseManifest(token, tag);
+      if (m && m.from_version === deadEnd) return m;
+    } catch {
+      // Non-404 errors bubble up to the caller eventually; for discovery we
+      // treat any fetch failure as "try the next tag".
+    }
+    return null;
+  };
+
+  // 1. Single-hop fast path.
+  const direct = await tryTag(`v${toVersion}`);
+  if (direct) return direct;
+
+  // 2. Release listing + semver-range walk.
+  const dSemver = parseTelarVersion(deadEnd);
+  const tSemver = parseTelarVersion(toVersion);
+  if (dSemver && tSemver) {
+    let releases: TelarRelease[] = [];
+    try {
+      releases = await fetchAllReleases(token);
+    } catch {
+      // Listing failed — fall through to legacy fallback below.
+    }
+    const candidates = releases
+      .map((r) => ({ tag: r.tagName, sv: parseTelarVersion(r.tagName) }))
+      .filter(
+        (r) =>
+          r.sv !== null &&
+          compareVersions(r.tag, deadEnd) > 0 &&
+          compareVersions(r.tag, toVersion) <= 0,
+      )
+      .sort((a, b) => compareVersions(a.tag, b.tag));
+
+    for (const c of candidates) {
+      const m = await tryTag(c.tag);
+      if (m) return m;
+    }
+  }
+
+  // 3. Legacy fallback for non-semver tags or list-API failure.
+  for (const tag of [`v${deadEnd}`, deadEnd, toVersion]) {
+    const m = await tryTag(tag);
+    if (m) return m;
+  }
+
+  return null;
+}
+
+/**
  * Load + chain manifests from bundled + release-asset sources. Bundled
- * manifests cover historical versions; anything not bundled
- * is fetched as a release asset from the framework repo.
+ * manifests cover historical versions; anything not bundled is discovered
+ * via the framework repo's releases.
  *
  * Algorithm:
  *   1. Seed the accumulated set with BUNDLED_MANIFESTS.
- *   2. Try chainManifests. On "no manifest from X" error, attempt to fetch
- *      the missing manifest by release tag (trying a small set of tag
- *      candidates), verify its from_version matches the dead-end, and retry.
- *   3. Fail closed after 10 attempts or when no candidate tag yields the
+ *   2. Try chainManifests. On "no manifest from X" error, call
+ *      discoverNextManifest to find the missing link, push it, and retry.
+ *   3. Fail closed after 10 attempts or when no candidate yields the
  *      required manifest.
- *
- * Tag-name heuristic: a release at tag `vX.Y.Z` ships a migration.json whose
- * to_version is "X.Y.Z" and whose from_version is the previous version. The
- * candidate list tries `v{deadEnd}` and `{deadEnd}` (for releases tagged at
- * the from-version — rare), and `v{toVersion}` / `{toVersion}` (for the
- * common single-hop case where the dead-end is exactly one step away).
  */
 export async function loadManifestChain(
   token: string,
@@ -654,35 +718,11 @@ export async function loadManifestChain(
       const match = msg.match(/no manifest from ([^\s]+)/);
       if (!match) throw err;
       const deadEnd = match[1];
-      // Heuristic: try a handful of likely release-tag names. In practice
-      // users are rarely more than one step behind, so v{toVersion} is the
-      // most likely hit. For multi-hop cases this will eventually fail and
-      // surface a clear error — which is preferable to silent data loss.
-      const candidateTags = [
-        `v${toVersion}`,
-        toVersion,
-        `v${deadEnd}`,
-        deadEnd,
-      ];
-      let fetched: Manifest | null = null;
-      for (const tag of candidateTags) {
-        let attempt: Manifest | null = null;
-        try {
-          attempt = await fetchReleaseManifest(token, tag);
-        } catch {
-          // Non-404 fetch errors bubble up; 404 already yielded null — for
-          // chain discovery we treat fetch-level errors as "try next tag".
-          continue;
-        }
-        if (attempt && attempt.from_version === deadEnd) {
-          fetched = attempt;
-          break;
-        }
-      }
+      const fetched = await discoverNextManifest(token, deadEnd, toVersion);
       if (!fetched) {
         throw new Error(
           `Missing migration manifest for upgrade path ${deadEnd} → (toward ${toVersion}). ` +
-            `Ensure the framework release includes a migration.json asset.`,
+            `Ensure the framework releases between ${deadEnd} and ${toVersion} include migration.json assets.`,
         );
       }
       accumulated.push(fetched);
