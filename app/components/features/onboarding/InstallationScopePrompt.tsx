@@ -1,21 +1,25 @@
 /**
- * InstallationScopePrompt — reusable polling prompt shown when the GitHub
- * App cannot yet see a repository the user needs access to. Opens the
- * GitHub App installation settings in a new tab and polls `/onboarding`
- * with `intent=check-installation-scope` every 2s until the server reports
- * `inScope: true`, then calls `onResolved()`.
+ * This file renders the installation-scope polling prompt — a
+ * reusable widget shown when the GitHub App cannot yet see a
+ * repository the user needs access to. Opens the GitHub App
+ * installation settings in a new tab and polls `/onboarding` with
+ * `intent=check-installation-scope` every 2s until the server
+ * reports `inScope: true`, then calls `onResolved()`.
  *
  * Used by:
- *  - CreateSiteForm — after repo creation, while waiting for the user to
- *    grant the GitHub App access to the new repo.
- *  - StepConnect — normal connect flow when the user picks an existing
- *    repo the App can't see.
+ *  - `CreateSiteForm` — after repo creation, while waiting for the
+ *    user to grant the GitHub App access to the new repo.
+ *  - `StepConnect` — normal connect flow when the user picks an
+ *    existing repo the App can't see.
  *
  * Safety:
- *  - setInterval is cleared on unmount.
- *  - onResolved is ref-guarded so it fires at most once, and never after unmount.
- *  - Anchor uses rel="noopener noreferrer".
+ *  - `setInterval` is cleared on unmount.
+ *  - `onResolved` is ref-guarded so it fires at most once, and
+ *    never after unmount.
+ *  - Anchor uses `rel="noopener noreferrer"`.
  *  - Never renders raw fetcher error messages.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useEffect, useRef } from "react";
@@ -28,6 +32,14 @@ interface InstallationScopePromptProps {
   owner: string;
   repoName: string;
   onResolved: () => void;
+  /**
+   * i18n key prefix for the four strings rendered (title, body, grant_button,
+   * waiting). Defaults to `create_site.installation_scope` for the original
+   * create-site call sites. The connect path uses
+   * `step_connect.installation_scope` so the body copy stays accurate
+   * (a fresh fetcher key per consumer keeps the polling streams isolated).
+   */
+  i18nKeyPrefix?: string;
   className?: string;
 }
 
@@ -40,6 +52,7 @@ export function InstallationScopePrompt({
   owner,
   repoName,
   onResolved,
+  i18nKeyPrefix = "create_site.installation_scope",
   className = "",
 }: InstallationScopePromptProps) {
   const { t } = useTranslation("onboarding");
@@ -99,10 +112,10 @@ export function InstallationScopePrompt({
       className={`border border-gray-200 bg-cream rounded-lg p-4 ${className}`}
     >
       <h3 className="font-heading font-semibold text-base text-charcoal mb-2">
-        {t("create_site.installation_scope.title")}
+        {t(`${i18nKeyPrefix}.title`)}
       </h3>
       <p className="font-body text-sm text-gray-600 mb-4">
-        {t("create_site.installation_scope.body")}
+        {t(`${i18nKeyPrefix}.body`)}
       </p>
       <a
         href={`https://github.com/settings/installations/${installationId}`}
@@ -110,11 +123,11 @@ export function InstallationScopePrompt({
         rel="noopener noreferrer"
         className="inline-flex items-center justify-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider bg-periwinkle hover:bg-periwinkle-hover text-charcoal rounded-full px-6 py-2.5 transition-colors"
       >
-        {t("create_site.installation_scope.grant_button")}
+        {t(`${i18nKeyPrefix}.grant_button`)}
       </a>
       <p className="mt-3 inline-flex items-center gap-2 font-body text-xs text-gray-500">
         <Loader2 className="w-3 h-3 animate-spin" />
-        {t("create_site.installation_scope.waiting")}
+        {t(`${i18nKeyPrefix}.waiting`)}
       </p>
     </div>
   );

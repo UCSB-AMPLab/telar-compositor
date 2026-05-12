@@ -1,10 +1,15 @@
 /**
- * Onboarding wizard route.
+ * This file renders the onboarding wizard — a 4-step Connect → Sync →
+ * Review → Done flow that a new user runs once to bring their Telar
+ * repo into the compositor.
  *
- * 4-step wizard: Connect → Sync → Review → Done.
- * Own layout (no tab nav). Auth-protected via authMiddleware.
- * Loader fetches GitHub App installations and repos.
- * Action runs the import pipeline and handles Sheets URL retry.
+ * Has its own layout (no tab nav). Auth-protected via authMiddleware.
+ * Loader fetches GitHub App installations and the user's repos. Action
+ * runs the full import pipeline and handles the Sheets URL retry path
+ * (where the user's first Sheets URL was inaccessible and they enter a
+ * corrected one).
+ *
+ * @version v1.2.0-beta
  */
 
 import { redirect } from "react-router";
@@ -38,7 +43,7 @@ import { Header } from "~/components/layout/Header";
 import { WizardShell } from "~/components/features/onboarding/WizardShell";
 
 export const middleware = [authMiddleware];
-export const handle = { i18n: ["onboarding", "common"] };
+export const handle = { i18n: ["onboarding", "common", "account"] };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -249,7 +254,13 @@ export async function action({ request, context }: Route.ActionArgs) {
     intent === "create-site" ||
     intent === "check-installation-scope"
   ) {
-    return handleCreateSiteIntents(intent, formData, token, env);
+    return handleCreateSiteIntents(
+      intent,
+      formData,
+      token,
+      env,
+      (user.ui_locale as "en" | "es" | null) ?? null,
+    );
   }
 
   if (intent === "save_config") {

@@ -1,5 +1,6 @@
 {
   "title": "Site Configuration",
+  "account_link_note": "For your user account settings, such as the interface language, <1>go to your account</1>.",
   "save": "Save Changes",
   "saving": "Saving…",
   "saved": "Changes saved",
@@ -23,6 +24,12 @@
       "field_theme": "Theme",
       "field_theme_help": "Choose a color theme for your site.",
       "refresh_themes": "Refresh themes from repository",
+      "theme_alert": {
+        "title_unrecognised": "We didn't recognise this theme",
+        "body_unrecognised": "Your site config sets the theme to {{value}}, but we couldn't find a matching theme in your repository. Pick one of your themes below to update the setting.",
+        "title_empty": "No theme set yet",
+        "body_empty": "Your site doesn't have a theme set. Pick one of your themes below to assign one."
+      },
       "field_logo": "Logo URL (optional)",
       "field_logo_help": "URL to your site logo image.",
       "field_language": "Language",

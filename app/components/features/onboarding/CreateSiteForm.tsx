@@ -1,22 +1,28 @@
 /**
- * CreateSiteForm — single-field debounced create-site form plus its inline
- * progress view. Mirrors existing onboarding patterns (StepConnect /
- * SiteConfigConfirmation / StepSync).
+ * This file renders the create-site form inside the onboarding
+ * wizard — a single-field debounced repo-name input plus the inline
+ * progress view that appears while the new repo is being
+ * provisioned. Mirrors existing onboarding patterns
+ * (`StepConnect` / `SiteConfigConfirmation` / `StepSync`).
  *
- * Theme token: uses `periwinkle` accent (matches existing StepConnect usage).
- * Both --color-lavender and --color-periwinkle exist at #C6D0F8 in app.css; we keep
+ * Theme token: uses `periwinkle` accent (matches existing
+ * `StepConnect` usage). Both `--color-lavender` and
+ * `--color-periwinkle` exist at `#C6D0F8` in `app.css`; we keep
  * `periwinkle` to avoid a split in onboarding.
  *
- * i18n note: `create_site.progress.*` currently ships with `creating`, `still_setting_up`,
- * and `success`. A dedicated `checking_access` key does not yet exist; this file uses
- * `create_site.installation_scope.waiting` as the closest existing key for the second
- * progress row.
+ * i18n note: `create_site.progress.*` currently ships with
+ * `creating`, `still_setting_up`, and `success`. A dedicated
+ * `checking_access` key does not yet exist; this file uses
+ * `create_site.installation_scope.waiting` as the closest existing
+ * key for the second progress row.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import { Check, AlertTriangle, Loader2, ArrowLeft, ExternalLink } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
 import { InstallationScopePrompt } from "./InstallationScopePrompt";
 import type { RepoWithInstallation } from "~/routes/onboarding";
@@ -56,7 +62,15 @@ type AvailabilityData =
   | { ok: false; intent: "check-repo-name"; error: "github_error"; message?: string; name?: string };
 
 type CreateData =
-  | { ok: true; intent: "create-site"; repoUrl: string; defaultBranch: string; owner: string; name: string }
+  | {
+      ok: true;
+      intent: "create-site";
+      repoUrl: string;
+      defaultBranch: string;
+      owner: string;
+      name: string;
+      langPatchFailed?: boolean;
+    }
   | { ok: false; intent: "create-site"; error: "repo_name_taken" | "permission_denied" | "repo_not_ready" }
   | { ok: false; intent: "create-site"; error: "github_error"; message?: string };
 
@@ -71,13 +85,18 @@ export function CreateSiteForm({
   onBack,
   className = "",
 }: CreateSiteFormProps) {
-  const { t } = useTranslation("onboarding");
+  const { t } = useTranslation(["onboarding", "account"]);
 
   const [name, setName] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("form");
   const [nameState, setNameState] = useState<NameState>({ kind: "idle" });
   const [createError, setCreateError] = useState<CreateData | null>(null);
   const [scopeError, setScopeError] = useState<ScopeData | null>(null);
+  // When langPatchFailed=true, hold the wizard on the progress view with the
+  // amber warning visible until the user explicitly confirms via the Continue
+  // button. Otherwise the auto-advance via scopeFetcher hides the warning
+  // before the user can read it.
+  const [pendingRepo, setPendingRepo] = useState<RepoWithInstallation | null>(null);
 
   const availabilityFetcher = useFetcher<AvailabilityData>();
   const createFetcher = useFetcher<CreateData>();
@@ -178,6 +197,12 @@ export function CreateSiteForm({
         description: null,
         installationId,
       };
+      // Hold on the progress view if the language patch soft-failed so the
+      // amber warning is actually readable. User confirms via "Continue".
+      if (createData.langPatchFailed) {
+        setPendingRepo(syntheticRepo);
+        return;
+      }
       onSelect(syntheticRepo);
       return;
     }
@@ -246,6 +271,50 @@ export function CreateSiteForm({
             </span>
           </li>
         </ul>
+
+        {/* Language-patch failure note. Shown only on
+            the success path when patchSiteConfigLanguage soft-failed. Non-
+            blocking — the site exists; user just needs to flip the language
+            manually in Config. */}
+        {createFetcher.data?.ok && createFetcher.data.langPatchFailed === true && (
+          <div
+            role="status"
+            aria-label={t("preferences.create_site_lang_patch_failed_aria_label", { ns: "account" }) as string}
+            className="mt-5 border border-amber-200 bg-amber-50 rounded-lg p-4"
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle aria-hidden="true" className="w-4 h-4 text-amber-700 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="font-body text-sm text-amber-900">
+                  <Trans
+                    i18nKey="preferences.create_site_lang_patch_failed_body"
+                    ns="account"
+                    components={[
+                      <a
+                        key="config-link"
+                        href="/config"
+                        className="text-amber-900 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-1 rounded-sm"
+                      />,
+                    ]}
+                  />
+                </p>
+                {pendingRepo && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const repo = pendingRepo;
+                      setPendingRepo(null);
+                      onSelect(repo);
+                    }}
+                    className="mt-3 font-heading font-semibold text-xs uppercase tracking-wider text-amber-900 underline underline-offset-4 hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-1 rounded-sm"
+                  >
+                    {t("preferences.create_site_lang_patch_failed_continue", { ns: "account" })}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Error rendering */}
         {createError && !createError.ok && createError.error === "permission_denied" && (

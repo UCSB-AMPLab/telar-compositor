@@ -19,7 +19,7 @@
     "missing_repo_callout_body": "El Compositor de Telar solo ve repositorios en las cuentas y organizaciones donde está instalado. Para usar un repositorio de otra cuenta u organización, instálalo allí también.",
     "missing_repo_callout_cta": "Instalar en otra cuenta u organización",
     "connected_badge": "Conectado",
-    "new_repo_badge": "Nuevo — conecta para continuar",
+    "new_repo_badge": "Nuevo — sin conectar",
     "your_sites_heading": "Tus sitios conectados",
     "add_another_heading": "Agregar otro sitio",
     "status_complete": "Sitio listo",
@@ -33,7 +33,13 @@
     "unlink_cancel": "Cancelar",
     "unlink_confirm": "Desvincular",
     "private_repo_warning_title": "Este repositorio es privado",
-    "private_repo_warning_body": "Las cuentas gratuitas de GitHub no pueden publicar sitios web desde repositorios privados. <repoSettings>Cambia este repositorio a público</repoSettings> en la configuración de GitHub, o actualiza a una cuenta de GitHub de pago — si eres estudiante, es posible que califiques para el <studentPack>GitHub Student Developer Pack</studentPack> gratuito. En cualquier caso, tendrás que volver aquí y comenzar el proceso de importación de nuevo."
+    "private_repo_warning_body": "GitHub Pages no publica repositorios privados cuando la cuenta de GitHub es gratuita. <repoSettings>Cambia este repositorio a público</repoSettings> en la configuración de GitHub, o actualiza a una cuenta de pago — si estudias, puedes solicitar el <studentPack>GitHub Student Developer Pack</studentPack> gratuito. En cualquiera de los dos casos, vas a tener que volver acá y empezar la importación otra vez.",
+    "installation_scope": {
+      "title": "Da acceso a este repositorio",
+      "body": "El Compositor de Telar aún no tiene permiso para ver este repositorio. Haz clic en el botón de abajo para actualizar el acceso de la aplicación en GitHub y luego vuelve a esta página.",
+      "grant_button": "Dar acceso en GitHub",
+      "waiting": "Esperando acceso a este repositorio..."
+    }
   },
   "step_sync": {
     "heading": "Importando contenido",
