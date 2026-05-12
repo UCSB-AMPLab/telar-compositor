@@ -262,6 +262,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       },
     };
   } catch (err) {
+    // React Router throws Response objects for redirects and explicit
+    // status responses — re-throw so the framework can act on them.
+    if (err instanceof Response) throw err;
     // GitHub API unavailable — show minimal page
     console.error("Upgrade loader error:", err);
     return {
