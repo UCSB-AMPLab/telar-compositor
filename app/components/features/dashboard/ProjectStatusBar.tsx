@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { Link } from "react-router";
-import { Github, ChevronDown, ExternalLink } from "lucide-react";
+import { Github, ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { formatRelative } from "~/lib/format-relative";
 
@@ -29,7 +29,6 @@ interface ProjectStatusBarProps {
   activeProjectId: number;
   onSwitchProject: (projectId: number) => void;
   onSyncClick: () => void;
-  pagesUrl?: string | null;
   className?: string;
 }
 
@@ -43,7 +42,6 @@ export function ProjectStatusBar({
   activeProjectId,
   onSwitchProject,
   onSyncClick,
-  pagesUrl = null,
   className = "",
 }: ProjectStatusBarProps) {
   const { t } = useTranslation("dashboard");
@@ -111,19 +109,6 @@ export function ProjectStatusBar({
           <span className="text-xs font-medium">{formatRelative(lastPublished, neverLabel)}</span>
         </div>
       </div>
-
-      {/* View published site link */}
-      {pagesUrl && (
-        <a
-          href={pagesUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs font-body text-periwinkle hover:text-charcoal transition-colors shrink-0"
-        >
-          {t("status_bar.view_site")}
-          <ExternalLink className="w-3 h-3" />
-        </a>
-      )}
 
       {/* Spacer */}
       <div className="flex-1" />
