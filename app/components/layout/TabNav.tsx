@@ -1,11 +1,15 @@
 /**
- * TabNav — horizontal tab navigation for the authenticated shell.
+ * This file renders the horizontal tab navigation for the
+ * authenticated shell — the bar of eight tabs (Dashboard, Config,
+ * Homepage, Objects, Stories, Pages, Glossary, Publish) that sits
+ * directly under the header.
  *
- * Eight tabs: Dashboard, Config, Homepage, Objects, Stories, Pages, Glossary, Publish.
- * Active tab: charcoal underline and text. Space Grotesk, uppercase, xs.
- * Save indicator at far right: detects in-flight fetchers globally.
- * Presence dots: coloured dot appears next to tab label when a remote collaborator
- * is on that route.
+ * Active tab: charcoal underline and text. Space Grotesk, uppercase,
+ * xs. Save indicator at far right: detects in-flight fetchers
+ * globally. Presence dots: a coloured dot appears next to a tab
+ * label when a remote collaborator is on that route.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useEffect } from "react";

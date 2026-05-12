@@ -9,8 +9,12 @@ import { describe, it, expect } from "vitest";
 import { supportedLanguages, fallbackLanguage, defaultNS, namespaces } from "~/i18n/config";
 import enCommon from "~/i18n/locales/en/common.json";
 import enAuth from "~/i18n/locales/en/auth.json";
+import enConfig from "~/i18n/locales/en/config.json";
+import enOnboarding from "~/i18n/locales/en/onboarding.json";
 import esCommon from "~/i18n/locales/es/common.json";
 import esAuth from "~/i18n/locales/es/auth.json";
+import esConfig from "~/i18n/locales/es/config.json";
+import esOnboarding from "~/i18n/locales/es/onboarding.json";
 import { localeCookieConfig } from "~/i18n/i18next.server";
 
 // ---------------------------------------------------------------------------
@@ -117,6 +121,28 @@ describe("es/auth.json", () => {
 
     for (const key of enKeys) {
       expect(esKeys.has(key), `ES auth missing key: ${key}`).toBe(true);
+    }
+  });
+});
+
+describe("es/config.json", () => {
+  it("has same keys as en/config.json (values can be empty strings)", () => {
+    const enKeys = flatKeys(enConfig as Record<string, unknown>);
+    const esKeys = flatKeys(esConfig as Record<string, unknown>);
+
+    for (const key of enKeys) {
+      expect(esKeys.has(key), `ES config missing key: ${key}`).toBe(true);
+    }
+  });
+});
+
+describe("es/onboarding.json", () => {
+  it("has same keys as en/onboarding.json (values can be empty strings)", () => {
+    const enKeys = flatKeys(enOnboarding as Record<string, unknown>);
+    const esKeys = flatKeys(esOnboarding as Record<string, unknown>);
+
+    for (const key of enKeys) {
+      expect(esKeys.has(key), `ES onboarding missing key: ${key}`).toBe(true);
     }
   });
 });

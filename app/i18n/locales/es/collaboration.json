@@ -15,7 +15,7 @@
   "publish_freeze_dismiss": "Cerrar",
   "upgrade_freeze_heading": "Actualizando Telar",
   "upgrade_freeze_body_owner": "Aplicando la actualización de Telar. No cierres esta pestaña.",
-  "upgrade_freeze_body_collaborator": "La persona coordinadora del sitio está actualizando Telar. La edición está pausada hasta que termine.",
+  "upgrade_freeze_body_collaborator": "La edición del sitio está pausada mientras que la persona que lo coordina actualiza Telar.",
   "upgrade_freeze_error_heading": "Falló la actualización",
   "upgrade_freeze_error_body": "Algo salió mal. Revisa tu conexión y vuelve a intentarlo desde la página de actualización.",
   "upgrade_freeze_dismiss": "Cerrar",

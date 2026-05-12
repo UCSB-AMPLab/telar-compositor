@@ -1,17 +1,22 @@
 /**
- * Authenticated application layout.
- *
- * Applies auth middleware — all child routes are protected.
- * Renders: Header + TabNav + UpgradeBanner (when outdated) + SyncBanner (when HEAD diverged) + content area + Footer.
+ * This file is the authenticated application layout — every signed-in
+ * page renders inside its shell. Applies auth middleware (all child
+ * routes are protected) and renders Header + TabNav + UpgradeBanner
+ * (when outdated) + SyncBanner (when HEAD diverged) + content area +
+ * Footer.
  *
  * On every authenticated page load, the loader:
- *   1. Checks whether the active project's stored head_sha matches the repo's
- *      current HEAD. If not, sets headDiverged: true so the SyncBanner can warn.
- *   2. Checks the site's telar_version against the latest release. If outdated,
- *      sets needsUpgrade: true and redirects gated routes (/publish, /objects)
- *      to /upgrade.
+ *   1. Checks whether the active project's stored `head_sha` matches
+ *      the repo's current HEAD. If not, sets `headDiverged: true` so
+ *      the SyncBanner can warn.
+ *   2. Checks the site's `telar_version` against the latest release.
+ *      If outdated, sets `needsUpgrade: true` and redirects gated
+ *      routes (/publish, /objects) to /upgrade.
  *
- * Both checks fail open — if the GitHub API call fails, the user is not blocked.
+ * Both checks fail open — if the GitHub API call fails, the user is
+ * not blocked.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -41,7 +46,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowUpCircle, Loader2 } from "lucide-react";
 
 export const middleware = [authMiddleware];
-export const handle = { i18n: ["common", "upgrade", "collaboration"] };
+export const handle = { i18n: ["common", "upgrade", "collaboration", "bug-report", "account"] };
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);

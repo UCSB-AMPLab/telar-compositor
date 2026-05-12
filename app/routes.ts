@@ -1,3 +1,11 @@
+/**
+ * This file is the React Router route manifest — every URL the
+ * compositor serves is registered here, grouped into API routes,
+ * unauthenticated routes, and the authenticated `_app` shell.
+ *
+ * @version v1.2.0-beta
+ */
+
 import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
 
 export default [
@@ -29,6 +37,7 @@ export default [
     route("/homepage", "routes/_app.homepage.tsx"),
     route("/pages", "routes/_app.pages.tsx"),
     route("/glossary", "routes/_app.glossary.tsx"),
+    route("/account", "routes/_app.account.tsx"),
     route("/config", "routes/_app.config.tsx"),
     route("/publish", "routes/_app.publish.tsx"),
     route("/upgrade", "routes/_app.upgrade.tsx"),
