@@ -1,16 +1,19 @@
 /**
- * Tests for the upgrade route action — end-to-end pipeline.
+ * This file tests the upgrade route action end-to-end.
  *
  * Covers: loadManifestChain + applyManifestChain + tree-diff merge + atomic
  * commit + D1 version bump, including the blocker merge-order fix (patchedConfig
- * seeded into manifest-runner input, not pre-upgrade configContent) and
- * Pitfall 1 symmetric version normalisation.
+ * seeded into manifest-runner input, not pre-upgrade configContent) and the
+ * symmetric version normalisation that handles the historical edge case where
+ * recorded versions occasionally lacked a leading `v`.
  *
  * Mocking strategy: because the action pulls in auth middleware, drizzle/D1,
  * crypto, session storage, and GitHub helpers, we mock the whole dependency
  * graph at the module boundary and invoke `action({request, context})`
  * directly. The D1 layer is mocked as a chainable drizzle builder via a small
  * hand-rolled fake that tracks `.update(table).set(values).where(...)` calls.
+ *
+ * @version v1.0.1-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -448,7 +451,7 @@ describe("upgrade action: manifest pipeline", () => {
     expect((res.manualSteps as Array<unknown>).length).toBeGreaterThan(0);
   });
 
-  it("returns upgradeError when loadManifestChain throws (Pitfall 6 — Missing migration manifest)", async () => {
+  it("returns upgradeError when loadManifestChain throws (missing migration manifest)", async () => {
     vi.mocked(fetchLatestRelease).mockResolvedValue(latestRelease("v1.2.0"));
     vi.mocked(computeUpgradeDiff).mockResolvedValue(emptyDiff());
     vi.mocked(loadManifestChain).mockRejectedValueOnce(

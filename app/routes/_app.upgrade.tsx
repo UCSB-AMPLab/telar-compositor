@@ -1,16 +1,21 @@
 /**
- * Upgrade route — shows version info, release notes, file change summary,
- * and an upgrade button that commits framework files atomically.
+ * This file is the Upgrade route — surfaces version info, release
+ * notes, and the file-change summary the user sees before clicking
+ * Upgrade. The button commits framework files atomically against
+ * the user's repo.
  *
- * Loader: fetches latest release, computes upgrade diff between user's repo
- *         and the latest framework release.
+ * Loader fetches the latest framework release and computes the
+ * upgrade diff between the user's repo and that release.
  *
- * Action: handles three intents —
- *   upgrade:      commits framework files atomically, updates D1
- *   poll-build:   polls GitHub Actions for build progress
- *   compute-diff: recomputes the diff (refresh/retry)
+ * Action handles three intents:
+ *   - `upgrade` — commits framework files atomically, updates D1
+ *   - `poll-build` — polls GitHub Actions for build progress
+ *   - `compute-diff` — recomputes the diff (refresh / retry)
  *
- * Component: 4-stage state machine — review | upgrading | building | done.
+ * Renders a 4-stage state machine — review | upgrading | building |
+ * done.
+ *
+ * @version v1.2.0-beta
  */
 
 import { redirect, useFetcher, useRouteLoaderData } from "react-router";
@@ -58,6 +63,8 @@ import {
 import type { UpgradeDiff, TelarRelease, UpgradeSummary } from "~/lib/upgrade.server";
 import { applyManifestChain } from "~/lib/manifest-runner.server";
 import type { ManifestApplyResult } from "~/lib/manifest-runner.server";
+import { applyV130Transforms } from "~/lib/v130-ingest.server";
+import type { V130IngestResult } from "~/lib/v130-ingest.server";
 import type { Manifest, ManualStep } from "~/lib/manifest-schema.server";
 import {
   commitFilesToRepo,
@@ -353,7 +360,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         .limit(1);
       const oldVersion = configRows[0]?.telar_version ?? "unknown";
 
-      // Pitfall 1: exact-string-equality chain discovery — normalise both sides.
+      // Exact-string-equality chain discovery — normalise both sides.
       const fromVersion = (oldVersion ?? "").replace(/^v/, "");
       const toVersion = latestRelease.tagName.replace(/^v/, "");
 
@@ -361,7 +368,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       try {
         manifestChain = await loadManifestChain(token, fromVersion, toVersion);
       } catch (err) {
-        // Pitfall 6: missing release-asset manifest — fail closed, no commit.
+        // Missing release-asset manifest — fail closed, no commit.
         console.error(
           `[runUpgradePrepare] loadManifestChain failed (${fromVersion} -> ${toVersion}):`,
           err,
@@ -403,6 +410,44 @@ export async function action({ request, context }: Route.ActionArgs) {
           error: "manifest_failed",
           message: err instanceof Error ? err.message : "Manifest application failed",
         };
+      }
+
+      // v1.3.0 ingest: when target version >= 1.3.0, run
+      // bespoke transforms over the same virtual filesystem. v1.3.0's release
+      // manifest is operations:[] — the Python reference migration's three
+      // conditional transforms (A/B/C) live in v130-ingest.server.ts.
+      //
+      // Use compareVersions, not string compare. compareVersions
+      // strips the "v" prefix internally but expects parseable input.
+      let v130Result: V130IngestResult | null = null;
+      if (compareVersions(`v${toVersion}`, "v1.3.0") >= 0) {
+        // Preload the four content files (plus the acerca.md probe) into the
+        // Map. collectFilesReferencedByChain does NOT enumerate these for the
+        // bespoke transforms — preload here. Missing files (404 → null) leave
+        // the Map slot empty; Transform A returns { changed:false, reason:
+        // "missing" }. The user OAuth token works for user-repo reads.
+        for (const path of [
+          "index.md",
+          "pages/glossary.md",
+          "pages/objects.md",
+          "telar-content/texts/pages/about.md",
+          "telar-content/texts/pages/acerca.md",
+        ]) {
+          if (!manifestResult.files.has(path)) {
+            const content = await getFileContent(token, owner, repo, path);
+            if (content !== null) manifestResult.files.set(path, content);
+          }
+        }
+        v130Result = await applyV130Transforms(manifestResult.files, language);
+        // v130Result.files === manifestResult.files (mutated in place); the
+        // additions merge below picks up Transform A replacements + Transform
+        // C's silent acerca.md creation automatically.
+        if (v130Result.changes.length > 0) {
+          console.log(
+            `[runUpgradePrepare] v130 ingest applied ${v130Result.changes.length} change(s):`,
+            v130Result.changes,
+          );
+        }
       }
 
       // Merge additions: framework tree-diff first, then manifest-runner output
@@ -495,6 +540,14 @@ export async function action({ request, context }: Route.ActionArgs) {
         console.error("D1 update after upgrade commit failed:", d1Err);
       }
 
+      // The cleanProjectLanding helper was removed 2026-05-11 in favour of a
+      // display-layer treatment in `_app.homepage.tsx`'s loader: it surfaces
+      // the lang-pack canned text whenever landing.welcome_body is empty,
+      // the v1.3.0 liquid block, or the legacy v1.2.1 English literal. The publish
+      // (publish defensive gate) still prevents stale D1 from re-emitting
+      // English on the next publish. Import liquid-block recognition
+      // keeps D1 clean on natural re-sync after upgrade. Publish-time leak closure
+      // on the live site comes from the v1.3.0 framework upgrade itself.
       return {
         ok: true,
         newHeadSha,

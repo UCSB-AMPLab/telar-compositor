@@ -1,8 +1,7 @@
 /**
- * Upgrade library for the Telar Compositor.
- *
- * Provides version comparison, framework tree diffing, config mutation, and
- * GitHub Releases API access for the site upgrade flow.
+ * This file is the library powering the site-upgrade flow — version
+ * comparison, framework tree diffing, line-based config mutation, GitHub
+ * Releases lookup, and manifest-chain loading.
  *
  * Design notes:
  *   - Pure functions (parseTelarVersion, compareVersions, isFrameworkPath,
@@ -10,17 +9,19 @@
  *   - Async functions (fetchLatestRelease, fetchAllReleases,
  *     getFrameworkTreeAtTag, computeUpgradeDiff, checkTelarVersion) interact
  *     with the GitHub REST API and are tested with mocked fetch.
- *   - _config.yml mutation is line-based (not full YAML parse) to preserve
+ *   - `_config.yml` mutation is line-based (not full YAML parse) to preserve
  *     comments, whitespace, and user-authored content exactly.
  *   - checkTelarVersion fails open: if the GitHub API is unreachable, the
- *     function returns needsUpgrade: false rather than blocking the user.
+ *     function returns `needsUpgrade: false` rather than blocking the user.
  *
- * Framework repo: UCSB-AMPLab/telar (public — user OAuth token is sufficient)
+ * Framework repo: UCSB-AMPLab/telar (public — user OAuth token is sufficient).
  * Truncation note: the framework repo has no IIIF tiles, so the 100,000-entry
  * git tree limit is not a concern for getFrameworkTreeAtTag. For user repo
- * trees, framework paths are shallow and appear before IIIF tiles alphabetically,
- * so they will be present even in a truncated tree. Revisit if truncation is
- * ever detected in practice.
+ * trees, framework paths are shallow and appear before IIIF tiles
+ * alphabetically, so they will be present even in a truncated tree. Revisit
+ * if truncation is ever detected in practice.
+ *
+ * @version v1.2.0-beta
  */
 
 import { githubHeaders, decodeGitHubContent } from "~/lib/github.server";
@@ -65,6 +66,8 @@ export const FRAMEWORK_PREFIXES = [
 export const FRAMEWORK_FILES = [
   "_data/navigation.yml",
   "CHANGELOG.md",
+  // README.md is the only v1.3.0 framework file not covered by FRAMEWORK_PREFIXES.
+  "README.md",
   // Dependency manifests — source files assume these deps, CI fails otherwise.
   "package.json",
   "Gemfile",
@@ -254,7 +257,8 @@ export function categorizeFrameworkPath(path: string): keyof UpgradeSummary {
     path.startsWith("_data/languages/") ||
     path.startsWith("_data/themes/") ||
     path === "_data/navigation.yml" ||
-    path === "CHANGELOG.md"
+    path === "CHANGELOG.md" ||
+    path === "README.md"
   ) {
     return "dataFiles";
   }
@@ -626,7 +630,7 @@ export function chainManifests(
  *      the missing manifest by release tag (trying a small set of tag
  *      candidates), verify its from_version matches the dead-end, and retry.
  *   3. Fail closed after 10 attempts or when no candidate tag yields the
- *      required manifest (Pitfall 6 / A3).
+ *      required manifest.
  *
  * Tag-name heuristic: a release at tag `vX.Y.Z` ships a migration.json whose
  * to_version is "X.Y.Z" and whose from_version is the previous version. The
