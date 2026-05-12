@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 /**
- * use-collaboration.test.tsx — unit tests for the CollaborationContext hook.
+ * This file pins unit tests for the `CollaborationContext` hook.
  *
  * Tests: lastEditorByField population from awareness state,
  * and connectionStatus three-state field.
+ *
+ * @version v1.0.1-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -88,18 +90,6 @@ function renderWithProvider() {
 }
 
 // ---------------------------------------------------------------------------
-// Existing stubs
-// ---------------------------------------------------------------------------
-
-describe("CollaborationContext lastEditorByField", () => {
-  it.todo("initialises lastEditorByField as an empty Map");
-  it.todo("populates lastEditorByField when a remote user has a fieldKey in awareness state");
-  it.todo("updates lastEditorByField entry when the same fieldKey gets a new editor");
-  it.todo("preserves previous entries when a new fieldKey is added");
-  it.todo("does not include the local client's own awareness state");
-});
-
-// ---------------------------------------------------------------------------
 // contributionsByUser on CollaborationContext
 // ---------------------------------------------------------------------------
 
@@ -176,7 +166,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("connecting");
   });
 
-  it("SC-6: y-websocket status='connected' maps to connectionStatus='connected'", () => {
+  it("y-websocket status='connected' maps to connectionStatus='connected'", () => {
     renderWithProvider();
     act(() => {
       capturedStatusHandler?.({ status: "connected" });
@@ -184,7 +174,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("connected");
   });
 
-  it("SC-6: y-websocket status='connecting' maps to connectionStatus='connecting'", () => {
+  it("y-websocket status='connecting' maps to connectionStatus='connecting'", () => {
     renderWithProvider();
     // First go connected, then back to connecting
     act(() => {
@@ -196,7 +186,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("connecting");
   });
 
-  it("SC-6: y-websocket status='disconnected' maps to connectionStatus='offline'", () => {
+  it("y-websocket status='disconnected' maps to connectionStatus='offline'", () => {
     renderWithProvider();
     act(() => {
       capturedStatusHandler?.({ status: "disconnected" });
@@ -204,7 +194,7 @@ describe("connectionStatus field", () => {
     expect(capturedConnectionStatus).toBe("offline");
   });
 
-  it("SC-6: legacy `connected` boolean remains true when status==='connected' (backwards compat)", () => {
+  it("legacy `connected` boolean remains true when status==='connected' (backwards compat)", () => {
     renderWithProvider();
     act(() => {
       capturedStatusHandler?.({ status: "connected" });
@@ -215,8 +205,6 @@ describe("connectionStatus field", () => {
     });
     expect(capturedConnected).toBe(false);
   });
-
-  it.todo("onlineMembers list only contains session-authenticated awareness clients");
 });
 
 // ---------------------------------------------------------------------------
@@ -274,13 +262,13 @@ describe("isUpgrading / upgradeError awareness fields", () => {
     expect(capturedIsUpgrading).toBe(true);
   });
 
-  it("SC-1: upgradeError becomes true when any client broadcasts state.upgradeError=true", () => {
+  it("upgradeError becomes true when any client broadcasts state.upgradeError=true", () => {
     renderForUpgradeFields();
     simulateAwarenessStates(new Map([[2, { upgradeError: true }]]));
     expect(capturedUpgradeError).toBe(true);
   });
 
-  it("SC-1: isUpgrading clears to false when no client has state.upgrading set", () => {
+  it("isUpgrading clears to false when no client has state.upgrading set", () => {
     renderForUpgradeFields();
     simulateAwarenessStates(new Map([[2, { upgrading: true }]]));
     expect(capturedIsUpgrading).toBe(true);

@@ -1,15 +1,19 @@
 /**
- * Shared auth helpers for the worker entry and the Collaboration Durable Object.
+ * This file holds the shared auth helpers for the worker entry and
+ * the Collaboration Durable Object.
  *
- * Both `workers/app.ts` and `workers/collaboration.ts` need to read the
- * `__compositor_session` cookie and resolve it to a userId. Keeping these
- * helpers in a single module avoids duplication and keeps the cookie format
- * (React Router's HMAC-signed `<base64url(JSON)>.<base64url(HMAC)>` shape)
- * defined in one place.
+ * Both `workers/app.ts` and `workers/collaboration.ts` need to read
+ * the `__compositor_session` cookie and resolve it to a userId.
+ * Keeping these helpers in a single module avoids duplication and
+ * keeps the cookie format (React Router's HMAC-signed
+ * `<base64url(JSON)>.<base64url(HMAC)>` shape) defined in one
+ * place.
  *
- * Extracted from `workers/collaboration.ts` so the `/ws/:projectId/reset`
- * route in `workers/app.ts` can gate by session + project membership before
- * forwarding to the DO.
+ * Extracted from `workers/collaboration.ts` so the
+ * `/ws/:projectId/reset` route in `workers/app.ts` can gate by
+ * session + project membership before forwarding to the DO.
+ *
+ * @version v1.2.0-beta
  */
 
 /**
@@ -85,8 +89,8 @@ export async function getUserIdFromToken(
 
 // ---------------------------------------------------------------------------
 // Internal-marker signing/verification for the worker -> DO /reset flow.
-// workers/app.ts signs a HMAC marker the DO recomputes; the DO rejects
-// direct reaches that don't carry a fresh signed marker.
+// Internal-marker auth: workers/app.ts signs a HMAC marker the DO recomputes; the DO
+// rejects direct reaches that don't carry a fresh signed marker.
 // ---------------------------------------------------------------------------
 
 export interface SignedInternalMarker {

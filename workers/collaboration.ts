@@ -1,22 +1,30 @@
 /**
- * ProjectCollaborationDO — Durable Object class for real-time collaborative editing.
+ * This file is the Durable Object class behind real-time Yjs
+ * collaboration — one DO instance per project, with periodic D1
+ * snapshots so a server restart doesn't lose anyone's work.
  *
- * One instance per project. Hosts a Yjs document in memory, accepts WebSocket
- * connections from authenticated project members, relays Yjs sync messages between
- * clients, and snapshots the document to D1 every 30 seconds via alarm and on
- * last-client disconnect.
+ * Each project's edit session lives inside a single
+ * `ProjectCollaborationDO` instance. The DO hosts the Yjs document
+ * in memory, relays sync messages between connected editors, and
+ * snapshots both ways: a binary blob into `projects.yjs_state` for
+ * fast warm restart, and row-level data into the entity tables
+ * (stories, steps, layers, objects, config, glossary, pages) so
+ * the publish pipeline can keep reading from D1 unchanged.
  *
- * Authentication: Validates a short-lived session token passed in the `?token=`
- * query parameter (the browser sends its session cookie value). The DO checks project
- * membership in D1 before accepting any WebSocket connection.
+ * Authentication runs at the WebSocket handshake: the browser
+ * sends its session cookie value as `?token=`, the DO resolves it
+ * to a user id, and project membership is checked in D1 before the
+ * socket is accepted. A bespoke session-control protocol on top
+ * of the y-websocket message channel lets the server push a
+ * "project deleted" or "you've been removed" disconnect to every
+ * client when a convenor takes a destructive action.
  *
- * Persistence strategy:
- *   - Binary blob  → projects.yjs_state (fast warm restart via Y.applyUpdate)
- *   - Row-level data → entity tables (stories, steps, layers, objects, config, glossary)
- *     so the publish pipeline reads from D1 unchanged
+ * Cold start: when no `yjs_state` blob exists for the project,
+ * the DO builds the Y.Doc from D1 rows on first connection. That
+ * makes the DO durable against forced eviction without any state
+ * loss beyond the in-flight edit window.
  *
- * Cold start:
- *   - When no yjs_state blob exists, the DO builds the Y.Doc from D1 rows.
+ * @version v1.2.0-beta
  */
 
 import * as Y from "yjs";
@@ -40,6 +48,19 @@ import {
 // y-websocket message type constants (must match client)
 const messageSync = 0;
 const messageAwareness = 1;
+
+// Bespoke session-control protocol for server-initiated
+// disconnects (project deleted by convenor; collaborator left from another
+// tab). Wire format = varuint(2) + uint8(subtype). Server→client only —
+// the existing webSocketMessage handler still silently ignores unknown
+// msgTypes, so no client→server path exists.
+//
+// Note: y-protocols today only uses 0/1 at the
+// top level, so 2 is safe; re-evaluate if the project ever bumps to a
+// y-protocols major that adds new top-level types.
+const messageSessionControl = 2;
+const subProjectDeleted = 0x01;
+const subRemovedFromProject = 0x02;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -303,6 +324,247 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         });
       }
       return new Response("OK", { status: 200 });
+    }
+
+    // POST /notify-deleted — broadcast a session-
+    // control message to connected clients then close their sockets.
+    //
+    // No `?userId=` param  → subtype 0x01 (project_deleted) to ALL sockets
+    //                        (convenor delete-project: every collaborator
+    //                        currently editing must be evicted).
+    // With `?userId=N`     → subtype 0x02 (removed_from_project) to ONLY
+    //                        the sockets whose attachment.userId === N
+    //                        (collaborator-left-from-another-tab variant;
+    //                        future "remove collaborator" flows reuse this).
+    //
+    // Order constraint: the route action MUST run the D1 cascade
+    // BEFORE invoking this endpoint so any reconnect attempt fails fast
+    // against the missing project_members row (graceful no-op end state).
+    if (url.pathname.endsWith("/notify-deleted") && request.method === "POST") {
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      if (markerError) return markerError;
+
+      const targetUserId = url.searchParams.get("userId");
+      const subtype = targetUserId ? subRemovedFromProject : subProjectDeleted;
+      const closeReason = targetUserId ? "removed_from_project" : "project_deleted";
+
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, messageSessionControl);
+      encoding.writeUint8(enc, subtype);
+      const msg = encoding.toUint8Array(enc);
+
+      for (const ws of this.ctx.getWebSockets()) {
+        const att = ws.deserializeAttachment() as SocketAttachment | null;
+        if (targetUserId && att?.userId !== Number(targetUserId)) continue;
+        try { ws.send(msg); } catch { /* socket may have disconnected */ }
+        try { ws.close(1000, closeReason); } catch { /* already closed */ }
+      }
+      return new Response("OK", { status: 200 });
+    }
+
+    // GET /active-ws-count — live socket count for the
+    // convenor's pre-flight modal. Authoritative answer (D1's
+    // awareness_state may lag); informational, NOT a gate (the convenor
+    // can confirm regardless of count or fetch failure).
+    if (url.pathname.endsWith("/active-ws-count") && request.method === "GET") {
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      if (markerError) return markerError;
+      // Count distinct OTHER users with live sockets, excluding the
+      // requester. The warning text ("N collaborators are editing right
+      // now") is about people the convenor will disconnect — they
+      // themselves aren't disconnecting themselves, and a single user
+      // with several tabs is still one collaborator.
+      const exceptUserIdParam = url.searchParams.get("exceptUserId");
+      const exceptUserId =
+        exceptUserIdParam !== null ? Number(exceptUserIdParam) : NaN;
+      const otherUserIds = new Set<number>();
+      for (const ws of this.ctx.getWebSockets()) {
+        const att = ws.deserializeAttachment() as SocketAttachment | null;
+        if (!att?.userId) continue;
+        if (Number.isFinite(exceptUserId) && att.userId === exceptUserId) continue;
+        otherUserIds.add(att.userId);
+      }
+      return Response.json({ count: otherUserIds.size });
+    }
+
+    // POST /restore-orphans — route Restore-as-drafts
+    // through the Y.doc instead of writing D1 directly. The original
+    // design wrote rows to D1, but the next snapshotToD1 reconciliation
+    // (line ~1289) treated them as orphan-from-Y.doc and deleted them.
+    // Routing through the Y.doc means the existing INSERT path in
+    // snapshotToD1 picks the new entries up correctly. HMAC-marker gated
+    // identically to /snapshot and /reset.
+    //
+    // Body: { stories: Array<{ storyId, steps[], layers[] }> }
+    //   step:  { step_number, kind, object_id, x, y, zoom, page,
+    //            question, answer, clip_start, clip_end, loop }
+    //   layer: { step_index, layer_number, title, button_label, content }
+    // Title defaults to storyId; subtitle/byline default to empty
+    // (per-story CSVs do not carry these fields). draft is always true
+    // on restore. Order is computed as max(existing order) + 1 + i so
+    // restored entries push onto the end of the array deterministically.
+    if (url.pathname.endsWith("/restore-orphans") && request.method === "POST") {
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      if (markerError) return markerError;
+
+      let payload: {
+        stories: Array<{
+          storyId: string;
+          steps: Array<{
+            step_number?: number;
+            kind?: string;
+            object_id?: string;
+            x?: number | null;
+            y?: number | null;
+            zoom?: number | null;
+            page?: string;
+            question?: string;
+            answer?: string;
+            clip_start?: string;
+            clip_end?: string;
+            loop?: string;
+          }>;
+          layers: Array<{
+            step_index: number;
+            layer_number: number;
+            title?: string;
+            button_label?: string;
+            content?: string;
+          }>;
+        }>;
+      };
+      try {
+        payload = await request.json();
+      } catch {
+        return new Response("Invalid JSON body", { status: 400 });
+      }
+      if (!payload || !Array.isArray(payload.stories)) {
+        return new Response("Missing stories array", { status: 400 });
+      }
+
+      // Empty array: nothing to do — return early without firing
+      // snapshotToD1 (no-op should not pay the snapshot cost).
+      if (payload.stories.length === 0) {
+        return Response.json({ restored: 0 });
+      }
+
+      // Load the Y.doc and mutate inside blockConcurrencyWhile so the
+      // snapshot writeback and broadcast happen atomically w.r.t. other
+      // operations on this DO (internal-marker consistency).
+      let restored = 0;
+      await this.ctx.blockConcurrencyWhile(async () => {
+        await this.ensureDocLoaded();
+
+        const storiesArray = this.ydoc.getArray<Y.Map<unknown>>("stories");
+        // Compute the starting order so restored entries push onto the
+        // end of the existing list deterministically.
+        let maxOrder = -1;
+        for (let i = 0; i < storiesArray.length; i++) {
+          const existing = storiesArray.get(i);
+          const order = existing.get("order");
+          if (typeof order === "number" && order > maxOrder) maxOrder = order;
+        }
+        let nextOrder = maxOrder + 1;
+
+        this.ydoc.transact(() => {
+          for (const story of payload.stories) {
+            // Remove any pre-existing Y.Map(s) with the same story_id.
+            // A stale entry with an invalid _id (pointing at a deleted
+            // D1 row) would otherwise win the deduplicateYArray pass
+            // in snapshotToD1 and our fresh _id=null Y.Map would be
+            // discarded, leaving D1 without the row. Walk the array in
+            // reverse so deletions don't shift indices we still need.
+            for (let i = storiesArray.length - 1; i >= 0; i--) {
+              const existing = storiesArray.get(i);
+              if (existing.get("story_id") === story.storyId) {
+                storiesArray.delete(i, 1);
+              }
+            }
+
+            const storyMap = new Y.Map<unknown>();
+            storyMap.set("_id", null);
+            storyMap.set("story_id", story.storyId);
+            // title default = storyId (the per-story CSV has no title
+            // column; user can rename in /stories). subtitle/byline are
+            // not in the per-story CSV either — default to empty Y.Text.
+            storyMap.set("title", new Y.Text(story.storyId));
+            storyMap.set("subtitle", new Y.Text(""));
+            storyMap.set("byline", new Y.Text(""));
+            storyMap.set("order", nextOrder++);
+            storyMap.set("private", false);
+            storyMap.set("draft", true);
+            storyMap.set("show_sections", false);
+
+            // Pre-allocate one Y.Array<layer Y.Map> per step (indexed by
+            // the step's position in the input array) so we can thread
+            // layers without a second pass.
+            const stepsArray = new Y.Array<Y.Map<unknown>>();
+            const stepLayerArrays: Array<Y.Array<Y.Map<unknown>>> = [];
+            for (const step of story.steps ?? []) {
+              const stepMap = new Y.Map<unknown>();
+              stepMap.set("_id", null);
+              stepMap.set("step_number", step.step_number ?? 0);
+              stepMap.set("kind", step.kind ?? "media");
+              stepMap.set("object_id", step.object_id ?? "");
+              stepMap.set("x", step.x ?? null);
+              stepMap.set("y", step.y ?? null);
+              stepMap.set("zoom", step.zoom ?? null);
+              stepMap.set("page", step.page ?? "");
+              stepMap.set("question", new Y.Text(step.question ?? ""));
+              stepMap.set("answer", new Y.Text(step.answer ?? ""));
+              // alt_text is not in the per-story CSV schema (mapStoryCsv
+              // does not populate it); restore with empty Y.Text so the
+              // Y.Map shape matches buildFromD1Rows exactly.
+              stepMap.set("alt_text", new Y.Text(""));
+              stepMap.set("clip_start", step.clip_start ?? "");
+              stepMap.set("clip_end", step.clip_end ?? "");
+              stepMap.set("loop", step.loop ?? "");
+              const layersArr = new Y.Array<Y.Map<unknown>>();
+              stepLayerArrays.push(layersArr);
+              stepMap.set("layers", layersArr);
+              stepsArray.push([stepMap]);
+            }
+
+            // Thread layers under their parent step by step_index.
+            for (const layer of story.layers ?? []) {
+              const targetArr = stepLayerArrays[layer.step_index];
+              if (!targetArr) continue; // out-of-range step_index — skip silently
+              const layerMap = new Y.Map<unknown>();
+              layerMap.set("_id", null);
+              layerMap.set("layer_number", layer.layer_number);
+              layerMap.set("title", new Y.Text(layer.title ?? ""));
+              layerMap.set("button_label", new Y.Text(layer.button_label ?? ""));
+              layerMap.set("content", new Y.Text(layer.content ?? ""));
+              targetArr.push([layerMap]);
+            }
+
+            storyMap.set("steps", stepsArray);
+            storiesArray.push([storyMap]);
+            restored += 1;
+          }
+        });
+
+        // Persist immediately so the dashboard loader's post-action
+        // revalidation sees the new D1 rows on its next orphan scan.
+        await this.snapshotToD1();
+      });
+
+      // Broadcast the full state to connected /stories editors so they
+      // see the new draft(s) appear in real time (mirrors the ID-backfill
+      // broadcast at ~line 1578).
+      const updateEncoder = encoding.createEncoder();
+      encoding.writeVarUint(updateEncoder, messageSync);
+      syncProtocol.writeSyncStep2(updateEncoder, this.ydoc);
+      const updateMsg = encoding.toUint8Array(updateEncoder);
+      for (const client of this.ctx.getWebSockets()) {
+        try {
+          client.send(updateMsg);
+        } catch {
+          // Client may have disconnected; ignore.
+        }
+      }
+
+      return Response.json({ restored });
     }
 
     // Only accept WebSocket upgrades for all other paths
@@ -881,7 +1143,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
   async snapshotToD1(): Promise<void> {
     if (!this.projectId || !this.docLoaded) return;
-    if (this.isSnapshotting) return; // Pitfall 2: prevent duplicate INSERTs from concurrent calls
+    if (this.isSnapshotting) return; // Prevent duplicate INSERTs from concurrent calls
     this.isSnapshotting = true;
     try {
       await this.doSnapshot();
@@ -1438,9 +1700,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
     // 9. Snapshot contribution data to project_members.
     // fields_edited is sourced from userFieldSets.get(userId).size (unique-field
-    // Set semantics). The Set is NOT cleared after snapshot — it keeps
-    // accumulating within the DO's lifetime, so each snapshot writes the
-    // cumulative count for the lifetime, not a per-snapshot delta.
+    // Set semantics). The Set is NOT cleared after snapshot — it keeps accumulating
+    // within the DO's lifetime (accepted behaviour).
     // Contribution UPDATE statements are added to the same batch for atomicity.
     if (this.projectId) {
       const allUserIds = new Set<number>([...this.userFieldSets.keys(), ...this.newSessions]);
