@@ -1,5 +1,7 @@
 /**
- * Unit tests for publish.server.ts — Telar Compositor publish library.
+ * This file pins unit tests for `app/lib/publish.server.ts` — the
+ * Telar Compositor publish library that serialises D1 state into the
+ * CSV + markdown bundle the Jekyll site consumes.
  *
  * Tests cover:
  *   - serializeProjectCsv: CSV header, bilingual row, draft omission, private mapping, ordering
@@ -9,6 +11,10 @@
  *   - updateConfigFields: line-based YAML mutation, comment preservation, append missing
  *   - computeChangeSummary: first-time publish, no-change, entity classification
  *   - runPrePublishValidation: stale head blocker, missing-title warning, no-position warning
+ *   - storyPathsForPublish + computeStoryDeletions: draft round-trip + hard-delete cleanup
+ *   - publish defensive gate: v1.2.1 frontmatter literals are stripped at publish time
+ *
+ * @version v1.2.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -19,13 +25,53 @@ import {
   layerFilename,
   layerFileContent,
   updateConfigFields,
+  buildConfigManagedFields,
   computeChangeSummary,
   runPrePublishValidation,
   buildNavigationYml,
   serializeGlossaryCsv,
   serializePageMarkdown,
+  pageRowsToCommitFiles,
+  buildPageContentHashes,
+  isPagePublishable,
+  ENTITY_HASHES_VERSION,
+  computeStoryDeletions,
+  storyPathsForPublish,
 } from "~/lib/publish.server";
-import type { PublishSnapshot, CurrentPublishState } from "~/lib/publish.server";
+import type { PublishSnapshot, CurrentPublishState, EntityHashes } from "~/lib/publish.server";
+import { project_config } from "~/db/schema";
+
+type ProjectConfigRow = typeof project_config.$inferSelect;
+
+function makeConfig(overrides: Partial<ProjectConfigRow> = {}): ProjectConfigRow {
+  return {
+    id: 1,
+    project_id: 1,
+    title: null,
+    lang: null,
+    baseurl: null,
+    url: null,
+    telar_version: null,
+    theme: null,
+    description: null,
+    author: null,
+    email: null,
+    logo: null,
+    include_demo_content: true,
+    google_sheets_enabled: false,
+    google_sheets_published_url: null,
+    show_on_homepage: true,
+    show_story_steps: true,
+    show_object_credits: true,
+    browse_and_search: true,
+    show_link_on_homepage: true,
+    show_sample_on_homepage: false,
+    collection_mode: false,
+    featured_count: 4,
+    story_key: null,
+    ...overrides,
+  } as ProjectConfigRow;
+}
 
 // ---------------------------------------------------------------------------
 // serializeProjectCsv
@@ -363,12 +409,12 @@ describe("serializeStoryCsv", () => {
     expect(dataRow.loop).toBe("");
   });
 
-  // --- defensive empty-object write for kind='section' ---
+  // --- defensive empty-object write for kind='section' (W-05, plan 33.2 task 4) ---
   // Framework signal in stories.csv: empty `object` column = section card.
   // Even if internal kind/object_id state has drifted (kind='section' with
   // a stale object_id), the writer must emit empty `object` so the framework
   // still renders the row as a section card.
-  describe("kind='section' defensive empty-object write", () => {
+  describe("kind='section' defensive empty-object write (W-05)", () => {
     it("kind='section' with stale object_id => CSV `object` column is empty", () => {
       const step = {
         ...baseStep,
@@ -428,6 +474,84 @@ describe("serializeStoryCsv", () => {
       expect(dataRow.object).toBe("my-object");
       expect(dataRow.question).toBe("What do you see?");
       expect(dataRow.answer).toBe("A weaving.");
+    });
+  });
+
+  // --- step order survives scrambled input ---
+  // Root cause: serializeStoryCsv used to write rows in the order stepRows
+  // arrived (and the D1 query has no ORDER BY). Editor reorders therefore did
+  // not survive publish. Section heading cards inherit the same `steps` table
+  // and thus the same bug. Fix: spread-then-sort by step_number inside the
+  // serialiser, mirroring serializeProjectCsv.
+  describe("serializeStoryCsv — step order survives scrambled input", () => {
+    // The bilingual row is parsed.data[0] when Papa.parse is called with
+    // { header: true } (header line 1 is consumed as the header, Spanish
+    // column-name row at line 2 becomes the first data row). Real step rows
+    // therefore start at parsed.data[1]. The bilingual row's `step` cell is
+    // the literal "paso" — filter on that to drop it without relying on
+    // raw row indices.
+    const dataRowsFrom = (csv: string) => {
+      const parsed = Papa.parse<Record<string, string>>(csv, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      return parsed.data.filter((row) => row.step !== "paso");
+    };
+
+    it("scrambled regular steps sort ascending by step_number", () => {
+      const scrambled = [
+        { ...baseStep, step_number: 3, question: "third" },
+        { ...baseStep, step_number: 1, question: "first" },
+        { ...baseStep, step_number: 2, question: "second" },
+      ];
+      const csv = serializeStoryCsv(scrambled, "weavers");
+      const dataRows = dataRowsFrom(csv);
+      expect(dataRows).toHaveLength(3);
+      expect(dataRows.map((r) => r.step)).toEqual(["1", "2", "3"]);
+      expect(dataRows.map((r) => r.question)).toEqual([
+        "first",
+        "second",
+        "third",
+      ]);
+    });
+
+    it("mixed media + section steps sort together by step_number", () => {
+      const scrambled = [
+        { ...baseStep, step_number: 3, question: "third media" },
+        {
+          ...baseStep,
+          step_number: 2,
+          kind: "section" as "media" | "section",
+          object_id: null,
+          question: "Chapter Two",
+        },
+        { ...baseStep, step_number: 1, question: "first media" },
+      ];
+      const csv = serializeStoryCsv(scrambled, "weavers");
+      const dataRows = dataRowsFrom(csv);
+      expect(dataRows).toHaveLength(3);
+      expect(dataRows.map((r) => r.step)).toEqual(["1", "2", "3"]);
+      // Section heading lands second, with the framework's empty-object signal
+      // (W-05 defensive write) preserved through the sort.
+      expect(dataRows[1].step).toBe("2");
+      expect(dataRows[1].object).toBe("");
+      expect(dataRows[1].question).toBe("Chapter Two");
+      // Media steps either side keep their object_id intact.
+      expect(dataRows[0].object).toBe("my-object");
+      expect(dataRows[2].object).toBe("my-object");
+    });
+
+    it("caller's stepRows array is not mutated", () => {
+      const input = [
+        { ...baseStep, step_number: 3, question: "third" },
+        { ...baseStep, step_number: 1, question: "first" },
+        { ...baseStep, step_number: 2, question: "second" },
+      ];
+      const orderBefore = input.map((s) => s.step_number);
+      serializeStoryCsv(input, "weavers");
+      const orderAfter = input.map((s) => s.step_number);
+      expect(orderAfter).toEqual(orderBefore);
+      expect(orderAfter).toEqual([3, 1, 2]);
     });
   });
 });
@@ -530,9 +654,189 @@ custom_field: keep-this
     expect(result).not.toContain("  key: oldkey");
   });
 
+  // Regression: every publish was appending a duplicate top-level story_key:
+  // line because the main field-matcher skipped story_key entirely, leaving
+  // the append path to fire on every run. Discovered on juancobo/telar-test
+  // (10 duplicates accumulated). The fix updates the first top-level
+  // story_key: in place AND drops any subsequent duplicates as cleanup.
+  it("updates an existing top-level story_key when no protected block exists", () => {
+    const input = `title: "My Site"
+story_key: "old"
+custom_field: keep
+`;
+    const result = updateConfigFields(input, { story_key: "new" });
+    expect(result).toContain("story_key: new");
+    expect(result).not.toContain('story_key: "old"');
+    // Must not append a second story_key: line
+    expect(result.match(/^story_key:/gm)?.length).toBe(1);
+  });
+
+  it("is idempotent on top-level story_key — re-running yields no growth", () => {
+    const input = `title: "My Site"
+story_key: test
+`;
+    const once = updateConfigFields(input, { story_key: "test" });
+    const twice = updateConfigFields(once, { story_key: "test" });
+    expect(once).toBe(twice);
+    expect(twice.match(/^story_key:/gm)?.length).toBe(1);
+  });
+
+  it("collapses duplicate top-level story_key lines into one (self-heal)", () => {
+    const input = `title: "My Site"
+story_key: "test"
+custom_field: keep
+story_key: test
+story_key: test
+story_key: test
+`;
+    const result = updateConfigFields(input, { story_key: "test" });
+    expect(result.match(/^story_key:/gm)?.length).toBe(1);
+    expect(result).toContain("custom_field: keep");
+  });
+
+  it("prefers first occurrence when both protected key: and top-level story_key: exist", () => {
+    const input = `title: "My Site"
+story_key: oldtop
+protected:
+  key: oldprotected
+custom_field: keep
+`;
+    const result = updateConfigFields(input, { story_key: "new" });
+    // First match wins — top-level appears first here
+    expect(result).toContain("story_key: new");
+    expect(result).not.toContain("story_key: oldtop");
+    // Only one story_key: line total
+    expect(result.match(/^story_key:/gm)?.length).toBe(1);
+  });
+
   it("preserves indentation and quotes", () => {
     const result = updateConfigFields(yaml, { baseurl: '"/newsite"' });
     expect(result).toContain('baseurl: "/newsite"');
+  });
+
+  // Silent v-prefix heal on telar.version
+  it("strips leading v from telar.version line (heal)", () => {
+    const input = `title: "My Site"
+telar:
+  version: v1.2.0
+  key: abc
+`;
+    const result = updateConfigFields(input, {});
+    expect(result).toContain("version: 1.2.0");
+    expect(result).not.toContain("version: v1.2.0");
+  });
+
+  it("is idempotent when telar.version has no v prefix", () => {
+    const input = `title: "My Site"
+telar:
+  version: 1.2.0
+  key: abc
+`;
+    const result = updateConfigFields(input, {});
+    expect(result).toContain("version: 1.2.0");
+    // Guard against an over-eager replace producing e.g. ".2.0"
+    expect(result).not.toContain("version: .2.0");
+    expect(result).not.toContain("version: ersion");
+  });
+
+  it("does not touch a top-level version: line outside the telar: block", () => {
+    const input = `title: "My Site"
+version: v9.9.9
+telar:
+  key: abc
+`;
+    const result = updateConfigFields(input, {});
+    expect(result).toContain("version: v9.9.9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildConfigManagedFields
+// ---------------------------------------------------------------------------
+
+describe("buildConfigManagedFields", () => {
+  it("threads telar_language from config.lang (regression: previously omitted)", () => {
+    const fields = buildConfigManagedFields(makeConfig({ lang: "es" }));
+    expect(fields.telar_language).toBe("es");
+  });
+
+  it("threads telar_language as 'en' when config.lang is 'en'", () => {
+    const fields = buildConfigManagedFields(makeConfig({ lang: "en" }));
+    expect(fields.telar_language).toBe("en");
+  });
+
+  it("omits telar_language entirely when config.lang is null", () => {
+    const fields = buildConfigManagedFields(makeConfig({ lang: null }));
+    expect(fields).not.toHaveProperty("telar_language");
+  });
+
+  it("emits telar_language unquoted (template format)", () => {
+    const fields = buildConfigManagedFields(makeConfig({ lang: "es" }));
+    expect(fields.telar_language).not.toMatch(/^".*"$/);
+  });
+
+  it("wraps string fields in double quotes", () => {
+    const fields = buildConfigManagedFields(
+      makeConfig({
+        title: "My Site",
+        url: "https://example.com",
+        baseurl: "/site",
+        description: "A description",
+        author: "Author",
+        email: "author@example.com",
+        logo: "/assets/logo.png",
+      }),
+    );
+    expect(fields.title).toBe('"My Site"');
+    expect(fields.url).toBe('"https://example.com"');
+    expect(fields.baseurl).toBe('"/site"');
+    expect(fields.description).toBe('"A description"');
+    expect(fields.author).toBe('"Author"');
+    expect(fields.email).toBe('"author@example.com"');
+    expect(fields.logo).toBe('"/assets/logo.png"');
+  });
+
+  it("emits collection_mode as unquoted boolean string", () => {
+    expect(buildConfigManagedFields(makeConfig({ collection_mode: true })).collection_mode).toBe(
+      "true",
+    );
+    expect(buildConfigManagedFields(makeConfig({ collection_mode: false })).collection_mode).toBe(
+      "false",
+    );
+  });
+
+  it("emits story_key unquoted", () => {
+    const fields = buildConfigManagedFields(makeConfig({ story_key: "secret-key-value" }));
+    expect(fields.story_key).toBe("secret-key-value");
+  });
+
+  it("omits null string fields", () => {
+    const fields = buildConfigManagedFields(makeConfig({ title: null, lang: null, url: null }));
+    expect(fields).not.toHaveProperty("title");
+    expect(fields).not.toHaveProperty("url");
+    expect(fields).not.toHaveProperty("telar_language");
+  });
+
+  it("round-trips through updateConfigFields to flip telar_language in an existing _config.yml", () => {
+    const yaml = `# Site config
+title: "Site"
+telar_language: "en"
+baseurl: "/site"
+`;
+    const fields = buildConfigManagedFields(makeConfig({ title: "Site", lang: "es" }));
+    const result = updateConfigFields(yaml, fields);
+    expect(result).toContain("telar_language: es");
+    expect(result).not.toContain('telar_language: "en"');
+  });
+
+  it("appends telar_language when missing from existing _config.yml", () => {
+    const yaml = `# Site config
+title: "Site"
+baseurl: "/site"
+`;
+    const fields = buildConfigManagedFields(makeConfig({ lang: "es" }));
+    const result = updateConfigFields(yaml, fields);
+    expect(result).toContain("telar_language: es");
   });
 });
 
@@ -541,11 +845,36 @@ custom_field: keep-this
 // ---------------------------------------------------------------------------
 
 describe("computeChangeSummary", () => {
+  // Helper: empty entity hashes (everything blank) for fixtures that
+  // don't care about hash content. Tests that DO care override the
+  // relevant fields. Version defaults to current; tests covering
+  // version-mismatch back-compat override it explicitly.
+  function makeEntityHashes(overrides: Partial<EntityHashes> = {}): EntityHashes {
+    return {
+      version: ENTITY_HASHES_VERSION,
+      pages: {},
+      stories: {},
+      objects: {},
+      glossary: {},
+      navigation: "",
+      landing: "",
+      settings: "",
+      ...overrides,
+    };
+  }
+
+  // Top-level fixture — two stories, two objects, no pages/glossary, no
+  // nav. Tests override `entityHashes` and entity arrays as needed.
+  const baseEntityHashes: EntityHashes = makeEntityHashes({
+    stories: { weavers: "h-weavers", painters: "h-painters" },
+    objects: { "obj-1": "h-obj-1", "obj-2": "h-obj-2" },
+    landing: JSON.stringify({ stories_heading: "Stories" }),
+    settings: JSON.stringify({ title: `"My Site"` }),
+  });
+
   const currentState: CurrentPublishState = {
-    storyIds: ["weavers", "painters"],
-    objectIds: ["obj-1", "obj-2"],
-    configHash: JSON.stringify({ title: "My Site" }),
-    landingHash: JSON.stringify({ stories_heading: "Stories" }),
+    entityHashes: baseEntityHashes,
+    config: makeConfig({ title: "My Site" }),
     stories: [
       { story_id: "weavers", title: "The Weavers" },
       { story_id: "painters", title: "The Painters" },
@@ -554,110 +883,510 @@ describe("computeChangeSummary", () => {
       { object_id: "obj-1", title: "Object 1" },
       { object_id: "obj-2", title: "Object 2" },
     ],
+    pages: [],
+    glossary: [],
+    allStoryIds: ["weavers", "painters"],
   };
+
+  // Mirror the currentState's config so the per-field settings diff sees
+  // a clean match by default (collection_mode is non-nullable, so it
+  // always lands in the managed-fields map — drop one of these and the
+  // diff fires a spurious "settings changed" entry).
+  const baseConfigManaged = buildConfigManagedFields(makeConfig({ title: "My Site" }));
+
+  // Snapshot in entity-hashing mode (entity_hashes populated). Defaults
+  // mirror baseEntityHashes so this represents "no changes since last
+  // publish" out of the box.
+  function makeSnapshot(overrides: Partial<PublishSnapshot> = {}): PublishSnapshot {
+    return {
+      story_ids: ["weavers", "painters"],
+      object_ids: ["obj-1", "obj-2"],
+      config_hash: JSON.stringify(baseConfigManaged),
+      config_managed: baseConfigManaged,
+      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
+      entity_hashes: baseEntityHashes,
+      ...overrides,
+    };
+  }
+
+  // Back-compat snapshot — same legacy fields, no entity_hashes. Used by
+  // tests that pin the back-compat flood behaviour.
+  function makeLegacySnapshot(overrides: Partial<PublishSnapshot> = {}): PublishSnapshot {
+    return {
+      story_ids: ["weavers", "painters"],
+      object_ids: ["obj-1", "obj-2"],
+      config_hash: JSON.stringify(baseConfigManaged),
+      config_managed: baseConfigManaged,
+      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
+      ...overrides,
+    };
+  }
 
   it("first-time publish with null snapshot: all entities are new, isUpToDate false", () => {
     const summary = computeChangeSummary(currentState, null);
     expect(summary.isUpToDate).toBe(false);
+    expect(summary.backCompatBootstrap).toBe(false);
     expect(summary.stories.new).toHaveLength(2);
     expect(summary.stories.modified).toHaveLength(0);
     expect(summary.stories.deleted).toHaveLength(0);
     expect(summary.objects.new).toHaveLength(2);
+    expect(summary.glossary.new).toHaveLength(0);
   });
 
-  it("no changes since last publish: existing stories treated as modified (no per-entity hashes)", () => {
-    const snapshot: PublishSnapshot = {
-      story_ids: ["weavers", "painters"],
-      object_ids: ["obj-1", "obj-2"],
-      config_hash: JSON.stringify({ title: "My Site" }),
-      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
-    };
-    const summary = computeChangeSummary(currentState, snapshot);
-    // Without per-entity hashes, existing stories are conservatively
-    // treated as modified, so isUpToDate is false
-    expect(summary.isUpToDate).toBe(false);
+  it("no changes (entity_hashes match): all diff arrays empty, isUpToDate true", () => {
+    // Entity-hashing mode: snapshot's entity_hashes match currentState's,
+    // every diff bucket is empty, isUpToDate is true. This is the precision
+    // win that the pre-rewrite "no changes" test couldn't assert (without
+    // per-story hashing the function had to stay conservatively false).
+    const summary = computeChangeSummary(currentState, makeSnapshot());
+    expect(summary.isUpToDate).toBe(true);
+    expect(summary.backCompatBootstrap).toBe(false);
     expect(summary.stories.new).toHaveLength(0);
-    expect(summary.stories.modified).toHaveLength(2);
+    expect(summary.stories.modified).toHaveLength(0);
     expect(summary.stories.deleted).toHaveLength(0);
+    expect(summary.objects.modified).toHaveLength(0);
+    expect(summary.pages.modified).toHaveLength(0);
+    expect(summary.glossary.modified).toHaveLength(0);
   });
 
   it("new story added appears in stories.new", () => {
-    const snapshot: PublishSnapshot = {
+    // Snapshot has only weavers; current has weavers+painters → painters
+    // is new.
+    const snapshot = makeSnapshot({
       story_ids: ["weavers"],
-      object_ids: ["obj-1", "obj-2"],
-      config_hash: JSON.stringify({ title: "My Site" }),
-      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
-    };
+      entity_hashes: makeEntityHashes({
+        stories: { weavers: "h-weavers" },
+        objects: { "obj-1": "h-obj-1", "obj-2": "h-obj-2" },
+        landing: baseEntityHashes.landing,
+        settings: baseEntityHashes.settings,
+      }),
+    });
     const summary = computeChangeSummary(currentState, snapshot);
-    expect(summary.stories.new.map((s) => s.story_id)).toContain("painters");
+    expect(summary.stories.new.map((s) => s.story_id)).toEqual(["painters"]);
+    expect(summary.stories.modified).toHaveLength(0);
+    expect(summary.isUpToDate).toBe(false);
+  });
+
+  it("story content edited appears in stories.modified (entity-hashing precision win)", () => {
+    // Hash for weavers differs between snapshot and current → modified.
+    // Painters' hash matches → not in any bucket. This was impossible to
+    // detect pre-rewrite (stories.modified was always empty); the entity-
+    // hashing rewrite is what closes that false-negative.
+    const snapshot = makeSnapshot({
+      entity_hashes: {
+        ...baseEntityHashes,
+        stories: { weavers: "h-weavers-OLD", painters: "h-painters" },
+      },
+    });
+    const summary = computeChangeSummary(currentState, snapshot);
+    expect(summary.stories.modified.map((s) => s.story_id)).toEqual(["weavers"]);
+    expect(summary.stories.new).toHaveLength(0);
+    expect(summary.stories.deleted).toHaveLength(0);
     expect(summary.isUpToDate).toBe(false);
   });
 
   it("story deleted appears in stories.deleted", () => {
     const stateWithout: CurrentPublishState = {
       ...currentState,
-      storyIds: ["weavers"],
+      entityHashes: {
+        ...baseEntityHashes,
+        stories: { weavers: "h-weavers" },
+      },
       stories: [{ story_id: "weavers", title: "The Weavers" }],
     };
-    const snapshot: PublishSnapshot = {
-      story_ids: ["weavers", "painters"],
-      object_ids: ["obj-1", "obj-2"],
-      config_hash: JSON.stringify({ title: "My Site" }),
-      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
-    };
-    const summary = computeChangeSummary(stateWithout, snapshot);
-    expect(summary.stories.deleted.map((s) => s.story_id)).toContain("painters");
+    const summary = computeChangeSummary(stateWithout, makeSnapshot());
+    expect(summary.stories.deleted.map((s) => s.story_id)).toEqual(["painters"]);
   });
 
   it("object added appears in objects.new", () => {
-    const snapshot: PublishSnapshot = {
-      story_ids: ["weavers", "painters"],
+    const snapshot = makeSnapshot({
       object_ids: ["obj-1"],
-      config_hash: JSON.stringify({ title: "My Site" }),
-      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
-    };
+      entity_hashes: {
+        ...baseEntityHashes,
+        objects: { "obj-1": "h-obj-1" },
+      },
+    });
     const summary = computeChangeSummary(currentState, snapshot);
-    expect(summary.objects.new.map((o) => o.object_id)).toContain("obj-2");
+    expect(summary.objects.new.map((o) => o.object_id)).toEqual(["obj-2"]);
+  });
+
+  it("object metadata edited appears in objects.modified", () => {
+    const snapshot = makeSnapshot({
+      entity_hashes: {
+        ...baseEntityHashes,
+        objects: { "obj-1": "h-obj-1-OLD", "obj-2": "h-obj-2" },
+      },
+    });
+    const summary = computeChangeSummary(currentState, snapshot);
+    expect(summary.objects.modified.map((o) => o.object_id)).toEqual(["obj-1"]);
   });
 
   it("object removed appears in objects.deleted", () => {
     const stateWithout: CurrentPublishState = {
       ...currentState,
-      objectIds: ["obj-1"],
+      entityHashes: {
+        ...baseEntityHashes,
+        objects: { "obj-1": "h-obj-1" },
+      },
       objects: [{ object_id: "obj-1", title: "Object 1" }],
     };
-    const snapshot: PublishSnapshot = {
-      story_ids: ["weavers", "painters"],
-      object_ids: ["obj-1", "obj-2"],
-      config_hash: JSON.stringify({ title: "My Site" }),
-      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
-    };
-    const summary = computeChangeSummary(stateWithout, snapshot);
-    expect(summary.objects.deleted.map((o) => o.object_id)).toContain("obj-2");
+    const summary = computeChangeSummary(stateWithout, makeSnapshot());
+    expect(summary.objects.deleted.map((o) => o.object_id)).toEqual(["obj-2"]);
   });
 
-  it("config field changed is detected", () => {
-    const snapshot: PublishSnapshot = {
-      story_ids: ["weavers", "painters"],
-      object_ids: ["obj-1", "obj-2"],
-      config_hash: JSON.stringify({ title: "Old Site" }),
-      landing_hash: JSON.stringify({ stories_heading: "Stories" }),
-    };
+  it("config field changed is detected via per-field diff", () => {
+    const snapshot = makeSnapshot({
+      config_hash: JSON.stringify({ title: `"Old Site"` }),
+      config_managed: { title: `"Old Site"` },
+    });
     const summary = computeChangeSummary(currentState, snapshot);
     expect(summary.settings.changed.length).toBeGreaterThan(0);
     expect(summary.isUpToDate).toBe(false);
   });
 
-  it("landing content changed is detected", () => {
-    const snapshot: PublishSnapshot = {
-      story_ids: ["weavers", "painters"],
-      object_ids: ["obj-1", "obj-2"],
-      config_hash: JSON.stringify({ title: "My Site" }),
-      landing_hash: JSON.stringify({ stories_heading: "Old Heading" }),
-    };
+  it("landing content changed is detected via entity_hashes.landing", () => {
+    const snapshot = makeSnapshot({
+      entity_hashes: {
+        ...baseEntityHashes,
+        landing: JSON.stringify({ stories_heading: "Old Heading" }),
+      },
+    });
     const summary = computeChangeSummary(currentState, snapshot);
     expect(summary.landing.changed).toBe(true);
     expect(summary.isUpToDate).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Pages — entity-hashing-aware coverage. Pages were the first bucket to
+  // get per-entity hashing (commits ffa2844, 19d6ed0); the rewrite
+  // generalises the same shape across stories, objects, glossary.
+  // -------------------------------------------------------------------------
+
+  it("first-time publish lists all pages as new", () => {
+    const stateWithPages: CurrentPublishState = {
+      ...currentState,
+      entityHashes: makeEntityHashes({
+        pages: { about: "h-about", team: "h-team" },
+      }),
+      pages: [
+        { slug: "about", title: "About" },
+        { slug: "team", title: "Team" },
+      ],
+    };
+    const summary = computeChangeSummary(stateWithPages, null);
+    expect(summary.pages.new).toHaveLength(2);
+    expect(summary.pages.new.map((p) => p.slug)).toEqual(["about", "team"]);
+    expect(summary.pages.modified).toHaveLength(0);
+    expect(summary.pages.deleted).toHaveLength(0);
+  });
+
+  it("new page appears in pages.new, existing-but-edited page appears in pages.modified", () => {
+    const snapshot = makeSnapshot({
+      page_slugs: ["about"],
+      page_hashes: { about: "h-about-old" },
+      entity_hashes: {
+        ...baseEntityHashes,
+        pages: { about: "h-about-old" },
+      },
+    });
+    const stateWithPages: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        pages: { about: "h-about-new", team: "h-team" },
+      },
+      pages: [
+        { slug: "about", title: "About" },
+        { slug: "team", title: "Team" },
+      ],
+    };
+    const summary = computeChangeSummary(stateWithPages, snapshot);
+    expect(summary.pages.new.map((p) => p.slug)).toEqual(["team"]);
+    expect(summary.pages.modified.map((p) => p.slug)).toEqual(["about"]);
+    expect(summary.pages.deleted).toHaveLength(0);
+    expect(summary.isUpToDate).toBe(false);
+  });
+
+  it("deleted page appears in pages.deleted", () => {
+    const snapshot = makeSnapshot({
+      page_slugs: ["about", "team"],
+      entity_hashes: {
+        ...baseEntityHashes,
+        pages: { about: "h-about", team: "h-team" },
+      },
+    });
+    const stateWithFewerPages: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        pages: { about: "h-about" },
+      },
+      pages: [{ slug: "about", title: "About" }],
+    };
+    const summary = computeChangeSummary(stateWithFewerPages, snapshot);
+    expect(summary.pages.deleted.map((p) => p.slug)).toEqual(["team"]);
+  });
+
+  it("page with same hash as snapshot is NOT marked modified", () => {
+    const snapshot = makeSnapshot({
+      page_slugs: ["about"],
+      page_hashes: { about: "hash-A" },
+      entity_hashes: {
+        ...baseEntityHashes,
+        pages: { about: "hash-A" },
+      },
+    });
+    const stateWithSameHash: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        pages: { about: "hash-A" },
+      },
+      pages: [{ slug: "about", title: "About" }],
+    };
+    const summary = computeChangeSummary(stateWithSameHash, snapshot);
+    expect(summary.pages.modified).toHaveLength(0);
+    expect(summary.pages.new).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Glossary — first time it gets diff coverage. Pre-rewrite glossary
+  // changes never appeared in the change summary at all.
+  // -------------------------------------------------------------------------
+
+  it("new glossary term appears in glossary.new", () => {
+    const snapshot = makeSnapshot({
+      entity_hashes: {
+        ...baseEntityHashes,
+        glossary: { encomienda: "h-enc" },
+      },
+    });
+    const stateWithGlossary: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        glossary: { encomienda: "h-enc", repartimiento: "h-rep" },
+      },
+      glossary: [
+        { term_id: "encomienda", title: "Encomienda" },
+        { term_id: "repartimiento", title: "Repartimiento" },
+      ],
+    };
+    const summary = computeChangeSummary(stateWithGlossary, snapshot);
+    expect(summary.glossary.new.map((g) => g.term_id)).toEqual(["repartimiento"]);
+    expect(summary.glossary.modified).toHaveLength(0);
+  });
+
+  it("glossary term definition edited appears in glossary.modified", () => {
+    const snapshot = makeSnapshot({
+      entity_hashes: {
+        ...baseEntityHashes,
+        glossary: { encomienda: "h-enc-old" },
+      },
+    });
+    const stateWithGlossary: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        glossary: { encomienda: "h-enc-new" },
+      },
+      glossary: [{ term_id: "encomienda", title: "Encomienda" }],
+    };
+    const summary = computeChangeSummary(stateWithGlossary, snapshot);
+    expect(summary.glossary.modified.map((g) => g.term_id)).toEqual(["encomienda"]);
+  });
+
+  it("deleted glossary term appears in glossary.deleted", () => {
+    const snapshot = makeSnapshot({
+      entity_hashes: {
+        ...baseEntityHashes,
+        glossary: { encomienda: "h-enc", repartimiento: "h-rep" },
+      },
+    });
+    const stateWithFewer: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        glossary: { encomienda: "h-enc" },
+      },
+      glossary: [{ term_id: "encomienda", title: "Encomienda" }],
+    };
+    const summary = computeChangeSummary(stateWithFewer, snapshot);
+    expect(summary.glossary.deleted.map((g) => g.term_id)).toEqual(["repartimiento"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Back-compat — snapshots written before entity-hashing landed have no
+  // entity_hashes field. Mark every existing entity as modified for that
+  // one publish (one wave of noise then accurate forever — same trade-off
+  // as the page-hash back-compat fallback in commit 19d6ed0).
+  // -------------------------------------------------------------------------
+
+  it("back-compat (no entity_hashes): every existing story flagged as modified, backCompatBootstrap=true", () => {
+    const summary = computeChangeSummary(currentState, makeLegacySnapshot());
+    expect(summary.backCompatBootstrap).toBe(true);
+    expect(summary.stories.modified.map((s) => s.story_id).sort()).toEqual([
+      "painters",
+      "weavers",
+    ]);
+    expect(summary.stories.new).toHaveLength(0);
+    expect(summary.stories.deleted).toHaveLength(0);
+    expect(summary.isUpToDate).toBe(false);
+  });
+
+  it("back-compat: every existing object flagged as modified", () => {
+    const summary = computeChangeSummary(currentState, makeLegacySnapshot());
+    expect(summary.objects.modified.map((o) => o.object_id).sort()).toEqual([
+      "obj-1",
+      "obj-2",
+    ]);
+    expect(summary.objects.new).toHaveLength(0);
+    expect(summary.objects.deleted).toHaveLength(0);
+  });
+
+  it("back-compat: pages flagged via legacy page_hashes when present", () => {
+    // Snapshots written between commit ffa2844 (page hashing) and the
+    // entity-hashing rewrite have page_hashes but no entity_hashes —
+    // back-compat falls back to page_hashes keys for legacy IDs.
+    const snapshot = makeLegacySnapshot({
+      page_slugs: ["about", "team"],
+      page_hashes: { about: "any", team: "any" },
+    });
+    const stateWithPages: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        pages: { about: "h-about", team: "h-team" },
+      },
+      pages: [
+        { slug: "about", title: "About" },
+        { slug: "team", title: "Team" },
+      ],
+    };
+    const summary = computeChangeSummary(stateWithPages, snapshot);
+    expect(summary.pages.modified.map((p) => p.slug).sort()).toEqual([
+      "about",
+      "team",
+    ]);
+  });
+
+  it("version mismatch (snapshot has entity_hashes but stale version) fires back-compat path", () => {
+    // Hash format evolves over time (a prior release went from v1 → v2 when we
+    // dropped `order` from object and page hashes). Without a version
+    // field, an old-format snapshot's hashes look "present but wrong" and
+    // every entity silently flags as Modified — confusing the user with
+    // no banner explaining why. With the version check, a mismatched
+    // version fires the same back-compat path as missing entity_hashes:
+    // banner in the modal, modify_X parts suppressed in the commit.
+    const staleVersionSnapshot: PublishSnapshot = makeSnapshot({
+      entity_hashes: {
+        ...baseEntityHashes,
+        version: ENTITY_HASHES_VERSION - 1,
+      },
+    });
+    const summary = computeChangeSummary(currentState, staleVersionSnapshot);
+    expect(summary.backCompatBootstrap).toBe(true);
+    // Existing entities flagged as modified per the standard back-compat
+    // contract — same as if entity_hashes were missing entirely.
+    expect(summary.stories.modified.map((s) => s.story_id).sort()).toEqual([
+      "painters",
+      "weavers",
+    ]);
+  });
+
+  it("back-compat: glossary terms surface as MODIFIED, not Added", () => {
+    // Glossary was never tracked in pre-rewrite snapshots, so legacyIds is
+    // empty for the glossary bucket. The naive interpretation of "empty
+    // legacy" would be "definitely none existed" → all current → New.
+    // That's wrong: the empty really means "we never tracked them" — terms
+    // bundled with the template predate anything the user did. Calling
+    // them "Added" on the bootstrap commit would be a definitive claim
+    // the system can't back up. Match stories/objects/pages by flagging
+    // every current term as Modified instead — same back-compat principle:
+    // we can't separate signal from noise, so we acknowledge it uniformly.
+    const stateWithGlossary: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        glossary: { encomienda: "h-enc" },
+      },
+      glossary: [{ term_id: "encomienda", title: "Encomienda" }],
+    };
+    const summary = computeChangeSummary(stateWithGlossary, makeLegacySnapshot());
+    expect(summary.glossary.modified.map((g) => g.term_id)).toEqual(["encomienda"]);
+    expect(summary.glossary.new).toHaveLength(0);
+    expect(summary.glossary.deleted).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Navigation
+  // -------------------------------------------------------------------------
+
+  it("navigation hash change is detected as navigation.changed", () => {
+    const snapshot = makeSnapshot({
+      navigation_hash: "old-nav-hash",
+      entity_hashes: {
+        ...baseEntityHashes,
+        navigation: "old-nav-hash",
+      },
+    });
+    const stateWithNewNav: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        navigation: "new-nav-hash",
+      },
+    };
+    const summary = computeChangeSummary(stateWithNewNav, snapshot);
+    expect(summary.navigation.changed).toBe(true);
+    expect(summary.isUpToDate).toBe(false);
+  });
+
+  it("navigation hash unchanged means navigation.changed is false", () => {
+    const snapshot = makeSnapshot({
+      navigation_hash: "same-nav-hash",
+      entity_hashes: {
+        ...baseEntityHashes,
+        navigation: "same-nav-hash",
+      },
+    });
+    const stateWithSameNav: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        navigation: "same-nav-hash",
+      },
+    };
+    const summary = computeChangeSummary(stateWithSameNav, snapshot);
+    expect(summary.navigation.changed).toBe(false);
+  });
+
+  it("back-compat (no entity_hashes): non-empty current nav surfaces as a change", () => {
+    const stateWithNav: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        navigation: "current-nav-hash",
+      },
+    };
+    const summary = computeChangeSummary(stateWithNav, makeLegacySnapshot());
+    expect(summary.navigation.changed).toBe(true);
+  });
+
+  it("back-compat AND empty current nav means no change (defensive)", () => {
+    // A project with no navigation + a back-compat snapshot must NOT
+    // spuriously flag navigation as changed; otherwise every legacy
+    // project's first post-upgrade publish would falsely claim a nav
+    // change.
+    const stateWithoutNav: CurrentPublishState = {
+      ...currentState,
+      entityHashes: {
+        ...baseEntityHashes,
+        navigation: "",
+      },
+    };
+    const summary = computeChangeSummary(stateWithoutNav, makeLegacySnapshot());
+    expect(summary.navigation.changed).toBe(false);
   });
 });
 
@@ -777,6 +1506,7 @@ describe("runPrePublishValidation", () => {
       },
     ],
     objects: [{ object_id: "obj-1", title: "My Object" }],
+    pages: [{ slug: "about", title: "About" }],
   };
 
   it("returns stale_head blocker when SHAs mismatch", () => {
@@ -866,5 +1596,777 @@ describe("runPrePublishValidation", () => {
     const result = runPrePublishValidation(validParams);
     expect(result.warnings).toHaveLength(0);
     expect(result.blockers).toHaveLength(0);
+  });
+
+  // Pages without titles surface as BLOCKERS, not warnings.
+  // Distinct from object_no_title: an untitled page can't be published
+  // (no usable URL/menu entry — pageRowsToCommitFiles excludes it), so
+  // gating here forces the user to either name or delete the row before
+  // any publish proceeds.
+  it("returns page_no_title blocker for pages with null title", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      pages: [{ slug: "untitled", title: null }],
+    });
+    const pageBlockers = result.blockers.filter((b) => b.code === "page_no_title");
+    expect(pageBlockers).toHaveLength(1);
+    expect(pageBlockers[0].entityId).toBe("untitled");
+    expect(pageBlockers[0].params).toEqual({ slug: "untitled" });
+    // Must NOT also surface as a warning (single source of truth)
+    expect(result.warnings.map((w) => w.code)).not.toContain("page_no_title");
+  });
+
+  it("returns page_no_title blocker for pages with empty title", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      pages: [{ slug: "untitled-3", title: "" }],
+    });
+    expect(result.blockers.map((b) => b.code)).toContain("page_no_title");
+  });
+
+  it("returns page_no_title blocker for pages with whitespace-only title", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      pages: [{ slug: "blank", title: "   " }],
+    });
+    expect(result.blockers.map((b) => b.code)).toContain("page_no_title");
+  });
+
+  it("does not block for pages with valid titles", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      pages: [
+        { slug: "about", title: "About" },
+        { slug: "team", title: "Team" },
+      ],
+    });
+    expect(result.blockers.map((b) => b.code)).not.toContain("page_no_title");
+  });
+
+  it("emits one page_no_title blocker per untitled page", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      pages: [
+        { slug: "about", title: "About" },
+        { slug: "untitled-1", title: null },
+        { slug: "untitled-2", title: "" },
+      ],
+    });
+    expect(result.blockers.filter((b) => b.code === "page_no_title")).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeChangeSummary — per-field config diff
+// ---------------------------------------------------------------------------
+
+describe("computeChangeSummary — per-field config diff", () => {
+  // Minimal fixture: only the fields the diff cares about. Stories/objects
+  // arrays are empty so they don't contaminate the assertions.
+  const baseLandingHash = JSON.stringify({ stories_heading: "Stories" });
+
+  function makeState(configOverrides: Partial<ProjectConfigRow>): CurrentPublishState {
+    const config = makeConfig(configOverrides);
+    return {
+      entityHashes: {
+        version: ENTITY_HASHES_VERSION,
+        pages: {},
+        stories: {},
+        objects: {},
+        glossary: {},
+        navigation: "",
+        landing: baseLandingHash,
+        settings: JSON.stringify(buildConfigManagedFieldsForTest(config)),
+      },
+      config,
+      stories: [],
+      objects: [],
+      pages: [],
+      glossary: [],
+      allStoryIds: [],
+    };
+  }
+
+  // Local helper that mirrors buildConfigManagedFields without re-exporting it
+  // — keeps fixtures readable and avoids hand-formatting quoted strings.
+  function buildConfigManagedFieldsForTest(c: ProjectConfigRow): Record<string, string> {
+    return buildConfigManagedFields(c);
+  }
+
+  function makeSnapshot(configOverrides: Partial<ProjectConfigRow>): PublishSnapshot {
+    const config = makeConfig(configOverrides);
+    const managed = buildConfigManagedFields(config);
+    return {
+      story_ids: [],
+      object_ids: [],
+      config_hash: JSON.stringify(managed),
+      config_managed: managed,
+      landing_hash: baseLandingHash,
+    };
+  }
+
+  it("title-only change emits a single 'title' entry", () => {
+    const current = makeState({ title: "New" });
+    const snapshot = makeSnapshot({ title: "Old" });
+    const summary = computeChangeSummary(current, snapshot);
+    expect(summary.settings.changed).toHaveLength(1);
+    expect(summary.settings.changed[0].key).toBe("title");
+  });
+
+  it("lang-only change emits 'lang' entry with post-change value as label", () => {
+    const current = makeState({ lang: "es" });
+    const snapshot = makeSnapshot({ lang: "en" });
+    const summary = computeChangeSummary(current, snapshot);
+    expect(summary.settings.changed).toHaveLength(1);
+    expect(summary.settings.changed[0].key).toBe("lang");
+    // Label carries post-change value so the route helper can resolve
+    // target-language commit-message keys without needing the full config.
+    expect(summary.settings.changed[0].label).toBe("es");
+  });
+
+  it("multi-field change (title + lang) emits both entries", () => {
+    const current = makeState({ title: "New", lang: "es" });
+    const snapshot = makeSnapshot({ title: "Old", lang: "en" });
+    const summary = computeChangeSummary(current, snapshot);
+    expect(summary.settings.changed).toHaveLength(2);
+    const keys = new Set(summary.settings.changed.map((e) => e.key));
+    expect(keys).toEqual(new Set(["title", "lang"]));
+  });
+
+  it("no change produces an empty settings.changed array", () => {
+    const current = makeState({ title: "Same", lang: "en" });
+    const snapshot = makeSnapshot({ title: "Same", lang: "en" });
+    const summary = computeChangeSummary(current, snapshot);
+    expect(summary.settings.changed).toHaveLength(0);
+  });
+
+  it("first publish (snapshot===null) emits a single 'all' entry", () => {
+    const current = makeState({ title: "Whatever" });
+    const summary = computeChangeSummary(current, null);
+    expect(summary.settings.changed).toHaveLength(1);
+    expect(summary.settings.changed[0].key).toBe("all");
+  });
+
+  it("collection_mode change is detected (was silently dropped pre-fix)", () => {
+    const current = makeState({ collection_mode: true });
+    const snapshot = makeSnapshot({ collection_mode: false });
+    const summary = computeChangeSummary(current, snapshot);
+    expect(summary.settings.changed).toHaveLength(1);
+    expect(summary.settings.changed[0].key).toBe("collection_mode");
+  });
+
+  // Review-modal humanization: collection_mode label carries
+  // the post-change value as "on"/"off" so the renderer can pick a
+  // value-specific i18n string (change_collection_mode_on/off), mirror
+  // of how lang threads "en"/"es".
+  it("collection_mode false→true labels the change as 'on'", () => {
+    const current = makeState({ collection_mode: true });
+    const snapshot = makeSnapshot({ collection_mode: false });
+    const summary = computeChangeSummary(current, snapshot);
+    const entry = summary.settings.changed.find((e) => e.key === "collection_mode");
+    expect(entry?.label).toBe("on");
+  });
+
+  it("collection_mode true→false labels the change as 'off'", () => {
+    const current = makeState({ collection_mode: false });
+    const snapshot = makeSnapshot({ collection_mode: true });
+    const summary = computeChangeSummary(current, snapshot);
+    const entry = summary.settings.changed.find((e) => e.key === "collection_mode");
+    expect(entry?.label).toBe("off");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pageRowsToCommitFiles — empty-slug guard
+// ---------------------------------------------------------------------------
+
+describe("pageRowsToCommitFiles — empty-slug guard", () => {
+  it("empty-slug row produces no commit file", () => {
+    const files = pageRowsToCommitFiles([{ title: "Untitled", slug: "", body: "" }]);
+    expect(files).toHaveLength(0);
+  });
+
+  it("null-slug row produces no commit file", () => {
+    const files = pageRowsToCommitFiles([
+      { title: "Untitled", slug: null as unknown as string, body: "" },
+    ]);
+    expect(files).toHaveLength(0);
+  });
+
+  it("whitespace-only-slug row produces no commit file", () => {
+    const files = pageRowsToCommitFiles([{ title: "Untitled", slug: "   ", body: "" }]);
+    expect(files).toHaveLength(0);
+  });
+
+  it("valid-slug row produces exactly one commit file at the expected path", () => {
+    const files = pageRowsToCommitFiles([
+      { title: "About", slug: "about", body: "Welcome." },
+    ]);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("telar-content/texts/pages/about.md");
+    expect(files[0].content).toContain('title: "About"');
+    expect(files[0].content).toContain("Welcome.");
+  });
+
+  it("mixed input emits one file for the valid row only", () => {
+    const files = pageRowsToCommitFiles([
+      { title: "About", slug: "about", body: "Welcome." },
+      { title: "Untitled", slug: "", body: "" },
+    ]);
+    expect(files).toHaveLength(1);
+    expect(files[0].path).toBe("telar-content/texts/pages/about.md");
+  });
+
+  // The actual regression: editor auto-derives a slug like `untitled` when
+  // the title is empty, so the original empty-slug check never fires for
+  // these rows. Discovered during late UAT (2026-05-10) — the empty-
+  // title page surfaced as "New" in the Review modal and got past Checks.
+  it("auto-slugged empty-title row (slug=untitled) produces no commit file", () => {
+    const files = pageRowsToCommitFiles([{ title: "", slug: "untitled", body: "" }]);
+    expect(files).toHaveLength(0);
+  });
+
+  it("auto-slugged null-title row produces no commit file", () => {
+    const files = pageRowsToCommitFiles([
+      { title: null as unknown as string, slug: "untitled-3", body: "" },
+    ]);
+    expect(files).toHaveLength(0);
+  });
+
+  it("whitespace-only-title row produces no commit file", () => {
+    const files = pageRowsToCommitFiles([{ title: "   ", slug: "untitled", body: "x" }]);
+    expect(files).toHaveLength(0);
+  });
+});
+
+// isPagePublishable — single source of truth used by
+// pageRowsToCommitFiles AND buildPageContentHashes so both surfaces
+// (commit emission + entity-hashing diff) treat the same rows as
+// "ready to publish".
+describe("isPagePublishable", () => {
+  it("returns false for null title", () => {
+    expect(isPagePublishable({ title: null, slug: "about" })).toBe(false);
+  });
+
+  it("returns false for empty title", () => {
+    expect(isPagePublishable({ title: "", slug: "about" })).toBe(false);
+  });
+
+  it("returns false for whitespace-only title", () => {
+    expect(isPagePublishable({ title: "   ", slug: "about" })).toBe(false);
+  });
+
+  it("returns false for null slug", () => {
+    expect(isPagePublishable({ title: "About", slug: null })).toBe(false);
+  });
+
+  it("returns false for empty slug", () => {
+    expect(isPagePublishable({ title: "About", slug: "" })).toBe(false);
+  });
+
+  it("returns true when both title and slug are populated", () => {
+    expect(isPagePublishable({ title: "About", slug: "about" })).toBe(true);
+  });
+});
+
+// buildPageContentHashes shares the same skip rule so the
+// entity-hashing diff cannot disagree with the commit file set — an
+// empty-title page must not appear in the hashes (otherwise it would
+// surface as "New" in the change-review modal even though no file is
+// being committed).
+describe("buildPageContentHashes — empty-title guard", () => {
+  it("excludes empty-title pages from hashes (auto-slug=untitled regression)", () => {
+    const hashes = buildPageContentHashes([
+      { title: "", slug: "untitled", body: "" },
+      { title: "About", slug: "about", body: "Welcome." },
+    ]);
+    expect(Object.keys(hashes)).toEqual(["about"]);
+  });
+
+  it("excludes empty-slug pages from hashes (legacy guard preserved)", () => {
+    const hashes = buildPageContentHashes([{ title: "Untitled", slug: "", body: "" }]);
+    expect(hashes).toEqual({});
+  });
+
+  it("includes a fully populated page", () => {
+    const hashes = buildPageContentHashes([
+      { title: "About", slug: "about", body: "Welcome." },
+    ]);
+    expect(Object.keys(hashes)).toEqual(["about"]);
+    expect(hashes.about).toContain('"title":"About"');
+    expect(hashes.about).toContain('"slug":"about"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Publish-time defensive gate against v1.2.1 English literals
+// ---------------------------------------------------------------------------
+//
+// Each test dynamically imports `V121_FRONTMATTER_DEFAULTS` and
+// `V121_BODIES` from `~/lib/v130-ingest.server`, plus `buildIndexMd`
+// from `~/lib/publish.server`.
+// ---------------------------------------------------------------------------
+
+interface PublishServerWithBuildIndexMd {
+  buildIndexMd: (landing: {
+    stories_heading: string | null;
+    stories_intro: string | null;
+    objects_heading: string | null;
+    objects_intro: string | null;
+    welcome_body: string | null;
+  }) => string;
+}
+
+async function loadV130Defaults() {
+  const mod = (await import("~/lib/v130-ingest.server")) as {
+    V121_FRONTMATTER_DEFAULTS: {
+      stories_heading: string;
+      objects_heading: string;
+      objects_intro: string;
+    };
+    V121_BODIES: { index: string };
+  };
+  return mod;
+}
+
+async function loadBuildIndexMd() {
+  const mod = (await import("~/lib/publish.server")) as unknown as PublishServerWithBuildIndexMd;
+  return mod.buildIndexMd;
+}
+
+describe("publish defensive gate", () => {
+  it("omits stories_heading when value matches V121_FRONTMATTER_DEFAULTS literal", async () => {
+    const { V121_FRONTMATTER_DEFAULTS } = await loadV130Defaults();
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: V121_FRONTMATTER_DEFAULTS.stories_heading,
+      stories_intro: null,
+      objects_heading: null,
+      objects_intro: null,
+      welcome_body: null,
+    });
+    expect(out).not.toMatch(
+      new RegExp(`stories_heading:\\s*"?${V121_FRONTMATTER_DEFAULTS.stories_heading}"?`),
+    );
+  });
+
+  it("emits stories_heading when value is user-customised", async () => {
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: "My Stories",
+      stories_intro: null,
+      objects_heading: null,
+      objects_intro: null,
+      welcome_body: null,
+    });
+    expect(out).toMatch(/stories_heading:\s*"My Stories"/);
+  });
+
+  it("omits objects_heading when value matches V121_FRONTMATTER_DEFAULTS literal", async () => {
+    const { V121_FRONTMATTER_DEFAULTS } = await loadV130Defaults();
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: null,
+      stories_intro: null,
+      objects_heading: V121_FRONTMATTER_DEFAULTS.objects_heading,
+      objects_intro: null,
+      welcome_body: null,
+    });
+    expect(out).not.toMatch(
+      new RegExp(`objects_heading:\\s*"?${V121_FRONTMATTER_DEFAULTS.objects_heading}"?`),
+    );
+  });
+
+  it("emits objects_heading when value is user-customised", async () => {
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: null,
+      stories_intro: null,
+      objects_heading: "Featured Items",
+      objects_intro: null,
+      welcome_body: null,
+    });
+    expect(out).toMatch(/objects_heading:\s*"Featured Items"/);
+  });
+
+  it("omits objects_intro when value matches V121_FRONTMATTER_DEFAULTS literal", async () => {
+    const { V121_FRONTMATTER_DEFAULTS } = await loadV130Defaults();
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: null,
+      stories_intro: null,
+      objects_heading: null,
+      objects_intro: V121_FRONTMATTER_DEFAULTS.objects_intro,
+      welcome_body: null,
+    });
+    // Pinned literal contains `{count}` — escape for regex
+    const escaped = V121_FRONTMATTER_DEFAULTS.objects_intro.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&",
+    );
+    expect(out).not.toMatch(new RegExp(`objects_intro:\\s*"?${escaped}"?`));
+  });
+
+  it("emits objects_intro when value is user-customised", async () => {
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: null,
+      stories_intro: null,
+      objects_heading: null,
+      objects_intro: "User-customised intro.",
+      welcome_body: null,
+    });
+    expect(out).toMatch(/objects_intro:\s*"User-customised intro\."/);
+  });
+
+  it("welcome_body falls back to parsed body when matches V121_BODIES.index", async () => {
+    const { V121_BODIES } = await loadV130Defaults();
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: null,
+      stories_intro: null,
+      objects_heading: null,
+      objects_intro: null,
+      welcome_body: V121_BODIES.index,
+    });
+    // Defensive gate: V121 default body is dropped (output omits it)
+    expect(out).not.toContain("Welcome to the Telar Demo Site");
+  });
+
+  it("welcome_body uses landing.welcome_body when customised", async () => {
+    const buildIndexMd = await loadBuildIndexMd();
+    const out = buildIndexMd({
+      stories_heading: null,
+      stories_intro: null,
+      objects_heading: null,
+      objects_intro: null,
+      welcome_body: "# My Custom Welcome\n\nUser-edited content.",
+    });
+    expect(out).toContain("# My Custom Welcome");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Drafts round-trip + hard-delete cleanup
+// ---------------------------------------------------------------------------
+//
+// The drafts/hard-delete contract introduces two pipeline behaviours:
+//   1. {story_id}.csv files are emitted for ALL D1 stories — draft + non-draft
+//      project.csv continues to exclude drafts, but the per-story
+//      files now round-trip draft state via the "orphans-are-drafts" rule.
+//   2. Stories hard-deleted from D1 since the last publish produce deletion
+//      entries for commitFilesToRepo's deletions[] parameter.
+//   3. Re-publishing without any D1 change emits zero deletions and zero file
+//      writes (idempotency).
+//
+// The first contract is locked here via the pure helper `storyPathsForPublish`,
+// extracted from buildPublishFileSet's file-set assembly site. The second/third
+// contracts are locked via `computeStoryDeletions`. The project.csv-excludes-
+// drafts invariant continues to be locked by the existing serializeProjectCsv
+// tests above ("omits draft stories entirely") which act as the regression
+// guard against accidentally widening the project.csv membership.
+
+describe("drafts round-trip + hard-delete cleanup", () => {
+  describe("storyPathsForPublish", () => {
+    it("emits telar-content/spreadsheets/{id}.csv for both draft and non-draft stories", () => {
+      const paths = storyPathsForPublish([
+        { story_id: "weavers", draft: false },
+        { story_id: "secret-draft", draft: true },
+      ]);
+      expect(paths).toContain("telar-content/spreadsheets/weavers.csv");
+      expect(paths).toContain("telar-content/spreadsheets/secret-draft.csv");
+    });
+
+    it("returns one path per story regardless of draft flag (file-set parity)", () => {
+      // Three stories — one draft. All three must produce a file path. This
+      // is the contract that lets the importer recover drafts via the
+      // orphans-are-drafts rule.
+      const paths = storyPathsForPublish([
+        { story_id: "a", draft: false },
+        { story_id: "b", draft: true },
+        { story_id: "c", draft: false },
+      ]);
+      expect(paths).toHaveLength(3);
+      expect(paths).toEqual([
+        "telar-content/spreadsheets/a.csv",
+        "telar-content/spreadsheets/b.csv",
+        "telar-content/spreadsheets/c.csv",
+      ]);
+    });
+  });
+
+  describe("computeStoryDeletions", () => {
+    const baseSnapshot: PublishSnapshot = {
+      story_ids: ["a", "b", "c"],
+      object_ids: [],
+      config_hash: "",
+      landing_hash: "",
+    };
+
+    it("emits a deletion entry for a story removed from D1 since the last publish", () => {
+      // Prior publish wrote files for [a, b, c]; current D1 has [a, b]; c was
+      // hard-deleted → its file must be deleted on this publish.
+      const deletions = computeStoryDeletions(["a", "b"], baseSnapshot);
+      expect(deletions).toEqual(["telar-content/spreadsheets/c.csv"]);
+    });
+
+    it("emits multiple deletion entries when several stories were hard-deleted", () => {
+      const deletions = computeStoryDeletions(["a"], baseSnapshot);
+      expect(deletions).toEqual([
+        "telar-content/spreadsheets/b.csv",
+        "telar-content/spreadsheets/c.csv",
+      ]);
+    });
+
+    it("does NOT emit a deletion when a story is toggled to draft but remains in D1", () => {
+      // The draft is still in D1 — its row just isn't in project.csv. The
+      // {story_id}.csv file is still written (per storyPathsForPublish), so no
+      // deletion. This is the "orphans-are-drafts" contract: only the absence
+      // of the file from publish output indicates a hard-delete.
+      const deletions = computeStoryDeletions(["a", "b", "c"], baseSnapshot);
+      expect(deletions).toEqual([]);
+    });
+
+    it("emits zero deletions when the snapshot is null (first publish)", () => {
+      // No prior snapshot ⇒ nothing has ever been published ⇒ nothing to
+      // delete. Without this guard, a first-publish would incorrectly try to
+      // delete files that don't exist on GitHub.
+      const deletions = computeStoryDeletions(["a", "b"], null);
+      expect(deletions).toEqual([]);
+    });
+
+    it("emits zero deletions when D1 state matches the snapshot exactly (idempotency)", () => {
+      // Re-publishing without any D1 change must produce no deletions. The
+      // entity-hashing diff already guarantees no file writes (no story
+      // bucket changes → no per-story file re-emission); this guarantees the
+      // deletion side is equally idempotent.
+      const deletions = computeStoryDeletions(["a", "b", "c"], baseSnapshot);
+      expect(deletions).toEqual([]);
+    });
+
+    it("treats snapshots written before story_ids tracking as no-op (missing-field back-compat)", () => {
+      // snapshot.story_ids has been populated since an earlier release, but the field is
+      // typed `string[]` not `string[] | undefined` — the type system would
+      // catch a missing one. We exercise the empty-array path explicitly here
+      // so an empty prior snapshot doesn't accidentally claim everything was
+      // deleted on the next publish.
+      const emptySnapshot: PublishSnapshot = {
+        ...baseSnapshot,
+        story_ids: [],
+      };
+      const deletions = computeStoryDeletions(["a", "b"], emptySnapshot);
+      expect(deletions).toEqual([]);
+    });
+  });
+
+  describe("computeChangeSummary fileChanges (45-01.1-HOTFIX)", () => {
+    // Minimal helpers — local to this describe so they don't disturb the
+    // existing computeChangeSummary fixtures above. The publishable-view
+    // arrays (stories/objects/pages/glossary) are kept empty unless a test
+    // explicitly populates `stories` (non-drafts) to exercise the dedup
+    // path against storiesDiff.{new,deleted}.
+    function makeEH(stories: Record<string, string> = {}): EntityHashes {
+      return {
+        version: ENTITY_HASHES_VERSION,
+        pages: {},
+        stories,
+        objects: {},
+        glossary: {},
+        navigation: "",
+        landing: "",
+        settings: "",
+      };
+    }
+
+    function makeState(opts: {
+      allStoryIds: string[];
+      stories?: { story_id: string; title: string | null }[];
+      storyHashes?: Record<string, string>;
+    }): CurrentPublishState {
+      return {
+        entityHashes: makeEH(opts.storyHashes ?? {}),
+        config: null,
+        stories: opts.stories ?? [],
+        objects: [],
+        pages: [],
+        glossary: [],
+        allStoryIds: opts.allStoryIds,
+      };
+    }
+
+    function makeSnap(opts: {
+      story_ids?: string[];
+      all_story_ids?: string[];
+      storyHashes?: Record<string, string>;
+    }): PublishSnapshot {
+      return {
+        story_ids: opts.story_ids ?? [],
+        all_story_ids: opts.all_story_ids,
+        object_ids: [],
+        config_hash: JSON.stringify({}),
+        config_managed: {},
+        landing_hash: "",
+        entity_hashes: makeEH(opts.storyHashes ?? {}),
+      };
+    }
+
+    it("Case B fix: hard-delete of an always-draft surfaces in fileChanges.removedStoryFiles and flips isUpToDate", () => {
+      // Prior publish: snapshot tracked both `a` (non-draft) and `b-draft`
+      // (always-draft). Current D1: only `a` exists; `b-draft` was hard-deleted.
+      // The publishable view (storiesDiff) cannot see this — `b-draft` was
+      // never in story_ids — so without fileChanges the Review modal would
+      // claim "up to date" while a stale draft file lingers on GitHub.
+      const snapshot = makeSnap({
+        story_ids: ["a"],
+        all_story_ids: ["a", "b-draft"],
+        storyHashes: { a: "h-a" },
+      });
+      const state = makeState({
+        allStoryIds: ["a"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" },
+      });
+      const summary = computeChangeSummary(state, snapshot);
+      expect(summary.stories.deleted).toEqual([]);
+      expect(summary.fileChanges.addedStoryFiles).toEqual([]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual(["b-draft"]);
+      expect(summary.isUpToDate).toBe(false);
+    });
+
+    it("symmetric: a new draft created since last publish surfaces in fileChanges.addedStoryFiles and flips isUpToDate", () => {
+      // Snapshot tracks only `a`. Current D1 has `a` plus a new draft. The
+      // publishable view doesn't see the draft — fileChanges must.
+      const snapshot = makeSnap({
+        story_ids: ["a"],
+        all_story_ids: ["a"],
+        storyHashes: { a: "h-a" },
+      });
+      const state = makeState({
+        allStoryIds: ["a", "new-draft"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" },
+      });
+      const summary = computeChangeSummary(state, snapshot);
+      expect(summary.stories.new).toEqual([]);
+      expect(summary.fileChanges.addedStoryFiles).toEqual(["new-draft"]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual([]);
+      expect(summary.isUpToDate).toBe(false);
+    });
+
+    it("non-draft hard-delete is not double-rendered: shows in storiesDiff.deleted only", () => {
+      // `b` was a non-draft in the prior publish. Hard-deleted since.
+      // storiesDiff.deleted carries it; fileChanges must dedup it out.
+      const snapshot = makeSnap({
+        story_ids: ["a", "b"],
+        all_story_ids: ["a", "b"],
+        storyHashes: { a: "h-a", b: "h-b" },
+      });
+      const state = makeState({
+        allStoryIds: ["a"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" },
+      });
+      const summary = computeChangeSummary(state, snapshot);
+      expect(summary.stories.deleted.map((s) => s.story_id)).toEqual(["b"]);
+      expect(summary.fileChanges.addedStoryFiles).toEqual([]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual([]);
+      expect(summary.isUpToDate).toBe(false);
+    });
+
+    it("toggling non-draft to draft leaves no fileChanges entry (story still has a file)", () => {
+      // `b` was a non-draft in the prior publish and is now toggled to draft —
+      // its row still exists in D1 (still in allStoryIds), and its file is
+      // still written on this publish. No fileChanges entry either side.
+      // The publishable view will flag `b` as deleted (gone from non-draft
+      // stories), but fileChanges must not re-render it as removed.
+      const snapshot = makeSnap({
+        story_ids: ["a", "b"],
+        all_story_ids: ["a", "b"],
+        storyHashes: { a: "h-a", b: "h-b" },
+      });
+      const state = makeState({
+        allStoryIds: ["a", "b"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" }, // b excluded from hashes when draft
+      });
+      const summary = computeChangeSummary(state, snapshot);
+      expect(summary.stories.deleted.map((s) => s.story_id)).toEqual(["b"]);
+      expect(summary.fileChanges.addedStoryFiles).toEqual([]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual([]);
+    });
+
+    it("idempotency: nothing changed since last publish keeps fileChanges empty and isUpToDate true", () => {
+      // Snapshot and current state agree on the full file set; entity hashes
+      // match. isUpToDate must stay true.
+      const snapshot = makeSnap({
+        story_ids: ["a"],
+        all_story_ids: ["a", "b-draft"],
+        storyHashes: { a: "h-a" },
+      });
+      const state = makeState({
+        allStoryIds: ["a", "b-draft"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" },
+      });
+      const summary = computeChangeSummary(state, snapshot);
+      expect(summary.fileChanges.addedStoryFiles).toEqual([]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual([]);
+      expect(summary.isUpToDate).toBe(true);
+    });
+
+    it("back-compat: snapshot without all_story_ids falls back to story_ids — no false positives when state matches", () => {
+      // Pre-Phase-45 snapshot: only `story_ids` is populated. Current D1
+      // matches exactly (no drafts). fileChanges must stay empty.
+      const snapshot = makeSnap({
+        story_ids: ["a"],
+        // all_story_ids: undefined
+        storyHashes: { a: "h-a" },
+      });
+      const state = makeState({
+        allStoryIds: ["a"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" },
+      });
+      const summary = computeChangeSummary(state, snapshot);
+      expect(summary.fileChanges.addedStoryFiles).toEqual([]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual([]);
+      expect(summary.isUpToDate).toBe(true);
+    });
+
+    it("back-compat: snapshot without all_story_ids still detects a new draft via the story_ids fallback", () => {
+      // Same pre-Phase-45 snapshot shape but a new draft has appeared in D1.
+      // The fallback set is `story_ids` (non-drafts only); the new draft is
+      // not in it, so addedStoryFiles must surface it.
+      const snapshot = makeSnap({
+        story_ids: ["a"],
+        // all_story_ids: undefined
+        storyHashes: { a: "h-a" },
+      });
+      const state = makeState({
+        allStoryIds: ["a", "new-draft"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" },
+      });
+      const summary = computeChangeSummary(state, snapshot);
+      expect(summary.fileChanges.addedStoryFiles).toEqual(["new-draft"]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual([]);
+      expect(summary.isUpToDate).toBe(false);
+    });
+
+    it("first publish (snapshot null): fileChanges.addedStoryFiles lists drafts not already in stories.new", () => {
+      // No prior snapshot. Non-drafts land in stories.new; drafts are not
+      // named there but their files will be written, so they must surface
+      // in fileChanges.addedStoryFiles (dedup against stories.new).
+      const state = makeState({
+        allStoryIds: ["a", "b-draft"],
+        stories: [{ story_id: "a", title: "A" }],
+        storyHashes: { a: "h-a" },
+      });
+      const summary = computeChangeSummary(state, null);
+      expect(summary.stories.new.map((s) => s.story_id)).toEqual(["a"]);
+      expect(summary.fileChanges.addedStoryFiles).toEqual(["b-draft"]);
+      expect(summary.fileChanges.removedStoryFiles).toEqual([]);
+      expect(summary.isUpToDate).toBe(false);
+    });
   });
 });

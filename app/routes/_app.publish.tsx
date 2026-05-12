@@ -1,17 +1,27 @@
 /**
- * Publish — 3-step publish wizard (Review, Checks, Publish).
+ * This file is the Publish route — the 3-step publish wizard
+ * (Review, Checks, Publish) the user runs to push their D1-stored
+ * compositor content out to GitHub as a Telar-format commit.
  *
- * Loader: fetches the active project, computes a change summary against the
- *         stored publish snapshot, and returns project + user info.
+ * Loader fetches the active project, computes a change summary
+ * against the stored publish snapshot, and returns project + user
+ * info for rendering.
  *
- * Action: handles four intents —
- *   run-validation: runs pre-publish checks and returns ValidationResult
- *   publish: assembles the full file set, commits, updates D1, returns SHA
- *   poll-build: polls GitHub Actions and returns phase statuses
- *   dismiss-intro: no-op (dismissal handled client-side via localStorage)
+ * Action handles four intents:
+ *   - `run-validation` — runs pre-publish checks and returns
+ *     `ValidationResult`
+ *   - `publish` — assembles the full file set, commits, updates D1,
+ *     returns the new SHA
+ *   - `poll-build` — polls GitHub Actions and returns phase
+ *     statuses for the build tracker
+ *   - `dismiss-intro` — no-op (dismissal handled client-side via
+ *     localStorage)
  *
- * Component: wizard with PublishProgressBar, ChangeSummary, GitEducationPanel,
- *            ValidationChecks, CommitMessageEditor, BuildTracker.
+ * Renders the wizard with `PublishProgressBar`, `ChangeSummary`,
+ * `GitEducationPanel`, `ValidationChecks`, `CommitMessageEditor`,
+ * and `BuildTracker`.
+ *
+ * @version v1.2.0-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -23,7 +33,7 @@ import type { Route } from "./+types/_app.publish";
 import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, stories, objects, steps, project_config, project_landing } from "~/db/schema";
+import { projects, stories, objects, steps, project_config, project_landing, project_pages, glossary_terms } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
@@ -38,8 +48,14 @@ import {
 } from "~/lib/commit.server";
 import {
   computeChangeSummary,
+  computeStoryDeletions,
   runPrePublishValidation,
   buildPublishFileSet,
+  buildConfigManagedFields,
+  buildPageContentHashes,
+  buildEntityHashes,
+  findEntityMaxUpdatedAt,
+  ENTITY_HASHES_VERSION,
 } from "~/lib/publish.server";
 import type { PublishSnapshot, ChangeSummary, ValidationResult } from "~/lib/publish.server";
 import { Button } from "~/components/ui/Button";
@@ -65,16 +81,74 @@ function autoGenerateCommitMessage(summary: ChangeSummary, t: (key: string, opts
   const parts: string[] = [];
 
   const newStories = summary.stories.new.length;
+  const modifiedStories = summary.stories.modified.length;
   const deletedStories = summary.stories.deleted.length;
   const newObjects = summary.objects.new.length;
+  const modifiedObjects = summary.objects.modified.length;
   const deletedObjects = summary.objects.deleted.length;
+  const newPages = summary.pages.new.length;
+  const modifiedPages = summary.pages.modified.length;
+  const deletedPages = summary.pages.deleted.length;
+  const newTerms = summary.glossary.new.length;
+  const modifiedTerms = summary.glossary.modified.length;
+  const deletedTerms = summary.glossary.deleted.length;
+
+  // In back-compat bootstrap mode the `modified` arrays are noise + signal
+  // mixed (every existing entity flagged because the snapshot lacked
+  // entity_hashes). We can't separate the user's actual edits from the
+  // back-compat flood, so we omit modify_X parts entirely rather than
+  // mislead — better to lose per-edit visibility for one publish than to
+  // tell the user they modified 47 objects when they only touched one.
+  // add_X / remove_X parts ARE reliable in back-compat (legacy story_ids /
+  // object_ids / page_slugs let us detect adds and deletes accurately).
+  const includeModified = !summary.backCompatBootstrap;
 
   if (newStories > 0) parts.push(t("auto_commit.add_stories", { count: newStories }));
+  if (includeModified && modifiedStories > 0) parts.push(t("auto_commit.modify_stories", { count: modifiedStories }));
   if (deletedStories > 0) parts.push(t("auto_commit.remove_stories", { count: deletedStories }));
   if (newObjects > 0) parts.push(t("auto_commit.add_objects", { count: newObjects }));
+  if (includeModified && modifiedObjects > 0) parts.push(t("auto_commit.modify_objects", { count: modifiedObjects }));
   if (deletedObjects > 0) parts.push(t("auto_commit.remove_objects", { count: deletedObjects }));
-  if (summary.settings.changed.length > 0) parts.push(t("auto_commit.update_settings"));
+  if (newPages > 0) parts.push(t("auto_commit.add_pages", { count: newPages }));
+  if (includeModified && modifiedPages > 0) parts.push(t("auto_commit.modify_pages", { count: modifiedPages }));
+  if (deletedPages > 0) parts.push(t("auto_commit.remove_pages", { count: deletedPages }));
+  if (newTerms > 0) parts.push(t("auto_commit.add_terms", { count: newTerms }));
+  if (includeModified && modifiedTerms > 0) parts.push(t("auto_commit.modify_terms", { count: modifiedTerms }));
+  if (deletedTerms > 0) parts.push(t("auto_commit.remove_terms", { count: deletedTerms }));
+
+  // Settings — first-publish bypass first (single "all" entry preserves the
+  // legacy first-publish headline), then per-field naming for incremental
+  // changes. The lang entry is special-cased with a target-
+  // language form and pushed FIRST within the settings group so it survives
+  // the 3-part headline cap when other fields also changed.
+  const settingsChanges = summary.settings.changed;
+  if (settingsChanges.some((e) => e.key === "all")) {
+    parts.push(t("auto_commit.update_settings"));
+  } else if (settingsChanges.length > 0) {
+    const settingsParts: string[] = [];
+    // Value-dependent keys go first so the headline reads with the most
+    // significant change up front (language change reads naturally as the
+    // primary action). Same ordering used by both surfaces consuming
+    // computeChangeSummary so commit subject and Review modal stay aligned.
+    const langEntry = settingsChanges.find((e) => e.key === "lang");
+    if (langEntry) {
+      const targetLang = langEntry.label; // "en" | "es" — post-change value
+      settingsParts.push(t(`auto_commit.change_language_to_${targetLang}`));
+    }
+    for (const entry of settingsChanges) {
+      if (entry.key === "lang") continue;
+      if (entry.key === "collection_mode") {
+        // entry.label is "on" | "off" — see computeChangeSummary
+        settingsParts.push(t(`auto_commit.change_collection_mode_${entry.label}`));
+        continue;
+      }
+      settingsParts.push(t(`auto_commit.change_${entry.key}`));
+    }
+    parts.push(...settingsParts);
+  }
+
   if (summary.landing.changed) parts.push(t("auto_commit.update_homepage"));
+  if (summary.navigation.changed) parts.push(t("auto_commit.update_nav"));
 
   const headline = parts.length > 0
     ? parts.slice(0, 3).join(", ").replace(/^./, (c) => c.toUpperCase())
@@ -84,22 +158,55 @@ function autoGenerateCommitMessage(summary: ChangeSummary, t: (key: string, opts
 }
 
 function autoGenerateCommitBody(summary: ChangeSummary, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  const includeModified = !summary.backCompatBootstrap;
+
+  // Build per-bucket entry lists. Entries within a section are ordered
+  // stories → objects → pages → glossary, matching the change-summary
+  // modal's section order so commit body and modal stay aligned.
+  const added: string[] = [];
+  for (const s of summary.stories.new) added.push(t("auto_commit.entry_story", { title: s.title ?? s.story_id }));
+  for (const o of summary.objects.new) added.push(t("auto_commit.entry_object", { title: o.title ?? o.object_id }));
+  for (const p of summary.pages.new) added.push(t("auto_commit.entry_page", { title: p.title ?? p.slug }));
+  for (const g of summary.glossary.new) added.push(t("auto_commit.entry_term", { title: g.title ?? g.term_id }));
+
+  const changed: string[] = [];
+  if (includeModified) {
+    for (const s of summary.stories.modified) changed.push(t("auto_commit.entry_story", { title: s.title ?? s.story_id }));
+    for (const o of summary.objects.modified) changed.push(t("auto_commit.entry_object", { title: o.title ?? o.object_id }));
+    for (const p of summary.pages.modified) changed.push(t("auto_commit.entry_page", { title: p.title ?? p.slug }));
+    for (const g of summary.glossary.modified) changed.push(t("auto_commit.entry_term", { title: g.title ?? g.term_id }));
+  }
+
+  const removed: string[] = [];
+  for (const s of summary.stories.deleted) removed.push(t("auto_commit.entry_story", { title: s.title ?? s.story_id }));
+  for (const o of summary.objects.deleted) removed.push(t("auto_commit.entry_object", { title: o.title ?? o.object_id }));
+  for (const p of summary.pages.deleted) removed.push(t("auto_commit.entry_page", { title: p.title ?? p.slug }));
+  for (const g of summary.glossary.deleted) removed.push(t("auto_commit.entry_term", { title: g.title ?? g.term_id }));
+
+  const sections: string[][] = [];
+  if (added.length > 0) sections.push([t("auto_commit.section_added"), ...added]);
+  if (changed.length > 0) sections.push([t("auto_commit.section_changed"), ...changed]);
+  if (removed.length > 0) sections.push([t("auto_commit.section_removed"), ...removed]);
+
+  // Join sections with a blank line between them; flat sequence within
+  // each section.
   const lines: string[] = [];
-
-  for (const s of summary.stories.new) {
-    lines.push(t("auto_commit.new_story", { title: s.title ?? s.story_id }));
-  }
-  for (const s of summary.stories.deleted) {
-    lines.push(t("auto_commit.deleted_story", { title: s.title ?? s.story_id }));
-  }
-  for (const o of summary.objects.new) {
-    lines.push(t("auto_commit.new_object", { title: o.title ?? o.object_id }));
-  }
-  for (const o of summary.objects.deleted) {
-    lines.push(t("auto_commit.deleted_object", { title: o.title ?? o.object_id }));
+  for (let i = 0; i < sections.length; i++) {
+    if (i > 0) lines.push("");
+    lines.push(...sections[i]);
   }
 
-  lines.push("");
+  // In back-compat bootstrap mode, add a one-time note explaining why
+  // the body is sparse — keeps the commit's audit trail honest about
+  // why this commit looks different from neighbours, and reassures
+  // future-readers that subsequent commits will have full per-edit
+  // detail.
+  if (summary.backCompatBootstrap) {
+    if (lines.length > 0) lines.push("");
+    lines.push(t("auto_commit.bootstrap_note"));
+  }
+
+  if (lines.length > 0) lines.push("");
   lines.push(t("auto_commit.footer"));
   return lines.join("\n");
 }
@@ -125,52 +232,123 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
   const { project: activeProject } = resolved;
 
-  // Fetch D1 data needed for change summary
-  const [storyRows, objectRows, configRow, landingRow] = await Promise.all([
+  // Force a DO snapshot before reading D1 — otherwise the change summary is
+  // computed against stale rows (e.g. orphan pages from earlier broken
+  // deploys) that the publish action's own snapshot will then DELETE before
+  // commit, producing a "+ 4 pages" summary against a commit that only
+  // creates 2 files. The cost is one DB write per /publish navigation when
+  // a DO is alive; if no DO instance is alive (no active collaborators) the
+  // call returns 200 without any work. Identical to the action's snapshot
+  // call below, just earlier in the request lifecycle.
+  try {
+    const doId = env.COLLABORATION.idFromName(String(activeProject.id));
+    const doStub = env.COLLABORATION.get(doId);
+    const { sigHex, timestamp } = await signInternalMarker(
+      activeProject.id,
+      env.SESSION_SECRET,
+    );
+    const snapshotReq = new Request(`https://internal/snapshot`, {
+      method: "POST",
+      headers: {
+        "X-Internal-Auth": sigHex,
+        "X-Internal-Timestamp": String(timestamp),
+        "X-Internal-Project": String(activeProject.id),
+      },
+    });
+    await doStub.fetch(snapshotReq);
+  } catch {
+    // DO unreachable — fall through to D1 reads with whatever state exists.
+  }
+
+  // Fetch display metadata + entity hashes in parallel. buildEntityHashes
+  // reads stories/objects/pages/glossary/config/landing internally (plus
+  // steps/layers for story hashing) — D1 handles concurrent reads fine,
+  // and parallelising shaves the per-page latency we add to the loader.
+  // Pages are fetched here only for the empty-slug filter; the config row
+  // is fetched here because computeChangeSummary's per-field settings diff
+  // needs the raw row, not just its hash.
+  const [storyRows, objectRows, pageRows, glossaryRows, configRow, entityHashes] = await Promise.all([
     db.select({ story_id: stories.story_id, title: stories.title, draft: stories.draft })
       .from(stories)
       .where(eq(stories.project_id, activeProject.id)),
     db.select({ object_id: objects.object_id, title: objects.title })
       .from(objects)
       .where(eq(objects.project_id, activeProject.id)),
+    db.select({
+      slug: project_pages.slug,
+      title: project_pages.title,
+    })
+      .from(project_pages)
+      .where(eq(project_pages.project_id, activeProject.id)),
+    db.select({ term_id: glossary_terms.term_id, title: glossary_terms.title })
+      .from(glossary_terms)
+      .where(eq(glossary_terms.project_id, activeProject.id)),
     db.select().from(project_config).where(eq(project_config.project_id, activeProject.id)).limit(1),
-    db.select().from(project_landing).where(eq(project_landing.project_id, activeProject.id)).limit(1),
+    buildEntityHashes(db, activeProject.id),
   ]);
 
   const config = configRow[0] ?? null;
-  const landing = landingRow[0] ?? null;
 
   const nonDraftStories = storyRows.filter((s) => !s.draft);
+  // Filter out empty/whitespace slugs — these never land in the publish
+  // commit (see pageRowsToCommitFiles in publish.server.ts) so they
+  // shouldn't appear in the diff either. Keeps the change summary
+  // consistent with what actually gets pushed to GitHub.
+  const committablePages = pageRows
+    .map((p) => ({ slug: (p.slug ?? "").trim(), title: p.title }))
+    .filter((p) => p.slug.length > 0);
 
   const currentState = {
-    storyIds: nonDraftStories.map((s) => s.story_id),
-    objectIds: objectRows.map((o) => o.object_id),
-    configHash: config ? hashObject({
-      title: config.title,
-      url: config.url,
-      baseurl: config.baseurl,
-      description: config.description,
-      author: config.author,
-      email: config.email,
-      logo: config.logo,
-      story_key: config.story_key,
-    }) : "",
-    landingHash: landing ? hashObject({
-      stories_heading: landing.stories_heading,
-      stories_intro: landing.stories_intro,
-      objects_heading: landing.objects_heading,
-      objects_intro: landing.objects_intro,
-      welcome_body: landing.welcome_body,
-    }) : "",
+    entityHashes,
+    config,
     stories: nonDraftStories.map((s) => ({ story_id: s.story_id, title: s.title })),
     objects: objectRows.map((o) => ({ object_id: o.object_id, title: o.title })),
+    pages: committablePages,
+    glossary: glossaryRows,
+    // Full D1 story-id set (drafts + non-drafts) drives the
+    // fileChanges section of ChangeSummary so the gate sees draft file
+    // adds/removes that the publishable-view diff misses by design.
+    allStoryIds: storyRows.map((s) => s.story_id),
   };
 
   const snapshot: PublishSnapshot | null = activeProject.publish_snapshot
     ? (JSON.parse(activeProject.publish_snapshot) as PublishSnapshot)
     : null;
 
-  const changeSummary = computeChangeSummary(currentState, snapshot);
+  // Silent-bootstrap detection: when the snapshot's entity_hashes is
+  // missing OR has a stale version (hash format changed), AND nothing has
+  // been edited since the last publish, upgrade the snapshot in place
+  // without making a GitHub commit. The user sees a clean "up to date"
+  // modal — no flood, no banner, no commit pollution.
+  //
+  // The version check guards against the same kind of silent re-flood
+  // that happened mid-Phase-36-05 when we changed object/page hash
+  // inputs without bumping a format marker — old snapshot hashes didn't
+  // match new ones, every entity flagged as Modified, and the back-compat
+  // path didn't fire because `entity_hashes` was technically present.
+  //
+  // Active editors (anything edited since last_published_at) take the
+  // loud bootstrap path: backCompatBootstrap=true on the ChangeSummary,
+  // banner shown in the modal, modify_X parts suppressed in the commit
+  // message. They publish once with that mitigated UX, snapshot upgrades
+  // as part of the publish action, and subsequent publishes are accurate.
+  let effectiveSnapshot: PublishSnapshot | null = snapshot;
+  const snapshotIsOutdated =
+    snapshot !== null &&
+    (snapshot.entity_hashes === undefined ||
+      (snapshot.entity_hashes.version ?? 1) !== ENTITY_HASHES_VERSION);
+  if (snapshotIsOutdated && activeProject.last_published_at) {
+    const maxUpdatedAt = await findEntityMaxUpdatedAt(db, activeProject.id);
+    const isIdle = !maxUpdatedAt || maxUpdatedAt <= activeProject.last_published_at;
+    if (isIdle) {
+      effectiveSnapshot = { ...snapshot!, entity_hashes: entityHashes };
+      await db.update(projects).set({
+        publish_snapshot: JSON.stringify(effectiveSnapshot),
+      }).where(eq(projects.id, activeProject.id));
+    }
+  }
+
+  const changeSummary = computeChangeSummary(currentState, effectiveSnapshot);
 
   return {
     project: {
@@ -255,12 +433,18 @@ export async function action({ request, context }: Route.ActionArgs) {
           allSteps = allSteps.concat(stepsForStory);
         }
 
+        // Fetch pages for empty-title validation (page_no_title warning)
+        const pageRows = await db.select({ slug: project_pages.slug, title: project_pages.title })
+          .from(project_pages)
+          .where(eq(project_pages.project_id, activeProject.id));
+
         const validation = runPrePublishValidation({
           headSha: activeProject.head_sha ?? "",
           currentRepoHead,
           stories: storyRows.map((s) => ({ story_id: s.story_id, title: s.title })),
           steps: allSteps,
           objects: objectRows,
+          pages: pageRows,
         });
 
         return { ok: true, intent: "run-validation", validation };
@@ -318,6 +502,26 @@ export async function action({ request, context }: Route.ActionArgs) {
           env,
         });
 
+        // Hard-deleted stories (present in prior publish's
+        // file set, no longer in D1) get their {story_id}.csv deleted on
+        // GitHub this publish. Drafts are NOT hard-deletes — they remain in
+        // D1 with draft=true and their file is still written by the file-set
+        // assembly above. Snapshot is the publish-snapshot loaded earlier
+        // in this action (current_snapshot below); we re-derive here to keep
+        // the deletion decision adjacent to the commit call. Empty list when
+        // no prior snapshot (first publish) or when no stories were removed.
+        const currentStoryIdsForDeletion = await db
+          .select({ story_id: stories.story_id })
+          .from(stories)
+          .where(eq(stories.project_id, activeProject.id));
+        const priorSnapshot: PublishSnapshot | null = activeProject.publish_snapshot
+          ? (JSON.parse(activeProject.publish_snapshot) as PublishSnapshot)
+          : null;
+        const deletions = computeStoryDeletions(
+          currentStoryIdsForDeletion.map((r) => r.story_id),
+          priorSnapshot,
+        );
+
         // Publish always triggers a full build — tiles are deployed via GitHub
         // Pages (artifact upload), so partial workflows can't deploy content.
         const result = await commitFilesToRepo(
@@ -328,36 +532,68 @@ export async function action({ request, context }: Route.ActionArgs) {
           files,
           commitMessage,
           commitBody,
+          deletions.length > 0 ? deletions : undefined,
         );
 
         const newHeadSha = result.newHeadSha;
         const now = new Date().toISOString();
 
-        // Compute current snapshot for storage
-        const [storyRows, objectRows, configRow, landingRow] = await Promise.all([
+        // Compute current snapshot for storage. entity_hashes is the new
+        // single source of truth for change detection; legacy fields
+        // (story_ids, object_ids, page_slugs, page_hashes, config_hash,
+        // config_managed, landing_hash, navigation_hash) are dual-written
+        // during the transition so a roll-back doesn't lose change-tracking
+        // data, and so old snapshots' computeChangeSummary readers keep
+        // working until the next publish overwrites the snapshot.
+        const [storyRows, objectRows, pageRows, configRow, landingRow, entityHashes] = await Promise.all([
           db.select({ story_id: stories.story_id, draft: stories.draft }).from(stories).where(eq(stories.project_id, activeProject.id)),
           db.select({ object_id: objects.object_id }).from(objects).where(eq(objects.project_id, activeProject.id)),
+          db.select({
+            slug: project_pages.slug,
+            title: project_pages.title,
+            body: project_pages.body,
+            order: project_pages.order,
+          }).from(project_pages).where(eq(project_pages.project_id, activeProject.id)),
           db.select().from(project_config).where(eq(project_config.project_id, activeProject.id)).limit(1),
           db.select().from(project_landing).where(eq(project_landing.project_id, activeProject.id)).limit(1),
+          buildEntityHashes(db, activeProject.id),
         ]);
 
         const config = configRow[0] ?? null;
         const landing = landingRow[0] ?? null;
         const nonDraftStories = storyRows.filter((s) => !s.draft);
+        // Mirror the loader's filter — only pages with non-empty trimmed slugs
+        // land in the commit, so only those should land in the snapshot.
+        const committablePageSlugs = pageRows
+          .map((p) => (p.slug ?? "").trim())
+          .filter((slug) => slug.length > 0);
 
+        // Per-field managed-fields map — independent of entity_hashes
+        // because computeChangeSummary's per-field settings diff uses it
+        // (drives lang/title/etc. labels in the commit message).
+        const newConfigManaged = config ? buildConfigManagedFields(config) : {};
+        let newNavigationHash = "";
+        if (config?.navigation_json) {
+          try {
+            newNavigationHash = hashObject(JSON.parse(config.navigation_json));
+          } catch {
+            // Malformed — match loader behaviour and store empty.
+          }
+        }
         const newSnapshot: PublishSnapshot = {
+          // story_ids keeps its legacy semantics — non-drafts only — to preserve
+          // the diffEntities back-compat naming layer (drafts must not surface
+          // in the commit-message's added/removed stories list).
           story_ids: nonDraftStories.map((s) => s.story_id),
+          // Track every story whose {story_id}.csv was written
+          // by buildPublishFileSet (draft + non-draft). Drives accurate
+          // hard-delete detection on the next publish via computeStoryDeletions.
+          all_story_ids: storyRows.map((s) => s.story_id),
           object_ids: objectRows.map((o) => o.object_id),
-          config_hash: config ? hashObject({
-            title: config.title,
-            url: config.url,
-            baseurl: config.baseurl,
-            description: config.description,
-            author: config.author,
-            email: config.email,
-            logo: config.logo,
-            story_key: config.story_key,
-          }) : "",
+          page_slugs: committablePageSlugs,
+          page_hashes: buildPageContentHashes(pageRows),
+          config_hash: config ? hashObject(newConfigManaged) : "",
+          config_managed: newConfigManaged,
           landing_hash: landing ? hashObject({
             stories_heading: landing.stories_heading,
             stories_intro: landing.stories_intro,
@@ -365,6 +601,8 @@ export async function action({ request, context }: Route.ActionArgs) {
             objects_intro: landing.objects_intro,
             welcome_body: landing.welcome_body,
           }) : "",
+          navigation_hash: newNavigationHash,
+          entity_hashes: entityHashes,
         };
 
         await db.update(projects).set({
