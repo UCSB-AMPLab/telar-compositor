@@ -1,5 +1,7 @@
 /**
- * collaboration-can-delete.test.ts — server-side canDelete enforcement.
+ * This file pins server-side `canDelete` enforcement — the worker check
+ * that decides which collaborators are allowed to remove which Yjs
+ * structures from a project's shared doc.
  *
  * Tests the `makeCanDeleteHandler` factory from `workers/can-delete.ts`
  * against the cases mandated by the test plan and verification rules:
@@ -18,7 +20,9 @@
  * The handler runs against a real Y.Doc with synthetic WebSocket origins
  * (objects exposing `deserializeAttachment`). No DurableObject runtime is
  * required. This mirrors the harness pattern in
- * tests/snapshot-insert-delete.test.ts (A2 verification test).
+ * tests/snapshot-insert-delete.test.ts.
+ *
+ * @version v1.0.1-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

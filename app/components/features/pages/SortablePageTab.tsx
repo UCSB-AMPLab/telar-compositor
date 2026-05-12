@@ -1,13 +1,18 @@
 /**
- * SortablePageTab — a single draggable tab in the nav bar preview.
+ * This file renders a single draggable tab in the Pages editor's
+ * nav-bar preview — used for both user-defined page tabs and the
+ * built-in nav items (Home, Objects, Glossary).
  *
- * Used for both page tabs and built-in nav items (Home, Objects, Glossary).
- * Uses useSortable from @dnd-kit/sortable. Touch target: h-[36px].
+ * Uses `useSortable` from `@dnd-kit/sortable`. Touch target:
+ * `h-[36px]`.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface SortablePageTabProps {
   sortableId: string;
@@ -17,6 +22,8 @@ interface SortablePageTabProps {
   isBuiltin?: boolean;
   onDelete?: () => void;
   canDelete?: boolean;
+  /** When true, renders an amber `!` badge to flag a page that needs attention. */
+  isIncomplete?: boolean;
 }
 
 export function SortablePageTab({
@@ -27,7 +34,9 @@ export function SortablePageTab({
   isBuiltin = false,
   onDelete,
   canDelete = true,
+  isIncomplete = false,
 }: SortablePageTabProps) {
+  const { t } = useTranslation("pages");
   const {
     attributes,
     listeners,
@@ -61,6 +70,15 @@ export function SortablePageTab({
       onClick={isBuiltin ? undefined : onSelect}
     >
       {label || "Untitled"}
+      {isIncomplete && (
+        <span
+          className="inline-flex items-center justify-center text-xs font-body text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 flex-shrink-0"
+          aria-label={t("name_required")}
+          title={t("name_required")}
+        >
+          !
+        </span>
+      )}
       {!isBuiltin && onDelete && (
         <button
           type="button"

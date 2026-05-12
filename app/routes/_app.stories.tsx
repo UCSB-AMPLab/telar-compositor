@@ -1,17 +1,23 @@
 /**
- * Stories — full story management list view.
+ * This file is the Stories route — the full story management list
+ * view, where the user browses every story in their project and
+ * launches the per-story editor by clicking a row.
  *
- * Loader: fetches the active project's stories ordered by `order` ASC,
- *         plus step counts per story, team members (for delete
- *         confirmation contributor warnings), and the viewer's role.
- * Action: handles toggle-draft and toggle-private. Structural ops
- *         (create-story, delete-story, reorder) migrated to Yjs via
- *         useStructuralOps — see workers/collaboration.ts snapshotToD1.
- * Component: vertical dnd-kit list with drag handles, inline creation form,
- *            delete confirmation modal, and draft/private Switch toggles.
- *            When ydoc is available, reads stories from the Y.Array so
- *            remote collaborators' changes appear in real time. Falls
- *            back to loader data during SSR / pre-connection.
+ * Loader fetches the active project's stories ordered by `order` ASC,
+ * plus step counts per story, team members (for delete-confirmation
+ * contributor warnings), and the viewer's role. Action handles
+ * `toggle-draft` and `toggle-private`. Structural ops
+ * (`create-story`, `delete-story`, `reorder`) are migrated to Yjs
+ * via `useStructuralOps` — see `workers/collaboration.ts`
+ * `snapshotToD1`.
+ *
+ * Renders a vertical dnd-kit list with drag handles, an inline
+ * creation form, a delete-confirmation modal, and draft/private
+ * Switch toggles. When a Y.Doc is available, the page reads stories
+ * from the Y.Array so remote collaborators' changes appear in real
+ * time; it falls back to loader data during SSR or pre-connection.
+ *
+ * @version v1.2.0-beta
  */
 
 import { asc, count, eq, gt } from "drizzle-orm";
@@ -38,6 +44,7 @@ import {
 import type { Route } from "./+types/_app.stories";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
+import { keyFor } from "~/lib/item-key";
 import { stories, steps, project_members, users } from "~/db/schema";
 import { resolveActiveProject } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
@@ -50,6 +57,7 @@ import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useToast } from "~/hooks/use-toast";
+import { signInternalMarker } from "../../workers/auth";
 
 export const handle = { i18n: ["common", "stories"] };
 
@@ -78,7 +86,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .where(eq(stories.project_id, activeProject.id))
     .orderBy(asc(stories.order));
 
-  // Fetch team members (for delete confirmation contributor warning)
+  // Fetch team members (for delete-confirmation contributor warning)
   const memberRows = await db
     .select({
       userId: project_members.user_id,
@@ -158,6 +166,52 @@ export async function action({ request, context }: Route.ActionArgs) {
       return { ok: true, intent: "toggle-private" };
     }
 
+    case "flush-yjs-snapshot": {
+      // Eager DO -> D1 snapshot before the client navigates to
+      // a freshly-created story. Closes the race where the editor loader
+      // (`_app.stories.$storyId.tsx:75`) reads D1 before the debounced
+      // `snapshotToD1` has flushed and 404s. Mirrors the marker-signing
+      // dance from `_app.publish.tsx:301-334` (the only other caller of
+      // the DO `/snapshot` endpoint today).
+      //
+      // Soft-error posture: on failure return ok:false but
+      // do NOT throw. The client still navigates — the story exists in
+      // Yjs, and the 30s alarm-driven snapshot is the eventual safety net.
+      try {
+        const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+        const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+        const sessionActiveId = session.get("activeProjectId") as number | undefined;
+
+        const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+        if (!resolved) {
+          return { ok: false, intent: "flush-yjs-snapshot", error: "snapshot_failed" };
+        }
+        const { project: activeProject } = resolved;
+
+        const doId = env.COLLABORATION.idFromName(String(activeProject.id));
+        const doStub = env.COLLABORATION.get(doId);
+        const { sigHex, timestamp } = await signInternalMarker(
+          activeProject.id,
+          env.SESSION_SECRET,
+        );
+        const snapshotReq = new Request(`https://internal/snapshot`, {
+          method: "POST",
+          headers: {
+            "X-Internal-Auth": sigHex,
+            "X-Internal-Timestamp": String(timestamp),
+            "X-Internal-Project": String(activeProject.id),
+          },
+        });
+        const snapshotRes = await doStub.fetch(snapshotReq);
+        if (!snapshotRes.ok) {
+          return { ok: false, intent: "flush-yjs-snapshot", error: "snapshot_failed" };
+        }
+        return { ok: true, intent: "flush-yjs-snapshot" };
+      } catch {
+        return { ok: false, intent: "flush-yjs-snapshot", error: "snapshot_failed" };
+      }
+    }
+
     default:
       throw new Response("Bad request", { status: 400 });
   }
@@ -174,7 +228,7 @@ interface StoryItem {
   updated_at: string | null;
   /** Y.Map sentinel: null when the item has not yet been backfilled to D1. */
   _tempId?: string | null;
-  /** Y.Map sentinel: the user id that created this item (used for permission checks). */
+  /** Y.Map sentinel: the user id that created this item (used for delete permissions). */
   _createdBy?: number | null;
   /** Index in the Y.Array (used for reorder). */
   _yIndex?: number;
@@ -211,7 +265,7 @@ function readScalar(yMap: Y.Map<unknown>, key: string): string | null {
 
 /**
  * Convert a Y.Map for a story into a StoryItem suitable for the UI.
- * Handles the _id: null / _temp_id sentinel for items not yet backfilled to D1.
+ * Handles the _id: null / _temp_id sentinel from plan 27-01.
  */
 function yMapToStoryItem(yMap: Y.Map<unknown>, yIndex: number): StoryItem {
   const id = (yMap.get("_id") as number | null) ?? 0;
@@ -272,7 +326,15 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("stories");
   const { t: tStructural } = useTranslation("structural");
   const fetcher = useFetcher();
+  // Dedicated fetcher for the eager DO->D1 snapshot flush after
+  // a new story is added to Yjs. Kept separate from `fetcher` so the
+  // existing intents (toggle-draft, toggle-private) are not affected by
+  // the flush state-machine.
+  const flushFetcher = useFetcher<{ ok: boolean; intent: string; error?: string }>();
   const navigate = useNavigate();
+  // Story id we are waiting to navigate to once the flush completes.
+  // Cleared as soon as the navigate fires.
+  const [pendingNavigate, setPendingNavigate] = useState<string | null>(null);
 
   const {
     project,
@@ -317,10 +379,12 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     ? yjsStories!
     : (loaderStories as StoryItem[]);
 
-  // Stable dnd-kit identifier for each row — `_temp_id` string for not-yet-
-  // persisted Yjs items, numeric D1 id otherwise.
-  const keyFor = (s: StoryItem): string | number =>
-    s.id > 0 ? s.id : s._tempId ?? `idx-${s._yIndex ?? 0}`;
+  // Stable dnd-kit identifier for each row — see `app/lib/item-key.ts` for
+  // why `_tempId` must win over numeric `id`. Previously inlined here with the
+  // `id`-first ordering, which produced a key flip when snapshotToD1
+  // backfilled the row id and tripped the deletion-detection observer at
+  // line ~502, firing a false "story was deleted" toast on new-story
+  // creation. Closed alongside the same fix for pages.
 
   // ------------------------------------------------------------------
   // DnD reorder (D1 fallback only — Yjs mode uses ops.reorderStories)
@@ -386,7 +450,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   }
 
   // ------------------------------------------------------------------
-  // Animations (highlight on add, fade on delete) — Yjs mode only
+  // Animations (highlight, fade) — Yjs mode only
   // ------------------------------------------------------------------
   const seenKeysRef = useRef<Set<string>>(new Set());
   const [highlightedKeys, setHighlightedKeys] = useState<Record<string, string>>(
@@ -472,7 +536,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
               action: {
                 label: tStructural("toast_item_deleted_undo"),
                 onClick: () => {
-                  // The shared UndoManager covers Y.Array deletes.
+                  // The shared UndoManager (plan 27-04) covers Y.Array deletes.
                   // Pop the top undo stack item — this re-inserts the Y.Map.
                   // We cannot call undo() here without the context ref; the
                   // TabNav Undo button is the authoritative path.
@@ -534,12 +598,36 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
       // TODO: subtitle/byline are created as empty Y.Text in addStory and
       // the user can edit them inline on the story editor page. If desired,
       // a follow-up enhancement can populate them via getYText().insert().
+
+      // Trigger an eager DO->D1 snapshot flush, then navigate to
+      // the new story's editor. The post-flush navigate fires from the
+      // useEffect below, which observes `flushFetcher.state === "idle"` and
+      // a non-null `pendingNavigate`. Closes the race where the editor
+      // loader queries D1 before the debounced snapshotToD1 has flushed.
+      setPendingNavigate(storyId);
+      flushFetcher.submit(
+        { intent: "flush-yjs-snapshot" },
+        { method: "post" },
+      );
       return;
     }
     // Not used — D1 create path removed. Log for visibility.
     // eslint-disable-next-line no-console
     console.warn("[stories] create requested without active ydoc; ignored");
   }
+
+  // Post-flush navigate. Fires once the flushFetcher reaches
+  // idle with the matching intent in its data. Navigation proceeds even
+  // when `data.ok === false` — soft-error (the story is
+  // in Yjs; the 30s alarm-driven snapshot is the eventual safety net).
+  useEffect(() => {
+    if (!pendingNavigate) return;
+    if (flushFetcher.state !== "idle") return;
+    if (flushFetcher.data?.intent !== "flush-yjs-snapshot") return;
+    const target = pendingNavigate;
+    setPendingNavigate(null);
+    navigate(`/stories/${target}`);
+  }, [flushFetcher.state, flushFetcher.data, pendingNavigate, navigate]);
 
   function handleDeleteStory(story: StoryItem) {
     // canDelete short-circuits before this runs, but belt-and-braces:

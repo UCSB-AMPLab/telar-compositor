@@ -1,22 +1,18 @@
 #!/usr/bin/env node
-
-/**
- * Deploy smoke harness
- *
- * Boots `wrangler dev` against a wrangler config (defaults to the build
- * output at build/server/wrangler.json so we exercise the same bundle that
- * deploy would ship), waits for the listener, hits GET / with a short
- * timeout, and asserts the response is non-5xx. Exits non-zero on failure.
- *
- * Why this exists: a worker bundle can pass typecheck and vitest while
- * still failing at request time — typically when a transitive dependency
- * pulls a Node-only module like `jsdom` into the bundle, leaving the
- * runtime to throw on the first request that touches the affected module.
- * Only a real wrangler boot against the BUILT bundle catches that class
- * of failure. This harness is that boot, run as a predeploy step.
- *
- * @version v1.1.0-beta
- */
+// Deploy smoke harness for the Telar Compositor.
+//
+// Boots `wrangler dev` against a wrangler config (defaults to the build output
+// at build/server/wrangler.json so we exercise the same bundle that deploy
+// would ship), waits for the listener, hits GET / with a short timeout, and
+// asserts the response is non-5xx. Exits non-zero on failure.
+//
+// Why this exists: v1.0.1-beta deployed with `isomorphic-dompurify` hoisting
+// `jsdom` into the worker bundle, throwing `ReferenceError: MessagePort is
+// not defined` lazily on the first request that imported the upgrade route
+// module. typecheck and vitest passed; only a real wrangler boot against the
+// BUILT bundle would have caught it. This harness is that boot, run pre-deploy.
+//
+// @version v1.2.0-beta
 
 import { spawn } from "node:child_process";
 import { argv, exit } from "node:process";

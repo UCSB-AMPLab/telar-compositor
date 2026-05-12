@@ -1,19 +1,17 @@
 /**
- * SortableStepItem — dnd-kit sortable wrapper for a step in the sidebar.
+ * This file renders the dnd-kit sortable wrapper for a step in the
+ * Story Editor sidebar — one row per step, draggable to reorder.
  *
- * Follows the same pattern as SortableStoryRow: a GripVertical drag handle
- * using setActivatorNodeRef so only the handle initiates drag. Shows a
- * Trash2 delete button on hover. Both are hidden by default and revealed
- * via the group-hover CSS pattern.
+ * Follows the same pattern as `SortableStoryRow`: a `GripVertical`
+ * drag handle using `setActivatorNodeRef` so only the handle
+ * initiates drag. Shows a `Trash2` delete button on hover. Both are
+ * hidden by default and revealed via the group-hover CSS pattern.
  *
- * Renders one of two layouts depending on `step.kind`:
- *   - "media" (default): step number + optional media-type badge
- *     (Image/Video/Music/FileText icon, when objectsByType is provided)
- *     + question preview text
- *   - "section": Heading icon + the section heading text from `question`
+ * Optionally displays a media-type badge (Image/Video/Music/FileText
+ * icon) when `objectsByType` is provided and the step has an
+ * `object_id`.
  *
- * The media-type badge is suppressed for section-kind steps since they
- * never carry an object_id.
+ * @version v1.2.0-beta
  */
 
 import { useSortable } from "@dnd-kit/sortable";

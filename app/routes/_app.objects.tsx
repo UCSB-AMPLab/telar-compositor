@@ -1,13 +1,19 @@
 /**
- * Objects — full IIIF object manager list view.
+ * This file is the Objects route — the full IIIF object manager list
+ * view, where the user browses every image, audio, and video object
+ * in their project and edits metadata, featured status, and IIIF
+ * source URLs.
  *
- * Loader: fetches the active project's objects ordered by title ASC,
- *         plus a step-reference count per object_id for "used in" info.
- * Action: handles ten intents — toggle-featured, update-object,
- *         compute-sync-diff, sync-apply, fetch-iiif-preview, add-iiif-object,
- *         upload-image, check-google-sheets, commit-objects, poll-build.
- * Component: table view with thumbnails, sort/filter controls, featured
- *            star toggles, a slide-in edit panel, and a build progress banner.
+ * Loader fetches the active project's objects ordered by title ASC,
+ * plus a step-reference count per `object_id` for "used in" info.
+ * Action handles ten intents — `toggle-featured`, `update-object`,
+ * `compute-sync-diff`, `sync-apply`, `fetch-iiif-preview`,
+ * `add-iiif-object`, `upload-image`, `check-google-sheets`,
+ * `commit-objects`, and `poll-build`. The page renders a table view
+ * with thumbnails, sort/filter controls, featured-star toggles, a
+ * slide-in edit panel, and a build progress banner.
+ *
+ * @version v1.2.0-beta
  */
 
 import { and, asc, count, eq, inArray } from "drizzle-orm";
@@ -557,7 +563,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
         imagePayloads.push({ imagePath, imageBase64 });
 
-        // 7. Build pending object — NOT inserted to D1 yet
+        // 7. Build pending object (NOT inserted to D1 yet)
         uploadPendingObjects.push({
           object_id: uploadObjectId,
           title: metadata.title.trim(),
@@ -712,8 +718,26 @@ export async function action({ request, context }: Route.ActionArgs) {
       const [owner, repo] = activeProject.github_repo_full_name.split("/");
 
       const disableSheets = formData.get("disableSheets") === "true";
-      const fixUrl = formData.get("fixUrl") === "true";
-      const pagesUrl = formData.get("pagesUrl") as string | null;
+
+      // Server-side recheck — supersedes client-passed fixUrl/pagesUrl.
+      // The client form fields (CommitAndBuildModal: fixUrl, pagesUrl) are
+      // derived from a `pre-commit-check` fired on mount; if the user opens
+      // the modal hours later or the repo's _config.yml has been edited
+      // externally, those flags are stale. We re-run verifySiteUrl here with
+      // a freshly fetched _config.yml and override the fix flags from that
+      // result. The fetched configContent is reused by the rewrite block
+      // below, avoiding a second getFileContent round-trip.
+      // (image-upload flow)
+      let configContent = await getFileContent(token, owner, repo, "_config.yml");
+      let fixUrl = false;
+      let pagesUrl: string | null = null;
+      if (configContent) {
+        const urlCheck = await verifySiteUrl(token, owner, repo, configContent);
+        if (urlCheck.pagesEnabled && !urlCheck.match) {
+          fixUrl = true;
+          pagesUrl = urlCheck.pagesUrl;
+        }
+      }
 
       // Parse pending objects from form data (not yet in D1)
       const pendingJson = formData.get("pendingObjects") as string | null;
@@ -748,9 +772,10 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       const commitParts = ["Updated objects.csv"];
 
-      // Check if _config.yml needs modification (sheets or URL fix)
+      // Check if _config.yml needs modification (sheets or URL fix).
+      // Reuses the outer `configContent` fetched above for the URL recheck,
+      // so _config.yml is only fetched once per action invocation.
       if (disableSheets || fixUrl) {
-        let configContent = await getFileContent(token, owner, repo, "_config.yml");
         if (configContent) {
           if (disableSheets) {
             configContent = disableGoogleSheetsInConfig(configContent);
@@ -995,9 +1020,9 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // D1 batch limit: 100 bindings per INSERT, 18 columns → max 5 rows.
       // Collect inserted rows so the client can mirror them into the Yjs
-      // Y.Array with canonical D1 ids — self-hosted objects appear in the
-      // shared doc only after the repo build succeeds and D1 INSERT
-      // completes; the snapshot writes them as UPDATEs on the next cycle.
+      // Y.Array with canonical D1 ids (self-hosted objects appear in
+      // the shared doc only after the repo build succeeds and D1 INSERT
+      // completes; the snapshot writes them as UPDATEs on the next cycle).
       const maxRows = Math.floor(100 / 18);
       type InsertedRow = { id: number; object_id: string };
       const inserted: InsertedRow[] = [];
@@ -1068,8 +1093,8 @@ function filterObjects(
 // ---------------------------------------------------------------------------
 // SortableObjectRow — dnd-kit sortable wrapper around ObjectRow for the Yjs
 // collaborative mode. Adds a grip handle for reorder, a delete button
-// (visible-but-disabled when canDelete is false), and a validation-state
-// badge for pending / invalid IIIF manifests.
+// (visible-but-disabled when canDelete is false), and a
+// validation-state badge for pending / invalid IIIF manifests.
 // ---------------------------------------------------------------------------
 
 interface SortableObjectRowProps {
@@ -1130,7 +1155,7 @@ function SortableObjectRow({
         )}
       </div>
 
-      {/* Delete button (visible-but-disabled when canDelete is false) */}
+      {/* Delete button (visible-but-disabled when not deletable) */}
       <div className="shrink-0 px-2 flex items-center">
         <button
           type="button"
@@ -1469,8 +1494,8 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
 
   function handleIiifConfirm(payload: AddIiifConfirmPayload) {
     // IIIF objects flow through the Y.Array with a "pending" validation
-    // state. The DO snapshot skips pending objects, so they do not reach
-    // D1 until this client-side fetch marks them valid.
+    // state. The DO snapshot (plan 27-03) skips pending objects, so they do
+    // not reach D1 until this client-side fetch marks them valid.
     if (!ops || !ydoc) {
       // No active ydoc — silently drop; reconnect will let the user retry.
       // eslint-disable-next-line no-console

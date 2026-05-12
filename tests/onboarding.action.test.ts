@@ -1,5 +1,5 @@
 /**
- * Tests for the onboarding route action — specifically the three new
+ * This file tests the onboarding route action — specifically the three
  * create-site intent branches:
  *   - check-repo-name
  *   - create-site
@@ -11,6 +11,8 @@
  * `handleCreateSiteIntents(intent, formData, token, env)` exported from
  * `~/routes/onboarding` that each of the three new `if (intent === ...)`
  * branches delegates to.
+ *
+ * @version v1.2.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -146,6 +148,9 @@ describe("onboarding action — create-site intent", () => {
       defaultBranch: "main",
       owner: "s",
       name: "my-site",
+      // Default userUiLocale=null → no patch attempted,
+      // langPatchFailed:false is part of the success shape.
+      langPatchFailed: false,
     });
     expect(createSiteFromTemplate).toHaveBeenCalledWith(TOKEN, "s", "my-site");
     expect(waitForRepoReady).toHaveBeenCalledWith(TOKEN, "s", "my-site");

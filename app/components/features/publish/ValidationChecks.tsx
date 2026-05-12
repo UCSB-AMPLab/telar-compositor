@@ -55,9 +55,9 @@ export function ValidationChecks({ validation, className = "" }: ValidationCheck
             {t("checks.blockers_heading")}
           </h3>
           <div className="space-y-2">
-            {validation.blockers.map((blocker) => (
+            {validation.blockers.map((blocker, idx) => (
               <div
-                key={blocker.code}
+                key={`${blocker.code}-${blocker.entityId ?? idx}`}
                 className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-3"
               >
                 <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
@@ -67,7 +67,7 @@ export function ValidationChecks({ validation, className = "" }: ValidationCheck
                   </p>
                   {blocker.code === "stale_head" && (
                     <Link
-                      to="/dashboard"
+                      to="/dashboard?sync=1"
                       className="font-body text-sm text-red-700 underline hover:text-red-900 mt-1 inline-block"
                     >
                       {t("checks.stale_head_action")}

@@ -26,5 +26,12 @@
   "nav_home": "Inicio",
   "nav_objects": "Objetos",
   "nav_glossary": "Glosario",
-  "nav_share": "Compartir"
+  "nav_share": "Compartir",
+  "name_required": "Nombre requerido",
+  "repo_pages_found_one": "Encontramos 1 página en tu repositorio",
+  "repo_pages_found_other": "Encontramos {{count}} páginas en tu repositorio",
+  "repo_pages_description": "Impórtalas al editor para gestionar su contenido desde aquí.",
+  "import_all_button": "Importar todas",
+  "import_one_button": "Importar",
+  "import_in_progress": "Importando…"
 }

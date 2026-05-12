@@ -222,6 +222,10 @@ describe("constants", () => {
     expect(FRAMEWORK_FILES).toContain("_data/navigation.yml");
     expect(FRAMEWORK_FILES).toContain("CHANGELOG.md");
   });
+
+  it("FRAMEWORK_FILES includes README.md (added v1.3.0 ingest)", () => {
+    expect(FRAMEWORK_FILES).toContain("README.md");
+  });
 });
 
 // ---------------------------------------------------------------------------

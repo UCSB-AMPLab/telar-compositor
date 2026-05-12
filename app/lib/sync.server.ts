@@ -1,20 +1,36 @@
 /**
- * Sync utilities for the Telar Compositor objects manager.
+ * This file powers the Sync flow — the page where a project owner
+ * reconciles whatever lives in D1 with whatever currently sits in the
+ * GitHub repo's CSV files (`objects.csv`, story CSVs, `_config.yml`).
  *
- * Computes a three-way diff between the D1 objects table and the repo's
- * objects.csv, and applies the user's selected changes back to D1.
+ * Sync answers two questions side by side. What's in the repo but not
+ * in D1, and what's in D1 but not in the repo? Same question for
+ * fields: where the two sides disagree, the user picks per-field which
+ * side wins. That is the three-way diff this module computes — repo,
+ * D1, and the user's choices on top.
  *
- * Extended to cover all content types:
- *   computeFullSyncDiff — diff for objects, stories, and config
- *   applyFullSyncChanges — apply for objects, stories, and config
+ * `computeSyncDiff` and `applySyncChanges` cover objects only — the
+ * original scope. `computeFullSyncDiff` and `applyFullSyncChanges`
+ * extend the same model across stories and config, returning a richer
+ * payload but routing per-field choices through the same apply path.
+ * Both diff functions also flag images sitting in the repo's
+ * `objects/` directory that no CSV row references — the user can
+ * register them in one click rather than chasing dangling files
+ * manually.
  *
- * Exports:
- *   computeSyncDiff(projectId, token, owner, repo, db) — diff computation
- *   applySyncChanges(projectId, changes, token, owner, repo, db) — apply
- *   computeFullSyncDiff(projectId, token, owner, repo, db, publishSnapshot) — full diff
- *   applyFullSyncChanges(projectId, changes, token, owner, repo, db) — full apply
- *   SyncDiff, SyncChanges — types for the objects diff/apply flow
- *   FullSyncDiff, FullSyncChanges, StorySyncDiff, ConfigSyncDiff — full sync types
+ * Diff results include story-usage hints. When an object is missing
+ * from the repo but still referenced by a step, the `missingObjects`
+ * entry carries the list of stories and step numbers that point at
+ * it, so the user can see what would break if they accept the
+ * deletion.
+ *
+ * Everything here is pure in the sense that callers supply the
+ * database handle and GitHub token — the module never reaches for
+ * environment, headers, or session state on its own. The route
+ * actions (currently in `_app.dashboard.tsx`) do the I/O
+ * orchestration; this module does the comparison.
+ *
+ * @version v1.2.0-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -749,7 +765,15 @@ export async function computeFullSyncDiff(
     : null;
 
   // 5. Compute story diffs
-  const storyFields: Array<keyof StorySyncItem> = ["title", "subtitle", "byline", "order", "isPrivate"];
+  //
+  // `order` is intentionally excluded: the import pipeline writes a 0-based
+  // sequence into `stories.order`, but `project.csv` is 1-based, so every
+  // freshly-imported project would report every story as "(changed)" on
+  // every sync check. Until the import is normalised to match the CSV
+  // (separate fix), the sync diff compares user-visible content only.
+  // Trade-off: a pure reorder with no content change won't surface here —
+  // a known limitation documented in 41-VERIFICATION.md.
+  const storyFields: Array<keyof StorySyncItem> = ["title", "subtitle", "byline", "isPrivate"];
 
   const newStories: StorySyncItem[] = [];
   const changedStories: StorySyncChangedItem[] = [];

@@ -1,7 +1,9 @@
 /**
- * SyncConfirmModal — multi-step sync confirmation modal for dashboard.
+ * This file renders the Sync confirmation modal — the multi-step
+ * modal launched from the dashboard when the user pulls changes
+ * made directly in the GitHub repo back into the compositor.
  *
- * Provides a two-phase flow:
+ * Provides a state-machine flow:
  *   1. Confirm — prompt user to check what changed in the repo
  *   2. Computing — diffFetcher submits compute-full-sync-diff intent
  *   3. (Optional) Conflict — warns about unpublished local changes
@@ -11,6 +13,8 @@
  *   7. Failed — error display with retry option
  *
  * All-or-nothing: the apply step accepts every change in the diff.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useEffect, useState } from "react";
@@ -33,7 +37,7 @@ import type { FullSyncDiff, FullSyncChanges } from "~/lib/sync.server";
 
 /**
  * Shared useFetcher key so the dashboard route can observe the same
- * compute-full-sync-diff response and surface the SC-3 version-change
+ * compute-full-sync-diff response and surface the version-change
  * toast without duplicating the submission.
  */
 export const SYNC_DIFF_FETCHER_KEY = "dashboard-sync-diff";
@@ -48,7 +52,9 @@ type SyncStep =
   | "conflict"
   | "diffReady"
   | "applying"
+  | "accepting"
   | "success"
+  | "acceptedSuccess"
   | "failed";
 
 interface SyncConfirmModalProps {
@@ -66,6 +72,8 @@ type DiffFetcherData =
 type ApplyFetcherData =
   | { ok: true; intent: "apply-full-sync"; newHeadSha: string }
   | { ok: false; intent: "apply-full-sync"; error: string }
+  | { ok: true; intent: "accept-divergence" }
+  | { ok: false; intent: "accept-divergence"; error: string; message?: string }
   | null
   | undefined;
 
@@ -167,7 +175,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
   // Stable fetcher key so the dashboard route can subscribe to the same
-  // sync-diff response via useFetcher({ key }) and surface the SC-3
+  // sync-diff response via useFetcher({ key }) and surface the
   // version-change toast (see _app.dashboard.tsx / useVersionChangeToast).
   const diffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
   const applyFetcher = useFetcher();
@@ -211,18 +219,23 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
     }
   }, [diffData, unpublishedCount]);
 
-  // Handle apply fetcher result
+  // Handle apply / accept-divergence fetcher result
   useEffect(() => {
     if (!applyData) return;
-    if (!applyData.ok || applyData.intent !== "apply-full-sync") {
-      setErrorMessage(
-        applyData.ok ? "" : (applyData.error ?? "Unknown error")
-      );
+    if (!applyData.ok) {
+      setErrorMessage(applyData.error ?? "Unknown error");
       setStep("failed");
       return;
     }
-    setStep("success");
-    setTimeout(() => window.location.reload(), 1500);
+    if (applyData.intent === "accept-divergence") {
+      setStep("acceptedSuccess");
+      setTimeout(() => window.location.reload(), 1500);
+      return;
+    }
+    if (applyData.intent === "apply-full-sync") {
+      setStep("success");
+      setTimeout(() => window.location.reload(), 1500);
+    }
   }, [applyData]);
 
   function handleCheckChanges() {
@@ -236,6 +249,14 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
     setStep("applying");
     applyFetcher.submit(
       { intent: "apply-full-sync", changes: JSON.stringify(changes) },
+      { method: "post" }
+    );
+  }
+
+  function handleAcceptDivergence() {
+    setStep("accepting");
+    applyFetcher.submit(
+      { intent: "accept-divergence" },
       { method: "post" }
     );
   }
@@ -397,7 +418,17 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
               ))}
             </div>
           )}
-          <div className="flex gap-3 justify-end">
+          {categorySections.length > 0 && (
+            <p className="font-body text-sm text-gray-600 mb-4">
+              {t("sync_modal.use_compositor_helper")}
+            </p>
+          )}
+          {categorySections.length === 0 && (
+            <p className="font-body text-sm text-gray-600 mb-4">
+              {t("sync_modal.no_changes_body")}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-3 justify-end">
             <button
               type="button"
               onClick={onClose}
@@ -406,13 +437,22 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
               {categorySections.length > 0 ? t("cancel") : t("sync_modal.close")}
             </button>
             {categorySections.length > 0 && (
-              <button
-                type="button"
-                onClick={handleApply}
-                className="font-heading font-semibold text-sm uppercase tracking-wider bg-terracotta hover:bg-terracotta/90 text-cream rounded-full px-5 py-2 transition-colors"
-              >
-                {t("sync_modal.apply_sync")}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleAcceptDivergence}
+                  className="font-heading font-semibold text-sm uppercase tracking-wider border border-charcoal text-charcoal rounded-full px-5 py-2 hover:bg-charcoal hover:text-cream transition-colors"
+                >
+                  {t("sync_modal.use_compositor_version")}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApply}
+                  className="font-heading font-semibold text-sm uppercase tracking-wider bg-terracotta hover:bg-terracotta/90 text-cream rounded-full px-5 py-2 transition-colors"
+                >
+                  {t("sync_modal.apply_sync")}
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -425,6 +465,22 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
         <div className="p-6 flex flex-col items-center gap-4 py-12">
           <Loader2 className="w-8 h-8 text-terracotta animate-spin" />
           <p className="font-body text-sm text-gray-600">{t("sync_modal.applying")}</p>
+        </div>
+      )}
+
+      {/* Accepting (accept-divergence in flight) */}
+      {step === "accepting" && (
+        <div className="p-6 flex flex-col items-center gap-4 py-12">
+          <Loader2 className="w-8 h-8 text-charcoal animate-spin" />
+          <p className="font-body text-sm text-gray-600">{t("sync_modal.accepting")}</p>
+        </div>
+      )}
+
+      {/* Accept-divergence succeeded */}
+      {step === "acceptedSuccess" && (
+        <div className="p-6 flex flex-col items-center gap-4 py-12">
+          <CheckCircle2 className="w-10 h-10 text-green-500" />
+          <p className="font-body text-sm text-gray-700">{t("sync_modal.accepted_success")}</p>
         </div>
       )}
 

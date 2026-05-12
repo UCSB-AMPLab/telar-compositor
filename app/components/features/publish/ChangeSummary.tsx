@@ -1,13 +1,13 @@
 /**
  * ChangeSummary — entity-level change summary for the Publish wizard Review step.
  *
- * Renders 3 expandable sections (stories, objects, settings) with entity counts
- * in headers. New items in green, modified in amber, deleted in red.
+ * Renders expandable sections (stories, objects, pages, glossary, settings) with
+ * entity counts in headers. New items in green, modified in amber, deleted in red.
  * Landing changes shown under settings. Empty sections are hidden.
  */
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Image, Settings } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, File, Image, BookOpen, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ChangeSummary as ChangeSummaryType } from "~/lib/publish.server";
 
@@ -62,10 +62,11 @@ interface ExpandableSectionProps {
   title: string;
   icon: React.ReactNode;
   items: SectionItem[];
+  description?: string;
   extraContent?: React.ReactNode;
 }
 
-function ExpandableSection({ title, icon, items, extraContent }: ExpandableSectionProps) {
+function ExpandableSection({ title, icon, items, description, extraContent }: ExpandableSectionProps) {
   const [expanded, setExpanded] = useState(true);
   const total = items.length;
 
@@ -96,6 +97,9 @@ function ExpandableSection({ title, icon, items, extraContent }: ExpandableSecti
 
       {expanded && (
         <div className="px-3 py-2">
+          {description && (
+            <p className="font-body text-xs text-gray-600 mb-2 px-2">{description}</p>
+          )}
           {items.map((item) => (
             <SectionRow key={item.id} item={item} />
           ))}
@@ -123,15 +127,49 @@ export function ChangeSummary({ summary, className = "" }: ChangeSummaryProps) {
     ...summary.objects.deleted.map((o) => ({ id: o.object_id, title: o.title, changeType: "deleted" as const })),
   ];
 
-  // Build settings items (just a count indicator, no IDs)
-  const settingsItems: SectionItem[] = summary.settings.changed.map((s) => ({
-    id: s.key,
-    title: s.label,
-    changeType: "modified" as const,
-  }));
+  // Build page items
+  const pageItems: SectionItem[] = [
+    ...summary.pages.new.map((p) => ({ id: p.slug, title: p.title, changeType: "new" as const })),
+    ...summary.pages.modified.map((p) => ({ id: p.slug, title: p.title, changeType: "modified" as const })),
+    ...summary.pages.deleted.map((p) => ({ id: p.slug, title: p.title, changeType: "deleted" as const })),
+  ];
 
-  // Extra content for settings: landing changed
-  const landingExtra =
+  // Build glossary items
+  const glossaryItems: SectionItem[] = [
+    ...summary.glossary.new.map((g) => ({ id: g.term_id, title: g.title, changeType: "new" as const })),
+    ...summary.glossary.modified.map((g) => ({ id: g.term_id, title: g.title, changeType: "modified" as const })),
+    ...summary.glossary.deleted.map((g) => ({ id: g.term_id, title: g.title, changeType: "deleted" as const })),
+  ];
+
+  // Build settings items. Reuse the same `auto_commit.change_<key>`
+  // sentences the commit-subject builder uses, so the Review modal row
+  // and the auto-generated commit headline stay verbally consistent.
+  // Value-dependent keys (`lang`, `collection_mode`) carry the post-change
+  // value as `s.label` from computeChangeSummary; every other managed key
+  // has a single `change_<key>` form. defaultValue falls back to the raw
+  // key if a future managed field is added without a matching i18n string.
+  const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  const settingsItems: SectionItem[] = summary.settings.changed.map((s) => {
+    let i18nKey: string;
+    if (s.key === "lang") {
+      i18nKey = `auto_commit.change_language_to_${s.label}`;
+    } else if (s.key === "collection_mode") {
+      i18nKey = `auto_commit.change_collection_mode_${s.label}`;
+    } else {
+      i18nKey = `auto_commit.change_${s.key}`;
+    }
+    const sentence = t(i18nKey, { defaultValue: s.key });
+    return {
+      id: s.key,
+      title: capitalize(sentence),
+      changeType: "modified" as const,
+    };
+  });
+
+  // Extra content for settings: landing changed and/or navigation changed.
+  // Both are single-boolean indicators rendered as one row each, mirroring
+  // the existing landing-row pattern.
+  const landingRow =
     summary.landing.changed ? (
       <div className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-cream">
         <span className="font-body text-sm text-amber-700">{t("summary.landing")}</span>
@@ -140,12 +178,48 @@ export function ChangeSummary({ summary, className = "" }: ChangeSummaryProps) {
         </span>
       </div>
     ) : null;
+  const navigationRow =
+    summary.navigation.changed ? (
+      <div className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-cream">
+        <span className="font-body text-sm text-amber-700">{t("summary.navigation")}</span>
+        <span className="font-body text-xs border rounded px-1.5 py-0.5 bg-amber-50 text-amber-700 border-amber-200">
+          {t("summary.modified")}
+        </span>
+      </div>
+    ) : null;
+  const settingsExtra =
+    landingRow || navigationRow ? (
+      <>
+        {landingRow}
+        {navigationRow}
+      </>
+    ) : null;
 
-  const hasSettingsContent = settingsItems.length > 0 || summary.landing.changed;
+  const hasSettingsContent =
+    settingsItems.length > 0 || summary.landing.changed || summary.navigation.changed;
+
+  const fileChangeItems: SectionItem[] = [
+    ...summary.fileChanges.addedStoryFiles.map((id) => ({ id, title: null, changeType: "new" as const })),
+    ...summary.fileChanges.removedStoryFiles.map((id) => ({ id, title: null, changeType: "deleted" as const })),
+  ];
 
   return (
     <div className={className}>
       <p className="font-body text-sm text-gray-600 mb-4">{t("review.description")}</p>
+
+      {summary.backCompatBootstrap && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3"
+        >
+          <p className="font-heading font-semibold text-sm text-amber-900 mb-1">
+            {t("review.bootstrap_banner_title")}
+          </p>
+          <p className="font-body text-sm text-amber-900">
+            {t("review.bootstrap_banner_body")}
+          </p>
+        </div>
+      )}
 
       <ExpandableSection
         title={t("summary.stories")}
@@ -159,14 +233,33 @@ export function ChangeSummary({ summary, className = "" }: ChangeSummaryProps) {
         items={objectItems}
       />
 
+      <ExpandableSection
+        title={t("summary.pages")}
+        icon={<File className="w-4 h-4" />}
+        items={pageItems}
+      />
+
+      <ExpandableSection
+        title={t("summary.glossary")}
+        icon={<BookOpen className="w-4 h-4" />}
+        items={glossaryItems}
+      />
+
       {hasSettingsContent && (
         <ExpandableSection
           title={t("summary.settings")}
           icon={<Settings className="w-4 h-4" />}
           items={settingsItems}
-          extraContent={landingExtra}
+          extraContent={settingsExtra}
         />
       )}
+
+      <ExpandableSection
+        title={t("summary.file_changes")}
+        icon={<FileText className="w-4 h-4" />}
+        items={fileChangeItems}
+        description={t("summary.file_changes_description")}
+      />
     </div>
   );
 }

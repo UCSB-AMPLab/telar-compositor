@@ -1,5 +1,6 @@
 import type { Resource } from "i18next";
 
+import enAccount from "./en/account.json";
 import enCommon from "./en/common.json";
 import enAuth from "./en/auth.json";
 import enConfig from "./en/config.json";
@@ -16,7 +17,9 @@ import enGlossary from "./en/glossary.json";
 import enTeam from "./en/team.json";
 import enCollaboration from "./en/collaboration.json";
 import enStructural from "./en/structural.json";
+import enBugReport from "./en/bug-report.json";
 
+import esAccount from "./es/account.json";
 import esCommon from "./es/common.json";
 import esAuth from "./es/auth.json";
 import esConfig from "./es/config.json";
@@ -33,9 +36,11 @@ import esGlossary from "./es/glossary.json";
 import esTeam from "./es/team.json";
 import esCollaboration from "./es/collaboration.json";
 import esStructural from "./es/structural.json";
+import esBugReport from "./es/bug-report.json";
 
 export default {
   en: {
+    account: enAccount,
     common: enCommon,
     auth: enAuth,
     config: enConfig,
@@ -52,8 +57,10 @@ export default {
     team: enTeam,
     collaboration: enCollaboration,
     structural: enStructural,
+    "bug-report": enBugReport,
   },
   es: {
+    account: esAccount,
     common: esCommon,
     auth: esAuth,
     config: esConfig,
@@ -70,5 +77,6 @@ export default {
     team: esTeam,
     collaboration: esCollaboration,
     structural: esStructural,
+    "bug-report": esBugReport,
   },
 } satisfies Resource;

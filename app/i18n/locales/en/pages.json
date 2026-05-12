@@ -26,5 +26,12 @@
   "nav_home": "Home",
   "nav_objects": "Objects",
   "nav_glossary": "Glossary",
-  "nav_share": "Share"
+  "nav_share": "Share",
+  "name_required": "Name required",
+  "repo_pages_found_one": "Found 1 page in your repo",
+  "repo_pages_found_other": "Found {{count}} pages in your repo",
+  "repo_pages_description": "Import them into the editor to manage their content here.",
+  "import_all_button": "Import all",
+  "import_one_button": "Import",
+  "import_in_progress": "Importing…"
 }

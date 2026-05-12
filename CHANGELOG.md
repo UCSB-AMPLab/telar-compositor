@@ -1,5 +1,58 @@
 # Changelog
 
+## v1.2.0-beta (2026-05-11)
+
+A new Account page for identity, preferences, projects, and account deletion; a bug-report button that captures runtime context for issues; persistent UI language across devices and seeded into newly-created sites; and a more accurate publish change summary built on per-entity content hashing.
+
+### New features
+
+- **Account page** — `/account` is the new top-level user route, replacing the Settings link in the header dropdown. Five sections: Profile (name, avatar, joined month), Preferences (editor UI language and presence-cursor colour), Connected sites (every project the user belongs to with a kebab for delete-or-leave), GitHub access (every installation granted, with deep links to GitHub's management page), and Danger zone (full account deletion with a live collaborator-count warning)
+- **Persistent UI language** — Language choice now persists to D1. Signing in on a new device restores the previously chosen language; creating a new site seeds `telar_language` in the generated `_config.yml` from the same preference, with a soft-fail amber warning surfaced on the Account page if the patch can't be applied
+- **Bug report button** — Header now carries a bug-report button. Clicking it opens a panel pre-filled with the user's locale, recent console errors, the build SHA, and attachments the user can drag in, then submits as a GitHub issue against the compositor repo with a redacted payload. A post-crash variant renders inside route ErrorBoundaries so a user can still file a report when the page they were on has stopped working
+- **Orphan-story handling** — When a story row in `project.csv` has been removed but the per-story CSV is still in the repo, the dashboard surfaces a banner. "Restore as drafts" pulls each orphan back into the project as a new draft; "Ignore" writes the orphan IDs to a `.compositor-ignored` file so they stop being flagged on every sync. Restores route through the project's Durable Object so live collaborators see the new drafts appear without reloading
+- **Sync mismatch modal** — The Sync flow surfaces a four-mode modal that distinguishes untracked-files-only divergence from stale-HEAD, repo-side drift, and conflict states. Empty-state copy makes it clear when there is no actionable divergence
+- **Telar v1.3.0 framework upgrade support** — The upgrade flow now recognises the v1.3.0 framework's homepage layout. On upgrade, the compositor hash-gates a replacement of `about.md` and the localised welcome body (only if untouched), removes obsolete frontmatter literals from the homepage's `index.md`, and silently creates `acerca.md` for Spanish sites that still carry the unedited v1.2.1 `about.md`. The homepage editor renders the v1.3.0 defaults as faded placeholders when the user hasn't customised them
+- **Onboarding safety checks** — The connect flow now warns when the chosen repo is private and the user's GitHub plan can't be verified, alerts when the site's `telar_theme` isn't a recognised theme, and pre-checks installation scope before the user commits to a repo
+- **Live deletion notifications** — Deleting a project or removing a collaborator now broadcasts over the project's WebSocket to every connected editor, so collaborators see a sticky toast and get cleanly disconnected instead of finding out by silent failure
+
+### Data layer
+
+- D1 migration 0025: `users.language_preference` (a write-once cookie default that nothing read) replaced with `users.ui_locale` (NULL means never actively chosen; non-null is the user's locked UI locale). **Forwards-only** — self-hosters cannot roll the database back past this release without manual schema work
+- Bilingual CSV column added to `project.csv` for sites upgrading from older Telar framework versions: `show_sections` / `mostrar_secciones` (the column was already supported in v1.1.0 of the compositor; the v1.1.0→v1.2.0 manifest now backfills it on user repos)
+- Per-entity content hashing — the publish change summary now hashes each story, page, object, and glossary term independently. The Review modal lists what was added, changed, and removed at per-entity granularity, and the commit body uses Added / Changed / Removed sections to match. A format-version sentinel detects mismatched snapshots so older saved state falls through to a safe full-recompute
+- Order-only changes no longer trigger false-positive change rows in either the Sync modal or the publish change summary: object order, story order, and page order are excluded from the relevant diffs and hashes
+
+### Security and stability
+
+- **Empty-title pages now blocked at publish** — A page missing its title used to surface as a non-blocking warning. The publish pipeline now refuses the commit and surfaces the offending page in the Checks step with a direct link to fix it
+- **Account deletion no longer leaves dangling projects** — Deleting your account auto-cascades any project on which you were the sole convenor, removing collaborator rows and the project record in one D1 batch. The signin page surfaces an "account deleted" banner so a tab that was open on a since-deleted account does not loop on failed-auth state
+- **Sync reimport now journals before mutation** — Reimporting a project from the repo snapshots existing state before deletion and restores on failure, so a mid-reimport crash no longer leaves the project in a half-imported state
+- **Repo HEAD cache with publish eviction** — Sync now caches the repo HEAD between checks within a single session and evicts the cache after a successful publish, reducing GitHub API pressure while keeping every publish accurate to actual repo state
+- **Per-entity hashing back-compat** — When a project's snapshot predates per-entity hashing, the change summary surfaces existing pages and glossary terms as Modified once on the first run rather than treating the upgrade as a full rewrite
+
+### Bug fixes
+
+- **Review modal humanises all settings keys** — Settings changes in the publish Review modal previously showed raw keys for non-language settings; every setting now renders in human-readable form
+- **No more duplicate `story_key` entries in `_config.yml`** — Repeated publishes used to append a fresh top-level `story_key` each time; only one is written now
+- **Publish change summary reflects current state** — The publish loader now forces a Durable Object snapshot before reading from D1, so the summary reflects the latest collaborative edits instead of occasionally stale state
+- **Step rows sort by step number on publish** — The story-CSV serialiser now sorts steps by step number; previously the CSV could emerge out of order after certain reorder-then-publish sequences
+- **`telar_language` no longer dropped on publish** — The `_config.yml` serialiser threads `telar_language` through correctly, fixing a regression where republishing reset the field
+- **Story-deletion toast names the right story** — Deleting a story used to surface the previously-deleted story's name in the toast; the key extractor now stabilises across the underlying `_id` backfill
+- **New page nav tab tracks the latest title** — The nav tab label now tracks the page title after the slug is set, instead of pinning the early slug value
+- **Auto-slug debounced and replaces the temporary slug** — The first keystroke in a new page's title no longer locks the URL; auto-slug is 600ms-debounced, and adding a page replaces the placeholder `untitled-page-N` slug with the title-derived slug as the user types
+- **Untitled new pages now appear in the nav** — Adding a page used to leave it un-navigable until a title was set; the nav now surfaces a tab immediately on creation
+- **Drag-reorder of pages-tab nav preserves entries** — Reordering tabs by drag could drop entries; the reorder helper now preserves all entries and corrects an off-by-one in the destination index
+- **Navigation recovers from corrupted Y.Array state** — Sites that had been affected by an earlier collaboration-corruption bug now self-heal on load by sanitising the navigation Y.Array
+- **Drag-reorder of editor steps preserves order across snapshots** — The editor's reorder-in-place helper drops a stray off-by-one that could shift a row past its intended slot under certain conditions
+- **Site URL re-verified server-side on object commits** — The commit-objects action re-verifies the site URL server-side, blocking an edge case where a stale client URL could land in the commit
+- **Dashboard status-bar timestamps clarified** — Last-published and last-synced labels drop trailing destinations for clarity, the last-published string is shortened to avoid overflow on narrow viewports, and the redundant "View site" affordance that surfaced twice has been removed
+
+### Toolchain
+
+- Build script now injects `BUILD_SHA` at compile time (`git rev-parse --short HEAD`), wired through Vite `define` and an ambient type declaration. The bug-report payload includes this so an issue ties back to a specific build
+- A `data-env` attribute on `<html>` exposes the environment (production / staging / dev) to client code, used by the bug-report flow to label which environment a report came from
+- i18next's global HTML-escape pass disabled — placeholder interpolation in some keys was double-escaping React-managed markup; React's own rendering remains the escape boundary
+
 ## v1.1.0-beta (2026-05-04)
 
 Story sections with a table of contents, a collection-first homepage layout, a deploy smoke test that catches bundle-time crashes vitest can't see, and a swap from `isomorphic-dompurify` to `sanitize-html` for cleaner worker-bundle compatibility.

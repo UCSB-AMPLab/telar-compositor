@@ -1,13 +1,14 @@
 /**
- * SectionCardView — editor panel for a section-card step (kind='section').
+ * This file renders the editor panel for a section-card step
+ * (`kind='section'`) — a heading-only preview with a centred large
+ * editable heading input bound to the step's `question` Y.Text. No
+ * IIIF viewer, no narrative column, no layers/panels — section
+ * cards are chapter breaks in published stories.
  *
- * Renders the chapter-break preview: a centred large editable heading bound
- * to the step's `question` Y.Text plus an optional subtitle bound to the
- * step's `answer` Y.Text. No IIIF viewer, no narrative column, no
- * layers/panels — section cards are chapter breaks in published stories.
+ * Mirrors `TitleCardView`'s centred-card chrome so authors get a
+ * consistent editor shape across the two heading-only step types.
  *
- * Mirrors TitleCardView's centred-card chrome so authors get a consistent
- * editor shape across the two heading-only step types.
+ * @version v1.2.0-beta
  */
 
 import { useRef } from "react";

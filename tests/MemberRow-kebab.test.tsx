@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 /**
- * MemberRow-kebab.test.tsx — SC-5 kebab menu replaces hover X button.
+ * This file pins the `MemberRow` kebab-menu contract — the always-visible
+ * MoreVertical icon that replaced the older hover-only X button so
+ * collaborators on touch devices have a discoverable remove affordance.
  *
- * Tests: always-visible MoreVertical icon, dropdown open/close,
- * Remove callback, defence-in-depth isConvenor guard.
+ * Tests: always-visible icon, dropdown open/close, Remove callback,
+ * defence-in-depth isConvenor guard, outside-click dismissal.
+ *
+ * @version v1.0.1-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -31,7 +35,7 @@ const defaultProps = {
 };
 
 describe("MemberRow kebab menu", () => {
-  it("SC-5: renders MoreVertical icon always (no opacity-0 class)", () => {
+  it("renders MoreVertical icon always (no opacity-0 class)", () => {
     const { container } = render(<MemberRow {...defaultProps} isConvenor={true} />);
     // The kebab button must be present in the DOM
     const btn = screen.getByRole("button", { name: /row menu/i });
@@ -40,12 +44,12 @@ describe("MemberRow kebab menu", () => {
     expect(container.innerHTML).not.toContain("opacity-0");
   });
 
-  it("SC-5: kebab button has no group-hover:opacity-100 modifier", () => {
+  it("kebab button has no group-hover:opacity-100 modifier", () => {
     const { container } = render(<MemberRow {...defaultProps} isConvenor={true} />);
     expect(container.innerHTML).not.toContain("group-hover:opacity-100");
   });
 
-  it("SC-5: clicking the kebab opens a dropdown with a Remove item", () => {
+  it("clicking the kebab opens a dropdown with a Remove item", () => {
     render(<MemberRow {...defaultProps} isConvenor={true} />);
     const btn = screen.getByRole("button", { name: /row menu/i });
     fireEvent.click(btn);
@@ -55,12 +59,12 @@ describe("MemberRow kebab menu", () => {
     expect(item.textContent?.toLowerCase()).toContain("remove");
   });
 
-  it("SC-5: kebab is only rendered when isConvenor=true (defence-in-depth)", () => {
+  it("kebab is only rendered when isConvenor=true (defence-in-depth for non-convenor accidental clicks)", () => {
     render(<MemberRow {...defaultProps} isConvenor={false} />);
     expect(screen.queryByRole("button", { name: /row menu/i })).toBeNull();
   });
 
-  it("SC-5: Remove item triggers onRemove prop", () => {
+  it("Remove item triggers onRemove prop", () => {
     const onRemove = vi.fn();
     render(<MemberRow {...defaultProps} isConvenor={true} onRemove={onRemove} />);
     const btn = screen.getByRole("button", { name: /row menu/i });
@@ -70,7 +74,7 @@ describe("MemberRow kebab menu", () => {
     expect(onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it("SC-5: menu closes on outside click", () => {
+  it("menu closes on outside click", () => {
     render(
       <div>
         <MemberRow {...defaultProps} isConvenor={true} />

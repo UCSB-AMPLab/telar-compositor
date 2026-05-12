@@ -1,6 +1,21 @@
-import { describe, it, expect, vi } from "vitest";
+/**
+ * This file pins unit tests for `app/lib/import.server.ts` — the
+ * Telar Compositor import library that ingests a connected repo's CSVs
+ * and markdown into the D1 row set the editor reads.
+ *
+ * Tests cover header detection, comment-row skipping, the typed CSV
+ * mappers (`mapConfigToProjectConfig`, `mapObjectsCsv`, `mapProjectCsv`,
+ * `mapStoryCsv`), markdown parsing, the v1.3.0 liquid-block recognition,
+ * the kind/show_sections derivations, the `scanRepoPages` import-pages
+ * path, the cascade-aware `deleteProjectCascade`, and the orphan-story
+ * detection plus `.compositor-ignored` parsing.
+ *
+ * @version v1.2.0-beta
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import * as githubServer from "~/lib/github.server";
 import {
   isHeaderRow,
   isCommentRow,
@@ -12,6 +27,10 @@ import {
   parseIndexMd,
   parsePageMarkdown,
   rollbackProjectImport,
+  scanRepoPages,
+  parseCompositorIgnored,
+  detectOrphanStoryIds,
+  scanRepoOrphanStoryIds,
 } from "~/lib/import.server";
 import { parseYaml } from "~/lib/yaml.server";
 import {
@@ -84,6 +103,20 @@ objects_intro: Browse the collection
   it("returns empty object for null/undefined", () => {
     expect(parseIndexMd(null)).toEqual({});
     expect(parseIndexMd(undefined)).toEqual({});
+  });
+
+  // -------------------------------------------------------------------------
+  // Import-time liquid-block recognition
+  // -------------------------------------------------------------------------
+
+  it("returns welcome_body undefined when body matches v1.3.0 liquid block", () => {
+    const content = `---\nlayout: index\n---\n\n{% assign lang = site.data.languages[site.telar_language] | default: site.data.languages.en %}\n<!-- EN: Default welcome content for this page comes from your language pack. -->\n\n{{ lang.index_page.welcome | markdownify }}\n`;
+    expect(parseIndexMd(content).welcome_body).toBeUndefined();
+  });
+
+  it("returns user content unchanged when body is not the liquid block", () => {
+    const content = `---\nlayout: index\n---\n\n## My custom welcome\n`;
+    expect(parseIndexMd(content).welcome_body).toBe("## My custom welcome");
   });
 });
 
@@ -445,7 +478,7 @@ describe("mapStoryCsv", () => {
 
   // --- kind derivation ---
   // Empty `object` column on a meaningful row signals a section card (Telar
-  // framework contract). Non-empty `object` => media step.
+  // 1.1.0 framework contract). Non-empty `object` => media step.
   describe("kind derivation", () => {
     it("derives kind='media' when object is non-empty", () => {
       const rows = [{ step: "1", object: "obj-A", question: "What is this?" }];
@@ -737,5 +770,433 @@ describe("rollbackProjectImport — cascade-delete order", () => {
     ]) {
       expect(visited).toContain(t);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scanRepoPages — discover repo-side pages for the import flow
+// ---------------------------------------------------------------------------
+
+describe("scanRepoPages", () => {
+  // Use vi.spyOn rather than vi.mock so the rest of the suite — which calls
+  // through to the real github.server helpers via globalThis.fetch mocking
+  // (see importRepo tests above) — is unaffected. We restore after each test.
+  let getRepoTreeSpy: ReturnType<typeof vi.spyOn> & {
+    mockResolvedValue: (v: { tree: githubServer.TreeEntry[]; truncated: boolean }) => unknown;
+  };
+  let getFileContentSpy: ReturnType<typeof vi.spyOn> & {
+    mockResolvedValue: (v: string | null) => unknown;
+    mockImplementation: (
+      fn: (token: string, owner: string, repo: string, path: string) => Promise<string | null>,
+    ) => unknown;
+  };
+
+  beforeEach(() => {
+    // The `as never` cast skirts vitest's overly-narrow MockInstance type
+    // when assigning a typed spy to a loosely-typed lexical binding; the
+    // spy itself is fully typed at the call sites.
+    getRepoTreeSpy = vi.spyOn(githubServer, "getRepoTree") as never;
+    getFileContentSpy = vi.spyOn(githubServer, "getFileContent") as never;
+  });
+
+  afterEach(() => {
+    (getRepoTreeSpy as { mockRestore: () => void }).mockRestore();
+    (getFileContentSpy as { mockRestore: () => void }).mockRestore();
+  });
+
+  it("returns [] when the tree contains no telar-content/texts/pages/*.md entries", async () => {
+    getRepoTreeSpy.mockResolvedValue({
+      tree: [
+        { path: "README.md", mode: "100644", type: "blob", sha: "a" },
+        { path: "telar-content/texts/about.md", mode: "100644", type: "blob", sha: "b" },
+        { path: "telar-content/texts/pages", mode: "040000", type: "tree", sha: "c" },
+        { path: "telar-content/spreadsheets/objects.csv", mode: "100644", type: "blob", sha: "d" },
+      ],
+      truncated: false,
+    });
+
+    const result = await scanRepoPages("token", "owner", "repo");
+
+    expect(result).toEqual([]);
+    expect(getFileContentSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns parsed page records with index-based order for matching md entries", async () => {
+    getRepoTreeSpy.mockResolvedValue({
+      tree: [
+        { path: "README.md", mode: "100644", type: "blob", sha: "a" },
+        { path: "telar-content/texts/pages/about.md", mode: "100644", type: "blob", sha: "b" },
+        { path: "telar-content/texts/pages/team.md", mode: "100644", type: "blob", sha: "c" },
+      ],
+      truncated: false,
+    });
+    getFileContentSpy.mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/texts/pages/about.md") {
+        return "---\ntitle: About this project\n---\nWelcome to the project.";
+      }
+      if (path === "telar-content/texts/pages/team.md") {
+        return "---\ntitle: Our team\n---\nMeet the team.";
+      }
+      return null;
+    });
+
+    const result = await scanRepoPages("token", "owner", "repo");
+
+    expect(result).toEqual([
+      { slug: "about", title: "About this project", body: "Welcome to the project.", order: 0 },
+      { slug: "team", title: "Our team", body: "Meet the team.", order: 1 },
+    ]);
+  });
+
+  it("skips entries when getFileContent returns null while preserving order for the rest", async () => {
+    getRepoTreeSpy.mockResolvedValue({
+      tree: [
+        { path: "telar-content/texts/pages/about.md", mode: "100644", type: "blob", sha: "a" },
+        { path: "telar-content/texts/pages/missing.md", mode: "100644", type: "blob", sha: "b" },
+        { path: "telar-content/texts/pages/team.md", mode: "100644", type: "blob", sha: "c" },
+      ],
+      truncated: false,
+    });
+    getFileContentSpy.mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/texts/pages/missing.md") return null;
+      if (path === "telar-content/texts/pages/about.md") {
+        return "---\ntitle: About\n---\nAbout body.";
+      }
+      if (path === "telar-content/texts/pages/team.md") {
+        return "---\ntitle: Team\n---\nTeam body.";
+      }
+      return null;
+    });
+
+    const result = await scanRepoPages("token", "owner", "repo");
+
+    // Two entries returned; the missing one is dropped. The remaining entries
+    // keep their original index from the filtered tree (0 and 2).
+    expect(result).toEqual([
+      { slug: "about", title: "About", body: "About body.", order: 0 },
+      { slug: "team", title: "Team", body: "Team body.", order: 2 },
+    ]);
+  });
+
+  it("falls back to slug as title when frontmatter is missing", async () => {
+    getRepoTreeSpy.mockResolvedValue({
+      tree: [
+        { path: "telar-content/texts/pages/notes.md", mode: "100644", type: "blob", sha: "a" },
+      ],
+      truncated: false,
+    });
+    getFileContentSpy.mockResolvedValue("Just a body without frontmatter.");
+
+    const result = await scanRepoPages("token", "owner", "repo");
+
+    expect(result).toEqual([
+      {
+        slug: "notes",
+        title: "notes",
+        body: "Just a body without frontmatter.",
+        order: 0,
+      },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests for the `deleteProjectCascade` extraction (from
+// `rollbackProjectImport`) and the `reimportRepo` extraction. The cascade
+// covers 9+ entity tables — including project_pages — and underpins the
+// journaled snapshot-and-restore re-import path.
+// ---------------------------------------------------------------------------
+
+describe("deleteProjectCascade — extracted from rollbackProjectImport", () => {
+  it("is exported from app/lib/import.server.ts and is callable as deleteProjectCascade(db, projectId)", async () => {
+    const mod = await import("~/lib/import.server");
+    expect(typeof (mod as any).deleteProjectCascade).toBe("function");
+  });
+
+  it("includes project_pages in the cascade (supersedes legacy 9-table list)", async () => {
+    const visited: unknown[] = [];
+    const db: any = {
+      delete: vi.fn((table: unknown) => {
+        visited.push(table);
+        return { where: vi.fn().mockResolvedValue(undefined) };
+      }),
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([{ id: 1 }]),
+        })),
+      })),
+      batch: vi.fn().mockResolvedValue([]),
+    };
+
+    const { deleteProjectCascade } = await import("~/lib/import.server");
+    const { project_pages } = await import("~/db/schema");
+    await deleteProjectCascade(db, 7);
+
+    expect(visited).toContain(project_pages);
+  });
+
+  it("issues the cascade as a single db.batch([...]) call", async () => {
+    const db: any = {
+      delete: vi.fn(() => ({ where: vi.fn().mockResolvedValue(undefined) })),
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({ where: vi.fn().mockResolvedValue([]) })),
+      })),
+      batch: vi.fn().mockResolvedValue([]),
+    };
+
+    const { deleteProjectCascade } = await import("~/lib/import.server");
+    await deleteProjectCascade(db, 7);
+
+    expect(db.batch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rollbackProjectImport delegates to deleteProjectCascade (no behavioural drift)", async () => {
+    // Both functions, called against the same mock db, must record the
+    // same delete-table sequence and the same number of batch calls.
+    const makeRecorder = () => {
+      const visited: unknown[] = [];
+      const db: any = {
+        delete: vi.fn((table: unknown) => {
+          visited.push(table);
+          return { where: vi.fn().mockResolvedValue(undefined) };
+        }),
+        select: vi.fn(() => ({
+          from: vi.fn(() => ({ where: vi.fn().mockResolvedValue([{ id: 1 }]) })),
+        })),
+        batch: vi.fn().mockResolvedValue([]),
+      };
+      return { db, visited };
+    };
+
+    const a = makeRecorder();
+    const b = makeRecorder();
+
+    const { rollbackProjectImport, deleteProjectCascade } = await import(
+      "~/lib/import.server"
+    );
+    await rollbackProjectImport(a.db, 42);
+    await deleteProjectCascade(b.db, 42);
+
+    expect(a.visited).toEqual(b.visited);
+    expect(a.db.batch).toHaveBeenCalledTimes(1);
+    expect(b.db.batch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Orphan detection + .compositor-ignored
+// ---------------------------------------------------------------------------
+
+describe("orphan detection + .compositor-ignored", () => {
+  describe("parseCompositorIgnored", () => {
+    it("returns [] when contents are null (missing file = empty list)", () => {
+      expect(parseCompositorIgnored(null)).toEqual([]);
+    });
+
+    it("returns [] for an empty string", () => {
+      expect(parseCompositorIgnored("")).toEqual([]);
+    });
+
+    it("parses newline-delimited story IDs, trimming whitespace, dropping blanks and # comments", () => {
+      const contents = [
+        "# header comment",
+        "  story-a  ",
+        "",
+        "story-b",
+        "# another comment",
+        "   ",
+        "story-c",
+      ].join("\n");
+      expect(parseCompositorIgnored(contents)).toEqual([
+        "story-a",
+        "story-b",
+        "story-c",
+      ]);
+    });
+
+    it("dedupes repeated IDs", () => {
+      const contents = "story-a\nstory-a\nstory-b\n";
+      expect(parseCompositorIgnored(contents)).toEqual(["story-a", "story-b"]);
+    });
+
+    it("handles \\r\\n line endings (Windows-edited file)", () => {
+      const contents = "# header\r\nstory-a\r\nstory-b\r\n";
+      expect(parseCompositorIgnored(contents)).toEqual(["story-a", "story-b"]);
+    });
+  });
+
+  describe("detectOrphanStoryIds", () => {
+    it("emits a story ID present on GitHub but absent from project.csv (happy path)", () => {
+      const result = detectOrphanStoryIds({
+        projectCsvStoryIds: new Set(["story-a", "story-b"]),
+        spreadsheetDirListing: [
+          "project.csv",
+          "story-a.csv",
+          "story-b.csv",
+          "story-c.csv",
+        ],
+        ignoredIds: new Set<string>(),
+      });
+      expect(result).toEqual(["story-c"]);
+    });
+
+    it("suppresses orphans listed in .compositor-ignored", () => {
+      const result = detectOrphanStoryIds({
+        projectCsvStoryIds: new Set(["story-a", "story-b"]),
+        spreadsheetDirListing: [
+          "project.csv",
+          "story-a.csv",
+          "story-b.csv",
+          "story-c.csv",
+        ],
+        ignoredIds: new Set(["story-c"]),
+      });
+      expect(result).toEqual([]);
+    });
+
+    it("returns [] when spreadsheets/ contains only project.csv (no false positives)", () => {
+      const result = detectOrphanStoryIds({
+        projectCsvStoryIds: new Set<string>(),
+        spreadsheetDirListing: ["project.csv"],
+        ignoredIds: new Set<string>(),
+      });
+      expect(result).toEqual([]);
+    });
+
+    it("ignores non-csv entries and the project.csv registry itself", () => {
+      const result = detectOrphanStoryIds({
+        projectCsvStoryIds: new Set<string>(),
+        spreadsheetDirListing: [
+          "project.csv",
+          "objects.csv", // registry — not a story file, but ends in .csv; should NOT be flagged
+          "glossary.csv", // registry — same
+          "README.md",
+          "story-orphan.csv",
+        ],
+        ignoredIds: new Set<string>(),
+      });
+      expect(result).toEqual(["story-orphan"]);
+    });
+
+    it("dedupes the listing if GitHub returned the same path twice", () => {
+      const result = detectOrphanStoryIds({
+        projectCsvStoryIds: new Set<string>(),
+        spreadsheetDirListing: ["story-x.csv", "story-x.csv"],
+        ignoredIds: new Set<string>(),
+      });
+      expect(result).toEqual(["story-x"]);
+    });
+  });
+
+  describe("scanRepoOrphanStoryIds — integration", () => {
+    let getRepoTreeSpy: ReturnType<typeof vi.spyOn> & {
+      mockResolvedValue: (v: { tree: githubServer.TreeEntry[]; truncated: boolean }) => unknown;
+    };
+    let getFileContentSpy: ReturnType<typeof vi.spyOn> & {
+      mockImplementation: (
+        fn: (token: string, owner: string, repo: string, path: string) => Promise<string | null>,
+      ) => unknown;
+    };
+
+    beforeEach(() => {
+      getRepoTreeSpy = vi.spyOn(githubServer, "getRepoTree") as never;
+      getFileContentSpy = vi.spyOn(githubServer, "getFileContent") as never;
+    });
+
+    afterEach(() => {
+      (getRepoTreeSpy as { mockRestore: () => void }).mockRestore();
+      (getFileContentSpy as { mockRestore: () => void }).mockRestore();
+    });
+
+    it("happy path: listing has 3 stories, project.csv references 2, .compositor-ignored is empty → 1 orphan", async () => {
+      getRepoTreeSpy.mockResolvedValue({
+        tree: [
+          { path: "telar-content/spreadsheets/project.csv", mode: "100644", type: "blob", sha: "p" },
+          { path: "telar-content/spreadsheets/story-a.csv", mode: "100644", type: "blob", sha: "a" },
+          { path: "telar-content/spreadsheets/story-b.csv", mode: "100644", type: "blob", sha: "b" },
+          { path: "telar-content/spreadsheets/story-c.csv", mode: "100644", type: "blob", sha: "c" },
+        ],
+        truncated: false,
+      });
+      getFileContentSpy.mockImplementation(async (_t, _o, _r, path) => {
+        if (path === ".compositor-ignored") return ""; // present but empty
+        return null;
+      });
+
+      const result = await scanRepoOrphanStoryIds("token", "owner", "repo", new Set(["story-a", "story-b"]));
+
+      expect(result).toEqual(["story-c"]);
+    });
+
+    it("suppresses orphans listed in .compositor-ignored", async () => {
+      getRepoTreeSpy.mockResolvedValue({
+        tree: [
+          { path: "telar-content/spreadsheets/project.csv", mode: "100644", type: "blob", sha: "p" },
+          { path: "telar-content/spreadsheets/story-a.csv", mode: "100644", type: "blob", sha: "a" },
+          { path: "telar-content/spreadsheets/story-b.csv", mode: "100644", type: "blob", sha: "b" },
+          { path: "telar-content/spreadsheets/story-c.csv", mode: "100644", type: "blob", sha: "c" },
+        ],
+        truncated: false,
+      });
+      getFileContentSpy.mockImplementation(async (_t, _o, _r, path) => {
+        if (path === ".compositor-ignored") return "story-c\n";
+        return null;
+      });
+
+      const result = await scanRepoOrphanStoryIds("token", "owner", "repo", new Set(["story-a", "story-b"]));
+
+      expect(result).toEqual([]);
+    });
+
+    it("handles missing .compositor-ignored as empty list (no throw)", async () => {
+      getRepoTreeSpy.mockResolvedValue({
+        tree: [
+          { path: "telar-content/spreadsheets/project.csv", mode: "100644", type: "blob", sha: "p" },
+          { path: "telar-content/spreadsheets/story-a.csv", mode: "100644", type: "blob", sha: "a" },
+          { path: "telar-content/spreadsheets/story-orphan.csv", mode: "100644", type: "blob", sha: "o" },
+        ],
+        truncated: false,
+      });
+      // .compositor-ignored returns null (404 from getFileContent)
+      getFileContentSpy.mockResolvedValue(null);
+
+      const result = await scanRepoOrphanStoryIds("token", "owner", "repo", new Set(["story-a"]));
+
+      expect(result).toEqual(["story-orphan"]);
+    });
+
+    it("returns [] when telar-content/spreadsheets/ contains only registry files", async () => {
+      getRepoTreeSpy.mockResolvedValue({
+        tree: [
+          { path: "telar-content/spreadsheets/project.csv", mode: "100644", type: "blob", sha: "p" },
+          { path: "telar-content/spreadsheets/objects.csv", mode: "100644", type: "blob", sha: "o" },
+          { path: "telar-content/spreadsheets/glossary.csv", mode: "100644", type: "blob", sha: "g" },
+        ],
+        truncated: false,
+      });
+      getFileContentSpy.mockResolvedValue(null);
+
+      const result = await scanRepoOrphanStoryIds("token", "owner", "repo", new Set<string>());
+
+      expect(result).toEqual([]);
+    });
+
+    it("ignores nested paths under telar-content/spreadsheets/ — only direct children of the directory count", async () => {
+      getRepoTreeSpy.mockResolvedValue({
+        tree: [
+          { path: "telar-content/spreadsheets/project.csv", mode: "100644", type: "blob", sha: "p" },
+          { path: "telar-content/spreadsheets/story-real.csv", mode: "100644", type: "blob", sha: "a" },
+          // Nested file — must NOT be treated as an orphan story id
+          { path: "telar-content/spreadsheets/archive/story-old.csv", mode: "100644", type: "blob", sha: "x" },
+        ],
+        truncated: false,
+      });
+      getFileContentSpy.mockResolvedValue(null);
+
+      const result = await scanRepoOrphanStoryIds("token", "owner", "repo", new Set<string>());
+
+      // story-real is the only direct-child orphan; story-old is in a sub-path and excluded
+      expect(result).toEqual(["story-real"]);
+    });
   });
 });

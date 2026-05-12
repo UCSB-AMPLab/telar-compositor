@@ -42,7 +42,7 @@ interface FakeUserRow {
   access_token_expires_at: string;
   refresh_token_expires_at: string;
   github_plan: string | null;
-  language_preference: string | null;
+  ui_locale: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -60,7 +60,7 @@ function makeUser(overrides: Partial<FakeUserRow> = {}): FakeUserRow {
     access_token_expires_at: minutesFromNow(60), // valid for 60 min
     refresh_token_expires_at: minutesFromNow(60 * 24 * 180), // 180 days
     github_plan: null,
-    language_preference: "en",
+    ui_locale: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,

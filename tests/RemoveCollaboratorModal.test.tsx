@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-// Centred remove collaborator modal
+/**
+ * This file pins the `RemoveCollaboratorModal` contract — render gating
+ * on `open`, focus-on-Cancel default, destructive Remove styling, body
+ * interpolation of the target username, Escape-to-cancel keyboard path,
+ * and the click-to-confirm callback that yields the member userId.
+ *
+ * @version v1.0.1-beta
+ */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 
@@ -25,20 +32,20 @@ const defaultProps = {
 };
 
 describe("RemoveCollaboratorModal", () => {
-  it("SC-2: renders nothing when open=false", () => {
+  it("renders nothing when open=false", () => {
     const { container } = render(
       <RemoveCollaboratorModal {...defaultProps} open={false} />
     );
     expect(container.firstChild).toBeNull();
   });
 
-  it("SC-2: renders when open=true with Cancel and Remove buttons", () => {
+  it("renders when open=true with Cancel and Remove buttons", () => {
     render(<RemoveCollaboratorModal {...defaultProps} />);
     expect(screen.getByRole("button", { name: "remove_cancel" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "remove_confirm" })).toBeTruthy();
   });
 
-  it("SC-2: focuses Cancel on open (safer default per phase 27 pattern)", async () => {
+  it("focuses Cancel on open (safer default for destructive modals)", async () => {
     render(<RemoveCollaboratorModal {...defaultProps} />);
     // requestAnimationFrame fires in jsdom — wait for the next frame
     await act(async () => {
@@ -48,27 +55,27 @@ describe("RemoveCollaboratorModal", () => {
     expect(document.activeElement).toBe(cancelBtn);
   });
 
-  it("SC-2: Remove button has destructive styling (bg-red-600)", () => {
+  it("Remove button has destructive styling (bg-red-600)", () => {
     render(<RemoveCollaboratorModal {...defaultProps} />);
     const removeBtn = screen.getByRole("button", { name: "remove_confirm" });
     expect(removeBtn.className).toMatch(/bg-red-600/);
   });
 
-  it("SC-2: body copy interpolates the @username passed via props", () => {
+  it("body copy interpolates the @username passed via props", () => {
     render(<RemoveCollaboratorModal {...defaultProps} username="bob" />);
     // The t mock returns "key:username" — check the body contains "bob"
     const body = screen.getByTestId("remove-modal-body");
     expect(body.textContent).toContain("bob");
   });
 
-  it("SC-2: Escape key invokes onCancel", () => {
+  it("Escape key invokes onCancel", () => {
     const onCancel = vi.fn();
     render(<RemoveCollaboratorModal {...defaultProps} onCancel={onCancel} />);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("SC-2: confirming invokes onConfirm with the member userId", () => {
+  it("confirming invokes onConfirm with the member userId", () => {
     const onConfirm = vi.fn();
     render(<RemoveCollaboratorModal {...defaultProps} onConfirm={onConfirm} userId={42} />);
     const removeBtn = screen.getByRole("button", { name: "remove_confirm" });

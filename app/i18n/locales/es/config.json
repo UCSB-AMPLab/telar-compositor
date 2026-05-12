@@ -1,5 +1,6 @@
 {
   "title": "Configuración del sitio",
+  "account_link_note": "Para los ajustes de tu cuenta de usuario, como el idioma de la interfaz, <1>ve a tu cuenta</1>.",
   "save": "Guardar cambios",
   "saving": "Guardando…",
   "saved": "Cambios guardados",
@@ -23,6 +24,12 @@
       "field_theme": "Tema",
       "field_theme_help": "Elige un tema de color para tu sitio.",
       "refresh_themes": "Actualizar temas desde el repositorio",
+      "theme_alert": {
+        "title_unrecognised": "No reconocemos este tema",
+        "body_unrecognised": "La configuración de tu sitio tiene el tema {{value}}, pero no encontramos un tema con ese nombre entre los del repositorio. Elige uno de los temas de abajo para actualizar el ajuste.",
+        "title_empty": "Todavía no has elegido un tema",
+        "body_empty": "Tu sitio no tiene un tema asignado. Elige uno de los temas de abajo para asignarle uno."
+      },
       "field_logo": "URL del logo (opcional)",
       "field_logo_help": "URL de la imagen del logo de tu sitio.",
       "field_language": "Idioma",

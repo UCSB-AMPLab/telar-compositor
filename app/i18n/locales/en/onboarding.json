@@ -33,7 +33,13 @@
     "unlink_cancel": "Cancel",
     "unlink_confirm": "Unlink",
     "private_repo_warning_title": "This repository is private",
-    "private_repo_warning_body": "Free GitHub accounts can't publish websites from private repositories. <repoSettings>Set this repository to public</repoSettings> in your GitHub settings, or upgrade to a paid GitHub account — if you're a student, you may qualify for the free <studentPack>GitHub Student Developer Pack</studentPack>. Either way, you'll need to come back here and start the import process again."
+    "private_repo_warning_body": "GitHub Pages can't publish private repositories on free GitHub accounts. <repoSettings>Set this repository to public</repoSettings> in your GitHub settings, or upgrade to a paid GitHub account — if you're a student, you may qualify for the free <studentPack>GitHub Student Developer Pack</studentPack>. Either way, you'll need to come back here and start the import process again.",
+    "installation_scope": {
+      "title": "Grant access to this repository",
+      "body": "The Telar Compositor GitHub App can't yet see this repository. Click the button below to update the app's access on GitHub, then come back to this page.",
+      "grant_button": "Grant access on GitHub",
+      "waiting": "Waiting for access to this repository..."
+    }
   },
   "step_sync": {
     "heading": "Importing Content",

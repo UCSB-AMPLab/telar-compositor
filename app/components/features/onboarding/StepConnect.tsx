@@ -1,9 +1,13 @@
 /**
- * StepConnect — repo selection step of the onboarding wizard.
+ * This file renders the Connect step of the onboarding wizard —
+ * the repo-selection screen where the user picks which GitHub repo
+ * to bring into the compositor (or creates a new one).
  *
- * Flat list of repos with radio-style selection and client-side search filter.
- * Already-connected repos show a "Connected" badge and an "Unlink" button
- * instead of being selectable.
+ * Flat list of repos with radio-style selection and client-side
+ * search filter. Already-connected repos show a "Connected" badge
+ * and an "Unlink" button instead of being selectable.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useMemo, useState } from "react";
@@ -32,6 +36,16 @@ interface StepConnectProps {
   githubPlan?: string | null;
   hasInstallations: boolean;
   githubAppSlug: string;
+  // Scope-block state lifted to WizardShell parent.
+  // `scopeBlocked` is the repo whose pre-check returned `inScope:false`;
+  // when set, the InstallationScopePrompt renders inside the slot below.
+  // `onScopeResolved` is called when the user grants access via the
+  // prompt's poll (parent clears state + retries import).
+  // `isCheckingScope` drives the Continue button's loading spinner while
+  // the pre-check is in flight.
+  scopeBlocked?: RepoWithInstallation | null;
+  onScopeResolved?: (repo: RepoWithInstallation) => void;
+  isCheckingScope?: boolean;
   className?: string;
 }
 
@@ -42,18 +56,29 @@ interface InstallationOption {
   isOwnAccount: boolean;
 }
 
-export function StepConnect({ repos, installations, userLogin, connectedProjects, orphanRepoNames = [], onSelect, githubPlan, hasInstallations, githubAppSlug, className = "" }: StepConnectProps) {
+export function StepConnect({
+  repos,
+  installations,
+  userLogin,
+  connectedProjects,
+  orphanRepoNames = [],
+  onSelect,
+  githubPlan,
+  hasInstallations,
+  githubAppSlug,
+  scopeBlocked = null,
+  onScopeResolved,
+  isCheckingScope = false,
+  className = "",
+}: StepConnectProps) {
   const { t } = useTranslation("onboarding");
   const [selected, setSelected] = useState<RepoWithInstallation | null>(null);
   const [search, setSearch] = useState("");
   const [unlinkTarget, setUnlinkTarget] = useState<ConnectedProject | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "create">("list");
   const [accountModalOpen, setAccountModalOpen] = useState(false);
-  // Scope-fallback for the normal connect flow. End-to-end
-  // wiring of the "App can't see picked repo" signal is deferred
-  // (verified manually). The reusable InstallationScopePrompt is the primary
-  // deliverable; this state exists so the conditional render site is in place.
-  const [scopeBlocked, setScopeBlocked] = useState<RepoWithInstallation | null>(null);
+  // `scopeBlocked` state lives in WizardShell now —
+  // received as a prop and rendered in the existing slot below.
   const unlinkFetcher = useFetcher();
 
   // Build installation options from the loader's `installations` payload so we
@@ -230,16 +255,19 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
         </div>
       )}
 
-      {/* Scope-blocked fallback for the normal connect flow. */}
+      {/* Scope-blocked fallback for the normal connect flow. Copy is
+          namespaced under `step_connect.installation_scope.*` per the
+          per-consumer-fork decision (the original
+          `create_site.installation_scope.body` says "your new repository"
+          which is inaccurate when picking an existing repo). */}
       {viewMode === "list" && scopeBlocked && (
         <InstallationScopePrompt
           installationId={scopeBlocked.installationId}
           owner={scopeBlocked.owner.login}
           repoName={scopeBlocked.name}
+          i18nKeyPrefix="step_connect.installation_scope"
           onResolved={() => {
-            const repo = scopeBlocked;
-            setScopeBlocked(null);
-            onSelect(repo);
+            if (onScopeResolved) onScopeResolved(scopeBlocked);
           }}
           className="mb-6"
         />
@@ -431,8 +459,10 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
         </a>
       </div>
 
-      {/* Private repo + free plan warning */}
-      {selected?.private && githubPlan === "free" && (
+      {/* Private repo + free plan warning. Treat a null/undefined plan as
+          potentially-free — fails safe (worst case: a paying user
+          we have no plan info for sees a redundant, dismissible warning). */}
+      {selected?.private && (githubPlan == null || githubPlan === "free") && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 mb-6">
           <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
           <div>
@@ -467,11 +497,13 @@ export function StepConnect({ repos, installations, userLogin, connectedProjects
         </div>
       )}
 
-      {/* Continue button */}
+      {/* Continue button — `loading` shows a spinner alongside the label
+          while the scope pre-check is in flight. */}
       <div className="flex justify-end">
         <Button
           variant="primary"
-          disabled={!selected || (selected.private && githubPlan === "free")}
+          disabled={!selected || (selected.private && (githubPlan == null || githubPlan === "free"))}
+          loading={isCheckingScope}
           onClick={() => selected && onSelect(selected)}
         >
           {t("step_connect.continue")}

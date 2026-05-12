@@ -4,13 +4,15 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "scripts": {
-    "build": "react-router build",
+    "build": "BUILD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo dev) react-router build",
     "dev": "react-router dev",
     "start": "wrangler dev",
     "typecheck": "react-router typegen && tsc --noEmit",
     "smoke": "node scripts/smoke.mjs --config build/server/wrangler.json",
     "predeploy": "npm run build && npm run smoke",
     "deploy": "wrangler deploy",
+    "predeploy:staging": "npm run build && node scripts/patch-staging-config.cjs && npm run smoke",
+    "deploy:staging": "wrangler deploy -c build/server/wrangler.json",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
@@ -50,6 +52,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.28.0",
+    "@cloudflare/workers-types": "^4.20260511.1",
     "@react-router/dev": "^7.12.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

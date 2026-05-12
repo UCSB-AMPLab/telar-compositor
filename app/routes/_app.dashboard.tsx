@@ -1,12 +1,24 @@
 /**
- * Dashboard — project management hub with team management and shared project support.
+ * This file is the Dashboard route — the project management hub
+ * where convenors and collaborators land after sign-in. Lists owned
+ * + shared projects, surfaces the orphan-stories banner, exposes
+ * team management for the active project, and serves as the launch
+ * point for switching between projects.
  *
- * Loader: fetches owned + shared projects (via getUserProjects), active project's
- *   team members, pending invites, and project config. Preview sections are on the
- *   Homepage tab (_app.homepage.tsx).
- * Action: handles switch-project, reorder, autosave-config, sync intents, and
- *   team management intents (generate-invite, search-users, send-invite, remove-member).
- * Component: project status bar, workflow steps, team panel.
+ * Loader fetches the user's full project set (via `getUserProjects`),
+ * the active project's team members, pending invites, project
+ * config, and any orphan story IDs that drive the orphan-stories
+ * banner. Action handles switch-project, reorder, autosave-config,
+ * sync, and team-management intents (generate-invite, search-users,
+ * send-invite, remove-member). The page renders the project status
+ * bar, workflow steps, team panel, and orphan-stories banner.
+ *
+ * Preview sections (Site Description, Welcome Message, Stories /
+ * Objects showcase) live on the Homepage tab in
+ * `_app.homepage.tsx` — they were relocated and this route keeps
+ * the project-management shell only.
+ *
+ * @version v1.2.0-beta
  */
 
 import { asc, count, desc, eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
@@ -16,25 +28,34 @@ import React, { useState, useEffect } from "react";
 import type { Route } from "./+types/_app.dashboard";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, stories, steps, project_config, project_members, project_invites, users } from "~/db/schema";
+import { projects, stories, steps, layers, project_config, project_members, project_invites, users } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
-import { getRepoHead } from "~/lib/github.server";
+import { getFileContent, getRepoHead } from "~/lib/github.server";
+import { signInternalMarker } from "../../workers/auth";
 import { getUserProjects, requireOwner, requireProjectMember } from "~/lib/membership.server";
 import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
 import type { FullSyncChanges } from "~/lib/sync.server";
+import {
+  scanRepoOrphanStoryIds,
+  parseCompositorIgnored,
+  parseTelarCsv,
+  mapStoryCsv,
+} from "~/lib/import.server";
+import { commitFilesToRepo } from "~/lib/commit.server";
 import { ProjectStatusBar } from "~/components/features/dashboard/ProjectStatusBar";
 import {
   SyncConfirmModal,
   SYNC_DIFF_FETCHER_KEY,
 } from "~/components/features/dashboard/SyncConfirmModal";
 import { RoleBadge } from "~/components/features/dashboard/RoleBadge";
+import OrphanStoryBanner from "~/components/features/dashboard/OrphanStoryBanner";
 import { useVersionChangeToast } from "~/hooks/use-version-change-toast";
 import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
 import { EmptyState } from "~/components/features/dashboard/EmptyState";
 import { Settings, Image, BookOpen, Sparkles, Upload } from "lucide-react";
 
-export const handle = { i18n: ["common", "dashboard", "team", "upgrade"] };
+export const handle = { i18n: ["common", "dashboard", "team", "upgrade", "sync"] };
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);
@@ -163,6 +184,36 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     memberCount: memberCountMap[p.id] ?? 1,
   }));
 
+  // Detect orphan {story_id}.csv files on GitHub that are
+  // not referenced by project.csv and not user-ignored. Drives the
+  // orphan-stories banner. Skipped for Sheets-backed sites (no per-story CSV
+  // files in telar-content/spreadsheets/ to scan) and silently when the
+  // GitHub call fails — the banner is a recovery affordance, not a
+  // dashboard-blocking signal.
+  let orphanStoryIds: string[] = [];
+  if (!config?.google_sheets_enabled) {
+    try {
+      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+      const projectStoryIds = new Set(
+        projectStories.length > 0
+          ? (
+              await db
+                .select({ story_id: stories.story_id })
+                .from(stories)
+                .where(eq(stories.project_id, activeProject.id))
+            ).map((r) => r.story_id)
+          : [],
+      );
+      orphanStoryIds = await scanRepoOrphanStoryIds(token, owner, repo, projectStoryIds);
+    } catch {
+      // Treat scan failure as "no orphans known" — keeps the dashboard
+      // responsive when GitHub is briefly unreachable; user will see the
+      // banner on the next successful load.
+      orphanStoryIds = [];
+    }
+  }
+
   return {
     hasProject: true as const,
     project: activeProject,
@@ -173,6 +224,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     pendingInvites,
     config,
     unpublishedCount,
+    orphanStoryIds,
   };
 }
 
@@ -508,6 +560,278 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
     }
 
+    case "accept-divergence": {
+      // Bump head_sha to current GitHub HEAD without
+      // re-importing. Single UPDATE; no entity changes. Uses freshly-fetched
+      // HEAD (NOT the cached banner-check value).
+      const activeProject = await getActiveProject();
+      if (!activeProject) {
+        return { ok: false, intent: "accept-divergence", error: "no_project" };
+      }
+      await requireOwner(db, activeProject.id, user.id);
+      try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
+        const currentHead = await getRepoHead(token, owner, repo);
+        const now = new Date().toISOString();
+        await db
+          .update(projects)
+          .set({
+            head_sha: currentHead,
+            last_synced_at: now,
+            updated_at: now,
+          })
+          .where(eq(projects.id, activeProject.id));
+        return { ok: true, intent: "accept-divergence" };
+      } catch (err) {
+        return {
+          ok: false,
+          intent: "accept-divergence",
+          error: "accept_divergence_failed",
+          message: err instanceof Error ? err.message : "Unknown error",
+        };
+      }
+    }
+
+    case "restore-orphan-drafts": {
+      // Bulk-restore orphan
+      // {story_id}.csv files as drafts. The set of orphan IDs is
+      // RECOMPUTED server-side via scanRepoOrphanStoryIds — the form
+      // payload carries no IDs, so a client-crafted form cannot point
+      // this action at arbitrary {id}.csv files outside the orphan set.
+      //
+      // Staging-UAT hotfix: the original
+      // design wrote directly to D1, but workers/collaboration.ts:1289's
+      // snapshotToD1 reconciles D1 against the Y.doc and DELETEs any
+      // D1 row not in the Y.doc — so the new D1 rows lived only until
+      // the next 30s alarm. Fix: route the restored data through the
+      // Y.doc via the DO's new POST /restore-orphans endpoint. The
+      // existing snapshotToD1 INSERT path then handles D1 writeback
+      // normally.
+      const activeProject = await getActiveProject();
+      if (!activeProject) {
+        return { ok: false, intent: "restore-orphan-drafts", error: "no_project" };
+      }
+      await requireProjectMember(db, activeProject.id, user.id);
+
+      try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
+
+        // Recompute authoritative orphan set (tampering mitigation).
+        const existingStoryRows = await db
+          .select({ story_id: stories.story_id })
+          .from(stories)
+          .where(eq(stories.project_id, activeProject.id));
+        const projectStoryIds = new Set(existingStoryRows.map((r) => r.story_id));
+        const orphanIds = await scanRepoOrphanStoryIds(
+          token,
+          owner,
+          repo,
+          projectStoryIds,
+        );
+
+        if (orphanIds.length === 0) {
+          return { ok: true, intent: "restore-orphan-drafts", restored: 0 };
+        }
+
+        // Fetch + parse each orphan CSV, build the DO payload. Skip
+        // files that vanished between the scan and the fetch (rare
+        // race; the next dashboard load would simply pick them up again).
+        const doStories: Array<{
+          storyId: string;
+          steps: Array<Record<string, unknown>>;
+          layers: Array<Record<string, unknown>>;
+        }> = [];
+        for (const storyId of orphanIds) {
+          const csvText = await getFileContent(
+            token,
+            owner,
+            repo,
+            `telar-content/spreadsheets/${storyId}.csv`,
+          );
+          if (!csvText) continue;
+
+          const parsedRows = parseTelarCsv(csvText);
+          // mapStoryCsv expects a numeric storyDbId for the step.story_id
+          // foreign key; for the DO payload we throw it away (the DO
+          // re-derives _id via snapshotToD1's INSERT path). Negative
+          // placeholder on layer.step_id is converted to a positive
+          // step_index here so the DO can thread layers without
+          // re-implementing the placeholder convention.
+          const { steps: stepRows, layers: layerRows } = mapStoryCsv(parsedRows, 0);
+          // mapStoryCsv emits rows in the same order as the input nonBlankRows
+          // and stamps step.story_id = 0 (the dbId we passed). We only need
+          // the per-step fields the DO writes onto each Y.Map.
+          const doSteps = stepRows.map((s) => ({
+            step_number: s.step_number,
+            kind: s.kind,
+            object_id: s.object_id ?? "",
+            x: s.x ?? null,
+            y: s.y ?? null,
+            zoom: s.zoom ?? null,
+            page: s.page ?? "",
+            question: s.question ?? "",
+            answer: s.answer ?? "",
+            clip_start: s.clip_start ?? "",
+            clip_end: s.clip_end ?? "",
+            loop: s.loop ?? "",
+          }));
+          // layer.step_id from mapStoryCsv is the negative placeholder
+          // `-(rowIndex + 1)`; convert to a 0-based step_index for the DO.
+          const doLayers = layerRows.map((l) => ({
+            step_index: Math.abs(l.step_id as number) - 1,
+            layer_number: l.layer_number,
+            title: (l.title ?? "") as string,
+            button_label: (l.button_label ?? "") as string,
+            content: (l.content ?? "") as string,
+          }));
+          doStories.push({ storyId, steps: doSteps, layers: doLayers });
+        }
+
+        if (doStories.length === 0) {
+          return { ok: true, intent: "restore-orphan-drafts", restored: 0 };
+        }
+
+        // Call the DO's /restore-orphans endpoint. The DO mutates its
+        // Y.doc, runs snapshotToD1 to persist, and broadcasts the new
+        // state to connected /stories editors. We send the parsed data
+        // (not the raw CSV) so the DO doesn't need to import the CSV
+        // parser — the action owns parsing as the canonical site.
+        const doId = env.COLLABORATION.idFromName(String(activeProject.id));
+        const doStub = env.COLLABORATION.get(doId);
+        const { sigHex, timestamp } = await signInternalMarker(
+          activeProject.id,
+          env.SESSION_SECRET,
+        );
+        const restoreRes = await doStub.fetch(
+          new Request("https://internal/restore-orphans", {
+            method: "POST",
+            headers: {
+              "X-Internal-Auth": sigHex,
+              "X-Internal-Timestamp": String(timestamp),
+              "X-Internal-Project": String(activeProject.id),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ stories: doStories }),
+          }),
+        );
+        if (!restoreRes.ok) {
+          return {
+            ok: false,
+            intent: "restore-orphan-drafts",
+            error: "restore_failed",
+            message: `DO returned ${restoreRes.status}`,
+          };
+        }
+        const restoreJson = (await restoreRes.json()) as { restored: number };
+        return {
+          ok: true,
+          intent: "restore-orphan-drafts",
+          restored: restoreJson.restored ?? 0,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          intent: "restore-orphan-drafts",
+          error: "restore_failed",
+          message: err instanceof Error ? err.message : "Unknown error",
+        };
+      }
+    }
+
+    case "ignore-orphans": {
+      // Append the authoritative
+      // orphan set to .compositor-ignored on GitHub. Same server-side
+      // recomputation as restore-orphan-drafts — form payload carries
+      // no IDs.
+      const activeProject = await getActiveProject();
+      if (!activeProject) {
+        return { ok: false, intent: "ignore-orphans", error: "no_project" };
+      }
+      await requireProjectMember(db, activeProject.id, user.id);
+
+      try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
+
+        // Recompute authoritative orphan set (tampering mitigation).
+        const existingStoryRows = await db
+          .select({ story_id: stories.story_id })
+          .from(stories)
+          .where(eq(stories.project_id, activeProject.id));
+        const projectStoryIds = new Set(existingStoryRows.map((r) => r.story_id));
+        const orphanIds = await scanRepoOrphanStoryIds(
+          token,
+          owner,
+          repo,
+          projectStoryIds,
+        );
+
+        if (orphanIds.length === 0) {
+          return { ok: true, intent: "ignore-orphans", ignored: 0 };
+        }
+
+        // Read existing .compositor-ignored (404 → null → empty list)
+        // and dedupe-append the new IDs. Reuse parseCompositorIgnored
+        // so the read-modify-write cycle preserves comments and
+        // existing ordering rules.
+        const existingRaw = await getFileContent(
+          token,
+          owner,
+          repo,
+          ".compositor-ignored",
+        );
+        const existingIds = new Set(parseCompositorIgnored(existingRaw));
+        const newIds = orphanIds.filter((id) => !existingIds.has(id));
+
+        if (newIds.length === 0) {
+          return { ok: true, intent: "ignore-orphans", ignored: 0 };
+        }
+
+        // Build the new file body: preserve the existing raw content
+        // verbatim (including comments and trailing newline state) and
+        // append the new IDs each on their own line. If the file did
+        // not exist, start with a brief header comment so a human
+        // browsing the repo can interpret it.
+        let newBody: string;
+        if (existingRaw === null) {
+          newBody =
+            "# .compositor-ignored — story IDs the compositor will not\n" +
+            "# resurface as orphans on import. Managed by the compositor\n" +
+            "# Compositor ignored-story IDs; safe to hand-edit (one ID per line; `#` comments).\n" +
+            newIds.join("\n") +
+            "\n";
+        } else {
+          const trimmed = existingRaw.endsWith("\n")
+            ? existingRaw
+            : existingRaw + "\n";
+          newBody = trimmed + newIds.join("\n") + "\n";
+        }
+
+        await commitFilesToRepo(
+          token,
+          owner,
+          repo,
+          "main",
+          [{ path: ".compositor-ignored", content: newBody }],
+          `chore: append ${newIds.length} orphan id(s) to .compositor-ignored`,
+          undefined,
+          undefined,
+          true, // skipCi — ignore-list is compositor metadata, not site content
+        );
+
+        return { ok: true, intent: "ignore-orphans", ignored: newIds.length };
+      } catch (err) {
+        return {
+          ok: false,
+          intent: "ignore-orphans",
+          error: "ignore_failed",
+          message: err instanceof Error ? err.message : "Unknown error",
+        };
+      }
+    }
+
     default:
       throw new Response("Bad request", { status: 400 });
   }
@@ -519,15 +843,15 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
   const docsUrl = i18n.language === "es" ? "https://telar.org/guia" : "https://telar.org/docs";
   const fetcher = useFetcher();
 
-  // SC-3: surface external version drift as a toast. The
+  // Surface external version drift as a toast. The
   // compute-full-sync-diff submission happens inside SyncConfirmModal via
   // useFetcher({ key: SYNC_DIFF_FETCHER_KEY }); we subscribe to the same
   // fetcher here so the toast fires once at the dashboard level and stays
   // visible after the modal closes. The hook calls showToast with "info"
   // for direction="ahead" (externalUpgradeToast — D1 was silently healed
-  // by applyFullSyncChanges) and "warning" for direction="behind"
-  // (externalDowngradeToast — user must verify). When there is no
-  // versionChange the hook is a no-op.
+  // by applyFullSyncChanges) and "warning" for
+  // direction="behind" (externalDowngradeToast — user must verify per
+  // When there is no versionChange the hook is a no-op.
   const syncDiffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
   const syncDiffData = syncDiffFetcher.data as
     | { ok?: boolean; diff?: { config?: { versionChange?: unknown } } }
@@ -541,7 +865,9 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
   const [syncModalOpen, setSyncModalOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Auto-open sync modal when ?sync=1 is in URL (from SyncBanner click)
+  // Auto-open SyncConfirmModal when ?sync=1 is in URL. The SyncBanner in
+  // _app.tsx links here; the publish-page stale_head validation blocker
+  // routes here via the same deep-link.
   useEffect(() => {
     if (searchParams.get("sync") === "1") {
       setSyncModalOpen(true);
@@ -562,6 +888,7 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
     pendingInvites,
     config,
     unpublishedCount,
+    orphanStoryIds,
   } = loaderData;
 
   function handleSwitchProject(projectId: number) {
@@ -576,10 +903,14 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+
       {/* H1 */}
       <h1 className="font-heading font-bold text-2xl text-charcoal">
         {t("page_title")}
       </h1>
+
+      {/* Orphan-stories banner — self-hides when no orphans. */}
+      <OrphanStoryBanner orphanStoryIds={orphanStoryIds ?? []} />
 
       {/* Project status bar — uses enriched allProjects with role/owner info */}
       <ProjectStatusBar
@@ -592,7 +923,6 @@ export default function DashboardPage({ loaderData }: Route.ComponentProps) {
         activeProjectId={project.id}
         onSwitchProject={handleSwitchProject}
         onSyncClick={() => setSyncModalOpen(true)}
-        pagesUrl={project.github_pages_url ?? null}
       />
 
       {/* Sync confirmation modal */}

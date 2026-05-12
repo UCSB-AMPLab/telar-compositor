@@ -65,6 +65,6 @@
   "phase_label_build_site": "Construir sitio",
   "phase_label_iiif_tiles": "Teselas IIIF",
   "phase_label_deploy": "Desplegar",
-  "externalUpgradeToast": "Tu sitio fue actualizado a v{{version}} por fuera del compositor.",
-  "externalDowngradeToast": "El repositorio está en v{{repo}} pero el compositor tiene v{{d1}}. Por favor verifica."
+  "externalUpgradeToast": "Actualizaron tu sitio a v{{version}} desde fuera del compositor.",
+  "externalDowngradeToast": "El repositorio quedó en v{{repo}} y el compositor todavía tiene v{{d1}}. Revisa qué pasó."
 }

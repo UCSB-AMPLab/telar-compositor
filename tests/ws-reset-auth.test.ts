@@ -1,5 +1,7 @@
 /**
- * Tests for /ws/:projectId/reset auth gate.
+ * This file pins the auth gate for the `/ws/:projectId/reset` endpoint —
+ * the worker route that lets a convenor wipe a project's collaboration
+ * state and force every connected client to reload from D1.
  *
  * Six cases:
  *  1. Unauthenticated POST -> 401
@@ -11,6 +13,8 @@
  *  6. DO direct-call rejection (the marker check itself): a request without
  *     the X-Internal-Auth header is rejected with 401 by verifyInternalMarker
  *     so an attacker that bypasses the worker entry cannot reach the DO.
+ *
+ * @version v1.0.1-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

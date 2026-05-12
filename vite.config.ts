@@ -5,6 +5,9 @@ import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
+  define: {
+    __BUILD_SHA__: JSON.stringify(process.env.BUILD_SHA ?? "dev"),
+  },
   server: {
     port: 4005,
   },

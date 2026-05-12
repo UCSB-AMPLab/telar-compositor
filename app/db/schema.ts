@@ -1,3 +1,11 @@
+/**
+ * This file is the Drizzle ORM schema for the compositor's D1 database —
+ * every table, column, type, and inferred TypeScript model the server
+ * code reads or writes flows through here.
+ *
+ * @version v1.2.0-beta
+ */
+
 import { sqliteTable, text, integer, real, unique, blob } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
@@ -11,7 +19,7 @@ export const users = sqliteTable("users", {
   access_token_expires_at: text("access_token_expires_at").notNull(), // ISO 8601
   refresh_token_expires_at: text("refresh_token_expires_at").notNull(),
   github_plan: text("github_plan"),
-  language_preference: text("language_preference").default("en"),
+  ui_locale: text("ui_locale"),
   created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });

@@ -1,15 +1,22 @@
 /**
- * Config — site configuration editor with explicit save.
+ * This file is the Config route — the site-configuration editor with
+ * explicit Save (in contrast to the autosave model used elsewhere in
+ * the compositor, because config changes are higher-stakes and the
+ * user expects a deliberate gesture before pushing).
  *
- * Fields update the Yjs config map on change (preventing DO snapshot overwrite).
- * The Save button writes directly to D1 for immediate persistence. Dirty state
- * is tracked — navigating away with unsaved changes shows a confirmation modal.
+ * Fields update the Yjs config map on change (preventing the
+ * Durable Object snapshot from overwriting them). The Save button
+ * writes directly to D1 for immediate persistence. Dirty state is
+ * tracked — navigating away with unsaved changes shows a
+ * confirmation modal.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { eq } from "drizzle-orm";
 import { Form, Link, useBlocker, useFetcher, useNavigation } from "react-router";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { AlertTriangle, Check, Loader2, RefreshCw } from "lucide-react";
 import * as Y from "yjs";
 import type { Route } from "./+types/_app.config";
@@ -28,6 +35,7 @@ import { ThemeSwatches } from "~/components/features/config/ThemeSwatches";
 // NavigationEditor removed — navigation is managed from the Pages tab
 import { Button } from "~/components/ui/Button";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { detectThemeAlert } from "~/lib/theme-recognition";
 
 export const handle = { i18n: ["common", "config"], hideAutosaveIndicator: true };
 
@@ -277,9 +285,34 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
   const config = loaderData.config;
   const themes = loaderData.themes;
 
+  // Surface an amber alert above ThemeSwatches when the project's
+  // configured theme is missing or doesn't match any imported theme_id. The
+  // helper suppresses the alert when themes.length === 0 — ThemeSwatches's own
+  // "No themes found" copy already carries the message there.
+  const themeValue = config?.theme ?? "";
+  const { showAlert: showThemeAlert, isEmpty: isThemeEmpty } = detectThemeAlert({
+    themeValue,
+    themes,
+  });
+
   return (
     <div className="max-w-3xl mx-auto pb-8">
       <h1 className="font-heading font-bold text-2xl text-charcoal mb-6">{t("title")}</h1>
+
+      <p className="text-sm font-body text-charcoal/70 mb-6">
+        <Trans
+          ns="config"
+          i18nKey="account_link_note"
+          components={{
+            1: (
+              <Link
+                to="/account"
+                className="underline underline-offset-2 text-charcoal hover:text-terracotta"
+              />
+            ),
+          }}
+        />
+      </p>
 
       <Form method="post" ref={formRef} onSubmit={() => { dirtyRef.current = false; }}>
         {/* 1. Site Settings */}
@@ -316,6 +349,23 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
               {t("sections.site_settings.field_theme")}
             </label>
             <p className="text-xs text-gray-400 mb-2">{t("sections.site_settings.field_theme_help")}</p>
+            {showThemeAlert && (
+              <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 mb-3">
+                <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <div>
+                  <p className="font-heading font-semibold text-sm text-charcoal">
+                    {isThemeEmpty
+                      ? t("sections.site_settings.theme_alert.title_empty")
+                      : t("sections.site_settings.theme_alert.title_unrecognised")}
+                  </p>
+                  <p className="font-body text-xs text-gray-600 mt-1">
+                    {isThemeEmpty
+                      ? t("sections.site_settings.theme_alert.body_empty")
+                      : t("sections.site_settings.theme_alert.body_unrecognised", { value: themeValue })}
+                  </p>
+                </div>
+              </div>
+            )}
             <ThemeSwatches
               name="theme"
               value={config?.theme ?? ""}

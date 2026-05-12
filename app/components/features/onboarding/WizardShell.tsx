@@ -1,12 +1,18 @@
 /**
- * WizardShell — step state machine for the onboarding wizard.
+ * This file is the step state machine for the onboarding wizard —
+ * the orchestrator that decides which step the user is currently
+ * on and handles the transitions between them.
  *
- * Manages step transitions: connect → sync → review → [configure-site →] done.
- * Uses useFetcher to submit the import action and react to results.
- * The sheetsAccessError blocking path keeps the user on "sync" until
- * they provide a corrected Sheet URL and retry.
- * When the imported repo has configuration issues (Google Sheets enabled,
- * URL mismatch), a mandatory configure-site step fixes them before Done.
+ * Manages step transitions:
+ * `connect → sync → review → [configure-site →] done`. Uses
+ * `useFetcher` to submit the import action and react to results.
+ * The `sheetsAccessError` blocking path keeps the user on "sync"
+ * until they provide a corrected Sheet URL and retry. When the
+ * imported repo has configuration issues (Google Sheets enabled,
+ * URL mismatch), a mandatory `configure-site` step fixes them
+ * before Done.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -23,6 +29,18 @@ import { StepDone } from "./StepDone";
 import { SiteConfigConfirmation } from "./SiteConfigConfirmation";
 
 type Step = "connect" | "sync" | "review" | "configure-site" | "done";
+
+// Discriminated union for the `intent=check-installation-scope` response.
+// Mirrors the shape returned by `/onboarding` action — see
+// `app/components/features/onboarding/CreateSiteForm.tsx:63-65`.
+type ScopeData =
+  | { ok: true; intent: "check-installation-scope"; inScope: boolean }
+  | {
+      ok: false;
+      intent: "check-installation-scope";
+      error: "github_error";
+      message?: string;
+    };
 
 interface ConnectedProject {
   id: number;
@@ -58,7 +76,17 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   const configCheckFetcher = useFetcher();
   const configFixFetcher = useFetcher();
   const completeFetcher = useFetcher();
+  // 5th useFetcher — the scope pre-check fired BEFORE intent=import in
+  // handleSelectRepo. Adding new useFetcher calls after this line breaks
+  // tests/WizardShell.test.tsx (slot index assumptions, modulo 5).
+  const scopeFetcher = useFetcher<ScopeData>();
   const isImporting = fetcher.state !== "idle";
+
+  // Lifted from StepConnect — `scopeBlocked` controls whether the
+  // InstallationScopePrompt renders inside StepConnect's slot. Set when
+  // the pre-check returns `inScope:false`, cleared when the user picks
+  // another repo or grants access.
+  const [scopeBlocked, setScopeBlocked] = useState<RepoWithInstallation | null>(null);
   const resumeChecked = useRef(false);
   const [searchParams] = useSearchParams();
 
@@ -86,18 +114,62 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   // When fetcher data arrives, process the result
   const fetcherData = fetcher.data as ImportResult | undefined;
 
-  const handleSelectRepo = (repo: RepoWithInstallation) => {
-    setSelectedRepo(repo);
-    setImportResult(null);
-    setConfigChecked(false);
+  // `proceedToImport` is the original body of `handleSelectRepo` — extracted
+  // so the response-handling useEffect below can call it after the scope
+  // pre-check resolves (in-scope) or fails open.
+  const proceedToImport = (repo: RepoWithInstallation) => {
     setStep("sync");
-
     const formData = new FormData();
     formData.set("intent", "import");
     formData.set("installation_id", String(repo.installationId));
     formData.set("repo_full_name", repo.full_name);
     fetcher.submit(formData, { method: "post", action: "/onboarding" });
   };
+
+  // Fire the scope pre-check BEFORE intent=import. On in-scope,
+  // proceedToImport runs; on out-of-scope, setScopeBlocked lifts the
+  // prompt; on non-scope errors, we fail open.
+  const handleSelectRepo = (repo: RepoWithInstallation) => {
+    setSelectedRepo(repo);
+    setImportResult(null);
+    setConfigChecked(false);
+    // Stale-prompt guard — clear any prior block before issuing a new
+    // check, so picking a fresh repo never leaves a misleading prompt up.
+    setScopeBlocked(null);
+    scopeFetcher.submit(
+      {
+        intent: "check-installation-scope",
+        owner: repo.owner.login,
+        name: repo.name,
+        installation_id: String(repo.installationId),
+      },
+      { method: "post", action: "/onboarding" },
+    );
+  };
+
+  // Branch on the scope pre-check response. Mirrors the symmetric pattern
+  // at `CreateSiteForm.tsx:163-190`. Fail-open on transient errors.
+  useEffect(() => {
+    if (!selectedRepo) return;
+    const data = scopeFetcher.data;
+    if (!data) return;
+    if (data.ok && data.inScope === true) {
+      proceedToImport(selectedRepo);
+      return;
+    }
+    if (data.ok && data.inScope === false) {
+      setScopeBlocked(selectedRepo);
+      return;
+    }
+    // !data.ok — fail open.
+    // eslint-disable-next-line no-console
+    console.error(
+      "check-installation-scope error:",
+      (data as { message?: string }).message,
+    );
+    proceedToImport(selectedRepo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeFetcher.data]);
 
   const handleRetryWithUrl = (sheetsUrl: string) => {
     if (!selectedRepo) return;
@@ -233,7 +305,23 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
 
       {/* Step content */}
       {step === "connect" && (
-        <StepConnect repos={repos} installations={installations} userLogin={user.github_login} connectedProjects={connectedProjects} orphanRepoNames={orphanRepoNames} onSelect={handleSelectRepo} githubPlan={user.github_plan} hasInstallations={hasInstallations} githubAppSlug={githubAppSlug} />
+        <StepConnect
+          repos={repos}
+          installations={installations}
+          userLogin={user.github_login}
+          connectedProjects={connectedProjects}
+          orphanRepoNames={orphanRepoNames}
+          onSelect={handleSelectRepo}
+          githubPlan={user.github_plan}
+          hasInstallations={hasInstallations}
+          githubAppSlug={githubAppSlug}
+          scopeBlocked={scopeBlocked}
+          onScopeResolved={(repo) => {
+            setScopeBlocked(null);
+            proceedToImport(repo);
+          }}
+          isCheckingScope={scopeFetcher.state !== "idle"}
+        />
       )}
 
       {step === "sync" && (

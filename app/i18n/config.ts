@@ -13,6 +13,7 @@ export const defaultNS = "common" as const;
 
 export const namespaces = [
   "common",
+  "account",
   "auth",
   "dashboard",
   "editor",
@@ -28,5 +29,6 @@ export const namespaces = [
   "team",
   "collaboration",
   "structural",
+  "bug-report",
 ] as const;
 

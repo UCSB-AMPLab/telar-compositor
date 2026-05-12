@@ -1,15 +1,18 @@
 /**
- * use-toast — React context, provider, and hook for toast notifications.
+ * This file is the React context, provider, and hook for toast
+ * notifications — the lightweight feedback system used by
+ * structural operations and any other surface that needs to flash
+ * a short message at the user.
  *
- * Provides a lightweight toast system used by structural operations and
- * other features. Toasts auto-dismiss after 5s by default or can be
- * dismissed manually via the close button. Convenor delete toasts include
- * an optional "Undo" action link.
+ * Toasts auto-dismiss after 5s by default or can be dismissed
+ * manually via the close button. Convenor delete toasts include an
+ * optional "Undo" action link.
  *
- * Up to 5 toasts are kept in the queue at once; older ones are evicted
- * as new ones arrive. Rendering lives in ToastContainer (see Toast.tsx).
+ * Up to 5 toasts are kept in the queue at once; older ones are
+ * evicted as new ones arrive. Rendering lives in `ToastContainer`
+ * (see `Toast.tsx`).
  *
- * Exports: ToastProvider, useToast, ToastData, ToastContextValue
+ * @version v1.2.0-beta
  */
 
 import {
@@ -33,8 +36,22 @@ export interface ToastData {
   type: "info" | "warning" | "destructive";
   /** Optional action link — e.g. the convenor "Undo" link on delete toasts. */
   action?: { label: string; onClick: () => void };
-  /** Auto-dismiss timeout in ms. Defaults to 5000. */
-  autoDismissMs?: number;
+  /**
+   * Auto-dismiss timeout in ms.
+   *  - `undefined` → uses DEFAULT_AUTO_DISMISS_MS (5000ms; back-compat)
+   *  - positive number → custom timeout
+   *  - `null` → STICKY (no auto-dismiss; user must dismiss manually).
+   *    Used by the WS-disconnect destructive toast — the user is
+   *    being kicked off the project and must read the message.
+   */
+  autoDismissMs?: number | null;
+  /**
+   * When true, ToastItem renders `role="alert"` (assertive
+   * announcement) instead of the default `role="status"` (polite). Used
+   * by the WS-disconnect destructive toast so screen readers interrupt
+   * other speech to announce the project deletion.
+   */
+  critical?: boolean;
 }
 
 export interface ToastContextValue {
@@ -102,9 +119,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         return next;
       });
 
-      const dismissMs = toast.autoDismissMs ?? DEFAULT_AUTO_DISMISS_MS;
-      const timer = setTimeout(() => dismissToast(id), dismissMs);
-      timersRef.current.set(id, timer);
+      // `autoDismissMs: null` means STICKY — schedule no
+      // timer at all. `undefined` falls back to the default. Positive
+      // numbers use the supplied value.
+      if (toast.autoDismissMs !== null) {
+        const dismissMs = toast.autoDismissMs ?? DEFAULT_AUTO_DISMISS_MS;
+        const timer = setTimeout(() => dismissToast(id), dismissMs);
+        timersRef.current.set(id, timer);
+      }
     },
     [dismissToast]
   );

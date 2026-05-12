@@ -1,10 +1,15 @@
 /**
- * NarrativeColumn — switches between TitleCardView (step 0) and StepView (step 1-N).
+ * This file renders the narrative column of the Story Editor —
+ * switches between `TitleCardView` (step 0) and `StepView`
+ * (steps 1-N) based on which step the user has selected in the
+ * sidebar.
  *
- * Receives story, active step, layers, and Y.Text instances from the editor route.
- * Renders TitleCardView when activeStepIndex === 0, StepView otherwise.
- * Forwards Y.Text props and callbacks to TitleCardView and StepView so both
- * components write directly to the Yjs document instead of HTTP autosave.
+ * Receives story, active step, layers, and Y.Text instances from
+ * the editor route. Forwards Y.Text props and callbacks so both
+ * children write directly to the Yjs document instead of going
+ * through HTTP autosave.
+ *
+ * @version v1.2.0-beta
  */
 
 import * as Y from "yjs";

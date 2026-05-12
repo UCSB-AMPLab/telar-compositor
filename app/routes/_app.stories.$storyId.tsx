@@ -1,22 +1,23 @@
 /**
- * Story Editor — full three-column story editing route.
+ * This file is the Story Editor route — the full three-column story
+ * editing surface (sidebar / narrative / viewer) the user lands on
+ * when they click into an individual story.
  *
- * Loader: fetches story by story_id slug, all its steps (ordered),
- *         layers for all steps, project objects for the object picker,
- *         project config for constructing IIIF URLs, and team members
- *         (for delete-confirmation contributor warnings).
- * Action: handles capture-position, change-object, and save-layer only.
- *         Structural ops (add-step, add-section-card, delete-step,
- *         reorder-steps, create-layer, delete-layer) migrated to Yjs via
- *         useStructuralOps — snapshotToD1 reconciles Y.Array state back
- *         to D1 entity tables every 30 seconds.
- * Component: wires EditorShell, StepSidebar, NarrativeColumn or
- *            SectionCardView (depending on the active step's `kind`), and
- *            ViewerColumn. Reads steps/layers from the Y.Array when a
- *            Y.Doc is available, otherwise falls back to loader data.
- *            Also owns the per-story `show_sections` toggle that controls
- *            whether section headings appear as a TOC on the published
- *            title card.
+ * Loader fetches the story by `story_id` slug, all its steps
+ * (ordered), layers for all steps, project objects for the object
+ * picker, project config for constructing IIIF URLs, and team
+ * members (for delete-confirmation contributor warnings). Action
+ * handles `capture-position`, `change-object`, and `save-layer`
+ * only. Structural ops (`add-step`, `delete-step`,
+ * `reorder-steps`, `create-layer`, `delete-layer`) are migrated to
+ * Yjs via `useStructuralOps` — `snapshotToD1` reconciles Y.Array
+ * state back to D1 entity tables every 30 seconds.
+ *
+ * Wires `EditorShell`, `StepSidebar`, `NarrativeColumn`, and
+ * `ViewerColumn`. Reads steps and layers from the Y.Array when a
+ * Y.Doc is available, otherwise falls back to loader data.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -360,8 +361,8 @@ function stepFromYMap(s: Y.Map<unknown>): EditorStep {
   return {
     id: (s.get("_id") as number | null) ?? 0,
     step_number: (s.get("step_number") as number) ?? 0,
-    // Hydration always sets an explicit `kind` on each step Y.Map;
-    // `?? "media"` guards against legacy Y.Maps from before sections shipped.
+    // Per phase 33-03 hydration, every step Y.Map carries an explicit kind;
+    // ?? 'media' guards against legacy Y.Maps from before plan 33-03 shipped.
     kind: ((s.get("kind") as string | undefined) ?? "media") as "media" | "section",
     question: readScalarText(s, "question"),
     answer: readScalarText(s, "answer"),
@@ -644,8 +645,8 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               action: {
                 label: tStructural("toast_item_deleted_undo"),
                 onClick: () => {
-                  // The global TabNav Undo button / Ctrl+Z drives the shared
-                  // UndoManager — no direct call here.
+                  // The global TabNav Undo button / Ctrl+Z (plan 27-04) drives
+                  // the shared UndoManager — no direct call here.
                 },
               },
             }
@@ -805,8 +806,8 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
   // Per-story show_sections toggle. Mirrors the existing
   // storyYMap.set("draft", ...) / storyYMap.set("private", ...) patterns
-  // in app/routes/_app.stories.tsx — Y.Doc is the source of truth and
-  // snapshotToD1 reconciles the boolean back to D1.
+  // in app/routes/_app.stories.tsx — Y.Doc is the source of truth, snapshotToD1
+  // (extended in plan 33-3) reconciles the boolean back to D1.
   function handleToggleShowSections(value: boolean) {
     if (useYjs && storyYMap && ydoc) {
       ydoc.transact(() => {

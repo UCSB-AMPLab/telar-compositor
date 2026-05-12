@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 /**
- * dashboard-sync-toast.test.tsx — SC-3 external version-change toast.
+ * This file pins the dashboard's external version-change toast — the
+ * notification that fires after a sync when the connected repo has
+ * advanced (or fallen behind) the locally-stored D1 version.
  *
- * Tests the useVersionChangeToast hook extracted from the dashboard's
- * post-sync useEffect. The hook observes syncFetcher.data and fires a
- * toast via showToast when diff.config.versionChange is populated.
+ * Tests the `useVersionChangeToast` hook extracted from the dashboard's
+ * post-sync useEffect. The hook observes `syncFetcher.data` and fires a
+ * toast via `showToast` when `diff.config.versionChange` is populated.
  *
  * Covered cases:
  *   - direction="ahead" -> info toast with repoVersion in message
@@ -13,6 +15,8 @@
  *   - data.ok=false -> no toast even when versionChange present
  *   - data=undefined -> no toast
  *   - stable data reference across renders -> exactly one toast
+ *
+ * @version v1.0.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

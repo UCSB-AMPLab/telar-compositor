@@ -1,15 +1,22 @@
 /**
- * Homepage tab — editable site preview for the active project.
+ * This file renders the Homepage tab — the editable site preview for
+ * the active project. The user lands here when they want to see what
+ * their site looks like to a visitor and to edit the heading copy
+ * and showcase items inline.
  *
- * Relocated from _app.dashboard.tsx: all four DashboardPreviewSection blocks
- * (Site Description, Welcome Message, Stories showcase, Objects showcase).
- * Adds a "View live site" link at the top using the project's github_pages_url.
+ * Relocated from `_app.dashboard.tsx`: all four
+ * `DashboardPreviewSection` blocks (Site Description, Welcome
+ * Message, Stories showcase, Objects showcase). Adds a "View live
+ * site" link at the top using the project's `github_pages_url`.
  *
- * Loader: fetches project_config, project_landing, stories, objects, siteBaseUrl.
- * Action: handles autosave-landing, autosave-config, reorder intents.
+ * Loader fetches `project_config`, `project_landing`, `stories`,
+ * `objects`, and the resolved site base URL. Action handles
+ * `autosave-landing`, `autosave-config`, and `reorder` intents.
  *
- * NOTE: The preview sections remain on _app.dashboard.tsx until a future
- * dashboard cleanup. This route duplicates them for now.
+ * NOTE: The preview sections remain on `_app.dashboard.tsx` until a
+ * future dashboard cleanup. This route duplicates them for now.
+ *
+ * @version v1.2.0-beta
  */
 
 import { asc, desc, eq, and, gt, inArray } from "drizzle-orm";
@@ -48,6 +55,19 @@ import { InlineTextArea } from "~/components/ui/InlineTextArea";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { getYText } from "~/lib/yjs-helpers";
+import {
+  WELCOME_BODY_LOCALISED,
+  LANDING_LABELS,
+  // Pulled from the client-safe labels module — used by the JSX component for
+  // the `defaultValues` prop. The other v130-ingest exports below are loader-
+  // only and React Router strips them from the client bundle.
+  V121_FRONTMATTER_DEFAULTS,
+} from "~/lib/v130-framework-labels";
+import {
+  isV130WelcomeLiquidBlock,
+  normalizeBody,
+  V121_BODIES,
+} from "~/lib/v130-ingest.server";
 import * as Y from "yjs";
 
 export const handle = { i18n: ["common", "homepage", "dashboard", "editor"] };
@@ -81,7 +101,60 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .from(project_landing)
     .where(eq(project_landing.project_id, activeProject.id))
     .limit(1);
-  const landing = landingRows[0] ?? null;
+  const landingRow = landingRows[0] ?? null;
+
+  // v1.3.0 display contract — what the editor renders for each landing field:
+  //   welcome_body: GH `index.md` body is `{{ lang.index_page.welcome | markdownify }}`
+  //     by default (and a teaching comment); user customisation = replace that line.
+  //     The editor surfaces the canned text from the lang pack so the user sees what
+  //     visitors see, with the option to edit. The three "default" states are:
+  //       (a) empty/null (fresh import after liquid-block normalisation, or first publish-from-scratch)
+  //       (b) v1.3.0 liquid-block body (defensive — import normally catches this)
+  //       (c) legacy v1.2.1 English literal (pre-v1.3.0 imports that haven't re-synced)
+  //   stories_heading / objects_heading / objects_intro: the v1.3.0 layouts read these
+  //     from the lang pack when frontmatter overrides are absent. Treat the legacy
+  //     v1.2.1 English literal as "no override" so the placeholder takes over.
+  //   stories_intro: no v1.2.1 default exists; never filter user content here.
+  // The publish-time leak is closed at the framework level by the v1.3.0 upgrade itself; this
+  // filter is purely for the compositor's editor display, not for the live site.
+  const siteLangForLoader: "en" | "es" = config?.lang === "es" ? "es" : "en";
+  let landing = landingRow;
+  if (landingRow) {
+    const welcomeBody = landingRow.welcome_body ?? "";
+    // The five "is this still the framework default?" branches:
+    //   (a) empty/null — fresh import after liquid-block normalisation, or first publish-from-scratch
+    //   (b) v1.3.0 liquid block — defensive (import normally catches this)
+    //   (c) legacy v1.2.1 EN literal — pre-v1.3.0 imports that didn't re-sync
+    //   (d) v1.3.0 EN canned text byte-equal — user pasted/saved canned and
+    //       never edited (handles the language-switch-with-canned-text case;
+    //       false-positive risk ~zero given the body is ~600 chars of
+    //       multi-section markdown — any one-char edit diverges)
+    //   (e) v1.3.0 ES canned text byte-equal — same logic in the other dir
+    const welcomeIsDefault =
+      welcomeBody.trim() === "" ||
+      isV130WelcomeLiquidBlock(welcomeBody) ||
+      normalizeBody(welcomeBody) === normalizeBody(V121_BODIES.index) ||
+      welcomeBody === WELCOME_BODY_LOCALISED.en ||
+      welcomeBody === WELCOME_BODY_LOCALISED.es;
+    landing = {
+      ...landingRow,
+      welcome_body: welcomeIsDefault
+        ? WELCOME_BODY_LOCALISED[siteLangForLoader]
+        : landingRow.welcome_body,
+      stories_heading:
+        landingRow.stories_heading === V121_FRONTMATTER_DEFAULTS.stories_heading
+          ? null
+          : landingRow.stories_heading,
+      objects_heading:
+        landingRow.objects_heading === V121_FRONTMATTER_DEFAULTS.objects_heading
+          ? null
+          : landingRow.objects_heading,
+      objects_intro:
+        landingRow.objects_intro === V121_FRONTMATTER_DEFAULTS.objects_intro
+          ? null
+          : landingRow.objects_intro,
+    };
+  }
 
   const projectStories = await db
     .select()
@@ -367,6 +440,13 @@ export default function HomepagePage({ loaderData }: Route.ComponentProps) {
     siteBaseUrl,
   } = loaderData;
 
+  // Site-locale (config.lang) drives the v1.3.0 framework preview content
+  // and the localised landing-field placeholders, NOT the user's UI locale
+  // (useTranslation). An EN compositor user editing an ES site must see the
+  // Spanish framework defaults that visitors will see on the live site
+  // Defensive narrowing of the project's language source to "en" | "es".
+  const siteLang: "en" | "es" = config?.lang === "es" ? "es" : "en";
+
   // DnD order state (optimistic)
   const [items, setItems] = useState<number[]>(
     (loaderStories as StoryItem[]).map((s: StoryItem) => s.id)
@@ -468,6 +548,14 @@ export default function HomepagePage({ loaderData }: Route.ComponentProps) {
         heading={t("preview.welcome_heading")}
         explanation={t("preview.welcome_explanation")}
       >
+        {/*
+          v1.3.0 display contract: the loader replaces landing.welcome_body
+          with the lang-pack canned text when the underlying state is
+          empty/liquid-block/legacy-v121 (see loader for the three branches).
+          So `initialValue` is always either user content or the canned
+          markdown the live site would render — no sibling preview block
+          needed.
+        */}
         <MarkdownEditor
           key={`welcome-${project.id}`}
           initialValue={landing?.welcome_body ?? ""}
@@ -492,10 +580,16 @@ export default function HomepagePage({ loaderData }: Route.ComponentProps) {
             <InlineTextField
               initialValue={landing?.stories_heading ?? ""}
               yText={storiesHeadingYText}
-              placeholder="Stories"
+              placeholder={LANDING_LABELS[siteLang].stories_heading}
+              defaultValues={[V121_FRONTMATTER_DEFAULTS.stories_heading]}
               className="font-heading font-bold text-xl"
               fieldKey="homepage-stories-heading"
             />
+            {(!landing?.stories_heading || landing.stories_heading.trim() === "") && (
+              <p className="mt-1 font-body text-xs italic text-charcoal/50">
+                {t("preview.empty_default_hint")}
+              </p>
+            )}
           </div>
 
           <DndContext
@@ -560,17 +654,29 @@ export default function HomepagePage({ loaderData }: Route.ComponentProps) {
           <InlineTextField
             initialValue={landing?.objects_heading ?? ""}
             yText={objectsHeadingYText}
-            placeholder="Objects"
+            placeholder={LANDING_LABELS[siteLang].objects_heading}
+            defaultValues={[V121_FRONTMATTER_DEFAULTS.objects_heading]}
             className="font-heading font-bold text-xl"
             fieldKey="homepage-objects-heading"
           />
+          {(!landing?.objects_heading || landing.objects_heading.trim() === "") && (
+            <p className="mt-1 font-body text-xs italic text-charcoal/50">
+              {t("preview.empty_default_hint")}
+            </p>
+          )}
           <InlineTextArea
             initialValue={landing?.objects_intro ?? ""}
             yText={objectsIntroYText}
-            placeholder="Browse the objects in this collection"
+            placeholder={LANDING_LABELS[siteLang].objects_intro}
+            defaultValues={[V121_FRONTMATTER_DEFAULTS.objects_intro]}
             className="text-sm text-gray-600"
             fieldKey="homepage-objects-intro"
           />
+          {(!landing?.objects_intro || landing.objects_intro.trim() === "") && (
+            <p className="mt-1 font-body text-xs italic text-charcoal/50">
+              {t("preview.empty_default_hint")}
+            </p>
+          )}
 
           {displayObjects.length > 0 ? (
             <div className="grid grid-cols-3 md:grid-cols-5 gap-3 pt-2">
