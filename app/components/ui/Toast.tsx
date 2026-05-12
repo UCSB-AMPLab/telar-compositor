@@ -1,16 +1,18 @@
 /**
- * Toast — toast notification display components.
+ * This file renders the toast notification stack — the
+ * fixed-position cluster at the bottom-right of the viewport
+ * (z-50) plus the individual toast cards inside it.
  *
- * ToastContainer renders a fixed-position stack at bottom-right of the
- * viewport (z-50). ToastItem is an individual toast card with a
- * left-border accent colour based on type, optional action link (e.g.
- * "Undo" for convenor delete toasts), and a close button.
+ * `ToastContainer` renders the stack; `ToastItem` is an individual
+ * toast card with a left-border accent colour based on type, an
+ * optional action link (e.g. "Undo" for convenor delete toasts),
+ * and a close button.
  *
- * Entry animation: slide-in-from-right (Tailwind v4 animate-in).
+ * Entry animation: slide-in-from-right (Tailwind v4 `animate-in`).
  * Exit animation: 200ms fade before the container removes the toast
- * from the DOM (handled by the provider via dismissToast).
+ * from the DOM (handled by the provider via `dismissToast`).
  *
- * Exports: ToastContainer
+ * @version v1.2.0-beta
  */
 
 import { X } from "lucide-react";
@@ -57,10 +59,16 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
         ? "border-l-4 border-amber-400"
         : "border-l-4 border-lavender";
 
+  // `critical` swaps the default polite role="status" for
+  // the assertive role="alert" so screen readers announce the message
+  // immediately. Used by the WS-disconnect destructive toast that fires
+  // when a convenor deletes a project the user has open.
+  const itemRole = toast.critical ? "alert" : "status";
+
   return (
     <div
       className={`bg-white rounded-md shadow-lg ${borderClass} p-3 flex items-start gap-3 min-w-72 animate-in slide-in-from-right duration-200`}
-      role="status"
+      role={itemRole}
     >
       <div className="flex-1">
         <p className="font-body text-sm text-charcoal">{toast.message}</p>
