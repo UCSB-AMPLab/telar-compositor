@@ -1,20 +1,30 @@
 /**
- * Pages tab — static page editor for the active project.
+ * This file is the Pages route — the static page editor for the
+ * active project. Where the user adds and orders the custom pages
+ * that appear in their site's top navigation alongside Home,
+ * Objects, Glossary, and Share.
  *
- * The tab bar is a live preview of the site's navigation menu: site title
- * on the left, right-aligned nav items (Home, Objects, Glossary, user pages,
- * Share). User pages are draggable; all nav items are rearrangeable.
- * A + button on the left creates new pages.
+ * The tab bar is a live preview of the site's navigation menu: site
+ * title on the left, right-aligned nav items (Home, Objects,
+ * Glossary, user pages, Share). User pages are draggable; all nav
+ * items are rearrangeable. A `+` button on the left creates new
+ * pages.
  *
- * Slug generation is deferred — pages start with an empty slug and it
- * auto-generates from the title once the user edits it.
+ * Slug generation is deferred — pages start with an empty
+ * (placeholder) slug and the slug auto-generates from the title
+ * once the user edits it. That lets the user create a new page
+ * without immediately committing to a URL.
+ *
+ * @version v1.2.0-beta
  */
 
 import { asc, eq, and } from "drizzle-orm";
 import { useTranslation } from "react-i18next";
 import { redirect, useFetcher } from "react-router";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import * as Y from "yjs";
+import { decrypt } from "~/lib/crypto.server";
+import { scanRepoPages } from "~/lib/import.server";
 import {
   DndContext,
   closestCenter,
@@ -36,17 +46,22 @@ import { getDb } from "~/lib/db.server";
 import { project_pages, project_members, users } from "~/db/schema";
 import { resolveActiveProject } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
-import { normaliseSlug, makeUniqueSlug } from "~/lib/slug";
+import { normaliseSlug, makeUniqueSlug, isTemporaryPageSlug } from "~/lib/slug";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { SlugField } from "~/components/ui/SlugField";
 import { SortablePageTab } from "~/components/features/pages/SortablePageTab";
-import { PagesEmptyState } from "~/components/features/pages/PagesEmptyState";
+import {
+  PagesEmptyState,
+  PagesRepoImportEmptyState,
+} from "~/components/features/pages/PagesEmptyState";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useToast } from "~/hooks/use-toast";
-import { findYMapByIdOrTempId, getYText } from "~/lib/yjs-helpers";
+import { keyFor } from "~/lib/item-key";
+import { mergeNavItemsWithPages } from "~/lib/nav-merge";
+import { findYMapByIdOrTempId, getYText, reorderNavArray, sanitizeNavArray } from "~/lib/yjs-helpers";
 
 export const handle = { i18n: ["common", "pages", "editor", "structural"] };
 
@@ -147,6 +162,68 @@ export async function action({ request, context }: Route.ActionArgs) {
       return { ok: true, intent: "autosave-page-body" };
     }
 
+    // ---- Surface existing repo pages on the empty-state ----
+    case "scan-repo-pages": {
+      // Probe the connected repo for telar-content/texts/pages/*.md and return
+      // the parsed page records. Called from the Pages tab when displayPages
+      // is empty so the UI can offer per-row + "Import all" actions instead
+      // of the plain empty-state.
+      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+      const pages = await scanRepoPages(token, owner, repo);
+      return { ok: true, intent: "scan-repo-pages", pages };
+    }
+
+    case "import-pages": {
+      // Insert one or more discovered pages into D1 for the active project.
+      // Slugs may be filtered via repeated `slugs` form fields; omitting them
+      // imports every page returned by scanRepoPages. Slugs that already exist
+      // in D1 are skipped (no overwrite — drift handling is out of scope per
+      // and reported in `already_present` so the UI can surface
+      // them. The client effect mirrors the returned `pages` into the active
+      // Yjs document so the editor hydrates immediately.
+      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+      const requestedSlugs = formData.getAll("slugs").map((s) => String(s));
+      const allPages = await scanRepoPages(token, owner, repo);
+      const candidatePages = requestedSlugs.length > 0
+        ? allPages.filter((p) => requestedSlugs.includes(p.slug))
+        : allPages;
+
+      // Skip slugs that are already in D1 — never overwrite existing pages.
+      const existingPages = await db
+        .select({ slug: project_pages.slug })
+        .from(project_pages)
+        .where(eq(project_pages.project_id, activeProjectId));
+      const existingSlugs = new Set(existingPages.map((p) => p.slug));
+
+      const toInsert = candidatePages.filter((p) => !existingSlugs.has(p.slug));
+      const alreadyPresent = candidatePages
+        .filter((p) => existingSlugs.has(p.slug))
+        .map((p) => p.slug);
+
+      const now = new Date().toISOString();
+      for (const page of toInsert) {
+        await db.insert(project_pages).values({
+          project_id: activeProjectId,
+          title: page.title,
+          slug: page.slug,
+          body: page.body,
+          order: page.order,
+          created_at: now,
+          updated_at: now,
+        });
+      }
+
+      return {
+        ok: true,
+        intent: "import-pages",
+        imported: toInsert.length,
+        pages: toInsert,
+        already_present: alreadyPresent,
+      };
+    }
+
     default:
       throw new Response("Bad request", { status: 400 });
   }
@@ -174,6 +251,9 @@ interface NavItem {
   slug?: string;
   label: string;
   visible: boolean;
+  // Render-only marker for unsaved pages with no slug yet (synthetic nav
+  // entries from `mergeNavItemsWithPages`). Never persisted to Yjs.
+  _tempId?: string;
 }
 
 interface Member {
@@ -247,6 +327,28 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   const bodyFetcher = useFetcher();
 
   // ------------------------------------------------------------------
+  // Repo-page scan + import on empty state.
+  // When displayPages is empty, probe the connected repo for importable
+  // pages so the user can pull them into the editor without having to
+  // re-import the whole site.
+  // ------------------------------------------------------------------
+  type ScannedPage = { slug: string; title: string; body: string; order: number };
+  const repoScanFetcher = useFetcher<{
+    ok: boolean;
+    intent: "scan-repo-pages";
+    pages: ScannedPage[];
+  }>();
+  const importFetcher = useFetcher<{
+    ok: boolean;
+    intent: "import-pages";
+    imported: number;
+    pages: ScannedPage[];
+    already_present: string[];
+  }>();
+  const [importingSlugs, setImportingSlugs] = useState<Set<string>>(new Set());
+  const repoScanRequestedRef = useRef(false);
+
+  // ------------------------------------------------------------------
   // Source of truth: Yjs when available, loader data otherwise
   // ------------------------------------------------------------------
   const [yjsPages, setYjsPages] = useState<PageItem[] | null>(null);
@@ -275,9 +377,84 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     ? yjsPages!
     : (loaderPages as PageItem[]);
 
-  // Stable dnd-kit identifier
-  const keyFor = (p: PageItem): string =>
-    p.id > 0 ? String(p.id) : p._tempId ?? `idx-${p._yIndex ?? 0}`;
+  // ------------------------------------------------------------------
+  // Probe the repo for importable pages on first
+  // render WHEN displayPages is empty. Mount-trigger pattern mirrors
+  // _app.objects.tsx:1347-1350. Guarded by ref to avoid re-firing.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (repoScanRequestedRef.current) return;
+    if (displayPages.length > 0) return;
+    repoScanRequestedRef.current = true;
+    repoScanFetcher.submit({ intent: "scan-repo-pages" }, { method: "post" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayPages.length]);
+
+  // ------------------------------------------------------------------
+  // When the import action returns, mirror the imported page
+  // records into the active Yjs document. The page rows already landed in
+  // D1 via the action; mirroring into Yjs hydrates the editor immediately
+  // so the user does not need to reload. Mirrors the addPage shape from
+  // use-structural-ops.ts:309-331.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (importFetcher.state !== "idle") return;
+    const data = importFetcher.data;
+    if (!data || !data.ok || data.intent !== "import-pages") return;
+    if (!ydoc || data.pages.length === 0) return;
+    const pagesArray = ydoc.getArray<Y.Map<unknown>>("pages");
+    // Skip pages already in Yjs (defensive: D1 already gates duplicates;
+    // this guards against a race where Yjs received the same slug between
+    // the import POST landing and the response arriving here).
+    const existingSlugs = new Set<string>();
+    for (let i = 0; i < pagesArray.length; i++) {
+      const s = pagesArray.get(i).get("slug") as string;
+      if (s) existingSlugs.add(s);
+    }
+    ydoc.transact(() => {
+      for (const page of data.pages) {
+        if (existingSlugs.has(page.slug)) continue;
+        const pageMap = new Y.Map<unknown>();
+        pageMap.set("_id", null);
+        pageMap.set("_temp_id", crypto.randomUUID());
+        pageMap.set("created_by", currentUserId);
+        const titleY = new Y.Text();
+        titleY.insert(0, page.title);
+        pageMap.set("title", titleY);
+        pageMap.set("slug", page.slug);
+        const bodyY = new Y.Text();
+        bodyY.insert(0, page.body);
+        pageMap.set("body", bodyY);
+        pageMap.set("order", pagesArray.length);
+        pagesArray.push([pageMap]);
+      }
+    });
+    setImportingSlugs(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importFetcher.state, importFetcher.data]);
+
+  // Handlers for the import variant.
+  function handleImportAll() {
+    const pages = repoScanFetcher.data?.pages ?? [];
+    setImportingSlugs(new Set(pages.map((p) => p.slug)));
+    importFetcher.submit({ intent: "import-pages" }, { method: "post" });
+  }
+
+  function handleImportOne(slug: string) {
+    setImportingSlugs((prev) => {
+      const next = new Set(prev);
+      next.add(slug);
+      return next;
+    });
+    const form = new FormData();
+    form.set("intent", "import-pages");
+    form.append("slugs", slug);
+    importFetcher.submit(form, { method: "post" });
+  }
+
+  // Stable dnd-kit identifier — see `app/lib/item-key.ts` for the rationale
+  // (key must remain constant across snapshotToD1's `_id` backfill, otherwise
+  // the deletion-detection observer at line ~715 fires a false toast).
 
   // ------------------------------------------------------------------
   // Navigation array from Yjs config (for the nav bar preview)
@@ -291,7 +468,13 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     const recomputeNav = () => {
       const navArray = config.get("navigation");
       if (navArray instanceof Y.Array) {
-        setNavItems(navArray.toArray() as NavItem[]);
+        // sanitizeNavArray filters out empty Y.Maps and entries with missing
+        // required fields (legacy corruption recovery — see commit f94282c
+        // regression notes in .planning/debug/pages-reorder-disappears.md).
+        // When dropped > 0, the helper also rewrites navArray inside a
+        // transact so the next snapshot persists the cleaned shape.
+        const { items } = sanitizeNavArray(navArray, { mutate: true, ydoc });
+        setNavItems(items as NavItem[]);
       }
     };
     recomputeNav();
@@ -341,6 +524,19 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     ? displayPages.find((p) => keyFor(p) === selectedKey) ?? null
     : null;
 
+  // Derived set of pages with empty/whitespace titles. Used to flag
+  // both the title-field error state and the sidebar incomplete badge. NOT React
+  // state and NOT Yjs state — the page row stays in Yjs/D1 even when the
+  // title is empty, so the user keeps their work-in-progress.
+  const incompletePageKeys = useMemo(
+    () => new Set(displayPages.filter((p) => !(p.title ?? "").trim()).map(keyFor)),
+    // keyFor is referentially stable across renders (defined inline but pure of
+    // closure state); the Set only needs to be recomputed when displayPages
+    // identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [displayPages],
+  );
+
   // Track last length to detect newly created pages (auto-select new page)
   const prevLengthRef = useRef(displayPages.length);
   useEffect(() => {
@@ -368,46 +564,134 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // Deferred slug generation — auto-generate from title when user edits it
   // ------------------------------------------------------------------
   const prevTitleForSlugRef = useRef<Map<string, string>>(new Map());
+  // Per-page debounce timers. The auto-slug effect fires on every Y.Text
+  // keystroke; without debouncing, the first character of the title locks
+  // the URL (e.g. typing "page" produced /p/ and froze, because by the time
+  // "a" arrived the slug was no longer the temp placeholder).
+  const slugDebounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
+  const SLUG_DEBOUNCE_MS = 600;
 
   useEffect(() => {
     if (!useYjs || !ydoc) return;
     for (const page of displayPages) {
       const key = keyFor(page);
       const prevTitle = prevTitleForSlugRef.current.get(key);
+      // Fire whenever the title changes AND the page has a non-empty title.
+      // The actual write runs after SLUG_DEBOUNCE_MS of no further changes,
+      // re-reads live state from the Y.Doc, then branches on the slug:
+      //   - empty / `untitled-N` placeholder → derive new slug from title,
+      //     update slug AND push or update the navArray entry with label.
+      //   - real slug → leave the slug alone, only sync the navArray label
+      //     (with a customisation guard so we don't clobber a label set by
+      //     the NavigationEditor).
       if (
         prevTitle !== undefined &&
         prevTitle !== page.title &&
-        page.title &&
-        !page.slug
+        page.title
       ) {
-        const pArr = ydoc.getArray<Y.Map<unknown>>("pages");
-        const targetYMap = findYMapByIdOrTempId(
-          pArr,
-          page.id > 0 ? page.id : null,
-          page._tempId ?? null
-        );
-        if (targetYMap) {
-          const allSlugs = new Set<string>();
-          for (let i = 0; i < pArr.length; i++) {
-            const s = pArr.get(i).get("slug") as string;
-            if (s) allSlugs.add(s);
+        const existing = slugDebounceRef.current.get(key);
+        if (existing) clearTimeout(existing);
+        const pageId = page.id > 0 ? page.id : null;
+        const pageTempId = page._tempId ?? null;
+        const previousTitleSnapshot = prevTitle;
+        const timer = setTimeout(() => {
+          slugDebounceRef.current.delete(key);
+          if (!ydoc) return;
+          const pArr = ydoc.getArray<Y.Map<unknown>>("pages");
+          const targetYMap = findYMapByIdOrTempId(pArr, pageId, pageTempId);
+          if (!targetYMap) return;
+          const titleY = targetYMap.get("title");
+          const currentTitle =
+            titleY instanceof Y.Text ? titleY.toString() : "";
+          if (!currentTitle) return; // user cleared the title before the timer fired
+          const currentSlug = (targetYMap.get("slug") as string) ?? "";
+          const config = ydoc.getMap("config");
+          const navArray = config.get("navigation");
+
+          if (!currentSlug || isTemporaryPageSlug(currentSlug)) {
+            // Slug derivation path — generate from title and push/update nav.
+            const allSlugs = new Set<string>();
+            for (let i = 0; i < pArr.length; i++) {
+              const s = pArr.get(i).get("slug") as string;
+              if (s && s !== currentSlug) allSlugs.add(s);
+            }
+            const { slug: newSlug } = makeUniqueSlug(
+              normaliseSlug(currentTitle),
+              allSlugs
+            );
+            ydoc.transact(() => {
+              targetYMap.set("slug", newSlug);
+              if (navArray instanceof Y.Array) {
+                let updated = false;
+                if (currentSlug) {
+                  for (let i = 0; i < navArray.length; i++) {
+                    const item = navArray.get(i) as Record<string, unknown> | null;
+                    if (item && item.type === "page" && item.slug === currentSlug) {
+                      navArray.delete(i, 1);
+                      navArray.insert(i, [
+                        { ...item, slug: newSlug, label: currentTitle },
+                      ]);
+                      updated = true;
+                      break;
+                    }
+                  }
+                }
+                if (!updated) {
+                  navArray.push([
+                    {
+                      type: "page",
+                      slug: newSlug,
+                      label: currentTitle,
+                      visible: true,
+                    },
+                  ]);
+                }
+              }
+            });
+            return;
           }
-          const { slug: newSlug } = makeUniqueSlug(normaliseSlug(page.title), allSlugs);
+
+          // Label-sync path — slug is real, just update the nav label so the
+          // published navigation.yml stays in sync with the page title.
+          // Customisation guard: only update if the existing label equals
+          // the previously-observed title (i.e. it was tracking the title).
+          // If NavigationEditor changed it to something else, leave alone.
+          if (!(navArray instanceof Y.Array)) return;
           ydoc.transact(() => {
-            targetYMap.set("slug", newSlug);
-            // Also add to navigation array
-            const config = ydoc.getMap("config");
-            const navArray = config.get("navigation");
-            if (navArray instanceof Y.Array) {
-              navArray.push([{ type: "page", slug: newSlug, label: page.title, visible: true }]);
+            for (let i = 0; i < navArray.length; i++) {
+              const item = navArray.get(i) as Record<string, unknown> | null;
+              if (item && item.type === "page" && item.slug === currentSlug) {
+                const currentLabel =
+                  typeof item.label === "string" ? item.label : "";
+                if (
+                  currentLabel === previousTitleSnapshot &&
+                  currentLabel !== currentTitle
+                ) {
+                  navArray.delete(i, 1);
+                  navArray.insert(i, [{ ...item, label: currentTitle }]);
+                }
+                break;
+              }
             }
           });
-        }
+        }, SLUG_DEBOUNCE_MS);
+        slugDebounceRef.current.set(key, timer);
       }
       prevTitleForSlugRef.current.set(key, page.title);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayPages, useYjs]);
+
+  // Clear any pending slug debounce timers on unmount so they don't fire
+  // against a stale ydoc.
+  useEffect(() => {
+    return () => {
+      for (const timer of slugDebounceRef.current.values()) clearTimeout(timer);
+      slugDebounceRef.current.clear();
+    };
+  }, []);
 
   // ------------------------------------------------------------------
   // Slug change handler — writes to Yjs + updates navigation array
@@ -461,17 +745,27 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     { type: "builtin", key: "home", label: "Home", visible: true },
     { type: "builtin", key: "collection", label: "Objects", visible: true },
     { type: "builtin", key: "glossary", label: "Glossary", visible: true },
-    ...displayPages
-      .filter((p) => p.slug)
-      .map((p) => ({ type: "page" as const, slug: p.slug, label: p.title || p.slug, visible: true })),
   ];
 
-  const effectiveNavItems = navItems.length > 0 ? navItems : defaultNavItems;
+  // Merge persisted nav items with displayPages so newly-created pages always
+  // get a tab — including untitled pages (no slug yet) which the renderer keys
+  // by `_tempId` until the user types a title and the slug auto-generates. The
+  // previous all-or-nothing fallback ignored `displayPages` whenever navItems
+  // had any entries, leaving new pages reachable from `pagesArray` but with no
+  // tab to click.
+  const baseNavItems = navItems.length > 0 ? navItems : defaultNavItems;
+  const effectiveNavItems = mergeNavItemsWithPages(baseNavItems, displayPages, {
+    untitledLabel: t("untitled"),
+  });
 
   // Each nav item gets a stable sortable ID
   const navSortableId = (item: NavItem, idx: number): string => {
     if (item.type === "builtin") return `nav-builtin-${item.key}`;
-    if (item.type === "page") return `nav-page-${item.slug || idx}`;
+    if (item.type === "page") {
+      if (item.slug) return `nav-page-${item.slug}`;
+      if (item._tempId) return `nav-page-temp-${item._tempId}`;
+      return `nav-page-${idx}`;
+    }
     return `nav-${idx}`;
   };
 
@@ -580,18 +874,20 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     const navArray = config.get("navigation");
     if (!(navArray instanceof Y.Array)) return;
 
+    // Merge-only entries (untitled pages with `_tempId` only, or temp-slug
+    // pages whose nav entry hasn't been pushed yet) live in `effectiveNavItems`
+    // past the end of `navArray`. Skip the persisted reorder for them rather
+    // than corrupt indices into `pagesArray` — the user just needs to type a
+    // title first, which pushes a real nav entry via the deferred-slug effect.
+    if (oldIndex >= navArray.length || newIndex >= navArray.length) return;
+
     ydoc.transact(() => {
-      // Clone the nav item before delete to avoid Yjs tombstone corruption
-      const source = navArray.get(oldIndex);
-      const clone = new Y.Map<unknown>();
-      if (source instanceof Y.Map) {
-        for (const [key, value] of source.entries()) {
-          clone.set(key, value instanceof Y.Text ? new Y.Text(value.toString()) : value);
-        }
-      }
-      navArray.delete(oldIndex, 1);
-      const insertAt = newIndex > oldIndex ? newIndex - 1 : newIndex;
-      navArray.insert(insertAt, [clone]);
+      // Reorder via shared helper. The previous inline clone built a Y.Map and
+      // only populated it `if (source instanceof Y.Map)` — but nav entries are
+      // plain JSON objects (see workers/collaboration.ts seed and the local
+      // navArray.push sites in this file), so the branch never executed and an
+      // empty Y.Map was inserted, making the moved page render as a blank tab.
+      reorderNavArray(navArray, oldIndex, newIndex);
     });
 
     // If the moved item was a page, also reorder pages array to match
@@ -638,9 +934,31 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // ------------------------------------------------------------------
 
   if (displayPages.length === 0) {
+    // Three branches based on the repo scan.
+    //   1. Scan in flight or no result yet: existing PagesEmptyState (acts as
+    //      a visual loading placeholder; users do not see a flicker).
+    //   2. Scan returned but repo has no pages: existing PagesEmptyState.
+    //   3. Scan returned with pages: import-variant with explicit per-row
+    //      and "Import all" actions (no silent auto-import).
+    const scanData = repoScanFetcher.data;
+    const scannedPages = scanData?.ok && scanData.intent === "scan-repo-pages"
+      ? scanData.pages
+      : [];
+    const showImportVariant = scannedPages.length > 0;
+
     return (
       <div className="flex-1 overflow-y-auto">
-        <PagesEmptyState onCreateNew={handleCreatePage} />
+        {showImportVariant ? (
+          <PagesRepoImportEmptyState
+            pages={scannedPages.map((p) => ({ slug: p.slug, title: p.title }))}
+            onImportAll={handleImportAll}
+            onImportOne={handleImportOne}
+            isImporting={importFetcher.state !== "idle"}
+            importingSlugs={importingSlugs}
+          />
+        ) : (
+          <PagesEmptyState onCreateNew={handleCreatePage} />
+        )}
       </div>
     );
   }
@@ -686,17 +1004,24 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
                   );
                 }
                 if (item.type === "page") {
-                  const page = pageBySlug.get(item.slug ?? "");
+                  // Resolve by slug (persisted nav entries) or by _tempId
+                  // (synthetic merge entries for unsaved untitled pages).
+                  const page = item.slug
+                    ? pageBySlug.get(item.slug)
+                    : item._tempId
+                      ? displayPages.find((p) => p._tempId === item._tempId)
+                      : undefined;
                   const key = page ? keyFor(page) : sid;
                   return (
                     <SortablePageTab
                       key={sid}
                       sortableId={sid}
-                      label={item.label || page?.title || t("untitled")}
+                      label={page?.title?.trim() || item.label || t("untitled")}
                       isSelected={page ? key === selectedKey : false}
                       onSelect={() => { if (page) setSelectedKey(keyFor(page)); }}
                       onDelete={page ? () => handleDeleteClick(page) : undefined}
                       canDelete={page && useYjs && page._yMap ? ops!.canDelete(page._yMap) : false}
+                      isIncomplete={page ? incompletePageKeys.has(keyFor(page)) : false}
                     />
                   );
                 }
@@ -745,6 +1070,8 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
                 placeholder={t("title_placeholder")}
                 className="w-full px-4 py-2 font-heading font-semibold text-lg border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-periwinkle/30"
                 fieldKey={`page-${selectedKey}-title`}
+                error={!(selectedPage.title ?? "").trim()}
+                errorMessage={t("name_required")}
               />
               {/* Slug — label + field appear once slug is generated */}
               {selectedPage.slug ? (

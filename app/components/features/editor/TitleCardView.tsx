@@ -1,17 +1,17 @@
 /**
- * TitleCardView — editor panel for step 0 (the title card).
+ * This file renders the editor panel for step 0 of a story — the
+ * title card. Where the author edits the headline, subtitle, and
+ * byline that appear above the first scrolling step.
  *
- * Renders inline-editable title, subtitle, and byline fields that write
- * directly to Yjs Y.Text instances via InlineTextField. Falls back to
- * initialValue (from D1 SSR render) when yText is null (pre-connection).
+ * Renders inline-editable title, subtitle, and byline fields that
+ * write directly to Yjs Y.Text instances via `InlineTextField`.
+ * Falls back to `initialValue` (from D1 SSR render) when `yText` is
+ * null (pre-connection).
  *
- * Each field has a pencil icon that darkens on hover with "Click to edit" text.
+ * Each field has a pencil icon that darkens on hover with a "Click
+ * to edit" affordance.
  *
- * Below the byline sits the "show table of contents" toggle: when a story
- * contains section-card steps, this toggle controls whether their headings
- * appear as a TOC on the published title card. Writes to the story Y.Map's
- * `show_sections` boolean. A small helper line is shown when no section
- * cards exist yet so authors know how to populate the TOC.
+ * @version v1.2.0-beta
  */
 
 import { useRef } from "react";

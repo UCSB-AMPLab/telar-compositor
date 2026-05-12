@@ -1,22 +1,24 @@
 /**
- * use-structural-ops — client-side Y.Array mutation operations for all
- * collaborative entities (stories, steps, layers, pages, IIIF objects,
- * glossary terms).
+ * This file is the hook that exposes client-side Y.Array mutation
+ * operations for every collaborative entity (stories, steps,
+ * layers, pages, IIIF objects, glossary terms).
  *
- * Replaces D1 route actions with direct Yjs mutations so structural
- * changes propagate to all connected collaborators in real time. The
- * Durable Object's snapshotToD1 cycle reconciles Y.Array state back to
- * D1 entity tables.
+ * Replaces D1 route actions with direct Yjs mutations so
+ * structural changes propagate to all connected collaborators in
+ * real time. The Durable Object's `snapshotToD1` cycle reconciles
+ * Y.Array state back to D1 entity tables.
  *
  * Every newly-created Y.Map carries three sentinel fields:
  *   - `_id: null`             (will be backfilled by snapshotToD1)
- *   - `_temp_id: <UUID>`      (stable UI key until `_id` is assigned)
+ *   - `_temp_id: <UUID>`      (stable UI key until `_id` is
+ *     assigned)
  *   - `created_by: <userId>`  (permission tracking)
  *
- * Permission model: `canDelete` allows the convenor to delete anything;
- * collaborators can delete only items they created themselves.
+ * Permission model: `canDelete` allows the convenor to delete
+ * anything; collaborators can delete only items they created
+ * themselves.
  *
- * Exports: useStructuralOps, StructuralOps, StructuralRole
+ * @version v1.2.0-beta
  */
 
 import { useMemo } from "react";
@@ -67,7 +69,7 @@ export interface StructuralOps {
   deletePage: (id: number | null, tempId: string | null) => void;
   reorderPages: (oldIndex: number, newIndex: number) => void;
 
-  // Objects: IIIF only — self-hosted uploads stay as a route action.
+  // Objects (IIIF only; self-hosted uploads stay as a route action).
   addIiifObject: (objectId: string, title: string, sourceUrl: string) => void;
   deleteObject: (id: number | null, tempId: string | null) => void;
   reorderObjects: (oldIndex: number, newIndex: number) => void;
@@ -129,10 +131,10 @@ function reorderInPlace(
   if (newIndex < 0 || newIndex > yArray.length - 1) return;
   const clone = cloneYMap(yArray.get(oldIndex));
   yArray.delete(oldIndex, 1);
-  // After deletion the array is one shorter — adjust for downward moves
-  const insertAt = newIndex > oldIndex ? newIndex - 1 : newIndex;
-  yArray.insert(insertAt, [clone]);
+  yArray.insert(newIndex, [clone]);
 }
+
+export const __test__ = { reorderInPlace };
 
 /**
  * useStructuralOps — returns the mutation API for structural Y.Array
@@ -345,7 +347,7 @@ export function useStructuralOps(
       });
     };
 
-    // ---- Objects (IIIF only — self-hosted uploads stay as a route action) ----
+    // ---- Objects (IIIF only) ----
 
     const addIiifObject: StructuralOps["addIiifObject"] = (
       objectId,

@@ -1,19 +1,24 @@
 /**
- * InlineTextArea — Yjs-backed inline textarea.
+ * This file renders the Yjs-backed inline textarea — used wherever
+ * the editor needs a multi-line text input that auto-saves through
+ * the collaborative document instead of HTTP.
  *
- * Replaced HTTP-based autosave with the useCollaborativeText hook. Mutations
- * write directly to a Y.Text shared type, which syncs to all clients via the
- * Durable Object WebSocket. Falls back to initialValue on SSR or before the
- * WebSocket connects (yText is null).
+ * Mutations write directly to a `Y.Text` shared type via the
+ * `useCollaborativeText` hook, which syncs to all clients via the
+ * Durable Object WebSocket. Falls back to `initialValue` on SSR or
+ * before the WebSocket connects (`yText` is null).
  *
- * Fields are disabled during publish to enforce the isPublishing lock from
- * CollaborationContext (per the field-locking spec).
+ * Fields are disabled during publish to enforce the `isPublishing`
+ * lock from `CollaborationContext`.
  *
- * When fieldKey is provided, the field shows a coloured border and floating
- * name pill when another user is editing the same field (PRES-02).
+ * When `fieldKey` is provided, the field shows a coloured border
+ * and floating name pill when another user is editing the same
+ * field (live presence).
  *
- * Shows an authorship indicator ("Last edit: {name}") on hover when no live
- * presence is active on the field.
+ * Shows an authorship indicator ("Last edit: {name}") on hover
+ * when no live presence is active on the field.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useState } from "react";
@@ -31,6 +36,12 @@ export interface InlineTextAreaProps {
   inputClassName?: string;
   rows?: number;
   bordered?: boolean;
+  /**
+   * Strings the field should DISPLAY as empty (placeholder takes over) even
+   * if the underlying Y.Text or initialValue equals one of them. See
+   * InlineTextField for the full rationale; same semantics here.
+   */
+  defaultValues?: readonly string[];
 }
 
 export function InlineTextArea({
@@ -42,9 +53,14 @@ export function InlineTextArea({
   inputClassName = "",
   rows = 3,
   bordered,
+  defaultValues,
 }: InlineTextAreaProps) {
   const { t } = useTranslation("team");
-  const { value, handleChange } = useCollaborativeText(yText, initialValue);
+  const { value, handleChange } = useCollaborativeText(
+    yText,
+    initialValue,
+    defaultValues,
+  );
   const { isPublishing, remoteCollaborators, provider, lastEditorByField } = useCollaborationContext();
   const [isHovered, setIsHovered] = useState(false);
 

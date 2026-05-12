@@ -1,8 +1,12 @@
 /**
- * yjs-helpers — shared utility functions for Yjs document operations.
+ * This file holds the shared utility helpers for navigating and mutating Yjs
+ * document structures — finding entries by `_id` or `_temp_id`, reading
+ * `Y.Text` values from `Y.Map`, reordering navigation arrays, and sanitising
+ * the navigation array against legacy corruption. Route and component code
+ * pulls from here so the Y.Doc-walking logic lives in one place instead of
+ * being inlined everywhere a loader or hook needs it.
  *
- * These helpers keep route and component code concise when navigating
- * the Y.Doc structure (find by _id, get Y.Text from Y.Map, etc.).
+ * @version v1.2.0-beta
  */
 
 import * as Y from "yjs";
@@ -92,4 +96,132 @@ export function findYMapIndex(
     if (tempId !== null && item.get("_temp_id") === tempId) return i;
   }
   return -1;
+}
+
+/**
+ * reorderNavArray — reorder an entry in the project's `config.navigation`
+ * Y.Array.
+ *
+ * The navigation array is unique among the project's Y.Arrays in that its
+ * entries are plain JSON objects (`{type, slug, label, visible, ...}`),
+ * never `Y.Map`s — see `workers/collaboration.ts` (server seed) and
+ * `app/routes/_app.pages.tsx` (client inserts), which both `push` plain
+ * objects. Yjs treats plain JSON values as immutable, so a simple
+ * delete + reinsert of the original reference is safe and avoids the
+ * tombstone issues that affect Y.Map reorders.
+ *
+ * Defensive: if a Y.Map ever ends up in the navigation array (legacy data
+ * or future migration), we deep-clone via the same idiom as
+ * `cloneYMap` in `use-structural-ops.ts` rather than reuse the reference,
+ * which would re-attach a deleted node.
+ *
+ * Must be called inside a `ydoc.transact()` block. No-ops on identical
+ * indices or out-of-range arguments.
+ *
+ * @param navArray The `config.navigation` Y.Array.
+ * @param oldIndex The current index of the entry being moved.
+ * @param newIndex The target index in the post-move array.
+ */
+export function reorderNavArray(
+  navArray: Y.Array<unknown>,
+  oldIndex: number,
+  newIndex: number
+): void {
+  if (oldIndex === newIndex) return;
+  if (oldIndex < 0 || oldIndex >= navArray.length) return;
+  if (newIndex < 0 || newIndex >= navArray.length) return;
+
+  const source = navArray.get(oldIndex);
+  let entry: unknown;
+  if (source instanceof Y.Map) {
+    // Defensive clone path — not exercised today (nav entries are plain
+    // objects) but kept so a future schema change doesn't silently corrupt.
+    const clone = new Y.Map<unknown>();
+    for (const [key, value] of source.entries()) {
+      clone.set(key, value instanceof Y.Text ? new Y.Text(value.toString()) : value);
+    }
+    entry = clone;
+  } else {
+    // Plain JSON object — Yjs allows reuse of the same reference across
+    // delete + insert because the value is immutable. This mirrors the
+    // working pattern in `app/components/features/config/NavigationEditor.tsx`.
+    entry = source;
+  }
+
+  navArray.delete(oldIndex, 1);
+  navArray.insert(newIndex, [entry]);
+}
+
+/**
+ * sanitizeNavArray — filter and (optionally) repair `config.navigation`.
+ *
+ * Defends against corrupted entries from an earlier broken deploy of the
+ * pages-tab reorder fix (commit f94282c) where `handleNavDragEnd` inserted
+ * empty `Y.Map`s in place of the dragged page record. Once snapshotToD1
+ * persisted those broken entries, every later read returns nav items with
+ * undefined `type`/`slug`/`key`, which the render path silently drops —
+ * leaving the nav bar empty.
+ *
+ * Returns the filtered list of plain `NavItemLike` records (suitable to feed
+ * directly to React state). When `mutate` is true and at least one entry was
+ * dropped, also rewrites `navArray` inside a `ydoc.transact()` so the next
+ * snapshot persists the cleaned shape — self-healing for any project that
+ * loaded the broken version of the editor.
+ *
+ * Validity rules (must satisfy ALL):
+ *   - The entry is a plain JSON object (NOT a `Y.Map`)
+ *   - `type` is one of `"page"`, `"builtin"`, `"external"`
+ *   - For `type === "page"`: `slug` is a non-empty string
+ *   - For `type === "builtin"`: `key` is a non-empty string
+ *   - For `type === "external"`: `url` (or `label` as last-resort fallback) is non-empty
+ */
+export interface NavItemLike {
+  type: "page" | "builtin" | "external";
+  key?: string;
+  slug?: string;
+  label?: string;
+  visible?: boolean;
+  url?: string;
+}
+
+export function sanitizeNavArray(
+  navArray: Y.Array<unknown>,
+  options: { mutate?: boolean; ydoc?: Y.Doc } = {}
+): { items: NavItemLike[]; dropped: number } {
+  const raw = navArray.toArray();
+  const items: NavItemLike[] = [];
+
+  for (const entry of raw) {
+    // Drop Y.Maps — production navArray holds only plain JSON objects;
+    // any Y.Map that slipped in is corruption from the f94282c regression.
+    if (entry instanceof Y.Map) continue;
+    if (entry === null || typeof entry !== "object") continue;
+
+    const item = entry as Record<string, unknown>;
+    const type = item.type;
+    if (type !== "page" && type !== "builtin" && type !== "external") continue;
+
+    if (type === "page") {
+      if (typeof item.slug !== "string" || item.slug.length === 0) continue;
+    } else if (type === "builtin") {
+      if (typeof item.key !== "string" || item.key.length === 0) continue;
+    } else if (type === "external") {
+      const url = typeof item.url === "string" ? item.url : "";
+      const label = typeof item.label === "string" ? item.label : "";
+      if (url.length === 0 && label.length === 0) continue;
+    }
+
+    items.push(item as unknown as NavItemLike);
+  }
+
+  const dropped = raw.length - items.length;
+
+  if (dropped > 0 && options.mutate && options.ydoc) {
+    options.ydoc.transact(() => {
+      navArray.delete(0, navArray.length);
+      navArray.insert(0, items as unknown[]);
+    });
+  }
+
+  return { items, dropped };
 }

@@ -1,18 +1,18 @@
 /**
- * StepSidebar — step list panel for the story editor.
+ * This file renders the step-list sidebar of the Story Editor — the
+ * left-hand panel that lists every step in the active story and
+ * lets the user drag-reorder them.
  *
- * Displays the title card (step 0, not reorderable) and all regular steps
- * (1-N) in a dnd-kit SortableContext for drag-to-reorder. Each step row is
- * a SortableStepItem with a GripVertical handle and a Trash2 delete button.
+ * Displays the title card (step 0, not reorderable) and all regular
+ * steps (1-N) in a dnd-kit `SortableContext`. Each step row is a
+ * `SortableStepItem` with a `GripVertical` handle and a `Trash2`
+ * delete button. A "+ Add step" button at the bottom appends a new
+ * step via `onAddStep`.
  *
- * Two add buttons sit below the list:
- *   - "+ Add step" (primary, yellow): appends a media-kind step via
- *     onAddStep
- *   - "+ Add section title" (secondary, outlined): appends a section-kind
- *     step via onAddSectionCard, used to break the story into chapters
+ * When `objectsByType` is provided, `SortableStepItem` shows a
+ * media-type badge (Video/Music/Text icon) for non-image steps.
  *
- * When objectsByType is provided, SortableStepItem shows a media type badge
- * (Video/Music/Text icon) for non-image media steps.
+ * @version v1.2.0-beta
  */
 
 import { useTranslation } from "react-i18next";

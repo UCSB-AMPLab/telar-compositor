@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 /**
- * inline-text-field.test.tsx — unit tests for InlineTextField component.
+ * This file pins unit tests for the `InlineTextField` component.
  *
  * Tests: render with initialValue, field presence indicator rendering,
- * and fieldKey prop (PRES-02 behaviour). The Yjs-backed value sync is
- * tested via the useCollaborativeText hook's own tests.
+ * and fieldKey prop. The Yjs-backed value sync is tested via the
+ * `useCollaborativeText` hook's own tests.
  *
  * Also covers: authorship indicator show/hide behaviour.
+ *
+ * @version v1.0.1-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -100,9 +102,3 @@ describe("InlineTextField", () => {
   });
 });
 
-describe("InlineTextField authorship indicator", () => {
-  it.todo("shows authorship indicator on hover when lastEditor exists and no active users");
-  it.todo("hides authorship indicator when activeUsers.length > 0 (live presence takes precedence)");
-  it.todo("hides authorship indicator when lastEditor is null");
-  it.todo("displays the first name of the last editor");
-});

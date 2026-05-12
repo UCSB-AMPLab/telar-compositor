@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 /**
- * MarkdownEditor.test.tsx — Component-level tests for the MarkdownEditor.
+ * This file pins component-level tests for the `MarkdownEditor`.
  *
- * Tests the wordCount utility logic and component import stability.
+ * Tests the `wordCount` utility logic and component import stability.
  * Note: EditorView requires real DOM layout (getBoundingClientRect etc.) which
  * jsdom does not provide, so full mount tests are limited to non-layout concerns.
+ *
+ * @version v1.0.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -95,7 +97,7 @@ describe("Autosave action routing", () => {
     expect(content).toMatch('actionUrl = "/dashboard"');
   });
 
-  it("SC-1: pages route passes actionUrl='/pages' to MarkdownEditor", async () => {
+  it("pages route passes actionUrl='/pages' to MarkdownEditor", async () => {
     // Verify the one-line fix is present in _app.pages.tsx
     const fs = await import("fs");
     const path = await import("path");

@@ -1,16 +1,22 @@
 /**
- * ViewerColumn — type-aware viewer column for the story editor.
+ * This file renders the type-aware viewer column of the Story
+ * Editor — the right-hand pane that shows the IIIF / video / audio
+ * media tied to the active step, with capture-position controls so
+ * the author can pin the current viewport into the step.
  *
  * Branches on media type to render either:
- *   - IiifViewer (for iiif and text-only objects)
- *   - VideoEmbed (for youtube, vimeo, google-drive objects)
- *   - AudioPlayer (for audio objects — WaveSurfer v7 waveform)
+ *   - `IiifViewer` (for iiif and text-only objects)
+ *   - `VideoEmbed` (for youtube, vimeo, google-drive objects)
+ *   - `AudioPlayer` (for audio objects — WaveSurfer v7 waveform)
  *
  * Overlays adapt to media type:
  *   - IIIF: x/y/zoom coordinate display + Capture Position button
- *   - Video/audio: clip start/end display in MM:SS + Capture Start/End buttons + Loop toggle
+ *   - Video/audio: clip start/end display in MM:SS + Capture
+ *     Start/End buttons + Loop toggle
  *
  * Also accepts a `children` slot for the layer panel overlay.
+ *
+ * @version v1.2.0-beta
  */
 
 import { useRef, useState, useEffect, useCallback } from "react";
@@ -281,8 +287,8 @@ export function ViewerColumn({
         const seconds = await getTime();
         onCaptureClip?.(field, String(seconds));
       } catch {
-        // If API fails, user sees no response — manual fallback handled by
-        // the inline input rendered when getCurrentTimeRef.current is null
+        // If API fails, user sees no response — the manual fallback path applies
+        // handled by the inline input rendered when getCurrentTimeRef.current is null
       }
     }
   }
