@@ -39,7 +39,7 @@ import {
 
 // CodeMirror imports — all browser-only; SSR guard prevents server execution
 import { EditorState, Compartment } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, undo, redo, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 
@@ -114,6 +114,14 @@ interface MarkdownEditorProps {
    * key changes.
    */
   formFieldName?: string;
+  /**
+   * Greyed placeholder shown when the editor is empty (both collaborative and
+   * non-collaborative modes). Used by the homepage Welcome editor to surface
+   * the localized canned default without injecting it as editable content —
+   * the same "show a default when empty" pattern the sibling landing fields
+   * use via InlineTextField's `placeholder`.
+   */
+  placeholder?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +184,7 @@ export function MarkdownEditor({
   alwaysShowToolbar = false,
   enableGlossaryLinks = false,
   formFieldName = "projectId",
+  placeholder,
 }: MarkdownEditorProps) {
   const [mounted, setMounted] = useState(false);
   const { t } = useTranslation("editor");
@@ -332,6 +341,7 @@ export function MarkdownEditor({
             EditorView.lineWrapping,
             livePreviewPlugin,
             richPasteExtension,
+            ...(placeholder ? [cmPlaceholder(placeholder)] : []),
             // Publish-lock compartment — reconfigured by isPublishing effect below
             readOnlyCompartment.current.of(EditorState.readOnly.of(false)),
             // yCollab binds Y.Text to CodeMirror; awareness enables cursor sync.
@@ -437,6 +447,7 @@ export function MarkdownEditor({
           EditorView.lineWrapping,
           livePreviewPlugin,
           richPasteExtension,
+          ...(placeholder ? [cmPlaceholder(placeholder)] : []),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               handleContentChange(update.state.doc.toString());

@@ -117,7 +117,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   //   stories_intro: no v1.2.1 default exists; never filter user content here.
   // The publish-time leak is closed at the framework level by the v1.3.0 upgrade itself; this
   // filter is purely for the compositor's editor display, not for the live site.
-  const siteLangForLoader: "en" | "es" = config?.lang === "es" ? "es" : "en";
   let landing = landingRow;
   if (landingRow) {
     const welcomeBody = landingRow.welcome_body ?? "";
@@ -138,9 +137,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       welcomeBody === WELCOME_BODY_LOCALISED.es;
     landing = {
       ...landingRow,
-      welcome_body: welcomeIsDefault
-        ? WELCOME_BODY_LOCALISED[siteLangForLoader]
-        : landingRow.welcome_body,
+      // Surfaced as null when it still holds the framework default, so the
+      // editor shows its canned placeholder instead of editable boilerplate
+      // (matching the sibling fields). The canned text lives in the
+      // MarkdownEditor `placeholder`, never injected as content — injecting it
+      // seeded a stale value the DO snapshot then clobbered with.
+      welcome_body: welcomeIsDefault ? null : landingRow.welcome_body,
       stories_heading:
         landingRow.stories_heading === V121_FRONTMATTER_DEFAULTS.stories_heading
           ? null
@@ -428,6 +430,11 @@ export default function HomepagePage({ loaderData }: Route.ComponentProps) {
   const storiesHeadingYText = getYText(landingYMap, "stories_heading");
   const objectsHeadingYText = getYText(landingYMap, "objects_heading");
   const objectsIntroYText = getYText(landingYMap, "objects_intro");
+  // welcome_body is collaborative like every other landing field: edits flow
+  // through this Y.Text, so the DO's snapshotToD1 persists them instead of
+  // clobbering with a stale copy. The canned default is shown via the editor's
+  // `placeholder` (below), not injected as content.
+  const welcomeBodyYText = getYText(landingYMap, "welcome_body");
 
   const {
     project,
@@ -562,6 +569,20 @@ export default function HomepagePage({ loaderData }: Route.ComponentProps) {
           fieldName="welcome_body"
           projectId={project.id}
           intent="autosave-landing"
+          // Collaborative like every other landing field: edits flow through
+          // this Y.Text and the DO's snapshotToD1 persists them. (Previously
+          // welcome_body was the lone landing field NOT wired to Yjs, so the
+          // snapshot clobbered the direct-to-D1 autosave with a stale copy.)
+          yText={welcomeBodyYText}
+          // Canned framework default shown as a placeholder when empty (like
+          // the sibling fields), instead of injected as editable content.
+          placeholder={WELCOME_BODY_LOCALISED[siteLang]}
+          // Non-collaborative fallback only (collab not connected): the autosave
+          // POSTs to `/homepage`, the one route whose action handles
+          // `autosave-landing`. Without it the fallback defaults to `/dashboard`
+          // (no handler) and 400s. These sections were relocated here from
+          // `_app.dashboard.tsx`; the autosave target moved with them.
+          actionUrl="/homepage"
           objects={(projectObjects as ObjectItem[]).map((o) => ({
             object_id: o.object_id,
             title: o.title,
