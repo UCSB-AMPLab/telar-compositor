@@ -25,6 +25,7 @@ import Papa from "papaparse";
 import { eq, max } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { getFileContent } from "~/lib/github.server";
+import { parseYaml } from "~/lib/yaml.server";
 import { slugify } from "~/lib/slugify";
 import { extractCommentRows, serializeObjectsCsv } from "~/lib/csv-export.server";
 import type { CommitFile } from "~/lib/commit.server";
@@ -619,6 +620,75 @@ export function layerFileContent(
 // ---------------------------------------------------------------------------
 
 /**
+ * Known top-level keys of the canonical Telar template `_config.yml`
+ * (ucsb-amplab/telar — verified stable across framework versions). Used as the
+ * sweep boundary so a description paragraph that happens to start with a
+ * lowercase `word:` (e.g. "usage: …") is treated as prose and swept, while a
+ * real key (`url:`, `plugins:`) stops the sweep. Far more robust than matching
+ * any `key:`-shaped line.
+ */
+const KNOWN_CONFIG_KEYS = new Set([
+  "title",
+  "description",
+  "url",
+  "baseurl",
+  "author",
+  "email",
+  "logo",
+  "telar_theme",
+  "telar_language",
+  "collection_mode",
+  "story_key",
+  "story_interface",
+  "collection_interface",
+  "protected",
+  "telar",
+  "google_sheets",
+  "collections",
+  "collections_dir",
+  "markdown",
+  "permalink",
+  "exclude",
+  "defaults",
+  "future",
+  "show_drafts",
+  "plugins",
+  "webrick",
+  "development-features",
+]);
+
+/**
+ * A "structural" line ends a swept continuation region: a known top-level
+ * config key, a comment, or a document separator. Bare prose (including
+ * sentences that contain or start with a colon) and blank lines are NOT
+ * structural and get swept.
+ */
+function isStructuralConfigLine(line: string): boolean {
+  if (/^\s*#/.test(line) || /^---\s*$/.test(line)) return true;
+  const m = line.match(/^([a-z][a-z0-9_-]*):(\s|$)/);
+  return m ? KNOWN_CONFIG_KEYS.has(m[1]) : false;
+}
+
+/**
+ * True when a matched `key: value` line opens a double-quoted scalar it does
+ * not close on the same physical line (odd count of unescaped quotes in the
+ * value). Such a line is the head of a multi-line scalar — its continuation
+ * lines must be swept when the field is replaced, otherwise old continuation
+ * (or duplicate-paragraph corruption) is orphaned outside the new closing quote.
+ */
+function opensUnterminatedQuotedScalar(line: string): boolean {
+  const m = line.match(/^[A-Za-z0-9_-]+:\s*(.*)$/);
+  if (!m) return false;
+  const value = m[1];
+  if (!value.startsWith('"')) return false;
+  let quotes = 0;
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === '"' && (i === 0 || value[i - 1] !== "\\")) quotes++;
+  }
+  return quotes % 2 === 1;
+}
+
+/**
  * Updates managed fields in a _config.yml string using line-based regex mutation.
  *
  * Preserves all comments, indentation, quotes, and unmanaged fields.
@@ -632,6 +702,10 @@ export function layerFileContent(
  * leading `v` prefix. Legacy v1.2.0 repos store the version as
  * `v1.2.0`; the canonical form (matching D1's import-side strip) is unprefixed.
  * Idempotent — once healed, subsequent publishes are a no-op for the line.
+ *
+ * Self-heals multi-line scalar corruption: replacing a field whose existing
+ * value opens an unterminated quote sweeps the orphaned continuation lines,
+ * repairing _config.yml files broken by the pre-fix bare-newline serializer.
  */
 export function updateConfigFields(yaml: string, fields: Record<string, string>): string {
   const lines = yaml.split("\n");
@@ -642,8 +716,22 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
   let inTelar = false;
   const storyKeyValue = fields["story_key"];
   let storyKeyUpdated = false;
+  // Self-heal: when set, drop orphaned continuation lines of a multi-line
+  // scalar we just replaced, until the next structural line. Repairs
+  // _config.yml files corrupted by the pre-fix bare-newline serializer.
+  let sweepingContinuation = false;
 
   for (const line of lines) {
+    // Sweep orphaned continuation lines of a just-replaced multi-line scalar.
+    // Stop (and fall through to normal processing) at the next structural line.
+    if (sweepingContinuation) {
+      if (isStructuralConfigLine(line)) {
+        sweepingContinuation = false;
+      } else {
+        continue;
+      }
+    }
+
     // Track protected: block
     if (/^protected:/.test(line)) {
       inProtected = true;
@@ -707,6 +795,9 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
         result.push(`${key}: ${value}`);
         fieldsToAppend.delete(key);
         pushed = true;
+        // If the old line opened a multi-line scalar, sweep its now-orphaned
+        // continuation lines (including duplicate-paragraph corruption).
+        if (opensUnterminatedQuotedScalar(line)) sweepingContinuation = true;
         break;
       }
     }
@@ -738,6 +829,91 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
   }
 
   return result.join("\n");
+}
+
+/**
+ * Managed free-text string fields — the only source of _config.yml scalar
+ * corruption. Kept in sync with the string fields in buildConfigManagedFields.
+ */
+const MANAGED_STRING_FIELD_KEYS = new Set([
+  "title",
+  "url",
+  "baseurl",
+  "description",
+  "author",
+  "email",
+  "logo",
+]);
+
+/** True when `s` parses as YAML. The hygiene gate's validity check. */
+function isParseableYaml(s: string): boolean {
+  try {
+    parseYaml(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Last-resort rescue for a _config.yml that the surgical heal could not make
+ * valid (an exotic corruption shape). Strips every managed string-field line
+ * and its orphaned multi-line continuation, leaving all framework keys and
+ * comments intact, then re-applies the managed fields cleanly from D1. The
+ * managed values come from buildConfigManagedFields (single-line, escaped), so
+ * the reapplied lines are always valid; only unrecoverable scalar garbage is
+ * dropped. Field order may change for rescued files — cosmetic, and only for
+ * files that were already broken.
+ */
+function stripManagedStringScalars(yaml: string): string {
+  const lines = yaml.split("\n");
+  const kept: string[] = [];
+  let sweeping = false;
+  for (const line of lines) {
+    if (sweeping) {
+      if (isStructuralConfigLine(line)) {
+        sweeping = false;
+      } else {
+        continue;
+      }
+    }
+    const keyMatch = line.match(/^([a-z][a-z0-9_-]*):/);
+    if (keyMatch && MANAGED_STRING_FIELD_KEYS.has(keyMatch[1])) {
+      // Drop this managed string line; sweep its continuation if it opened a
+      // multi-line scalar (the corruption shape).
+      if (opensUnterminatedQuotedScalar(line)) sweeping = true;
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+
+/**
+ * Produces a guaranteed-valid _config.yml for the publish commit.
+ *
+ * 1. Surgical update — escape managed fields and self-heal orphaned multi-line
+ *    scalars, preserving comments, field order, and unmanaged framework keys.
+ * 2. Hygiene gate — if the surgical result still does not parse as YAML (an
+ *    exotic pre-existing corruption the line-based heal can't fully repair),
+ *    rescue by stripping the managed string scalars and re-applying them clean.
+ *
+ * This is the single entry point the publish path uses, so no publish can ever
+ * commit a _config.yml that breaks the Jekyll build.
+ */
+export function healConfigYaml(
+  existingYaml: string,
+  fields: Record<string, string>,
+): string {
+  const updated = updateConfigFields(existingYaml, fields);
+  if (isParseableYaml(updated)) return updated;
+  // Rescue: strip the corrupt managed scalars from the repo file and re-apply
+  // them clean from D1. Guaranteed valid for this bug — whose corruption is
+  // confined to managed string scalars — and settings-safe: it preserves every
+  // unmanaged framework key and toggle (story_interface, collection_interface,
+  // telar_theme, …) exactly as they are in the user's repo, re-emitting only the
+  // managed fields, which already reflect the user's intent from D1.
+  return updateConfigFields(stripManagedStringScalars(existingYaml), fields);
 }
 
 // ---------------------------------------------------------------------------
@@ -1251,13 +1427,18 @@ export function buildConfigManagedFields(
   config: typeof project_config.$inferSelect,
 ): Record<string, string> {
   const fields: Record<string, string> = {};
-  if (config.title != null) fields["title"] = `"${config.title}"`;
-  if (config.url != null) fields["url"] = `"${config.url}"`;
-  if (config.baseurl != null) fields["baseurl"] = `"${config.baseurl}"`;
-  if (config.description != null) fields["description"] = `"${config.description}"`;
-  if (config.author != null) fields["author"] = `"${config.author}"`;
-  if (config.email != null) fields["email"] = `"${config.email}"`;
-  if (config.logo != null) fields["logo"] = `"${config.logo}"`;
+  // Route every free-text string field through yamlQuote so embedded newlines,
+  // double quotes, and backslashes are escaped into a single-line YAML scalar.
+  // The prior naive `"${value}"` wrapping let a multi-paragraph description (or
+  // a quote in the title) emit bare newlines / unbalanced quotes, corrupting
+  // _config.yml and breaking every Jekyll build (production incident 2026-05-28).
+  if (config.title != null) fields["title"] = yamlQuote(config.title);
+  if (config.url != null) fields["url"] = yamlQuote(config.url);
+  if (config.baseurl != null) fields["baseurl"] = yamlQuote(config.baseurl);
+  if (config.description != null) fields["description"] = yamlQuote(config.description);
+  if (config.author != null) fields["author"] = yamlQuote(config.author);
+  if (config.email != null) fields["email"] = yamlQuote(config.email);
+  if (config.logo != null) fields["logo"] = yamlQuote(config.logo);
   if (config.story_key != null) fields["story_key"] = config.story_key;
   if (config.lang != null) fields["telar_language"] = config.lang;
   if (config.collection_mode != null) {
@@ -1678,10 +1859,25 @@ export async function buildPublishFileSet(
   const files: CommitFile[] = [];
 
   // --- _config.yml ---
+  // healConfigYaml escapes managed fields and self-heals orphaned multi-line
+  // scalars left by the pre-fix serializer, so a user's next publish repairs a
+  // previously-broken site through the normal build pipeline. Hygiene gate: the
+  // result is parsed before committing — if it somehow still isn't valid YAML
+  // (a corruption shape beyond the line-based heal), the config write is skipped
+  // rather than committing broken YAML or overwriting the user's settings. The
+  // repo's current _config.yml is left untouched and the event is logged for
+  // manual follow-up; the rest of the publish still proceeds.
   if (existingConfigYml && config) {
     const managedFields = buildConfigManagedFields(config);
-    const updatedConfig = updateConfigFields(existingConfigYml, managedFields);
-    files.push({ path: "_config.yml", content: updatedConfig });
+    const updatedConfig = healConfigYaml(existingConfigYml, managedFields);
+    if (isParseableYaml(updatedConfig)) {
+      files.push({ path: "_config.yml", content: updatedConfig });
+    } else {
+      console.warn(
+        `[publish] _config.yml for project ${projectId} could not be healed to valid YAML; ` +
+          `skipping config write to avoid committing broken YAML or resetting settings`,
+      );
+    }
   }
 
   // --- project.csv ---

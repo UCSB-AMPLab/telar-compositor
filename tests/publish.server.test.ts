@@ -19,12 +19,14 @@
 
 import { describe, it, expect } from "vitest";
 import Papa from "papaparse";
+import { load as loadYaml } from "js-yaml";
 import {
   serializeProjectCsv,
   serializeStoryCsv,
   layerFilename,
   layerFileContent,
   updateConfigFields,
+  healConfigYaml,
   buildConfigManagedFields,
   computeChangeSummary,
   runPrePublishValidation,
@@ -748,6 +750,161 @@ telar:
     const result = updateConfigFields(input, {});
     expect(result).toContain("version: v9.9.9");
   });
+
+  // Regression (production incident 2026-05-28): editing the site description
+  // wrote bare newlines into _config.yml, producing a multi-line double-quoted
+  // scalar. A re-edit then replaced only the first physical line and orphaned
+  // the old continuation lines outside the closing quote, so every Jekyll build
+  // died with `yaml.scanner.ScannerError: could not find expected ':'`.
+  // updateConfigFields must self-heal: replacing a field whose existing value
+  // opens an unterminated quote sweeps the orphaned continuation lines.
+  it("heals an orphaned multi-line description scalar (real-world corruption)", () => {
+    const corrupt = [
+      'title: "Site"',
+      'description: "First paragraph here.',
+      "",
+      'Second paragraph ends. "',
+      "",
+      'Second paragraph ends. "',
+      "",
+      'Second paragraph ends. "',
+      'url: "https://example.com"',
+      'baseurl: "/test"',
+    ].join("\n");
+    // The corrupt input is itself invalid YAML (the bug).
+    expect(() => loadYaml(corrupt)).toThrow();
+
+    const result = updateConfigFields(corrupt, { description: '"Fresh description."' });
+
+    const parsed = loadYaml(result) as Record<string, unknown>;
+    expect(parsed.description).toBe("Fresh description.");
+    expect(parsed.url).toBe("https://example.com");
+    expect(parsed.baseurl).toBe("/test");
+    // No orphaned prose lines survived.
+    expect(result).not.toContain("Second paragraph ends.");
+  });
+
+  it("does not consume following lines when the replaced value is a balanced single-line scalar", () => {
+    const input = `title: "Old"
+description: "single line"
+url: "https://example.com"
+`;
+    const result = updateConfigFields(input, { description: '"new single line"' });
+    const parsed = loadYaml(result) as Record<string, unknown>;
+    expect(parsed.description).toBe("new single line");
+    expect(parsed.url).toBe("https://example.com");
+    expect(parsed.title).toBe("Old");
+  });
+
+  // A multi-paragraph description with capitalised sentences is the common
+  // real-world corruption. The hardened sweep must not mistake "This site…"
+  // for a key, even when a sentence contains an inner colon.
+  it("sweeps capitalised multi-paragraph prose continuation", () => {
+    const corrupt = [
+      'title: "Site"',
+      'description: "Intro paragraph.',
+      "",
+      "This site explores something. Note that HSSB: built in 1996. ",
+      "",
+      "This site explores something. Note that HSSB: built in 1996. ",
+      'url: "https://example.com"',
+    ].join("\n");
+    const result = updateConfigFields(corrupt, { description: '"Clean."' });
+    const parsed = loadYaml(result) as Record<string, unknown>;
+    expect(parsed.description).toBe("Clean.");
+    expect(parsed.url).toBe("https://example.com");
+    expect(result).not.toContain("This site explores");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// healConfigYaml — guarantees a valid _config.yml for the publish commit
+// ---------------------------------------------------------------------------
+
+describe("healConfigYaml", () => {
+  it("returns the surgically-updated config when it is already valid (preserves comments + unmanaged keys)", () => {
+    const input = `# Site Settings
+title: "Old"
+description: "A description"
+url: "https://example.com"
+telar_theme: "trama"
+story_interface:
+  show_on_homepage: true
+  show_story_steps: false
+`;
+    const out = healConfigYaml(input, { title: '"New"', description: '"Desc"' });
+    const parsed = loadYaml(out) as Record<string, unknown>;
+    expect(parsed.title).toBe("New");
+    expect(parsed.description).toBe("Desc");
+    expect(parsed.telar_theme).toBe("trama");
+    expect((parsed.story_interface as Record<string, unknown>).show_story_steps).toBe(false);
+    expect(out).toContain("# Site Settings");
+  });
+
+  it("heals the newline + duplicate-paragraph corruption (kftruitt shape)", () => {
+    const corrupt = [
+      'title: "Site"',
+      'description: "Para one.',
+      "",
+      'Para two ends. "',
+      "",
+      'Para two ends. "',
+      'url: "https://u.example"',
+      'telar_theme: "trama"',
+    ].join("\n");
+    expect(() => loadYaml(corrupt)).toThrow();
+    const out = healConfigYaml(corrupt, { description: '"Fresh."' });
+    const parsed = loadYaml(out) as Record<string, unknown>;
+    expect(parsed.description).toBe("Fresh.");
+    expect(parsed.url).toBe("https://u.example");
+    expect(parsed.telar_theme).toBe("trama");
+  });
+
+  it("heals the embedded-quote corruption (hafw1t shape)", () => {
+    const corrupt =
+      'title: "Site"\n' +
+      'description: "A Chimu "Double Chamber Whistle Vessel", an artifact. "\n' +
+      'url: "https://u.example"\n';
+    expect(() => loadYaml(corrupt)).toThrow();
+    const fields = buildConfigManagedFields(
+      makeConfig({ description: 'A Chimu "Double Chamber Whistle Vessel", an artifact.' }),
+    );
+    const out = healConfigYaml(corrupt, fields);
+    const parsed = loadYaml(out) as Record<string, unknown>;
+    expect(parsed.description).toBe('A Chimu "Double Chamber Whistle Vessel", an artifact.');
+    expect(parsed.url).toBe("https://u.example");
+  });
+
+  // A description paragraph that itself starts with a lowercase `word:`
+  // (e.g. "usage:") must not be mistaken for a config key and stop the sweep.
+  // The known-key allowlist sweeps it as prose, so the heal stays on the
+  // settings-preserving surgical path. Also asserts the duplicate-paragraph
+  // corruption is cleared and unmanaged framework settings survive untouched.
+  it("heals a description whose prose starts with a lowercase word+colon, preserving settings", () => {
+    const corrupt = [
+      'title: "Site"',
+      'description: "Intro paragraph.',
+      "",
+      'usage: it whistles loudly. "',
+      "",
+      'This sentence has no key and breaks the YAML. "',
+      'url: "https://u.example"',
+      'telar_theme: "paisajes"',
+      "story_interface:",
+      "  show_on_homepage: false",
+      "  featured_count: 9",
+    ].join("\n");
+    expect(() => loadYaml(corrupt)).toThrow();
+    const out = healConfigYaml(corrupt, { description: '"Fresh."' });
+    const parsed = loadYaml(out) as Record<string, unknown>;
+    expect(parsed.description).toBe("Fresh.");
+    expect(parsed.url).toBe("https://u.example");
+    // User's non-default framework settings survive untouched.
+    expect(parsed.telar_theme).toBe("paisajes");
+    expect((parsed.story_interface as Record<string, unknown>).show_on_homepage).toBe(false);
+    expect((parsed.story_interface as Record<string, unknown>).featured_count).toBe(9);
+    expect(out).not.toContain("usage: it whistles");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -830,13 +987,56 @@ baseurl: "/site"
   });
 
   it("appends telar_language when missing from existing _config.yml", () => {
-    const yaml = `# Site config
+    const ymlSrc = `# Site config
 title: "Site"
 baseurl: "/site"
 `;
     const fields = buildConfigManagedFields(makeConfig({ lang: "es" }));
-    const result = updateConfigFields(yaml, fields);
+    const result = updateConfigFields(ymlSrc, fields);
     expect(result).toContain("telar_language: es");
+  });
+
+  // Regression (production incident 2026-05-28): naive `"${value}"` wrapping
+  // emitted bare newlines and unescaped quotes, corrupting _config.yml. String
+  // fields must route through yamlQuote so the emitted value is always a valid
+  // single physical line.
+  it("escapes a multi-line description into a single-line YAML scalar", () => {
+    const desc = "Paragraph one.\n\nParagraph two ends here.";
+    const fields = buildConfigManagedFields(makeConfig({ description: desc }));
+    expect(fields.description).not.toMatch(/\n/);
+    expect(fields.description).toBe('"Paragraph one.\\n\\nParagraph two ends here."');
+  });
+
+  it("escapes embedded double quotes and backslashes in string fields", () => {
+    const fields = buildConfigManagedFields(makeConfig({ title: 'A "quoted" \\ title' }));
+    expect(fields.title).not.toMatch(/\n/);
+    expect(fields.title).toBe('"A \\"quoted\\" \\\\ title"');
+  });
+
+  it("round-trips a multi-line description through updateConfigFields back to the original value", () => {
+    const desc = "Line one.\n\nLine two.";
+    const fields = buildConfigManagedFields(makeConfig({ title: "T", description: desc }));
+    const base = `title: "old"\ndescription: "old"\nurl: "u"\n`;
+    const out = updateConfigFields(base, fields);
+    const parsed = loadYaml(out) as Record<string, unknown>;
+    expect(parsed.description).toBe(desc);
+  });
+
+  // Both triggers in a single value: embedded quotes AND line breaks (the
+  // kftruitt + hafw1t failure modes combined). One escaping primitive handles
+  // both — the value must survive verbatim through a full emit + parse cycle.
+  it("escapes a value containing BOTH embedded quotes and line breaks", () => {
+    const desc =
+      'The "Double Chamber" vessel.\n\nIt is described as a "whistle vessel" by scholars.';
+    const fields = buildConfigManagedFields(makeConfig({ description: desc }));
+    // Emitted as a single physical line (no raw newline, inner quotes escaped).
+    expect(fields.description).not.toMatch(/\n/);
+    // Round-trips back to the exact original through a real YAML parse.
+    const base = `title: "t"\ndescription: "old"\nurl: "u"\n`;
+    const out = updateConfigFields(base, fields);
+    const parsed = loadYaml(out) as Record<string, unknown>;
+    expect(parsed.description).toBe(desc);
+    expect(parsed.url).toBe("u");
   });
 });
 
