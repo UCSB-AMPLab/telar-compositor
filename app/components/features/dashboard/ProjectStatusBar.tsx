@@ -12,7 +12,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { Github, ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { formatRelative } from "~/lib/format-relative";
+import { useRelativeTime } from "~/lib/use-relative-time";
 
 interface Project {
   id: number;
@@ -47,6 +47,11 @@ export function ProjectStatusBar({
   const { t } = useTranslation("dashboard");
   const neverLabel = t("status_bar.never");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  // Client-only relative timestamps (see useRelativeTime). A present timestamp
+  // shows empty until mount; a null one shows the neverLabel immediately.
+  const syncedRelative = useRelativeTime(lastSynced, neverLabel);
+  const publishedRelative = useRelativeTime(lastPublished, neverLabel);
 
   // Single status: out_of_sync > unpublished > up_to_date
   const status = headDiverged
@@ -102,11 +107,11 @@ export function ProjectStatusBar({
       <div className="flex items-center gap-6 text-gray-500">
         <div className="flex flex-col items-start sm:flex-row sm:items-center sm:gap-1">
           <span className="text-xs text-gray-400">{t("status_bar.last_synced")}:</span>
-          <span className="text-xs font-medium">{formatRelative(lastSynced, neverLabel)}</span>
+          <span className="text-xs font-medium">{syncedRelative}</span>
         </div>
         <div className="flex flex-col items-start sm:flex-row sm:items-center sm:gap-1">
           <span className="text-xs text-gray-400">{t("status_bar.last_published")}:</span>
-          <span className="text-xs font-medium">{formatRelative(lastPublished, neverLabel)}</span>
+          <span className="text-xs font-medium">{publishedRelative}</span>
         </div>
       </div>
 

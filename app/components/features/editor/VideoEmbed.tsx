@@ -94,9 +94,11 @@ export function VideoEmbed({ type, videoId, vimeoHash, getCurrentTimeRef, getDur
   // Build the embed URL for each platform
   let src: string;
   if (type === "youtube") {
-    const origin =
-      typeof window !== "undefined" ? window.location.origin : "https://example.com";
-    src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&origin=${encodeURIComponent(origin)}`;
+    // Deliberately no `window.location.origin` here: it resolves differently
+    // during SSR vs the client, which would mismatch the iframe `src` on
+    // hydration and trip React #418. The `origin` param is only an optional
+    // postMessage hardening — the JS API (enablejsapi) works without it.
+    src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1`;
   } else if (type === "vimeo") {
     src = `https://player.vimeo.com/video/${videoId}?api=1${vimeoHash ? `&h=${vimeoHash}` : ""}`;
   } else {

@@ -11,7 +11,7 @@ import { Lock, LockOpen, PenLine } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
-import { formatRelative } from "~/lib/format-relative";
+import { useRelativeTime } from "~/lib/use-relative-time";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 
 interface StoryCardStory {
@@ -42,6 +42,11 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
   const navigate = useNavigate();
   const isPrivate = story.private ?? false;
   const isDraft = story.draft ?? false;
+
+  // Relative timestamps are client-only (locale/timezone/clock dependent) — see
+  // useRelativeTime. Empty until mount, so the rows below gate on a truthy value.
+  const updatedRelative = useRelativeTime(story.updated_at);
+  const syncedRelative = useRelativeTime(lastSynced);
 
   const { remoteCollaborators } = useCollaborationContext();
   const storyCollaborators = remoteCollaborators.filter(
@@ -156,14 +161,14 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
       {/* Footer */}
       <div className="flex items-center justify-between mt-auto pt-2">
         <div className="flex flex-col">
-          {story.updated_at && (
+          {updatedRelative && (
             <span className="text-xs text-gray-400">
-              {t("story_card.updated", { date: formatRelative(story.updated_at) })}
+              {t("story_card.updated", { date: updatedRelative })}
             </span>
           )}
-          {lastSynced && (
+          {syncedRelative && (
             <span className="text-xs text-gray-300">
-              {t("story_card.synced", { date: formatRelative(lastSynced) })}
+              {t("story_card.synced", { date: syncedRelative })}
             </span>
           )}
         </div>

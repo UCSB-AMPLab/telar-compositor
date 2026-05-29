@@ -12,7 +12,7 @@ import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { Switch } from "~/components/ui/Switch";
 import { DeleteStoryDialog } from "~/components/features/dashboard/DeleteStoryDialog";
-import { formatRelative } from "~/lib/format-relative";
+import { useRelativeTime } from "~/lib/use-relative-time";
 
 interface StoryRowStory {
   id: number;
@@ -67,6 +67,8 @@ export function StoryRow({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const isDraft = story.draft ?? false;
   const isPrivate = story.private ?? false;
+  // Client-only relative timestamp (see useRelativeTime); empty until mount.
+  const updatedRelative = useRelativeTime(story.updated_at);
 
   return (
     <>
@@ -103,9 +105,9 @@ export function StoryRow({
         </span>
 
         {/* Last edited */}
-        {story.updated_at && (
+        {updatedRelative && (
           <span className="shrink-0 text-xs text-gray-400 hidden md:block mr-3">
-            {t("story_row.updated", { date: formatRelative(story.updated_at) })}
+            {t("story_row.updated", { date: updatedRelative })}
           </span>
         )}
 
