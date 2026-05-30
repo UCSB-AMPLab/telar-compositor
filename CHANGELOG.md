@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.2.1-beta (2026-05-29)
+
+A patch release with three fixes, all live on production. No D1 migrations, no
+binding changes, no new environment variables — upgrading is a deploy.
+
+### Bug fixes
+
+- **Welcome message editor no longer crashes and now saves** — Editing (or clearing) the homepage Welcome Message crashed the page with a "Something went wrong" error and discarded the edit. The editor now saves changes reliably as you type. The canned framework default shows as a placeholder when the field is empty, so you start from a clean slate and type to replace it.
+- **Dashboard timestamps no longer cause a hydration mismatch** — The "Synced …" relative timestamps on dashboard story cards rendered differently on the server and the client (date format and timezone), triggering a React hydration error on load. Timestamps are now computed consistently and localised.
+
+### Stability
+
+- **Site config is escaped and self-heals on publish** — Config string fields are now escaped when writing `_config.yml`, and a corrupted `_config.yml` is repaired on the next publish instead of failing.
+
 ## v1.2.0-beta (2026-05-11)
 
 A new Account page for identity, preferences, projects, and account deletion; a bug-report button that captures runtime context for issues; persistent UI language across devices and seeded into newly-created sites; and a more accurate publish change summary built on per-entity content hashing.
