@@ -57,7 +57,7 @@ export function CommitMessageEditor({
             onChange={(e) => setMessage(e.target.value)}
             rows={8}
             placeholder={t("commit.placeholder")}
-            className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-periwinkle resize-none"
+            className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none"
             disabled={loading}
           />
           <p className="font-body text-xs text-gray-400 mt-1">

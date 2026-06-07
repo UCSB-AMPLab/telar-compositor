@@ -14,20 +14,24 @@
  *   - storyPathsForPublish + computeStoryDeletions: draft round-trip + hard-delete cleanup
  *   - publish defensive gate: v1.2.1 frontmatter literals are stripped at publish time
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import Papa from "papaparse";
 import { load as loadYaml } from "js-yaml";
 import {
   serializeProjectCsv,
   serializeStoryCsv,
+  serializeStory,
   layerFilename,
   layerFileContent,
   updateConfigFields,
+  updateConfigBlocks,
   healConfigYaml,
   buildConfigManagedFields,
+  buildConfigManagedBlocks,
+  buildConfigChangeFields,
   computeChangeSummary,
   runPrePublishValidation,
   buildNavigationYml,
@@ -37,10 +41,12 @@ import {
   buildPageContentHashes,
   isPagePublishable,
   ENTITY_HASHES_VERSION,
+  buildEntityHashes,
   computeStoryDeletions,
   storyPathsForPublish,
 } from "~/lib/publish.server";
 import type { PublishSnapshot, CurrentPublishState, EntityHashes } from "~/lib/publish.server";
+import { parseTelarCsv, mapStoryCsv } from "~/lib/import.server";
 import { project_config } from "~/db/schema";
 
 type ProjectConfigRow = typeof project_config.$inferSelect;
@@ -274,6 +280,20 @@ describe("serializeStoryCsv", () => {
     expect(dataLine).toMatch(/^1,my-object,0\.5,0\.5,1,/);
   });
 
+  // Pin the default-coordinate fallback at the parsed-column
+  // level (header-keyed, not positional) so a future column reorder can't mask a
+  // regression. A step with null x/y/zoom must export the string defaults
+  // "0.5" / "0.5" / "1" (String(... ?? 0.5) in serializeStoryCsv).
+  it("null x/y/zoom export the string defaults 0.5/0.5/1 in their named columns", () => {
+    const step = { ...baseStep, x: null, y: null, zoom: null };
+    const csv = serializeStoryCsv([step], "weavers");
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.x).toBe("0.5");
+    expect(dataRow.y).toBe("0.5");
+    expect(dataRow.zoom).toBe("1");
+  });
+
   it("skips fully empty steps", () => {
     const emptyStep = {
       step_number: 2,
@@ -411,12 +431,12 @@ describe("serializeStoryCsv", () => {
     expect(dataRow.loop).toBe("");
   });
 
-  // --- defensive empty-object write for kind='section' (W-05, plan 33.2 task 4) ---
+  // --- defensive empty-object write for kind='section' ---
   // Framework signal in stories.csv: empty `object` column = section card.
   // Even if internal kind/object_id state has drifted (kind='section' with
   // a stale object_id), the writer must emit empty `object` so the framework
   // still renders the row as a section card.
-  describe("kind='section' defensive empty-object write (W-05)", () => {
+  describe("kind='section' defensive empty-object write", () => {
     it("kind='section' with stale object_id => CSV `object` column is empty", () => {
       const step = {
         ...baseStep,
@@ -479,6 +499,104 @@ describe("serializeStoryCsv", () => {
     });
   });
 
+  // --- section steps: no phantom coords and never dropped ---
+  // A section step is a heading card with no IIIF
+  // viewer, so it has no meaningful x/y/zoom. The writer must emit EMPTY
+  // coordinate cells (not the 0.5/0.5/1 defaults) so they don't round-trip
+  // wrong or churn the entity hash, and isFullyEmptyStep must never drop a
+  // section step regardless of its other content.
+  describe("kind='section' coords + retention", () => {
+    const sectionBase = {
+      step_number: 1,
+      kind: "section" as "media" | "section",
+      object_id: null as string | null,
+      x: 0.5,
+      y: 0.5,
+      zoom: 1,
+      page: null,
+      question: "Chapter One",
+      answer: null as string | null,
+      alt_text: null as string | null,
+      clip_start: null as string | null,
+      clip_end: null as string | null,
+      loop: null as string | null,
+      layers: [] as {
+        layer_number: number;
+        title: string | null;
+        button_label: string | null;
+        content: string | null;
+      }[],
+    };
+
+    // A section step with x/y/zoom stored in D1 must serialise to EMPTY
+    // coordinate cells, because a section card has no viewer to position.
+    it("section step with stored coords => empty x/y/zoom cells", () => {
+      const step = { ...sectionBase, x: 0.7, y: 0.2, zoom: 3 };
+      const csv = serializeStoryCsv([step], "weavers");
+      const parsed = Papa.parse<Record<string, string>>(csv, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      const dataRow = parsed.data[1]; // skip bilingual row
+      expect(dataRow.x).toBe("");
+      expect(dataRow.y).toBe("");
+      expect(dataRow.zoom).toBe("");
+    });
+
+    // A section step carrying only a question (no object/answer/layers)
+    // must survive serialisation — isFullyEmptyStep must return false for it.
+    it("section step with only a question is not dropped", () => {
+      const csv = serializeStoryCsv([sectionBase], "weavers");
+      const dataLines = csv.split("\n").filter((l) => /^[0-9]/.test(l));
+      expect(dataLines).toHaveLength(1);
+    });
+
+    // Even a section step with NO other content (no question, object,
+    // answer or layers) survives — a titled-but-empty heading is not lost.
+    it("section step with no other content is not dropped", () => {
+      const step = { ...sectionBase, question: null };
+      const csv = serializeStoryCsv([step], "weavers");
+      const dataLines = csv.split("\n").filter((l) => /^[0-9]/.test(l));
+      expect(dataLines).toHaveLength(1);
+    });
+
+    // Regression: a truly-empty MEDIA step (not a section, no content) is still
+    // dropped — the retention change must be scoped to section steps only.
+    it("truly-empty media step is still dropped", () => {
+      const emptyMedia = { ...sectionBase, kind: "media" as "media" | "section", question: null };
+      const csv = serializeStoryCsv([emptyMedia], "weavers");
+      const dataLines = csv.split("\n").filter((l) => /^[0-9]/.test(l));
+      expect(dataLines).toHaveLength(0);
+    });
+
+    // Round-trip: serialise a section step with coords -> parse + map back ->
+    // re-imported step has no phantom 0.5/0.5/1 coordinates.
+    it("round-trips a section step with no phantom coords", () => {
+      const step = { ...sectionBase, x: 0.9, y: 0.1, zoom: 5 };
+      const csv = serializeStoryCsv([step], "weavers");
+      const rows = parseTelarCsv(csv);
+      const { steps: mapped } = mapStoryCsv(rows, 1);
+      expect(mapped).toHaveLength(1);
+      const reimported = mapped[0];
+      expect(reimported.kind).toBe("section");
+      // mapStoryCsv leaves x/y/zoom undefined when the cell is empty — no
+      // phantom 0.5/0.5/1 reintroduced.
+      expect(reimported.x).toBeUndefined();
+      expect(reimported.y).toBeUndefined();
+      expect(reimported.zoom).toBeUndefined();
+    });
+
+    // No-churn at the serialisation seam: two serialisations of an unchanged
+    // section step produce byte-identical CSV (the buildEntityHashes step seam
+    // is DB-bound, so this stands in for it at the serialiser level).
+    it("two serialisations of an unchanged section step are identical (no churn)", () => {
+      const step = { ...sectionBase, x: 0.4, y: 0.6, zoom: 2 };
+      const csvA = serializeStoryCsv([step], "weavers");
+      const csvB = serializeStoryCsv([step], "weavers");
+      expect(csvA).toBe(csvB);
+    });
+  });
+
   // --- step order survives scrambled input ---
   // Root cause: serializeStoryCsv used to write rows in the order stepRows
   // arrived (and the D1 query has no ORDER BY). Editor reorders therefore did
@@ -534,7 +652,7 @@ describe("serializeStoryCsv", () => {
       expect(dataRows).toHaveLength(3);
       expect(dataRows.map((r) => r.step)).toEqual(["1", "2", "3"]);
       // Section heading lands second, with the framework's empty-object signal
-      // (W-05 defensive write) preserved through the sort.
+      // (the defensive write) preserved through the sort.
       expect(dataRows[1].step).toBe("2");
       expect(dataRows[1].object).toBe("");
       expect(dataRows[1].question).toBe("Chapter Two");
@@ -554,6 +672,165 @@ describe("serializeStoryCsv", () => {
       const orderAfter = input.map((s) => s.step_number);
       expect(orderAfter).toEqual(orderBefore);
       expect(orderAfter).toEqual([3, 1, 2]);
+    });
+  });
+
+  // --- single source of truth for layer filenames (publish-correctness bug) ---
+  // The CSV records, per step, which markdown file holds each layer's content.
+  // The publish loop must write those exact files. Before the single-source
+  // refactor the CSV and the file-writing loop recomputed filenames in
+  // DIFFERENT orders (CSV: sorted by step_number + empty-filtered; file loop:
+  // raw query/array order, unfiltered) with SEPARATE usedFilenames Sets.
+  //
+  // layerFilename is order-dependent: a title-based name is preferred but falls
+  // back to a positional name once that title-based name is already taken. So
+  // when two layers SHARE a title and the two loops iterate in different order
+  // (which happens after a step reorder — step_number order != array/id order),
+  // the collision resolves to different steps: the CSV points step A at file Y
+  // while file Y receives step B's content. serializeStory closes this by
+  // computing each filename exactly once and returning the layer files in the
+  // same pass.
+  describe("serializeStory — CSV references and written files cannot diverge", () => {
+    // Helper: map serializeStory's layerFiles to the on-disk path/content the
+    // publish loop now produces, so the test asserts against what is actually
+    // written.
+    const writtenFilesFrom = (layerFiles: ReturnType<typeof serializeStory>["layerFiles"]) =>
+      layerFiles.map((lf) => ({
+        filename: lf.filename,
+        // mirrors the publish loop: layerFileContent(title, content)
+        content: layerFileContent(lf.title, lf.content),
+        rawContent: lf.content,
+      }));
+
+    it("two layers sharing a title on reordered steps: every CSV reference has a matching written file with the correct step's content", () => {
+      // Simulate a post-reorder state: array order (the raw D1 query order,
+      // which has no ORDER BY) does NOT match step_number order.
+      //   - array[0]: step_number 2, layer1 content "BODY-FOR-STEP-2"
+      //   - array[1]: step_number 1, layer1 content "BODY-FOR-STEP-1"
+      // Both layers share the free-text title "Notes".
+      const steps = [
+        {
+          ...baseStep,
+          step_number: 2,
+          question: "second",
+          layers: [
+            {
+              layer_number: 1,
+              title: "Notes",
+              button_label: "More",
+              content: "BODY-FOR-STEP-2",
+            },
+          ],
+        },
+        {
+          ...baseStep,
+          step_number: 1,
+          question: "first",
+          layers: [
+            {
+              layer_number: 1,
+              title: "Notes",
+              button_label: "More",
+              content: "BODY-FOR-STEP-1",
+            },
+          ],
+        },
+      ];
+
+      const { csv, layerFiles } = serializeStory(steps, "weavers");
+      const written = writtenFilesFrom(layerFiles);
+
+      // Parse the CSV's layer1_content references keyed by step_number.
+      const parsed = Papa.parse<Record<string, string>>(csv, {
+        header: true,
+        skipEmptyLines: true,
+      });
+      const dataRows = parsed.data.filter((r) => r.step !== "paso");
+
+      const writtenByFilename = new Map(written.map((w) => [w.filename, w]));
+
+      // For EVERY step, the file the CSV references must have actually been
+      // written, and must contain THAT step's content.
+      const expectedContentByStep: Record<string, string> = {
+        "1": "BODY-FOR-STEP-1",
+        "2": "BODY-FOR-STEP-2",
+      };
+      for (const row of dataRows) {
+        const referenced = row.layer1_content;
+        expect(referenced).not.toBe("");
+        const file = writtenByFilename.get(referenced);
+        // The referenced file must exist among the written files.
+        expect(file, `CSV step ${row.step} references ${referenced} but no such file was written`).toBeDefined();
+        // And it must carry the correct step's body.
+        expect(file!.rawContent).toBe(expectedContentByStep[row.step]);
+      }
+
+      // No orphan file: every written file is referenced by exactly one CSV cell.
+      const allReferenced = new Set(dataRows.map((r) => r.layer1_content));
+      for (const w of written) {
+        expect(allReferenced.has(w.filename)).toBe(true);
+      }
+      // The two colliding titles must resolve to two DISTINCT filenames.
+      expect(new Set(written.map((w) => w.filename)).size).toBe(written.length);
+    });
+
+    it("empty steps are excluded from layerFiles (no referenced layer dropped, no orphan written)", () => {
+      const steps = [
+        {
+          ...baseStep,
+          step_number: 1,
+          layers: [
+            {
+              layer_number: 1,
+              title: "Intro",
+              button_label: null,
+              content: "REAL",
+            },
+          ],
+        },
+        {
+          // fully empty step — must not produce a layer file
+          step_number: 2,
+          kind: "media" as "media" | "section",
+          object_id: null,
+          x: null,
+          y: null,
+          zoom: null,
+          page: null,
+          question: null,
+          answer: null,
+          alt_text: null as string | null,
+          clip_start: null as string | null,
+          clip_end: null as string | null,
+          loop: null as string | null,
+          layers: [],
+        },
+      ];
+
+      const { csv, layerFiles } = serializeStory(steps, "weavers");
+      expect(layerFiles).toHaveLength(1);
+      expect(layerFiles[0].filename).toBe("weavers-intro.md");
+      expect(csv).toContain("weavers-intro.md");
+    });
+
+    it("serializeStory.csv is byte-identical to serializeStoryCsv for the same input", () => {
+      const steps = [
+        {
+          ...baseStep,
+          step_number: 2,
+          layers: [
+            { layer_number: 1, title: "Notes", button_label: "More", content: "B2" },
+          ],
+        },
+        {
+          ...baseStep,
+          step_number: 1,
+          layers: [
+            { layer_number: 1, title: "Notes", button_label: "More", content: "B1" },
+          ],
+        },
+      ];
+      expect(serializeStory(steps, "weavers").csv).toBe(serializeStoryCsv(steps, "weavers"));
     });
   });
 });
@@ -1038,6 +1315,23 @@ baseurl: "/site"
     expect(parsed.description).toBe(desc);
     expect(parsed.url).toBe("u");
   });
+
+  it("keeps inline links but strips block tags from the description", () => {
+    const fields = buildConfigManagedFields(
+      makeConfig({ description: "<p>Lead <a href='https://x.org'>link</a></p><script>alert(1)</script>" }),
+    );
+    // yamlQuote wraps in double quotes; sanitiseInlineHtml has already removed block + script tags.
+    expect(fields["description"]).toContain("<a href=");
+    expect(fields["description"]).toContain("link");
+    expect(fields["description"]).not.toContain("<p>");
+    expect(fields["description"]).not.toContain("<script");
+    expect(fields["description"]).not.toContain("alert(1)");
+  });
+
+  it("leaves a plain description unchanged (still yaml-quoted)", () => {
+    const fields = buildConfigManagedFields(makeConfig({ description: "Just text" }));
+    expect(fields["description"]).toBe('"Just text"');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1092,7 +1386,7 @@ describe("computeChangeSummary", () => {
   // a clean match by default (collection_mode is non-nullable, so it
   // always lands in the managed-fields map — drop one of these and the
   // diff fires a spurious "settings changed" entry).
-  const baseConfigManaged = buildConfigManagedFields(makeConfig({ title: "My Site" }));
+  const baseConfigManaged = buildConfigChangeFields(makeConfig({ title: "My Site" }));
 
   // Snapshot in entity-hashing mode (entity_hashes populated). Defaults
   // mirror baseEntityHashes so this represents "no changes since last
@@ -1242,6 +1536,23 @@ describe("computeChangeSummary", () => {
     const summary = computeChangeSummary(currentState, snapshot);
     expect(summary.settings.changed.length).toBeGreaterThan(0);
     expect(summary.isUpToDate).toBe(false);
+  });
+
+  it("nested block toggle carries its post-change value for on/off label resolution", () => {
+    // Demo content flipped off: the changed entry must expose the dotted key
+    // AND the new boolean value so settingsChangeI18nKey can pick the _off
+    // variant (regression guard: without `value`, the commit message leaked
+    // the raw i18n key — telar-compositor #10/#17 follow-up).
+    const stateDemoOff: CurrentPublishState = {
+      ...currentState,
+      config: makeConfig({ title: "My Site", include_demo_content: false }),
+    };
+    const summary = computeChangeSummary(stateDemoOff, makeSnapshot());
+    const demo = summary.settings.changed.find(
+      (e) => e.key === "story_interface.include_demo_content",
+    );
+    expect(demo).toBeDefined();
+    expect(demo?.value).toBe("false");
   });
 
   it("landing content changed is detected via entity_hashes.landing", () => {
@@ -1652,15 +1963,71 @@ describe("buildNavigationYml", () => {
 
 describe("glossary and pages publish", () => {
   it("serialises glossary_terms to glossary.csv", () => {
+    // Papa.unparse emits the header automatically and quotes only fields that
+    // need it — so a plain row carries no spurious quotes (comp1 T3 change).
+    // A Spanish bilingual second row now follows the English header, mirroring
+    // objects.csv (SSOT alignment).
     const result = serializeGlossaryCsv([
-      { term_id: "enc", title: "Encomienda", definition: "A labor system" },
+      {
+        term_id: "enc",
+        title: "Encomienda",
+        definition: "A labor system",
+        related_terms: null,
+      },
     ]);
-    expect(result).toBe('term_id,title,definition\nenc,"Encomienda","A labor system"\n');
+    expect(result).toBe(
+      "term_id,title,definition,related_terms\n" +
+        "id_término,titulo,definición,términos_relacionados\n" +
+        "enc,Encomienda,A labor system,\n",
+    );
+  });
+
+  it("serializeGlossaryCsv emits the Spanish bilingual row as row 2", () => {
+    const result = serializeGlossaryCsv([
+      {
+        term_id: "enc",
+        title: "Encomienda",
+        definition: "A labor system",
+        related_terms: null,
+      },
+    ]);
+    expect(result.split("\n")[1]).toBe(
+      "id_término,titulo,definición,términos_relacionados",
+    );
+  });
+
+  it("serializeGlossaryCsv preserves comment rows from the existing CSV", () => {
+    const existing =
+      "term_id,title,definition,related_terms\n" +
+      "id_término,titulo,definición,términos_relacionados\n" +
+      "# Add one term per row. The term_id must be unique.\n" +
+      "enc,Encomienda,A labor system,\n";
+    const result = serializeGlossaryCsv(
+      [
+        {
+          term_id: "enc",
+          title: "Encomienda",
+          definition: "A labor system",
+          related_terms: null,
+        },
+      ],
+      existing,
+    );
+    const lines = result.split("\n");
+    expect(lines[0]).toBe("term_id,title,definition,related_terms");
+    expect(lines[1]).toBe("id_término,titulo,definición,términos_relacionados");
+    expect(lines[2]).toBe("# Add one term per row. The term_id must be unique.");
+    expect(lines[3]).toBe("enc,Encomienda,A labor system,");
   });
 
   it("serializeGlossaryCsv escapes double quotes in values", () => {
     const result = serializeGlossaryCsv([
-      { term_id: "enc", title: 'Say "hello"', definition: 'Has "quotes"' },
+      {
+        term_id: "enc",
+        title: 'Say "hello"',
+        definition: 'Has "quotes"',
+        related_terms: null,
+      },
     ]);
     expect(result).toContain('"Say ""hello"""');
     expect(result).toContain('"Has ""quotes"""');
@@ -1668,9 +2035,111 @@ describe("glossary and pages publish", () => {
 
   it("serializeGlossaryCsv handles null title and definition", () => {
     const result = serializeGlossaryCsv([
-      { term_id: "enc", title: null, definition: null },
+      { term_id: "enc", title: null, definition: null, related_terms: null },
     ]);
-    expect(result).toBe('term_id,title,definition\nenc,"",""\n');
+    // Empty cells are unquoted under correct CSV (Papa only quotes when needed).
+    expect(result).toBe(
+      "term_id,title,definition,related_terms\n" +
+        "id_término,titulo,definición,términos_relacionados\n" +
+        "enc,,,\n",
+    );
+  });
+
+  it("serializeGlossaryCsv emits a related_terms column with the pipe list preserved", () => {
+    const result = serializeGlossaryCsv([
+      {
+        term_id: "enc",
+        title: "Encomienda",
+        definition: "A labor system",
+        related_terms: "loom|weaving",
+      },
+    ]);
+    expect(result).toBe(
+      "term_id,title,definition,related_terms\n" +
+        "id_término,titulo,definición,términos_relacionados\n" +
+        "enc,Encomienda,A labor system,loom|weaving\n",
+    );
+  });
+
+  it("serializeGlossaryCsv quotes a term_id containing a comma and round-trips it (comp1 T3 fix)", async () => {
+    const { parseTelarCsv, mapGlossaryCsv } = await import(
+      "~/lib/import.server"
+    );
+    const result = serializeGlossaryCsv([
+      {
+        term_id: "a,b",
+        title: "Comma id",
+        definition: "Has a comma in its id",
+        related_terms: null,
+      },
+    ]);
+    // The term_id must be quoted so the row doesn't gain a spurious column.
+    expect(result).toContain('"a,b"');
+    const mapped = mapGlossaryCsv(parseTelarCsv(result));
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].term_id).toBe("a,b");
+  });
+
+  it("serializeGlossaryCsv handles a definition with a comma and a double-quote and round-trips it", async () => {
+    const { parseTelarCsv, mapGlossaryCsv } = await import(
+      "~/lib/import.server"
+    );
+    const def = 'A system, with "quotes" too';
+    const result = serializeGlossaryCsv([
+      {
+        term_id: "enc",
+        title: "Encomienda",
+        definition: def,
+        related_terms: null,
+      },
+    ]);
+    const mapped = mapGlossaryCsv(parseTelarCsv(result));
+    expect(mapped[0].definition).toBe(def);
+  });
+
+  it("serializeGlossaryCsv round-trips related_terms through parse + map", async () => {
+    const { parseTelarCsv, mapGlossaryCsv } = await import(
+      "~/lib/import.server"
+    );
+    const result = serializeGlossaryCsv([
+      {
+        term_id: "enc",
+        title: "Encomienda",
+        definition: "A labor system",
+        related_terms: "loom|weaving",
+      },
+    ]);
+    const mapped = mapGlossaryCsv(parseTelarCsv(result));
+    expect(mapped[0].related_terms).toBe("loom|weaving");
+  });
+
+  it("serializeGlossaryCsv round-trips with bilingual + comment rows skipped (no phantom rows)", async () => {
+    const { parseTelarCsv, mapGlossaryCsv } = await import(
+      "~/lib/import.server"
+    );
+    const existing =
+      "term_id,title,definition,related_terms\n" +
+      "id_término,titulo,definición,términos_relacionados\n" +
+      "# Add one term per row.\n";
+    const result = serializeGlossaryCsv(
+      [
+        {
+          term_id: "enc",
+          title: "Encomienda",
+          definition: "A labor system",
+          related_terms: "loom|weaving",
+        },
+      ],
+      existing,
+    );
+    // The bilingual row (row 2) and the preserved comment row must both be
+    // skipped on re-import, leaving exactly the data term — no phantom row.
+    const mapped = mapGlossaryCsv(parseTelarCsv(result));
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].term_id).toBe("enc");
+    expect(mapped[0].title).toBe("Encomienda");
+    expect(mapped[0].definition).toBe("A labor system");
+    expect(mapped[0].related_terms).toBe("loom|weaving");
   });
 
   it("serialises pages to markdown files with frontmatter", () => {
@@ -1810,8 +2279,11 @@ describe("runPrePublishValidation", () => {
     });
     const pageBlockers = result.blockers.filter((b) => b.code === "page_no_title");
     expect(pageBlockers).toHaveLength(1);
-    expect(pageBlockers[0].entityId).toBe("untitled");
-    expect(pageBlockers[0].params).toEqual({ slug: "untitled" });
+    // The blocker no longer derives identity from a (possibly empty) slug.
+    // entityId is a 1-based ordinal among untitled pages, and there is no
+    // slug param (the reworded copy does not interpolate it).
+    expect(pageBlockers[0].entityId).toBe("untitled-1");
+    expect(pageBlockers[0].params).toBeUndefined();
     // Must NOT also surface as a warning (single source of truth)
     expect(result.warnings.map((w) => w.code)).not.toContain("page_no_title");
   });
@@ -1895,7 +2367,7 @@ describe("computeChangeSummary — per-field config diff", () => {
 
   function makeSnapshot(configOverrides: Partial<ProjectConfigRow>): PublishSnapshot {
     const config = makeConfig(configOverrides);
-    const managed = buildConfigManagedFields(config);
+    const managed = buildConfigChangeFields(config);
     return {
       story_ids: [],
       object_ids: [],
@@ -2568,5 +3040,494 @@ describe("drafts round-trip + hard-delete cleanup", () => {
       expect(summary.fileChanges.removedStoryFiles).toEqual([]);
       expect(summary.isUpToDate).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// commit SUBJECT carries no "Telar Compositor" signature.
+// The subject is assembled by autoGenerateCommitMessage
+// purely from the change-summary parts + the `auto_commit.*` keys (excluding
+// `footer`); the signature lives ONLY in the body footer appended by
+// autoGenerateCommitBody (`auto_commit.footer`). autoGenerateCommitMessage is a
+// private function inside the route module, so we lock the contract at its
+// source-of-truth — the i18n keys the subject is built from. This passes
+// against the current locales and would fire if anyone moved the signature
+// into a subject key.
+// ---------------------------------------------------------------------------
+
+describe("auto_commit subject keys carry no 'Telar Compositor' signature", () => {
+  // The subject is built from every auto_commit.* key EXCEPT `footer` (which is
+  // body-only). If any of those leaked the signature, the rendered subject
+  // would contain it.
+  const subjectKeys = (block: Record<string, string>) =>
+    Object.entries(block).filter(([key]) => key !== "footer");
+
+  it("no EN auto_commit subject key contains 'Telar Compositor'", async () => {
+    const en = (await import("~/i18n/locales/en/publish.json")).default as {
+      auto_commit: Record<string, string>;
+    };
+    for (const [key, value] of subjectKeys(en.auto_commit)) {
+      expect(value, `en auto_commit.${key}`).not.toContain("Telar Compositor");
+    }
+  });
+
+  it("no ES auto_commit subject key contains 'Compositor de Telar' / 'Telar Compositor'", async () => {
+    const es = (await import("~/i18n/locales/es/publish.json")).default as {
+      auto_commit: Record<string, string>;
+    };
+    for (const [key, value] of subjectKeys(es.auto_commit)) {
+      expect(value, `es auto_commit.${key}`).not.toContain("Compositor de Telar");
+      expect(value, `es auto_commit.${key}`).not.toContain("Telar Compositor");
+    }
+  });
+
+  it("the signature IS present in the body footer key (confirming it lives there, not in the subject)", async () => {
+    const en = (await import("~/i18n/locales/en/publish.json")).default as {
+      auto_commit: Record<string, string>;
+    };
+    const es = (await import("~/i18n/locales/es/publish.json")).default as {
+      auto_commit: Record<string, string>;
+    };
+    expect(en.auto_commit.footer).toContain("Telar Compositor");
+    expect(es.auto_commit.footer).toContain("Compositor de Telar");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reworded page_no_title blocker no longer depends on slug.
+// A titleless page has an empty/temp slug, so the old `Page "{{slug}}"…` copy
+// rendered the unhelpful `Page ""…`. The blocker is reworked to a recovery-
+// oriented message that does NOT interpolate slug and drops `params: { slug }`.
+// ---------------------------------------------------------------------------
+
+describe("page_no_title blocker is slug-independent", () => {
+  it("an untitled page produces a page_no_title blocker that does NOT carry a slug param", () => {
+    const result = runPrePublishValidation({
+      headSha: "abc",
+      currentRepoHead: "abc",
+      stories: [],
+      steps: [],
+      objects: [],
+      pages: [{ slug: "", title: "" }],
+    });
+    const blocker = result.blockers.find((b) => b.code === "page_no_title");
+    expect(blocker).toBeDefined();
+    // The reworded blocker must not interpolate a (missing) slug.
+    expect(blocker?.params?.slug).toBeUndefined();
+  });
+
+  it("the page_no_title blocker does not set an empty-string entityId from a missing slug", () => {
+    const result = runPrePublishValidation({
+      headSha: "abc",
+      currentRepoHead: "abc",
+      stories: [],
+      steps: [],
+      objects: [],
+      pages: [{ slug: "", title: "" }],
+    });
+    const blocker = result.blockers.find((b) => b.code === "page_no_title");
+    expect(blocker).toBeDefined();
+    // An empty entityId is harmless for rendering (keyed by code+idx), but
+    // the blocker no longer derives identity from a non-existent slug.
+    expect(blocker?.entityId).not.toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildEntityHashes — object hash covers dimensions + extra_columns
+// ---------------------------------------------------------------------------
+//
+// The publish change-detection hash must include every D1 field a published
+// objects.csv row depends on. dimensions and extra_columns (the custom-column
+// passthrough blob) were added to the objects table and to import/export, but
+// were missing from the object hash — so editing them would not be detected as
+// a change and publish would skip re-emitting them. These tests pin that they
+// are now part of the hash, and that extra_columns is canonicalised so that
+// equivalent custom-column data hashes identically regardless of stored key
+// order.
+// ---------------------------------------------------------------------------
+
+describe("buildEntityHashes — object hash includes dimensions + extra_columns", () => {
+  // Sequential mock db: buildEntityHashes runs Promise.all of six selects in
+  // this order — stories, objects, pages, glossary, config, landing. With an
+  // empty stories array there are no further per-story step/layer queries, so
+  // six responses suffice. Each chain node is a thenable that resolves to the
+  // next queued response and also returns the db so chaining keeps working.
+  function makeMockDb(objectRows: Array<Record<string, unknown>>) {
+    const responses: unknown[] = [
+      [], // stories
+      objectRows, // objects
+      [], // pages
+      [], // glossary
+      [], // config
+      [], // landing
+    ];
+    let callIndex = 0;
+    function makeResult() {
+      const data = responses[callIndex] ?? [];
+      callIndex++;
+      return Promise.resolve(data);
+    }
+    const db: Record<string, unknown> = {};
+    function terminal() {
+      return Object.assign(
+        {
+          then: (
+            resolve: (v: unknown) => unknown,
+            reject?: (e: unknown) => unknown,
+          ) => {
+            try {
+              return Promise.resolve(makeResult()).then(resolve, reject);
+            } catch (e) {
+              return Promise.reject(e);
+            }
+          },
+        },
+        db,
+      );
+    }
+    db.select = vi.fn(() => terminal());
+    db.from = vi.fn(() => terminal());
+    db.where = vi.fn(() => terminal());
+    db.limit = vi.fn(() => terminal());
+    db.orderBy = vi.fn(() => terminal());
+    return db as unknown as Parameters<typeof buildEntityHashes>[0];
+  }
+
+  function baseObject(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      object_id: "obj-1",
+      title: "An Object",
+      featured: false,
+      creator: "",
+      description: "",
+      source_url: "",
+      period: "",
+      year: "",
+      object_type: "",
+      subjects: "",
+      source: "",
+      credit: "",
+      thumbnail: "",
+      alt_text: "",
+      dimensions: "",
+      extra_columns: null,
+      ...overrides,
+    };
+  }
+
+  async function hashFor(obj: Record<string, unknown>): Promise<string> {
+    const hashes = await buildEntityHashes(makeMockDb([obj]), 1);
+    return hashes.objects[obj.object_id as string];
+  }
+
+  it("differs when only dimensions differ", async () => {
+    const a = await hashFor(baseObject({ dimensions: "10 x 20 cm" }));
+    const b = await hashFor(baseObject({ dimensions: "30 x 40 cm" }));
+    expect(a).not.toBe(b);
+  });
+
+  it("differs when extra_columns CONTENT differs", async () => {
+    const a = await hashFor(baseObject({ extra_columns: '{"a":"1"}' }));
+    const b = await hashFor(baseObject({ extra_columns: '{"a":"2"}' }));
+    expect(a).not.toBe(b);
+  });
+
+  it("is EQUAL for the same extras in different key ORDER (canonicalised)", async () => {
+    const a = await hashFor(baseObject({ extra_columns: '{"a":"1","b":"2"}' }));
+    const b = await hashFor(baseObject({ extra_columns: '{"b":"2","a":"1"}' }));
+    expect(a).toBe(b);
+  });
+
+  it("treats extra_columns null and absent the same for the hash", async () => {
+    const withNull = await hashFor(baseObject({ extra_columns: null }));
+    const absent = baseObject();
+    delete absent.extra_columns;
+    const withAbsent = await hashFor(absent);
+    expect(withNull).toBe(withAbsent);
+  });
+
+  it("does not throw on corrupt extra_columns and hashes it as empty", async () => {
+    const corrupt = await hashFor(baseObject({ extra_columns: "{bad" }));
+    const empty = await hashFor(baseObject({ extra_columns: null }));
+    // Corrupt JSON canonicalises to "" — same as no extras at all.
+    expect(corrupt).toBe(empty);
+  });
+
+  it("hash-format version is 4", () => {
+    expect(ENTITY_HASHES_VERSION).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Glossary hash now includes related_terms. Without it, editing a term's
+// related_terms would not be detected as a change and publish would skip
+// re-emitting the row.
+// ---------------------------------------------------------------------------
+
+describe("buildEntityHashes — glossary hash includes related_terms", () => {
+  // Sequential mock db: buildEntityHashes runs Promise.all of six selects in
+  // order — stories, objects, pages, glossary, config, landing. Glossary is the
+  // fourth response.
+  function makeMockDb(glossaryRows: Array<Record<string, unknown>>) {
+    const responses: unknown[] = [
+      [], // stories
+      [], // objects
+      [], // pages
+      glossaryRows, // glossary
+      [], // config
+      [], // landing
+    ];
+    let callIndex = 0;
+    function makeResult() {
+      const data = responses[callIndex] ?? [];
+      callIndex++;
+      return Promise.resolve(data);
+    }
+    const db: Record<string, unknown> = {};
+    function terminal() {
+      return Object.assign(
+        {
+          then: (
+            resolve: (v: unknown) => unknown,
+            reject?: (e: unknown) => unknown,
+          ) => {
+            try {
+              return Promise.resolve(makeResult()).then(resolve, reject);
+            } catch (e) {
+              return Promise.reject(e);
+            }
+          },
+        },
+        db,
+      );
+    }
+    db.select = vi.fn(() => terminal());
+    db.from = vi.fn(() => terminal());
+    db.where = vi.fn(() => terminal());
+    db.limit = vi.fn(() => terminal());
+    db.orderBy = vi.fn(() => terminal());
+    return db as unknown as Parameters<typeof buildEntityHashes>[0];
+  }
+
+  function baseTerm(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      term_id: "enc",
+      title: "Encomienda",
+      definition: "A labor system",
+      related_terms: "",
+      ...overrides,
+    };
+  }
+
+  async function hashFor(term: Record<string, unknown>): Promise<string> {
+    const hashes = await buildEntityHashes(makeMockDb([term]), 1);
+    return hashes.glossary[term.term_id as string];
+  }
+
+  it("differs when only related_terms differ", async () => {
+    const a = await hashFor(baseTerm({ related_terms: "loom|weaving" }));
+    const b = await hashFor(baseTerm({ related_terms: "loom" }));
+    expect(a).not.toBe(b);
+  });
+
+  it("is EQUAL when related_terms are identical", async () => {
+    const a = await hashFor(baseTerm({ related_terms: "loom|weaving" }));
+    const b = await hashFor(baseTerm({ related_terms: "loom|weaving" }));
+    expect(a).toBe(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildConfigManagedBlocks / telar_theme / buildConfigChangeFields
+// ---------------------------------------------------------------------------
+
+describe("buildConfigManagedBlocks", () => {
+  it("emits story_interface + collection_interface with UNQUOTED bool/int values", () => {
+    const blocks = buildConfigManagedBlocks(makeConfig({ include_demo_content: false }));
+    expect(blocks.story_interface.include_demo_content).toBe("false");
+    expect(blocks.story_interface.show_on_homepage).toBe("true");
+    expect(blocks.collection_interface.browse_and_search).toBe("true");
+    expect(blocks.collection_interface.featured_count).toBe("4");
+    for (const block of Object.values(blocks))
+      for (const v of Object.values(block)) expect(v).not.toMatch(/["']/);
+  });
+  it("omits null fields and drops empty blocks", () => {
+    const blocks = buildConfigManagedBlocks(
+      makeConfig({ browse_and_search: null, show_link_on_homepage: null,
+            show_sample_on_homepage: null, featured_count: null }),
+    );
+    expect(blocks.collection_interface).toBeUndefined();
+    expect(blocks.story_interface).toBeDefined();
+  });
+});
+
+describe("buildConfigManagedFields — telar_theme", () => {
+  it("writes telar_theme from config.theme (quoted top-level scalar)", () => {
+    expect(buildConfigManagedFields(makeConfig({ theme: "trama" })).telar_theme).toBe('"trama"');
+  });
+  it("omits telar_theme when theme is null", () => {
+    expect(buildConfigManagedFields(makeConfig({ theme: null })).telar_theme).toBeUndefined();
+  });
+});
+
+describe("buildConfigChangeFields", () => {
+  it("flattens block fields under dotted keys alongside top-level managed fields", () => {
+    const f = buildConfigChangeFields(makeConfig({ title: "T", include_demo_content: false }));
+    expect(f.title).toBe('"T"');
+    expect(f["story_interface.include_demo_content"]).toBe("false");
+    expect(f["collection_interface.featured_count"]).toBe("4");
+  });
+});
+
+describe("updateConfigBlocks", () => {
+  const blocks = { story_interface: { include_demo_content: "false" } };
+
+  it("replaces an existing nested key in place, preserving indent + trailing comment", () => {
+    const yaml = `title: "x"\nstory_interface:\n  include_demo_content: true # keep me\n`;
+    const out = updateConfigBlocks(yaml, blocks);
+    expect(out).toContain("  include_demo_content: false # keep me");
+    expect((loadYaml(out) as any).story_interface.include_demo_content).toBe(false);
+  });
+
+  it("inserts a missing managed key into an existing block", () => {
+    const yaml = `story_interface:\n  show_on_homepage: true\nprotected:\n  key: abc\n`;
+    const out = updateConfigBlocks(yaml, { story_interface: { include_demo_content: "false" } });
+    const p = loadYaml(out) as any;
+    expect(p.story_interface.include_demo_content).toBe(false);
+    expect(p.story_interface.show_on_homepage).toBe(true);
+    expect(p.protected.key).toBe("abc");
+  });
+
+  it("appends the whole block at EOF when absent", () => {
+    const yaml = `title: "x"\n`;
+    const out = updateConfigBlocks(yaml, { collection_interface: { featured_count: "6" } });
+    expect((loadYaml(out) as any).collection_interface.featured_count).toBe(6);
+  });
+
+  it("emits booleans/ints unquoted so js-yaml types them correctly", () => {
+    const out = updateConfigBlocks(`story_interface:\n  a: 1\n`, {
+      story_interface: { include_demo_content: "false" },
+      collection_interface: { featured_count: "4" },
+    });
+    const p = loadYaml(out) as any;
+    expect(typeof p.story_interface.include_demo_content).toBe("boolean");
+    expect(typeof p.collection_interface.featured_count).toBe("number");
+  });
+
+  it("is idempotent", () => {
+    const yaml = `story_interface:\n  include_demo_content: true\n`;
+    const once = updateConfigBlocks(yaml, blocks);
+    expect(updateConfigBlocks(once, blocks)).toBe(once);
+  });
+
+  it("REFUSES flow-style blocks (leaves them untouched → caller stays valid)", () => {
+    const yaml = `story_interface: {}\n`;
+    const out = updateConfigBlocks(yaml, blocks);
+    expect(out).toBe(yaml);
+    expect(() => loadYaml(out)).not.toThrow();
+  });
+
+  it("updates the LAST duplicate block key (matches js-yaml/framework read order)", () => {
+    const yaml = `story_interface:\n  include_demo_content: true\nstory_interface:\n  include_demo_content: true\n`;
+    const out = updateConfigBlocks(yaml, blocks);
+    // js-yaml's default schema REFUSES duplicate keys outright; the framework
+    // (Jekyll/Ruby YAML) reads last-wins. `json: true` selects the same
+    // duplicate-tolerant last-wins semantics, which is what this case asserts.
+    expect((loadYaml(out, { json: true }) as any).story_interface.include_demo_content).toBe(false);
+  });
+
+  it("preserves a consistent CRLF line ending", () => {
+    const yaml = `title: "x"\r\nstory_interface:\r\n  include_demo_content: true\r\n`;
+    const out = updateConfigBlocks(yaml, blocks);
+    expect(out).not.toMatch(/[^\r]\n/);
+    expect((loadYaml(out) as any).story_interface.include_demo_content).toBe(false);
+  });
+
+  it("does not treat a commented child as the managed key (inserts the real one)", () => {
+    const yaml = `story_interface:\n  # include_demo_content: true (disabled)\n  show_on_homepage: true\n`;
+    const out = updateConfigBlocks(yaml, blocks);
+    expect(out).toContain("# include_demo_content: true (disabled)");
+    expect((loadYaml(out) as any).story_interface.include_demo_content).toBe(false);
+  });
+});
+
+describe("healConfigYaml — nested blocks", () => {
+  const blocks = { story_interface: { include_demo_content: "false" } };
+
+  it("applies blocks on the normal (already-valid) path", () => {
+    const input = `title: "x"\nstory_interface:\n  include_demo_content: true\n`;
+    const out = healConfigYaml(input, {}, blocks);
+    expect((loadYaml(out) as any).story_interface.include_demo_content).toBe(false);
+  });
+
+  it("applies blocks on the rescue path (input has the multi-line-scalar corruption)", () => {
+    const corrupt = [
+      'title: "Para one.', "", 'Para two. "', "", 'Para two. "',
+      'url: "https://u.example"', "story_interface:", "  include_demo_content: true",
+    ].join("\n");
+    expect(() => loadYaml(corrupt)).toThrow();
+    // Real callers pass every managed field (buildConfigManagedFields), so the
+    // rescue path can re-emit url cleanly after the strip drops the corrupt one.
+    const out = healConfigYaml(
+      corrupt,
+      { description: '"Fresh."', url: '"https://u.example"' },
+      blocks,
+    );
+    const p = loadYaml(out) as any;
+    expect(p.story_interface.include_demo_content).toBe(false);
+    expect(p.url).toBe("https://u.example");
+  });
+
+  it("never returns invalid YAML even for a flow-style block (drops the block write)", () => {
+    const input = `title: "x"\nstory_interface: {}\n`;
+    const out = healConfigYaml(input, { title: '"y"' }, blocks);
+    expect(() => loadYaml(out)).not.toThrow();
+    expect((loadYaml(out) as any).title).toBe("y");
+  });
+
+  it("defaults blocks to {} (existing 2-arg callers unaffected)", () => {
+    const input = `title: "x"\n`;
+    expect(healConfigYaml(input, { title: '"y"' })).toContain('title: "y"');
+  });
+});
+
+describe("config blocks round-trip against real _config.yml fixtures", () => {
+  const TEMPLATE = `title: "Demo"\nstory_interface:\n  show_on_homepage: true # c\n  show_story_steps: true # c\n  show_object_credits: true # c\n  include_demo_content: true # c\n\n# Collection Interface Settings\ncollection_interface:\n  browse_and_search: true # c\n  show_link_on_homepage: true # c\n  show_sample_on_homepage: true # c\n  featured_count: 4 # c\n`;
+  const PARTIAL = `title: "AIH"\nstory_interface:\n  show_story_steps: true # c\n  show_object_credits: true # c\n  include_demo_content: false # c\n`;
+
+  it("turns demo off in the framework template, preserving comments + typing", () => {
+    const blocks = { story_interface: { include_demo_content: "false" } };
+    const out = healConfigYaml(TEMPLATE, {}, blocks);
+    const p = loadYaml(out) as Record<string, unknown>;
+    expect((p.story_interface as Record<string, unknown>).include_demo_content).toBe(false);
+    expect((p.story_interface as Record<string, unknown>).show_on_homepage).toBe(true);
+    expect((p.collection_interface as Record<string, unknown>).featured_count).toBe(4);
+    expect(out).toContain("# Collection Interface Settings");
+  });
+
+  it("inserts missing keys + appends the absent collection_interface (aiforhistory)", () => {
+    const blocks = {
+      story_interface: { show_on_homepage: "false", include_demo_content: "false" },
+      collection_interface: { featured_count: "8" },
+    };
+    const out = healConfigYaml(PARTIAL, {}, blocks);
+    const p = loadYaml(out) as Record<string, unknown>;
+    expect((p.story_interface as Record<string, unknown>).show_on_homepage).toBe(false);
+    expect((p.story_interface as Record<string, unknown>).include_demo_content).toBe(false);
+    expect((p.story_interface as Record<string, unknown>).show_story_steps).toBe(true);
+    expect((p.collection_interface as Record<string, unknown>).featured_count).toBe(8);
+  });
+});
+
+describe("settings change-detection includes block fields", () => {
+  it("buildConfigChangeFields differs when only a nested toggle changes", () => {
+    const a = JSON.stringify(buildConfigChangeFields(makeConfig({ include_demo_content: true })));
+    const b = JSON.stringify(buildConfigChangeFields(makeConfig({ include_demo_content: false })));
+    expect(a).not.toBe(b);
   });
 });

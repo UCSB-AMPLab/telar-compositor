@@ -1,24 +1,27 @@
 // @vitest-environment jsdom
 /**
  * Regression — the homepage Welcome Message editor must be COLLABORATIVE, like
- * every other landing field and every other long-form editor.
+ * every other landing field (stories_heading, objects_heading, objects_intro)
+ * and every other long-form editor (page body, layer content, glossary
+ * definition).
  *
  * Root cause of the persistence bug: `welcome_body` was the ONLY field the
  * Durable Object's `snapshotToD1` cycle writes to D1 that was NOT wired to its
  * Yjs `Y.Text`. The editor wrote D1 directly (fetcher autosave) while the DO
- * kept snapshotting the stale, unused Yjs `welcome_body` Y.Text back over it,
+ * kept snapshotting the stale, unused Yjs `welcome_body` Y.Text back over it —
  * clobbering edits ~every snapshot cycle.
  *
  * Fix: wire the welcome `MarkdownEditor` to its Yjs `Y.Text` (collaborative
- * mode), like its siblings, so edits flow through Yjs and the snapshot
- * persists them. The canned default is shown via a `placeholder` instead of
- * being injected as editable content.
+ * mode), exactly like its siblings, so edits flow through Yjs and the snapshot
+ * persists them. The canned default is shown via a `placeholder` (the localized
+ * `WELCOME_BODY_LOCALISED` text) instead of being injected as editable content,
+ * matching how the sibling fields surface their defaults.
  *
- * Mock strategy mirrors tests/_app.homepage.test.tsx, but uses the REAL `yjs`
- * + REAL `getYText` so the component resolves a real welcome_body Y.Text from
- * the collaboration context.
+ * Mock strategy mirrors tests/homepage-live-lang.test.tsx, but uses the REAL
+ * `yjs` + REAL `getYText` so the component resolves a real welcome_body Y.Text
+ * from the collaboration context.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -27,7 +30,8 @@ import React from "react";
 import * as Y from "yjs";
 import { WELCOME_BODY_LOCALISED } from "~/lib/v130-framework-labels";
 
-// A real Y.Doc whose config.landing map holds a welcome_body Y.Text.
+// A real Y.Doc whose config.landing map holds a welcome_body Y.Text, so the
+// component (via REAL getYText) resolves a collaborative text instance.
 const ydoc = new Y.Doc();
 const configMap = ydoc.getMap<unknown>("config");
 const landingMap = new Y.Map<unknown>();
@@ -38,14 +42,14 @@ configMap.set("landing", landingMap);
 configMap.set("title", new Y.Text(""));
 configMap.set("description", new Y.Text(""));
 
+// Records the props of every MarkdownEditor mounted during a render.
 const markdownEditorMounts: Array<Record<string, unknown>> = [];
 
-function makeLoaderData() {
+function makeData() {
   return {
-    project: { id: 1, github_repo_full_name: "owner/repo", github_pages_url: null },
-    config: { project_id: 1, lang: "en", title: "Test site", url: null, baseurl: null },
+    project: { id: 42, github_pages_url: null, last_synced_at: null },
+    config: { lang: "en", title: "T", description: "D", featured_count: 4 },
     landing: {
-      project_id: 1,
       welcome_body: null,
       stories_heading: null,
       stories_intro: null,
@@ -72,9 +76,7 @@ vi.mock("react-router", () => ({
     submit: vi.fn(),
     Form: (props: React.FormHTMLAttributes<HTMLFormElement>) => <form {...props} />,
   }),
-  useLoaderData: () => makeLoaderData(),
   useNavigate: () => vi.fn(),
-  redirect: (url: string) => ({ url }),
   Link: ({ children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
     <a {...rest}>{children}</a>
   ),
@@ -103,33 +105,7 @@ vi.mock("~/hooks/use-collaborative-text", () => ({
 
 vi.mock("~/lib/use-iiif-thumbnail", () => ({ useIiifThumbnail: () => null }));
 
-vi.mock("~/middleware/auth.server", () => ({ userContext: Symbol("userContext") }));
-vi.mock("~/lib/db.server", () => ({ getDb: () => ({}) }));
-vi.mock("~/lib/membership.server", () => ({
-  resolveActiveProject: vi.fn(),
-  requireProjectMember: vi.fn(),
-}));
-vi.mock("~/lib/session.server", () => ({
-  createSessionStorage: () => ({ getSession: () => ({ get: () => undefined }) }),
-}));
-
-vi.mock("@dnd-kit/core", () => ({
-  DndContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  closestCenter: () => undefined,
-  KeyboardSensor: class {},
-  PointerSensor: class {},
-  useSensor: () => undefined,
-  useSensors: () => [],
-  DragOverlay: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-}));
-vi.mock("@dnd-kit/sortable", () => ({
-  SortableContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  sortableKeyboardCoordinates: () => undefined,
-  rectSortingStrategy: undefined,
-  arrayMove: <T,>(arr: T[]) => arr,
-}));
-
-// Inline fields not under test — stub out.
+// Inline fields are not under test here — stub them out.
 vi.mock("~/components/ui/InlineTextField", () => ({ InlineTextField: () => null }));
 vi.mock("~/components/ui/InlineTextArea", () => ({ InlineTextArea: () => null }));
 
@@ -140,12 +116,7 @@ vi.mock("~/components/ui/MarkdownEditor", () => ({
   },
 }));
 
-async function loadHomepage() {
-  const mod = (await import("~/routes/_app.homepage")) as unknown as {
-    default: React.ComponentType<{ loaderData: unknown }>;
-  };
-  return mod.default;
-}
+import { HomepageEditor } from "~/components/features/pages/HomepageEditor";
 
 afterEach(() => {
   cleanup();
@@ -153,27 +124,26 @@ afterEach(() => {
 });
 
 describe("homepage Welcome Message editor — collaborative wiring (regression)", () => {
-  it("wires welcome_body to its Yjs Y.Text (collaborative, like its sibling landing fields)", async () => {
-    const Homepage = await loadHomepage();
-    render(<Homepage loaderData={makeLoaderData() as unknown as never} />);
+  it("wires welcome_body to its Yjs Y.Text (collaborative, like its sibling landing fields)", () => {
+    render(<HomepageEditor data={makeData() as never} />);
 
     const welcome = markdownEditorMounts.find((p) => p.fieldName === "welcome_body");
     expect(welcome, "the welcome_body MarkdownEditor should be mounted").toBeTruthy();
+    // Collaborative: it must receive the welcome_body Y.Text so edits flow
+    // through Yjs (and the DO snapshot persists them instead of clobbering).
     expect(welcome!.yText, "welcome editor must receive a Yjs Y.Text").toBeInstanceOf(Y.Text);
     expect(welcome!.yText).toBe(landingMap.get("welcome_body"));
   });
 
-  it("shows the localized canned default as a placeholder (not injected content)", async () => {
-    const Homepage = await loadHomepage();
-    render(<Homepage loaderData={makeLoaderData() as unknown as never} />);
+  it("shows the localized canned default as a placeholder (not injected content)", () => {
+    render(<HomepageEditor data={makeData() as never} />);
 
     const welcome = markdownEditorMounts.find((p) => p.fieldName === "welcome_body");
     expect(welcome!.placeholder).toBe(WELCOME_BODY_LOCALISED.en);
   });
 
-  it("keeps actionUrl=/homepage for the non-collaborative fallback path", async () => {
-    const Homepage = await loadHomepage();
-    render(<Homepage loaderData={makeLoaderData() as unknown as never} />);
+  it("keeps actionUrl=/homepage for the non-collaborative fallback path", () => {
+    render(<HomepageEditor data={makeData() as never} />);
 
     const welcome = markdownEditorMounts.find((p) => p.fieldName === "welcome_body");
     expect(welcome!.actionUrl).toBe("/homepage");
