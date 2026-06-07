@@ -4,13 +4,16 @@
  * At rest: coloured dot only (compact, unobtrusive).
  * On hover / focus: floating tooltip below the dot shows label text.
  *
- * States:
- *   connected  — green dot, "Connected" tooltip
- *   connecting — amber animated dot, "Connecting…" tooltip
- *   offline    — red dot, "Offline" tooltip + reassuring sub-text
+ * States (the three connectionStatus keys map to deliberately calm copy and
+ * colour):
+ *   connected  — chilca (green) dot, "Live" tooltip
+ *   connecting — amber animated dot, "Reconnecting…" tooltip
+ *   offline    — neutral/cream dot, "Working solo" tooltip. This must NOT read
+ *                as an error: an offline editor can still work locally, so an
+ *                alarming red "Offline" treatment would be misleading.
  *
- * Uses font-body (Roboto Condensed) for tooltip text per visual identity.
- * All colours from Tailwind utility classes — no hardcoded hex values.
+ * Tooltip label uses font-heading 600 (uppercase chrome label). All colours
+ * come from Tailwind utility classes — no hardcoded hex values.
  *
  * Placement: right of PresenceBar, left of Users icon.
  */
@@ -24,22 +27,22 @@ export interface ConnectionPillProps {
 
 const dotConfig = {
   connected: {
-    dot: "bg-green-500",
-    label: "connection_status_connected",
-    tooltipBg: "bg-green-50 border-green-200",
-    text: "text-green-700",
+    dot: "bg-chilca",
+    label: "presence_live",
+    tooltipBg: "bg-surface border-gray-200",
+    text: "text-charcoal",
   },
   connecting: {
     dot: "bg-amber-500 animate-pulse",
-    label: "connection_status_connecting",
-    tooltipBg: "bg-amber-50 border-amber-200",
-    text: "text-amber-700",
+    label: "presence_reconnecting",
+    tooltipBg: "bg-surface border-gray-200",
+    text: "text-charcoal",
   },
   offline: {
-    dot: "bg-red-500",
-    label: "connection_status_offline",
-    tooltipBg: "bg-red-50 border-red-200",
-    text: "text-red-700",
+    dot: "bg-cream-dark border border-gray-300",
+    label: "presence_working_solo",
+    tooltipBg: "bg-surface border-gray-200",
+    text: "text-charcoal",
   },
 } as const;
 
@@ -69,7 +72,7 @@ export function ConnectionPill({ status, className = "" }: ConnectionPillProps) 
         aria-live="polite"
         className={`absolute top-full right-0 mt-2 hidden group-hover:block group-focus-within:block w-max max-w-[16rem] whitespace-normal rounded-md border px-2.5 py-1.5 shadow-sm ${cfg.tooltipBg}`}
       >
-        <span className={`font-body text-xs font-medium ${cfg.text}`}>{label}</span>
+        <span className={`font-heading text-xs font-semibold uppercase ${cfg.text}`}>{label}</span>
         {tooltip && (
           <p className={`font-body text-xs mt-0.5 opacity-75 ${cfg.text}`}>{tooltip}</p>
         )}

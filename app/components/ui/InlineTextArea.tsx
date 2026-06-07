@@ -18,7 +18,7 @@
  * Shows an authorship indicator ("Last edit: {name}") on hover
  * when no live presence is active on the field.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useState } from "react";
@@ -102,8 +102,8 @@ export function InlineTextArea({
   };
 
   const borderClass = bordered
-    ? "rounded-md border border-gray-200 px-3 py-2 bg-white hover:border-gray-300 focus:border-periwinkle focus:ring-1 focus:ring-periwinkle"
-    : "border-b border-transparent hover:border-gray-200 focus:border-periwinkle";
+    ? "rounded-md border border-gray-200 px-3 py-2 bg-white hover:border-gray-300 focus:border-anil"
+    : "border-b border-transparent hover:border-gray-200 focus:border-anil";
 
   return (
     <div
@@ -120,7 +120,7 @@ export function InlineTextArea({
         rows={rows}
         disabled={isPublishing}
         aria-disabled={isPublishing || undefined}
-        className={`w-full bg-transparent focus:outline-none resize-none transition-colors ${borderClass} ${isPublishing ? "opacity-50 cursor-not-allowed" : ""} ${inputClassName} ${className}`}
+        className={`w-full bg-transparent resize-none transition-colors ${borderClass} ${isPublishing ? "text-fg-disabled cursor-not-allowed" : ""} ${inputClassName} ${className}`}
         style={
           firstColor
             ? { outline: `2px solid ${firstColor}`, outlineOffset: "-1px", borderRadius: "4px" }

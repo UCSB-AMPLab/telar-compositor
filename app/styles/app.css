@@ -1,3 +1,10 @@
+/**
+ * Telar Compositor — global stylesheet
+ * Tailwind v4 @theme tokens, font imports, and shared keyframes.
+ *
+ * @version v1.3.0-beta
+ */
+
 @import "tailwindcss";
 
 @import "@fontsource/space-grotesk/400.css";
@@ -7,16 +14,79 @@
 @import "@fontsource/roboto-condensed/500.css";
 
 @theme {
-  /* Trama palette */
-  --color-terracotta: #883C36;
-  --color-lavender: #C6D0F8;
-  --color-cream: #FFF6EF;
-  --color-cream-dark: #F5EDE0;
+  /* ============================================================================
+     Trama — the extended token system (canonical, from tokens.css).
 
-  /* Compositor UI palette */
-  --color-charcoal: #333333;
-  --color-periwinkle: #C6D0F8;
-  --color-periwinkle-hover: #B5C3F0;
+     ROLE ALLOCATION — DOCUMENTATION ONLY.
+     This table records the canonical role each token plays, as a single
+     reference for the surfaces that consume them. The renamed anil tokens
+     carry their exact prior hexes (#C6D0F8 / #B5C3F0), so there is zero
+     visual change from the rename.
+
+       Surface stack (raised / page / recessed) ... surface / cream / cream-dark
+       Primary CTA fill ........................... anil, hover -> anil-hover
+       Destructive / Publish CTA .................. terracotta, hover -> terracotta-deep
+       Body text .................................. charcoal (never #000)
+       Inline link in prose ....................... anil-ink  [reallocation deferred:
+                                                    links stay terracotta for now]
+       Muted meta / captions ...................... fg-muted / fg-subtle
+       Objects content accent ..................... chilca
+       Stories content accent .....................  anil
+       Glossary content accent .................... caracol
+       Publish content accent ..................... terracotta
+       Featured / convenor / emphasis ............. caracol*
+       In-sync .................................... chilca-pale bg, chilca-deep ink
+       Unpublished changes ........................ cream-dark bg, terracotta ink
+       Out of sync / draft / requires attention ... qolle-pale bg, qolle-deep ink
+       Publishing... / focus rings / info ......... anil-pale bg, anil-ink ink
+       Upgrade required ........................... terracotta-pale bg, terracotta ink
+       Layer 1 reader panel (published) ........... anil bg, charcoal ink (unchanged)
+       Layer 2 reader panel (published) ........... terracotta bg, cream ink (unchanged)
+       Glossary pop-out (published) ............... cream bg, charcoal ink (unchanged)
+     ============================================================================ */
+
+  /* Cream stack (three tiers, all warm) */
+  --color-surface:         #FFFFFF;
+  --color-cream:           #FFF6EF;
+  --color-cream-dark:      #F5EDE0;
+
+  /* Añil (renamed; full family) — anil/anil-hover keep their prior hexes */
+  --color-anil-pale:       #E0E5FB;
+  --color-anil:            #C6D0F8;
+  --color-anil-hover:      #B5C3F0;
+  --color-anil-deep:       #5B6BAF;
+  --color-anil-ink:        #2E3F6E;
+
+  /* Terracotta family */
+  --color-terracotta-pale: #FBEAE8;
+  --color-terracotta:      #883C36;
+  --color-terracotta-deep: #5A2622;
+
+  /* Chilca — objects, in-sync */
+  --color-chilca-pale:     #E1E6D7;
+  --color-chilca:          #5D6F4F;
+  --color-chilca-deep:     #3E4D34;
+
+  /* Q'olle — drafts, out-of-sync, decorative (gold migrates here) */
+  --color-qolle-pale:      #EFE0A7;
+  --color-qolle:           #9C7B1F;
+  --color-qolle-deep:      #6B5210;
+
+  /* Caracol — featured, convenor, emphasis */
+  --color-caracol-pale:    #EFE0EA;
+  --color-caracol:         #6E2D4A;
+  --color-caracol-deep:    #4A1D32;
+
+  /* Charcoal + neutrals */
+  --color-charcoal:        #333333;
+  --color-charcoal-deep:   #1A1A1D;
+  --color-fg-muted:        #6B7280;
+  --color-fg-subtle:       #9CA3AF;
+  --color-fg-faint:        #D1D5DB;
+  --color-border:          #E5E7EB;
+  --color-border-strong:   #D1D5DB;
+  --color-fg-disabled:     #9CA3AF;
+  --color-disabled:        #E5E7EB;
 
   /* Typography */
   --font-heading: "Space Grotesk", sans-serif;
@@ -41,6 +111,10 @@
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-anil-deep);
+    outline-offset: 2px;
   }
 }
 
@@ -97,7 +171,7 @@
 .cm-md-syntax-hidden { font-size: 0; line-height: 0; overflow: hidden; display: inline-block; width: 0; }
 .cm-md-link { text-decoration: underline; color: var(--color-charcoal); cursor: pointer; }
 .cm-md-link-url { color: #999; font-size: 0.85em; }
-.cm-md-blockquote { border-left: 3px solid var(--color-periwinkle); padding-left: 1em; color: #666; }
+.cm-md-blockquote { border-left: 3px solid var(--color-anil); padding-left: 1em; color: #666; }
 .cm-md-code { background: var(--color-cream-dark); padding: 0.1em 0.3em; border-radius: 0.25rem; font-size: 0.9em; }
 .cm-md-code-block { background: var(--color-cream-dark); display: block; padding: 0.25em 0.5em; }
 .cm-md-hr { display: block; border: none; border-top: 1px solid #ddd; margin: 0.5em 0; }
@@ -109,6 +183,40 @@
 .cm-md-ol-mark { color: #999; }
 .cm-md-ul .cm-line,
 .cm-md-ol .cm-line { margin-bottom: 0.125em; }
+
+/* Glossary [[term]] chips — anil-pale pill, anil-ink text, anil-deep ring.
+   Shown when the cursor is outside the [[term]] range; raw brackets reveal when inside.
+   Unresolved term ids get a wavy terracotta underline instead of a pill. */
+.cm-glossary-chip {
+  display: inline;
+  background: var(--color-anil-pale);
+  color: var(--color-anil-ink);
+  box-shadow: inset 0 0 0 1px var(--color-anil-deep);
+  border-radius: 0.375rem;
+  padding: 0.05em 0.4em;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+.cm-glossary-unresolved {
+  text-decoration: underline wavy var(--color-terracotta);
+  text-underline-offset: 0.2em;
+}
+
+/* Glossary deep-link pulse — a transient anil-deep ring that fades after
+   the "Used in" jump lands on a [[term]] chip. One-shot (no infinite loop); the
+   story route adds this class then removes it after the animation. Distinct from
+   site-status-pulse (infinite) and structural-highlight-pulse (collaborator id). */
+@keyframes cm-glossary-chip-pulse {
+  0%   { box-shadow: inset 0 0 0 1px var(--color-anil-deep), 0 0 0 0 rgba(91, 107, 175, 0.55); }
+  40%  { box-shadow: inset 0 0 0 1px var(--color-anil-deep), 0 0 0 6px rgba(91, 107, 175, 0.18); }
+  100% { box-shadow: inset 0 0 0 1px var(--color-anil-deep), 0 0 0 0 transparent; }
+}
+.cm-glossary-chip-pulse {
+  animation: cm-glossary-chip-pulse 2.4s ease-out 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-glossary-chip-pulse { animation: none; }
+}
 
 /* Structural ops animations (highlight, fade-out) */
 /* Uses CSS custom property --structural-highlight-color set inline from the
@@ -125,4 +233,32 @@
   opacity: 0;
   transition: opacity 300ms ease-out;
   pointer-events: none;
+}
+
+/* Site Status pill — publishing dot pulsing ring.
+   Animates the ring box-shadow (NOT opacity); ring colour is anil-deep at low
+   alpha. Only the publishing state uses this. Tailwind's animate-pulse is
+   explicitly NOT a substitute. */
+@keyframes site-status-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(91, 107, 175, 0.25); }
+  50%      { box-shadow: 0 0 0 4px rgba(91, 107, 175, 0.08); }
+}
+.site-status-pulse {
+  animation: site-status-pulse 1.6s ease-in-out infinite;
+}
+
+/* IIIF viewer surface — Telar weave pattern behind the OpenSeadragon image,
+   ported from the framework's IIIF plates (the museum-mat texture published
+   Telar sites render behind images), replacing the unbranded navy. The weave
+   SVG declares width/height="100%", so it MUST be pinned to a small tile via
+   background-size or it scales to one giant copy. The drop-shadow is applied to
+   the OSD canvas (not the container) so it tracks the image's opaque pixels as
+   it pans/zooms, leaving the transparent letterbox unshadowed. The tiled SVG is
+   opaque grey; bg-cream is only a load-time fallback. */
+.iiif-viewer-surface {
+  background: var(--color-cream) url("/background-gris.svg") repeat;
+  background-size: 20px auto;
+}
+.iiif-viewer-surface .openseadragon-canvas canvas {
+  filter: drop-shadow(0 4px 16px rgb(0 0 0 / 0.35));
 }
