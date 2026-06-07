@@ -4,6 +4,13 @@
  * Uses Web Crypto API (available in Cloudflare Workers) to sign JWTs
  * with the App's RSA private key. Installation tokens carry the App's
  * permissions (e.g. pages:write) which user OAuth tokens do not.
+ *
+ * The private key is accepted in either PKCS#1 (`BEGIN RSA PRIVATE KEY`,
+ * GitHub's default download format) or PKCS#8 (`BEGIN PRIVATE KEY`) PEM.
+ * Web Crypto importKey only accepts PKCS#8, so PKCS#1 keys are wrapped into
+ * a PKCS#8 PrivateKeyInfo at runtime before import.
+ *
+ * @version v1.3.0-beta
  */
 
 import { githubHeaders } from "~/lib/github.server";
@@ -19,15 +26,110 @@ function base64url(input: ArrayBuffer | Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function pemToArrayBuffer(pem: string): ArrayBuffer {
+function pemBodyToBytes(pem: string): Uint8Array {
   const b64 = pem
     .replace(/-----BEGIN (RSA )?PRIVATE KEY-----/, "")
     .replace(/-----END (RSA )?PRIVATE KEY-----/, "")
     .replace(/\s/g, "");
-  const binary = atob(b64);
+  let binary: string;
+  try {
+    binary = atob(b64);
+  } catch {
+    throw new Error(
+      "GITHUB_PRIVATE_KEY could not be decoded; expected an RSA private key " +
+        "in PKCS#1 or PKCS#8 PEM format (check the secret is the real PEM, " +
+        "not escaped \\n sequences).",
+    );
+  }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
+  return bytes;
+}
+
+// ---------------------------------------------------------------------------
+// PKCS#1 -> PKCS#8 wrapping
+//
+// GitHub Apps download private keys in PKCS#1 form (`BEGIN RSA PRIVATE KEY`)
+// by default. Web Crypto's importKey only accepts PKCS#8 ("pkcs8"); handing it
+// a PKCS#1 DER throws a cryptic `DataError: Invalid keyData`. To accept both,
+// we wrap a PKCS#1 RSAPrivateKey in a PKCS#8 PrivateKeyInfo at runtime:
+//
+//   SEQUENCE {
+//     INTEGER 0                              -- version
+//     SEQUENCE { OID rsaEncryption, NULL }   -- AlgorithmIdentifier
+//     OCTET STRING { <PKCS#1 DER> }          -- privateKey
+//   }
+// ---------------------------------------------------------------------------
+
+// Fixed rsaEncryption AlgorithmIdentifier: SEQUENCE { OID 1.2.840.113549.1.1.1, NULL }
+const RSA_ALGORITHM_IDENTIFIER = new Uint8Array([
+  0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+  0x05, 0x00,
+]);
+
+// DER length octets: short form (<128) or long form with leading 0x80|count.
+function derLength(len: number): number[] {
+  if (len < 0x80) return [len];
+  const out: number[] = [];
+  let n = len;
+  while (n > 0) {
+    out.unshift(n & 0xff);
+    n >>= 8;
+  }
+  return [0x80 | out.length, ...out];
+}
+
+// Build a DER TLV (tag + length + content).
+function derTLV(tag: number, content: Uint8Array): Uint8Array {
+  const len = derLength(content.length);
+  const out = new Uint8Array(1 + len.length + content.length);
+  out[0] = tag;
+  out.set(len, 1);
+  out.set(content, 1 + len.length);
+  return out;
+}
+
+function wrapPkcs1AsPkcs8(pkcs1: Uint8Array): Uint8Array {
+  const version = new Uint8Array([0x02, 0x01, 0x00]); // INTEGER 0
+  const privateKeyOctet = derTLV(0x04, pkcs1); // OCTET STRING { pkcs1 }
+  const inner = new Uint8Array(
+    version.length + RSA_ALGORITHM_IDENTIFIER.length + privateKeyOctet.length,
+  );
+  inner.set(version, 0);
+  inner.set(RSA_ALGORITHM_IDENTIFIER, version.length);
+  inner.set(privateKeyOctet, version.length + RSA_ALGORITHM_IDENTIFIER.length);
+  return derTLV(0x30, inner); // SEQUENCE { ... }
+}
+
+/**
+ * Imports an RSA private key for RS256 signing from a PEM string, accepting
+ * BOTH PKCS#1 (`BEGIN RSA PRIVATE KEY`) and PKCS#8 (`BEGIN PRIVATE KEY`).
+ * PKCS#1 keys are wrapped into PKCS#8 before import. Throws a clear, actionable
+ * error if the key cannot be imported.
+ */
+async function importRsaPrivateKey(pem: string): Promise<CryptoKey> {
+  const isPkcs1 = /-----BEGIN RSA PRIVATE KEY-----/.test(pem);
+  const body = pemBodyToBytes(pem);
+  const pkcs8 = isPkcs1 ? wrapPkcs1AsPkcs8(body) : body;
+
+  try {
+    return await crypto.subtle.importKey(
+      "pkcs8",
+      pkcs8.buffer.slice(
+        pkcs8.byteOffset,
+        pkcs8.byteOffset + pkcs8.byteLength,
+      ) as ArrayBuffer,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+  } catch (err) {
+    throw new Error(
+      "GITHUB_PRIVATE_KEY could not be imported; expected an RSA private key " +
+        "in PKCS#1 or PKCS#8 PEM format. " +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
 }
 
 async function signJwt(appId: string, privateKeyPem: string): Promise<string> {
@@ -44,13 +146,7 @@ async function signJwt(appId: string, privateKeyPem: string): Promise<string> {
   const payloadB64 = base64url(enc.encode(JSON.stringify(payload)));
   const signingInput = `${headerB64}.${payloadB64}`;
 
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    pemToArrayBuffer(privateKeyPem),
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
+  const key = await importRsaPrivateKey(privateKeyPem);
 
   const signature = await crypto.subtle.sign(
     "RSASSA-PKCS1-v1_5",

@@ -14,6 +14,7 @@ import { maybeRefreshToken } from "~/lib/auth.server";
 import { getDb } from "~/lib/db.server";
 import { users } from "~/db/schema";
 import { eq } from "drizzle-orm";
+import { isSessionLifetimeValid } from "../../workers/auth";
 
 export type AuthenticatedUser = typeof users.$inferSelect;
 
@@ -28,6 +29,21 @@ export const authMiddleware: MiddlewareFunction = async ({ request, context }, n
 
   if (!userId) {
     throw redirect("/signin");
+  }
+
+  // Enforce the server-side session lifetime on the HTTP path too, using the
+  // SAME guard the websocket auth applies (workers/auth.ts). A token with no
+  // enforceable lifetime (legacy cookies minted before createdAt was stamped)
+  // or one past its 7-day window gets a clean logout here — rather than staying
+  // authenticated over HTTP while the collaboration socket silently rejects it.
+  const createdAt = session.get("createdAt") as string | undefined;
+  const expires = session.get("expires") as string | undefined;
+  if (!isSessionLifetimeValid(createdAt, expires)) {
+    throw redirect("/signin", {
+      headers: {
+        "Set-Cookie": await sessionStorage.destroySession(session),
+      },
+    });
   }
 
   const db = getDb(env.DB);

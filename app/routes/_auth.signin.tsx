@@ -8,7 +8,7 @@
  * Action generates CSRF state, stores it in a cookie, and redirects
  * to the GitHub authorise URL.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { redirect, Form, useNavigation, useSearchParams } from "react-router";
@@ -147,10 +147,10 @@ export default function SignIn() {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full inline-flex items-center justify-center gap-2 bg-charcoal text-white font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full inline-flex items-center justify-center gap-2 bg-charcoal text-white font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-3 hover:opacity-90 transition-opacity disabled:bg-disabled disabled:text-fg-disabled disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (
-                    <span className="w-4 h-4 rounded-full border-2 border-white border-t-periwinkle animate-spin" />
+                    <span className="w-4 h-4 rounded-full border-2 border-white border-t-anil animate-spin" />
                   ) : (
                     <Github className="w-4 h-4" />
                   )}

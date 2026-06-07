@@ -234,7 +234,7 @@ export default function InviteAcceptPage() {
             </p>
             <Link
               to="/dashboard"
-              className="inline-block bg-lavender text-charcoal font-heading font-semibold rounded-full px-6 py-3 hover:opacity-90 transition-opacity"
+              className="inline-block bg-anil text-charcoal font-heading font-semibold rounded-full px-6 py-3 hover:opacity-90 transition-opacity"
             >
               {t("accept_go_to_project")}
             </Link>
@@ -254,7 +254,7 @@ export default function InviteAcceptPage() {
             {data.state === "not_signed_in" ? (
               <a
                 href={`/signin?returnTo=${encodeURIComponent(`/invite/${data.token}`)}`}
-                className="inline-block bg-lavender text-charcoal font-heading font-semibold rounded-full px-6 py-3 hover:opacity-90 transition-opacity"
+                className="inline-block bg-anil text-charcoal font-heading font-semibold rounded-full px-6 py-3 hover:opacity-90 transition-opacity"
               >
                 {t("accept_signin")}
               </a>
@@ -262,7 +262,7 @@ export default function InviteAcceptPage() {
               <Form method="post">
                 <button
                   type="submit"
-                  className="bg-lavender text-charcoal font-heading font-semibold rounded-full px-6 py-3 hover:opacity-90 transition-opacity"
+                  className="bg-anil text-charcoal font-heading font-semibold rounded-full px-6 py-3 hover:opacity-90 transition-opacity"
                 >
                   {t("accept_join")}
                 </button>
