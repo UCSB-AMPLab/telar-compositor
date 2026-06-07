@@ -175,7 +175,7 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
         <Link
           to={`/stories/${story.story_id}`}
           onPointerDown={(e) => e.stopPropagation()}
-          className="inline-flex items-center justify-center bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-xs uppercase tracking-wider rounded-full px-3 py-1 transition-colors"
+          className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-xs uppercase tracking-wider rounded-full px-3 py-1 transition-colors"
         >
           {t("story_card.edit")}
         </Link>

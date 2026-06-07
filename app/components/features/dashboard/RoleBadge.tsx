@@ -1,7 +1,7 @@
 /**
  * RoleBadge — inline role chip for project members.
  *
- * Variants: convenor (blue), collaborator (periwinkle/charcoal), pending (gray).
+ * Variants: convenor (blue), collaborator (anil/charcoal), pending (gray).
  */
 
 import { useTranslation } from "react-i18next";
@@ -13,7 +13,7 @@ interface RoleBadgeProps {
 
 const badgeStyles = {
   convenor: "bg-blue-100 text-blue-700",
-  collaborator: "bg-periwinkle/30 text-charcoal",
+  collaborator: "bg-anil/30 text-charcoal",
   pending: "bg-gray-100 text-gray-500",
 } as const;
 
