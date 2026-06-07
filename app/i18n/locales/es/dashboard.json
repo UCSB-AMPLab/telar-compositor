@@ -30,7 +30,7 @@
     "welcome_explanation": "El contenido introductorio que ven los visitantes al llegar a tu sitio. Proviene de la página de inicio de tu sitio.",
     "stories_heading": "Historias",
     "stories_explanation": "Tu colección de historias tal como aparece en la página de inicio. Arrastra para reordenar — esto controla el orden de visualización en tu sitio publicado.",
-    "stories_manage": "Gestionar →",
+    "stories_manage": "Gestionar",
     "objects_heading": "Objetos",
     "objects_explanation": "Objetos destacados de tu colección, mostrados en la página de inicio.",
     "empty_default_hint": "Si lo dejas vacío, tu sitio mostrará un texto predeterminado."
@@ -72,8 +72,7 @@
   "sync_status": {
     "up_to_date": "Al día",
     "unpublished": "Cambios sin publicar",
-    "out_of_sync": "Desincronizado",
-    "published": "Publicado"
+    "out_of_sync": "Desincronizado"
   },
   "new_story_placeholder": "Título de la historia...",
   "new_story_subtitle_placeholder": "Subtítulo (opcional)",

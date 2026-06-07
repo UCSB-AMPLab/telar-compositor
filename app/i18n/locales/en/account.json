@@ -45,7 +45,7 @@
   "github_access_heading": "GitHub access",
   "github_install_type_user": "Personal account",
   "github_install_type_org": "Organization",
-  "github_manage_link": "Manage on GitHub →",
+  "github_manage_link": "Manage on GitHub",
   "github_manage_aria": "Manage installation on GitHub for {{login}}",
   "github_empty_heading": "Telar Compositor isn't installed anywhere yet.",
   "github_empty_subtext": "Install the GitHub App to connect a site.",

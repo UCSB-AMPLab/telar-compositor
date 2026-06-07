@@ -3,6 +3,7 @@
   "language_toggle": "EN",
   "loading": "Cargando...",
   "error": "Algo salió mal",
+  "learn_more": "Conoce más",
   "coming_soon": "Esta sección estará disponible en una próxima actualización.",
   "autosave": {
     "saving": "Guardando...",
@@ -14,15 +15,34 @@
   },
   "nav": {
     "dashboard": "Inicio",
-    "config": "Configuración",
+    "start": "Inicio",
+    "docs": "Docs",
+    "config": "Ajustes del sitio",
     "homepage": "Inicio del sitio",
     "objects": "Objetos",
     "stories": "Historias",
-    "pages": "Páginas",
+    "pages": "Inicio y páginas",
     "glossary": "Glosario",
     "publish": "Publicar",
     "site": "Sitio",
     "site_aria": "Abrir el sitio publicado en una pestaña nueva"
+  },
+  "role": {
+    "convenor": "Coordinador/a",
+    "collaborator": "Colaborador/a",
+    "denied_publish": "Solo quien coordina puede publicar.",
+    "denied_upgrade": "Solo quien coordina puede actualizar Telar.",
+    "ask_convenor_publish": "Pídele a quien coordina que publique"
+  },
+  "user_menu": {
+    "report_problem": "Reportar un problema"
+  },
+  "objects": {
+    "empty_heading": "Aún no hay objetos",
+    "empty_body": "Agrega tu primer objeto para empezar a crear historias. ¿Apenas empiezas? Termina la configuración en Ajustes del sitio."
+  },
+  "onboarding": {
+    "next_add_object": "Sigue: agrega tu primer objeto"
   },
   "sync_banner": {
     "message": "Tu repositorio en GitHub ha cambiado desde la última sincronización. Revisa los cambios para mantener actualizada la copia de trabajo del compositor.",
@@ -32,5 +52,18 @@
     "dismiss_cancel": "Volver",
     "dismiss_confirm": "Cerrar"
   },
-  "user_menu_aria": "Menú de usuario"
+  "user_menu_aria": "Menú de usuario",
+  "status": {
+    "in_sync": "Sincronizado",
+    "unpublished_one": "{{n}} cambio sin publicar",
+    "unpublished_other": "{{n}} cambios sin publicar",
+    "publish_cta": "Publicar",
+    "out_of_sync": "GitHub ha cambiado",
+    "review_cta": "Revisar",
+    "publishing": "Publicando…",
+    "upgrade": "Telar {{version}} disponible",
+    "upgrade_cta": "Actualizar",
+    "saving": "Guardando…",
+    "repo_unavailable": "Sin acceso al repositorio"
+  }
 }

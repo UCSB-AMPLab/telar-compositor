@@ -84,7 +84,8 @@
   "step_done": {
     "heading": "¡Todo listo!",
     "description": "Tu sitio Telar se importó correctamente.",
-    "go_to_dashboard": "Ir al inicio"
+    "go_to_dashboard": "Ir al inicio",
+    "go_to_settings": "Ir a Ajustes del sitio"
   },
   "inline_config": {
     "heading": "Configuración esencial",

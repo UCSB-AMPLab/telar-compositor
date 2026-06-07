@@ -1,0 +1,115 @@
+{
+  "welcome": {
+    "eyebrow_default": "Proyecto",
+    "eyebrow_collab_empty": "Te invitaron",
+    "title_collab_empty": "Te damos la bienvenida a {{project}}",
+    "open_repo_github": "Abrir el repositorio en GitHub",
+    "convened_by_one": "a cargo de {{convenor}} · {{count}} colaborador · creado en {{year}}",
+    "convened_by_other": "a cargo de {{convenor}} · {{count}} colaboradores · creado en {{year}}",
+    "created_year": "creado en {{year}}"
+  },
+  "role_chip": {
+    "convenor": "Tú · Coordinador/a",
+    "collaborator": "Tú · Colaborador/a"
+  },
+  "orientation": {
+    "what_is_compositor": "¿Qué es el compositor?",
+    "plan_narrative": "Planea tu narrativa",
+    "add_collaborators": "Invitar colaboradores"
+  },
+  "section": {
+    "workflow_map": "Cómo funciona el compositor",
+    "activity": "Actividad · lo más reciente",
+    "from_the_docs": "De la documentación",
+    "other_projects": "Tus otros proyectos · {{N}}"
+  },
+  "workflow": {
+    "hint": "Los sitios de Telar se construyen en seis pasos, desde la configuración inicial hasta la publicación. Los bloques de abajo te muestran el estado de cada parte.",
+    "learn_more": "Conoce más"
+  },
+  "tip": {
+    "configure": "Configura aquí los ajustes de tu sitio: el nombre, el tema, el idioma y una descripción breve, además de los datos de autoría, el alojamiento y cómo se les presentan las historias y la colección a quienes visitan el sitio.",
+    "objects": "Agrega o modifica las imágenes, los videos y los archivos de audio que usa tu sitio. Puedes subirlos o integrarlos desde IIIF, Vimeo, YouTube y Google Drive.",
+    "stories": "Las historias son el corazón de los sitios de Telar: combinan una serie de preguntas y respuestas breves con una vista encuadrada de un objeto y hasta dos paneles de capa para ampliar la información.",
+    "glossary": "Puedes agregar paneles adicionales con definiciones de términos clave, conceptos, personas, lugares o lo que quieras. Adminístralos aquí y úsalos en tus historias y páginas.",
+    "pages": "Tu sitio de Telar tiene una página de inicio y puede incluir otras páginas, como las de Acerca de, Créditos o Bibliografía. Edítalas aquí.",
+    "publish_collaborator": "Solo quien coordina puede publicar el sitio. Cuando tus cambios estén listos, avísale.",
+    "publish_convenor": "Cuando todo esté listo, reúne tus cambios en un commit a GitHub, donde tu sitio se reconstruye en unos dos minutos."
+  },
+  "activity": {
+    "empty": "Todavía no hay cambios. Cuando tú o alguien del equipo edite una historia, un objeto o un término, aparecerá aquí.",
+    "fail_open": "La actividad no está disponible — vuelve a revisar en un momento",
+    "see_all": "Ver toda la actividad"
+  },
+  "recovery": {
+    "eyebrow": "Necesita tu atención",
+    "body": "Hay {{N}} archivos de historia en tu repositorio de GitHub que no están en el compositor. Probablemente vienen de una edición a mano en GitHub o de alguien que trabajó por fuera del editor. Restáuralos aquí como borradores o ignóralos.",
+    "primary_cta": "Restaurar como borradores",
+    "secondary_cta": "Ignorar",
+    "ignore_aria": "Ignorar las historias huérfanas"
+  },
+  "from_docs": {
+    "hint": "Extractos breves de las guías, para leer sin salir del compositor. La documentación completa está en <docsLink>telar.org/docs</docsLink>.",
+    "desc_start": "Inicia sesión, conecta un repositorio y haz tus primeras ediciones.",
+    "desc_intro": "Qué es el compositor y cómo funciona.",
+    "desc_configure": "Define el nombre, el tema, el idioma y la descripción del sitio.",
+    "desc_narrative": "Cómo encajan historias, pasos y paneles.",
+    "desc_markdown": "Da formato al texto de los paneles — énfasis, enlaces, listas.",
+    "desc_iiif": "Usa imágenes de alta resolución de museos, bibliotecas y archivos.",
+    "desc_objects": "Explora, edita, sube y agrega objetos.",
+    "desc_publish": "Revisa los cambios, haz commit a GitHub y sigue la construcción.",
+    "desc_stories": "Construye una historia con el editor visual.",
+    "desc_video": "Captura clips y define puntos de bucle en los pasos multimedia.",
+    "desc_refine": "Ajusta las coordenadas de imagen y dale los toques finales a tu exhibición.",
+    "desc_sync": "Resincroniza con tu repositorio y actualiza Telar.",
+    "desc_glossary": "Define términos y enlázalos con [[término]].",
+    "desc_pages": "Crea tu página de inicio y otras páginas, como Acerca de, Créditos o Bibliografía."
+  },
+  "other_projects": {
+    "pill_unpublished": "{{N}} sin publicar",
+    "pill_unpublished_some": "Sin publicar",
+    "pill_in_sync": "Al día",
+    "pill_draft": "Borrador",
+    "edited_relative": "editado {{relative}}"
+  },
+  "checklist": {
+    "convenor_heading": "Configura tu proyecto — primero tres cosas",
+    "convenor_step1": "Confirma el título y el tema en Ajustes del sitio — define el idioma, el tema y lo que verán las visitas en la página de inicio publicada.",
+    "convenor_step2": "Agrega tu primer objeto — sube una imagen, pega un manifiesto IIIF o enlaza un medio externo. Los objetos son aquello a lo que apuntan las historias.",
+    "convenor_step3": "Invita a tu equipo y escribe una primera historia — una historia es una secuencia de pasos que acercan y recorren los objetos con tu análisis.",
+    "collaborator_heading": "Hoy, tres cosas para empezar",
+    "collaborator_step1": "Empieza por «¿Qué es el compositor?» — mira cómo encajan las páginas, los objetos, las historias y el glosario de Telar.",
+    "collaborator_step2": "Explora la pestaña de Objetos — mira lo que ha preparado quien coordina. Elige uno para leerlo con detenimiento.",
+    "collaborator_step3": "Abre el paso de una historia y empieza a escribir — tus cambios se guardan solos. Nada se publica hasta que quien coordina lo publique."
+  },
+  "tile": {
+    "configure": "Configurar",
+    "objects": "Objetos",
+    "stories": "Historias",
+    "glossary": "Glosario",
+    "pages": "Inicio y páginas",
+    "publish": "Publicar"
+  },
+  "pill": {
+    "done": "Listo",
+    "not_started": "Sin empezar",
+    "empty": "Vacío",
+    "none_yet": "Aún ninguna",
+    "landing_only": "Solo la página de inicio",
+    "convenor_only": "Solo coordinación",
+    "nothing_to_publish": "Nada que publicar aún",
+    "to_ship_one": "{{N}} cambio por publicar",
+    "to_ship_other": "{{N}} cambios por publicar",
+    "objects_unused": "{{N}} · {{U}} sin usar",
+    "stories_drafts": "{{N}} · {{D}} en borrador",
+    "terms": "{{N}} términos",
+    "pages": "{{N}} páginas"
+  },
+  "drawer": {
+    "open_on_telar": "Abrir en telar.org",
+    "see_also": "Véase también",
+    "next": "Siguiente: {{title}}",
+    "close": "Cerrar",
+    "breadcrumb": "telar.org · Docs · {{chapter}}"
+  }
+}

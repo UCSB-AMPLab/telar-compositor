@@ -30,7 +30,7 @@
     "welcome_explanation": "The introductory content visitors see when they arrive at your site. This comes from your site's index page.",
     "stories_heading": "Stories",
     "stories_explanation": "Your story collection as it appears on the landing page. Drag to reorder — this controls the display order on your published site.",
-    "stories_manage": "Manage \u2192",
+    "stories_manage": "Manage",
     "objects_heading": "Objects",
     "objects_explanation": "Featured objects from your collection, displayed on the landing page.",
     "empty_default_hint": "Empty fields show your site's localised default."

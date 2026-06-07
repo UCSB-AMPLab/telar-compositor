@@ -1,0 +1,23 @@
+{
+  "v1_3_0_beta": {
+    "title": "Qué hay de nuevo en el compositor",
+    "features_label": "Novedades",
+    "features": [
+      "Colaboración en tiempo real: puedes editar el mismo sitio con tu equipo",
+      "Espacio de trabajo rediseñado, con una guía para empezar",
+      "Navegación más rápida y un seguimiento más claro del proceso de publicación",
+      "Deshacer más seguro: solo afecta tus propios cambios recientes"
+    ],
+    "fixes_label": "Correcciones",
+    "fixes": [
+      "Ya se puede desactivar el contenido de ejemplo",
+      "Editar una historia recién creada ya no da error",
+      "Renombrar el botón de una capa ya no falla",
+      "Borrar la descripción del sitio ya no daña la página"
+    ],
+    "thanks_label": "Gracias a",
+    "thanks_suffix": "por reportar errores y problemas.",
+    "thanks_cta": "Tú también puedes ayudarnos a mejorar Telar y el compositor: reporta cualquier problema que encuentres con el botón para reportar errores",
+    "dismiss": "Listo"
+  }
+}

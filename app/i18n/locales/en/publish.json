@@ -1,9 +1,48 @@
 {
   "title": "Publish",
+  "intro": "When you're ready, bundle your changes into a commit to GitHub, where your site rebuilds and goes live in about two minutes.",
   "progress": {
     "review": "Review",
     "checks": "Checks",
     "publish": "Publish"
+  },
+  "sections": {
+    "whats_changing": "What's changing",
+    "what_we_checked": "What we checked",
+    "publish": "Publish"
+  },
+  "chips": {
+    "stories": "Stories",
+    "objects": "Objects",
+    "glossary": "Glossary",
+    "pages": "Pages",
+    "settings": "Settings",
+    "nothing_changing": "Nothing has changed since your last publish."
+  },
+  "passed_checks": {
+    "object_metadata": "All required object metadata present",
+    "term_links": "No broken [[term]] links",
+    "iiif_tiles": "IIIF tiles built",
+    "site_url": "Site URL matches Pages config",
+    "telar_version": "telar_version up to date"
+  },
+  "publish_section": {
+    "commit_message_label": "Commit message",
+    "edit_message": "Edit message",
+    "done_editing": "Done editing",
+    "publish_now": "Publish now",
+    "blocked_note": "Fix the items above before publishing."
+  },
+  "success_card": {
+    "heading": "Published. {{url}}",
+    "open": "Open",
+    "view_commit": "View commit on GitHub"
+  },
+  "failure_card": {
+    "heading": "Build failed",
+    "description": "Something went wrong while building your site.",
+    "view_actions": "View build details",
+    "try_again": "Try again"
   },
   "review": {
     "heading": "Review your changes",
@@ -52,7 +91,7 @@
     "stale_head": "Your site's repository has changed since you last synced. Please re-sync before publishing.",
     "stale_head_action": "Resolve sync",
     "object_no_title": "Object \"{{id}}\" has no title",
-    "page_no_title": "Page \"{{slug}}\" has no title — we cannot proceed until you give it a name.",
+    "page_no_title": "A page has no title — open Pages to give it a title, or delete it.",
     "step_no_position": "Step {{number}} has no viewer position — the published site will show 100% of the image."
   },
   "auto_commit": {
@@ -94,6 +133,23 @@
     "change_collection_mode_off": "turn off collection mode",
     "change_language_to_en": "change site language to English",
     "change_language_to_es": "change site language to Spanish",
+    "change_telar_theme": "change theme",
+    "change_story_interface_show_on_homepage_on": "show stories on homepage",
+    "change_story_interface_show_on_homepage_off": "hide stories on homepage",
+    "change_story_interface_show_story_steps_on": "show step indicator",
+    "change_story_interface_show_story_steps_off": "hide step indicator",
+    "change_story_interface_show_object_credits_on": "show object credits",
+    "change_story_interface_show_object_credits_off": "hide object credits",
+    "change_story_interface_include_demo_content_on": "show demo content",
+    "change_story_interface_include_demo_content_off": "hide demo content",
+    "change_collection_interface_browse_and_search_on": "turn on browse and search",
+    "change_collection_interface_browse_and_search_off": "turn off browse and search",
+    "change_collection_interface_show_link_on_homepage_on": "show collection link on homepage",
+    "change_collection_interface_show_link_on_homepage_off": "hide collection link on homepage",
+    "change_collection_interface_show_sample_on_homepage_on": "show collection sample on homepage",
+    "change_collection_interface_show_sample_on_homepage_off": "hide collection sample on homepage",
+    "change_collection_interface_featured_count": "change featured count",
+    "change_generic": "update a setting",
     "update_homepage": "update homepage",
     "default_headline": "Publish site",
     "section_added": "Added:",
@@ -138,5 +194,11 @@
     "next_checks": "Next: Run checks",
     "next_publish": "Next: Publish",
     "back": "Back"
+  },
+  "repo_unavailable": {
+    "heading": "Publishing is paused",
+    "lead": "Telar can't reach the repository for this project ({{repo}}).",
+    "body": "It may have been deleted, renamed, made private, or the Telar app's access to it was removed. Your work here is safe — everything you've edited in the compositor is stored separately from the repository — but you can't publish until Telar can reach it again.",
+    "manage_cta": "Manage repository access on GitHub"
   }
 }

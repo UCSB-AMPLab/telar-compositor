@@ -1,9 +1,48 @@
 {
   "title": "Publicar",
+  "intro": "Cuando todo esté listo, reúne tus cambios en un commit a GitHub, donde tu sitio se reconstruye y queda publicado en unos dos minutos.",
   "progress": {
     "review": "Revisión",
     "checks": "Verificación",
     "publish": "Publicar"
+  },
+  "sections": {
+    "whats_changing": "Qué va a cambiar",
+    "what_we_checked": "Qué revisamos",
+    "publish": "Publicar"
+  },
+  "chips": {
+    "stories": "Historias",
+    "objects": "Objetos",
+    "glossary": "Glosario",
+    "pages": "Páginas",
+    "settings": "Configuración",
+    "nothing_changing": "No hay cambios desde tu última publicación."
+  },
+  "passed_checks": {
+    "object_metadata": "Todos los objetos tienen los datos necesarios",
+    "term_links": "No hay enlaces [[término]] rotos",
+    "iiif_tiles": "Las teselas IIIF están listas",
+    "site_url": "La URL del sitio coincide con la configurada en GitHub Pages",
+    "telar_version": "telar_version al día"
+  },
+  "publish_section": {
+    "commit_message_label": "Mensaje de commit",
+    "edit_message": "Editar el mensaje",
+    "done_editing": "Listo",
+    "publish_now": "Publicar ahora",
+    "blocked_note": "Corrige lo de arriba antes de publicar."
+  },
+  "success_card": {
+    "heading": "Publicado. {{url}}",
+    "open": "Abrir",
+    "view_commit": "Ver el commit en GitHub"
+  },
+  "failure_card": {
+    "heading": "Falló la construcción del sitio",
+    "description": "Algo salió mal al construir tu sitio.",
+    "view_actions": "Ver los detalles de la construcción",
+    "try_again": "Intentar de nuevo"
   },
   "review": {
     "heading": "Revisa tus cambios",
@@ -52,7 +91,7 @@
     "stale_head": "El repositorio de tu sitio cambió desde la última sincronización. Sincroniza de nuevo antes de publicar.",
     "stale_head_action": "Resolver sincronización",
     "object_no_title": "El objeto \"{{id}}\" no tiene título",
-    "page_no_title": "La página \"{{slug}}\" no tiene título — no podemos continuar hasta que le des un nombre.",
+    "page_no_title": "Una página no tiene título — abre Páginas para ponerle un título, o elimínala.",
     "step_no_position": "El paso {{number}} no tiene posición de vista — el sitio publicado mostrará el 100% de la imagen."
   },
   "auto_commit": {
@@ -94,6 +133,23 @@
     "change_collection_mode_off": "desactivar modo de colección",
     "change_language_to_en": "cambiar el idioma del sitio a inglés",
     "change_language_to_es": "cambiar el idioma del sitio a español",
+    "change_telar_theme": "cambiar tema",
+    "change_story_interface_show_on_homepage_on": "mostrar historias en la página de inicio",
+    "change_story_interface_show_on_homepage_off": "ocultar historias en la página de inicio",
+    "change_story_interface_show_story_steps_on": "mostrar indicador de pasos",
+    "change_story_interface_show_story_steps_off": "ocultar indicador de pasos",
+    "change_story_interface_show_object_credits_on": "mostrar créditos de objetos",
+    "change_story_interface_show_object_credits_off": "ocultar créditos de objetos",
+    "change_story_interface_include_demo_content_on": "mostrar contenido de ejemplo",
+    "change_story_interface_include_demo_content_off": "ocultar contenido de ejemplo",
+    "change_collection_interface_browse_and_search_on": "activar exploración y búsqueda",
+    "change_collection_interface_browse_and_search_off": "desactivar exploración y búsqueda",
+    "change_collection_interface_show_link_on_homepage_on": "mostrar enlace a la colección en la página de inicio",
+    "change_collection_interface_show_link_on_homepage_off": "ocultar enlace a la colección en la página de inicio",
+    "change_collection_interface_show_sample_on_homepage_on": "mostrar muestra en la página de inicio",
+    "change_collection_interface_show_sample_on_homepage_off": "ocultar muestra en la página de inicio",
+    "change_collection_interface_featured_count": "cambiar cantidad de destacados",
+    "change_generic": "actualizar un ajuste",
     "update_homepage": "actualizar página de inicio",
     "default_headline": "Publicar sitio",
     "section_added": "Agregados:",
@@ -128,9 +184,9 @@
     "view_site": "Ver tu sitio",
     "view_commit": "Ver el commit completo en GitHub",
     "back_to_dashboard": "Volver al inicio",
-    "failed_heading": "El build falló",
+    "failed_heading": "Falló la construcción del sitio",
     "failed_description": "Algo salió mal al construir tu sitio.",
-    "view_actions": "Ver detalles del build",
+    "view_actions": "Ver detalles de la construcción",
     "try_again": "Intentar de nuevo",
     "stale_head_error": "El repositorio cambió mientras publicabas. Sincroniza de nuevo e intenta otra vez."
   },
@@ -138,5 +194,11 @@
     "next_checks": "Siguiente: Verificar",
     "next_publish": "Siguiente: Publicar",
     "back": "Volver"
+  },
+  "repo_unavailable": {
+    "heading": "La publicación está en pausa",
+    "lead": "Telar no puede acceder al repositorio de este proyecto ({{repo}}).",
+    "body": "Puede que lo hayan eliminado, le hayan cambiado el nombre o lo hayan hecho privado, o que la aplicación de Telar haya perdido el acceso. Tu trabajo está a salvo: todo lo que has editado en el compositor se guarda aparte del repositorio. Pero no podrás publicar hasta que Telar vuelva a tener acceso.",
+    "manage_cta": "Gestionar el acceso al repositorio en GitHub"
   }
 }

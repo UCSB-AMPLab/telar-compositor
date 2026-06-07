@@ -1,5 +1,6 @@
 {
   "title": "Site Configuration",
+  "intro": "Configure your site here — its name, theme, language, and description, plus author details, hosting, and how your stories and collection appear to readers.",
   "account_link_note": "For your user account settings, such as the interface language, <1>go to your account</1>.",
   "save": "Save Changes",
   "saving": "Saving…",

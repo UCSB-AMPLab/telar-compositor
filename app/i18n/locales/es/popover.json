@@ -1,0 +1,71 @@
+{
+  "in_sync": {
+    "title": "Todo está sincronizado",
+    "published": "Última publicación: {{time}}",
+    "commit": "commit {{sha}} — {{msg}}",
+    "synced": "Sincronizado desde el repositorio {{time}}",
+    "view_site": "Ver el sitio publicado"
+  },
+  "unpublished": {
+    "title_one": "1 cambio sin publicar",
+    "title_other": "{{n}} cambios sin publicar",
+    "since": "Desde la última publicación, {{time}}",
+    "section": {
+      "stories": "Historias",
+      "objects": "Objetos",
+      "glossary": "Glosario",
+      "pages": "Páginas",
+      "settings": "Ajustes del sitio"
+    },
+    "modified": "modificado",
+    "added": "agregado",
+    "review": "Revisar todos los cambios",
+    "publish": "Publicar"
+  },
+  "out_of_sync": {
+    "title": "GitHub ha cambiado",
+    "body": "Alguien editó el repositorio directamente. Revisa qué cambió antes de publicar.",
+    "diff_label": "Qué cambió",
+    "added": "{{n}} agregado",
+    "changed": "{{n}} cambiado",
+    "removed": "{{n}} eliminado",
+    "keep_mine": "Mantener mi versión",
+    "review": "Revisar cambios"
+  },
+  "publishing": {
+    "title": "Publicando… {{step}} de {{total}}",
+    "building": "Construyendo el sitio · paso {{step}} de {{total}}",
+    "committed": "enviado a GitHub",
+    "published": "Publicado: tu sitio está en línea",
+    "failed": "La construcción falló en «{{phase}}»",
+    "active": "en curso",
+    "steps": {
+      "dispatch": "Lanzar la construcción",
+      "setup": "Preparación",
+      "build_js": "Compilar el código",
+      "process_data": "Procesar el contenido",
+      "build_site": "Construir las páginas",
+      "media": "Imágenes y/o audio",
+      "deploy": "Publicar en la web"
+    },
+    "watch_github": "Ver el avance en GitHub",
+    "view_commit": "Ver el commit",
+    "open_site": "Abrir el sitio",
+    "view_logs": "Ver los registros",
+    "try_again": "Reintentar"
+  },
+  "upgrade": {
+    "title": "Telar {{version}} disponible",
+    "from": "Tu sitio usa {{current}}.",
+    "what_changed": "Novedades",
+    "learn_more": "Conoce más",
+    "run": "Actualizar",
+    "convenor_needed": "Quien coordina debe actualizar"
+  },
+  "repo_unavailable": {
+    "title": "No se puede acceder al repositorio",
+    "body": "Telar no puede acceder al repositorio de este proyecto ({{repo}}). Puede que lo hayan eliminado, le hayan cambiado el nombre o lo hayan hecho privado, o que la aplicación haya perdido el acceso. Tu trabajo está a salvo: se guarda aparte del repositorio.",
+    "manage_cta": "Gestionar el acceso en GitHub",
+    "collaborator_note": "Pídele a quien coordina el proyecto que vuelva a conectar el repositorio."
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "in_sync": {
+    "title": "Everything is in sync",
+    "published": "Last published {{time}}",
+    "commit": "commit {{sha}} — {{msg}}",
+    "synced": "Synced from repo {{time}}",
+    "view_site": "View published site"
+  },
+  "unpublished": {
+    "title_one": "1 unpublished change",
+    "title_other": "{{n}} unpublished changes",
+    "since": "Since last published, {{time}}",
+    "section": {
+      "stories": "Stories",
+      "objects": "Objects",
+      "glossary": "Glossary",
+      "pages": "Pages",
+      "settings": "Site settings"
+    },
+    "modified": "modified",
+    "added": "added",
+    "review": "Review all changes",
+    "publish": "Publish"
+  },
+  "out_of_sync": {
+    "title": "GitHub has changed",
+    "body": "Someone edited the repository directly. Review what changed before publishing.",
+    "diff_label": "What changed",
+    "added": "{{n}} added",
+    "changed": "{{n}} changed",
+    "removed": "{{n}} removed",
+    "keep_mine": "Keep my version",
+    "review": "Review changes"
+  },
+  "publishing": {
+    "title": "Publishing… {{step}} of {{total}}",
+    "building": "Building your site · step {{step}} of {{total}}",
+    "committed": "committed to GitHub",
+    "published": "Published — your site is live",
+    "failed": "Build failed at \"{{phase}}\"",
+    "active": "active",
+    "steps": {
+      "dispatch": "Dispatch build",
+      "setup": "Set up",
+      "build_js": "Build code",
+      "process_data": "Process content",
+      "build_site": "Build pages",
+      "media": "Images and/or audio",
+      "deploy": "Deploy"
+    },
+    "watch_github": "Watch on GitHub",
+    "view_commit": "View commit",
+    "open_site": "Open site",
+    "view_logs": "View logs",
+    "try_again": "Try again"
+  },
+  "upgrade": {
+    "title": "Telar {{version}} available",
+    "from": "Your site is on {{current}}.",
+    "what_changed": "What's new",
+    "learn_more": "Learn more",
+    "run": "Run upgrade",
+    "convenor_needed": "Convenor needs to upgrade"
+  },
+  "repo_unavailable": {
+    "title": "Repository unavailable",
+    "body": "Telar can't reach the repository for this project ({{repo}}). It may have been deleted, renamed, made private, or the app's access removed. Your work here is safe — it's stored separately from the repository.",
+    "manage_cta": "Manage access on GitHub",
+    "collaborator_note": "Ask the project's convenor to reconnect the repository."
+  }
+}
