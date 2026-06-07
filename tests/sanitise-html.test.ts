@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { sanitiseHtml } from "~/lib/sanitise-html";
+import { sanitiseHtml, sanitiseInlineHtml } from "~/lib/sanitise-html";
 
 describe("sanitiseHtml", () => {
   it("strips <script> tags", () => {
@@ -80,5 +80,43 @@ describe("sanitiseHtml", () => {
     const out = sanitiseHtml(input);
     expect(out).not.toContain("svg+xml");
     expect(out.toLowerCase()).not.toMatch(/data:\s*image\/svg/);
+  });
+});
+
+describe("sanitiseInlineHtml", () => {
+  it("keeps a, em, strong with safe href", () => {
+    const out = sanitiseInlineHtml('<strong>x</strong> <em>y</em> <a href="https://x.org">z</a>');
+    expect(out).toContain("<strong>x</strong>");
+    expect(out).toContain("<em>y</em>");
+    expect(out).toContain('<a href="https://x.org">z</a>');
+  });
+
+  it("strips block tags but keeps their text", () => {
+    const out = sanitiseInlineHtml("<p>para</p><ul><li>item</li></ul><h2>head</h2>");
+    expect(out).not.toContain("<p");
+    expect(out).not.toContain("<ul");
+    expect(out).not.toContain("<h2");
+    expect(out).toContain("para");
+    expect(out).toContain("item");
+    expect(out).toContain("head");
+  });
+
+  it("drops <script> entirely (tag and contents)", () => {
+    const out = sanitiseInlineHtml('hi<script>alert(1)</script>');
+    expect(out).not.toContain("<script");
+    expect(out).not.toContain("alert(1)");
+    expect(out).toContain("hi");
+  });
+
+  it("strips javascript: and other unsafe schemes on href", () => {
+    const out = sanitiseInlineHtml('<a href="javascript:alert(1)">x</a>');
+    expect(out).not.toContain("javascript:");
+  });
+
+  it("strips event-handler and target/style attributes on anchors", () => {
+    const out = sanitiseInlineHtml('<a href="https://x.org" onclick="x()" target="_blank" style="color:red">z</a>');
+    expect(out).not.toContain("onclick");
+    expect(out).not.toContain("target");
+    expect(out).not.toContain("style");
   });
 });

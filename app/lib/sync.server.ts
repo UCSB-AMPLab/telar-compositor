@@ -30,11 +30,11 @@
  * actions (currently in `_app.dashboard.tsx`) do the I/O
  * orchestration; this module does the comparison.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { eq, and } from "drizzle-orm";
-import { objects, steps, stories, project_config, glossary_terms } from "~/db/schema";
+import { objects, steps, layers, stories, project_config, glossary_terms } from "~/db/schema";
 import { getFileContent, getRepoTree, getRepoHead } from "~/lib/github.server";
 import { parseTelarCsv, mapObjectsCsv, mapProjectCsv, mapStoryCsv } from "~/lib/import.server";
 import { compareVersions } from "~/lib/upgrade.server";
@@ -52,6 +52,7 @@ export const SYNC_FIELDS = [
   "period",
   "year",
   "object_type",
+  "dimensions",
   "subjects",
   "source",
   "credit",
@@ -79,6 +80,7 @@ export interface NewObject {
   thumbnail: string | null;
   featured: boolean;
   source_url: string | null;
+  dimensions: string | null;
   image_available: boolean;
 }
 
@@ -233,6 +235,7 @@ export async function computeSyncDiff(
         thumbnail: (repoRow.thumbnail as string) || null,
         featured: Boolean(repoRow.featured),
         source_url: (repoRow.source_url as string) || null,
+        dimensions: (repoRow.dimensions as string) || null,
         image_available: iiifObjectIds.has(objectId),
       });
     }
@@ -288,7 +291,7 @@ export async function computeSyncDiff(
   // Compute missing objects (in D1 but not in repo CSV)
   // Compositor-origin objects are excluded: they were created by the compositor
   // and their CSV commit may have failed (e.g. StaleHeadError). They are
-  // legitimate objects — warn rather than offering to delete (DATA-03).
+  // legitimate objects — warn rather than offering to delete.
   const missingObjects: MissingObject[] = [];
   for (const [objectId, d1Obj] of d1Map.entries()) {
     if (!repoMap.has(objectId)) {
@@ -352,6 +355,8 @@ export interface PendingObject {
   credit: string | null;
   thumbnail: string | null;
   alt_text?: string | null;
+  dimensions?: string | null;
+  extra_columns?: string | null;
   image_available: boolean;
   origin?: string;
 }
@@ -419,6 +424,8 @@ export async function applySyncChanges(
         credit: (repoRow.credit as string | null) ?? null,
         thumbnail: (repoRow.thumbnail as string | null) ?? null,
         alt_text: (repoRow.alt_text as string | null) ?? null,
+        dimensions: repoRow.dimensions ?? null,
+        extra_columns: repoRow.extra_columns ?? null,
         image_available: iiifObjectIds.has(objectId),
         origin: "repo",
       });
@@ -489,7 +496,7 @@ export async function applySyncChanges(
 
   // 4. Flag missing objects that were NOT removed (immediate)
   // Compositor-origin objects are skipped — they are not repo objects and
-  // should not be flagged as missing when absent from the repo CSV (DATA-03).
+  // should not be flagged as missing when absent from the repo CSV.
   const allD1ObjectIds = [...d1Map.keys()];
   const removedSet = new Set(removedObjectIds);
   const repoObjectIds = new Set(repoMap.keys());
@@ -582,16 +589,18 @@ export interface ConfigSyncDiff {
 
 export interface GlossarySyncDiff {
   /** Terms in the repo CSV that are not in D1 */
-  added: Array<{ term_id: string; title: string; definition: string }>;
+  added: Array<{ term_id: string; title: string; definition: string; related_terms: string }>;
   /** Terms in D1 that are not in the repo CSV */
   removed: Array<{ term_id: string; title: string; dbId: number }>;
-  /** Terms in both but with differing definitions */
+  /** Terms in both but with differing definitions or related_terms */
   changed: Array<{
     term_id: string;
     title: string;
     dbId: number;
     d1Definition: string;
     repoDefinition: string;
+    d1RelatedTerms: string;
+    repoRelatedTerms: string;
   }>;
 }
 
@@ -656,19 +665,71 @@ const MANAGED_CONFIG_FIELDS = [
 type ManagedConfigField = typeof MANAGED_CONFIG_FIELDS[number];
 
 /**
+ * Parse a single YAML scalar value (the text after `key:` on one line) into its
+ * string value. Handles double-quoted (inverse of publish.server's yamlQuote:
+ * \" \\ \n), single-quoted (YAML '' -> '), and bare scalars (trailing # comment
+ * stripped). Returns null for an empty/absent value. Line-based — no js-yaml
+ * dependency (keeps multi-line/commented config files intact).
+ */
+function parseYamlScalar(raw: string): string | null {
+  const s = raw.trim();
+  if (s === "") return null;
+  if (s.startsWith('"')) {
+    // Double-quoted: consume to the matching unescaped closing quote.
+    let out = "";
+    for (let i = 1; i < s.length; i++) {
+      const c = s[i];
+      if (c === "\\") {
+        const next = s[i + 1];
+        if (next === "n") out += "\n";
+        else if (next === '"') out += '"';
+        else if (next === "\\") out += "\\";
+        else out += next ?? "";
+        i++;
+      } else if (c === '"') {
+        break;
+      } else {
+        out += c;
+      }
+    }
+    return out;
+  }
+  if (s.startsWith("'")) {
+    // Single-quoted: '' is a literal single quote; ends at a lone '.
+    let out = "";
+    for (let i = 1; i < s.length; i++) {
+      const c = s[i];
+      if (c === "'") {
+        if (s[i + 1] === "'") { out += "'"; i++; }
+        else break;
+      } else {
+        out += c;
+      }
+    }
+    return out;
+  }
+  // Bare scalar: strip a trailing " # comment".
+  const noComment = s.replace(/\s+#.*$/, "").trim();
+  return noComment === "" ? null : noComment;
+}
+
+/**
  * Extracts managed config field values from a raw _config.yml string using
  * line-based parsing — same approach as disableGoogleSheetsInConfig to avoid
  * a js-yaml dependency in sync.server.ts and to preserve multi-line config
  * files with comments.
  *
  * Only extracts top-level scalar keys (the managed set). Complex YAML sub-keys
- * (e.g. telar.version) are not touched.
+ * (e.g. telar.version) are not touched. Handles double-quoted, single-quoted,
+ * and bare scalar values correctly — the previous regex silently returned null
+ * for any value containing a quote (e.g. HTML descriptions).
  */
-function extractConfigFields(yamlContent: string): Record<ManagedConfigField, string | null> {
+export function extractConfigFields(yamlContent: string): Record<ManagedConfigField, string | null> {
   const result: Record<string, string | null> = {};
   for (const key of MANAGED_CONFIG_FIELDS) {
-    const match = yamlContent.match(new RegExp(`^${key}:\\s*["']?([^"'\\n]*)["']?\\s*$`, "m"));
-    result[key] = match ? match[1].trim() || null : null;
+    // Match the key line and capture the raw remainder (top-level keys only).
+    const m = yamlContent.match(new RegExp(`^${key}:[ \\t]*(.*)$`, "m"));
+    result[key] = m ? parseYamlScalar(m[1]) : null;
   }
   return result as Record<ManagedConfigField, string | null>;
 }
@@ -772,7 +833,7 @@ export async function computeFullSyncDiff(
   // every sync check. Until the import is normalised to match the CSV
   // (separate fix), the sync diff compares user-visible content only.
   // Trade-off: a pure reorder with no content change won't surface here —
-  // a known limitation documented in 41-VERIFICATION.md.
+  // a known limitation.
   const storyFields: Array<keyof StorySyncItem> = ["title", "subtitle", "byline", "isPrivate"];
 
   const newStories: StorySyncItem[] = [];
@@ -943,7 +1004,7 @@ export async function computeGlossarySyncDiff(
       .filter((r) => r.term_id)
       .map((r) => [
         r.term_id,
-        { title: r.title ?? "", definition: r.definition ?? "" },
+        { title: r.title ?? "", definition: r.definition ?? "", related_terms: r.related_terms ?? "" },
       ]),
   );
 
@@ -962,14 +1023,19 @@ export async function computeGlossarySyncDiff(
   for (const [termId, repoTerm] of repoTermMap.entries()) {
     const d1Term = d1TermMap.get(termId);
     if (!d1Term) {
-      added.push({ term_id: termId, title: repoTerm.title, definition: repoTerm.definition });
-    } else if ((d1Term.definition ?? "") !== repoTerm.definition) {
+      added.push({ term_id: termId, title: repoTerm.title, definition: repoTerm.definition, related_terms: repoTerm.related_terms });
+    } else if (
+      (d1Term.definition ?? "") !== repoTerm.definition ||
+      (d1Term.related_terms ?? "") !== repoTerm.related_terms
+    ) {
       changed.push({
         term_id: termId,
         title: d1Term.title ?? repoTerm.title,
         dbId: d1Term.id,
         d1Definition: d1Term.definition ?? "",
         repoDefinition: repoTerm.definition,
+        d1RelatedTerms: d1Term.related_terms ?? "",
+        repoRelatedTerms: repoTerm.related_terms,
       });
     }
   }
@@ -1064,16 +1130,44 @@ export async function applyFullSyncChanges(
 
       if (insertedStoryRows.length > 0) {
         const storyDbId = insertedStoryRows[0].id;
-        const { steps: stepRows } = mapStoryCsv(
+        const { steps: stepRows, layers: layerRows } = mapStoryCsv(
           parseTelarCsv(storyCsvContent),
           storyDbId,
         );
 
         if (stepRows.length > 0) {
           const stepsWithId = stepRows.map((s) => ({ ...s, story_id: storyDbId }));
-          // D1: steps has 11 cols → max 9 rows per insert
-          for (let i = 0; i < stepsWithId.length; i += 9) {
-            await db.insert(steps).values(stepsWithId.slice(i, i + 9));
+          // D1: steps has 14 inserted cols → max 7 rows per insert (7×14=98 ≤ 100)
+          for (let i = 0; i < stepsWithId.length; i += 7) {
+            await db.insert(steps).values(stepsWithId.slice(i, i + 7));
+          }
+        }
+
+        if (layerRows.length > 0) {
+          // Back-fill real step ids. mapStoryCsv sets step_id = -(index+1) as a
+          // placeholder where the index is the row's position in the filtered CSV
+          // (not the explicit `step` column value). After inserting steps, SELECT
+          // them back and sort by `id` ASC (insertion order), which matches the
+          // filtered-row order used to assign placeholders. Sorting by step_number
+          // would misalign layers when the CSV has non-sequential step values.
+          const insertedSteps = await db
+            .select({ id: steps.id })
+            .from(steps)
+            .where(eq(steps.story_id, storyDbId));
+          const orderedStepIds = insertedSteps
+            .sort((a, b) => a.id - b.id)
+            .map((s) => s.id);
+          const layersWithIds = layerRows
+            .map((layer) => {
+              const stepIndex = Math.abs(layer.step_id as number) - 1; // placeholder → 0-based
+              const realStepId = orderedStepIds[stepIndex];
+              if (realStepId === undefined) return null;
+              return { ...layer, step_id: realStepId };
+            })
+            .filter((l): l is NonNullable<typeof l> => l !== null);
+          // layers table has 6 columns → max 16 rows per insert (D1 bind-var limit)
+          for (let i = 0; i < layersWithIds.length; i += 16) {
+            await db.insert(layers).values(layersWithIds.slice(i, i + 16));
           }
         }
       }
@@ -1141,6 +1235,7 @@ export async function applyFullSyncChanges(
           term_id: termId,
           title: repoTerm.title || undefined,
           definition: repoTerm.definition || undefined,
+          related_terms: repoTerm.related_terms || undefined,
           updated_at: now,
         });
     }
@@ -1153,6 +1248,7 @@ export async function applyFullSyncChanges(
         .update(glossary_terms)
         .set({
           definition: repoTerm.definition || null,
+          related_terms: repoTerm.related_terms || null,
           updated_at: now,
         })
         .where(
@@ -1184,7 +1280,7 @@ export async function applyFullSyncChanges(
 
   await db
     .update(projects)
-    .set({ head_sha: newHeadSha, last_synced_at: now, updated_at: now })
+    .set({ head_sha: newHeadSha, last_synced_at: now, updated_at: now, gh_checked_at: null })
     .where(eq(projects.id, projectId));
 
   return { newHeadSha };

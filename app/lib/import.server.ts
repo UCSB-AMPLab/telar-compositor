@@ -19,7 +19,7 @@
  * importing whatever stale rows happen to sit in the repo would
  * desynchronise the user's content without them noticing.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import Papa from "papaparse";
@@ -42,6 +42,7 @@ import {
   project_members,
   project_invites,
   project_pages,
+  activity_log,
 } from "~/db/schema";
 
 // ---------------------------------------------------------------------------
@@ -49,62 +50,85 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Known Spanish bilingual column values used in the second row of Telar CSVs.
- * A row where 80%+ of its non-empty values match this set is treated as the
- * bilingual header row and skipped during import.
+ * Spanish (and alias) CSV header -> Compositor canonical English key.
+ * Ported from Telar's csv_utils.py COLUMN_NAME_MAPPING, with two deliberate
+ * retargets to the Compositor's canonical keys (which differ from the
+ * framework's): medio/medio_genero/tipo_objeto -> medium_genre (NOT `medium`),
+ * and privada/privado/protegida -> private (NOT `protected`). Keys are
+ * lowercased; lookup lowercases the trimmed header. Identity entries for the
+ * canonical English names normalise Google-Sheets capitalisation.
  */
-const KNOWN_BILINGUAL_VALUES = new Set([
-  // objects.csv bilingual row 1 values
-  "id_objeto",
-  "titulo",
-  "destacado",
-  "creador",
-  "descripcion",
-  "url_fuente",
-  "periodo",
-  "año",
-  "tipo_objeto",
-  "temas",
-  "fuente",
-  "credito",
-  "miniatura",
-  "medio",
-  "dimensiones",
-  "ubicacion",
-  "ubicación",
-  // project.csv bilingual row 1 values
-  "orden",
-  "id_historia",
-  "subtitulo",
-  "firma",
-  "privado",
-  "privada",
-  "mostrar_secciones",
-  // story CSV bilingual row 1 values
-  "paso",
-  "objeto",
-  "x",
-  "y",
-  "zoom",
-  "pagina",
-  "pregunta",
-  "respuesta",
-  "boton1",
-  "contenido1",
-  "boton2",
-  "contenido2",
-  // glossary.csv bilingual row 1 values
-  "id_término",
-  "definicion",
-  "definición",
-  // objects.csv alt text bilingual value
-  "texto_alt",
-  // story CSV clip field bilingual values (v1.0.0)
-  "inicio_clip",
-  "fin_clip",
-  "bucle",
-  // objects.csv medium_genre bilingual value (v1.0.0 column rename)
-  "medio_genero",
+const COLUMN_NAME_MAPPING: Record<string, string> = {
+  // Story steps
+  paso: "step", objeto: "object", pregunta: "question", respuesta: "answer",
+  boton_capa1: "layer1_button", boton1: "layer1_button",
+  contenido_capa1: "layer1_content", contenido1: "layer1_content", archivo_capa1: "layer1_content",
+  boton_capa2: "layer2_button", boton2: "layer2_button",
+  contenido_capa2: "layer2_content", contenido2: "layer2_content", archivo_capa2: "layer2_content",
+  inicio_clip: "clip_start", fin_clip: "clip_end", bucle: "loop",
+  texto_alt: "alt_text",
+  pagina: "page", "página": "page",
+  layer1_file: "layer1_content", layer2_file: "layer2_content",
+  // Objects
+  id_objeto: "object_id", titulo: "title", "título": "title",
+  descripcion: "description", "descripción": "description",
+  url_fuente: "source_url", creador: "creator", periodo: "period",
+  dimensiones: "dimensions",
+  ubicacion: "source", "ubicación": "source", fuente: "source", location: "source",
+  credito: "credit", miniatura: "thumbnail",
+  "año": "year", ano: "year",
+  medio: "medium_genre", medio_genero: "medium_genre", tipo_objeto: "medium_genre",
+  temas: "subjects", materias: "subjects", materia: "subjects",
+  destacado: "featured",
+  // Project
+  orden: "order", id_historia: "story_id", subtitulo: "subtitle", firma: "byline",
+  privada: "private", privado: "private", protegida: "private",
+  mostrar_secciones: "show_sections",
+  // Glossary
+  id_termino: "term_id", "id_término": "term_id",
+  definicion: "definition", "definición": "definition",
+  terminos_relacionados: "related_terms", "términos_relacionados": "related_terms",
+  // Identity entries (canonical English; case-insensitive via lowercased lookup)
+  object_id: "object_id", title: "title", featured: "featured", creator: "creator",
+  description: "description", source_url: "source_url", period: "period", year: "year",
+  medium_genre: "medium_genre", dimensions: "dimensions", subjects: "subjects",
+  source: "source", credit: "credit", thumbnail: "thumbnail", alt_text: "alt_text",
+  order: "order", story_id: "story_id", subtitle: "subtitle", byline: "byline",
+  private: "private", show_sections: "show_sections",
+  step: "step", object: "object", x: "x", y: "y", zoom: "zoom", page: "page",
+  question: "question", answer: "answer", clip_start: "clip_start", clip_end: "clip_end",
+  loop: "loop", layer1_button: "layer1_button", layer1_content: "layer1_content",
+  layer2_button: "layer2_button", layer2_content: "layer2_content",
+  term_id: "term_id", definition: "definition", related_terms: "related_terms",
+};
+
+/**
+ * Known bilingual column values used in the second row of Telar CSVs. A row
+ * where 80%+ of its non-empty values match this set is treated as the
+ * bilingual header row and skipped during import. Derived from
+ * COLUMN_NAME_MAPPING so both the Spanish header words (the keys) and the
+ * canonical English words (the values) are detected — covering CSVs whose
+ * second row repeats either language.
+ */
+// Extra header tokens the framework's is_header_row recognises beyond the
+// COLUMN_NAME_MAPPING key/value union — mirrored here so the Compositor's
+// bilingual-row detection stays in lockstep with the framework. Source of
+// truth: telar/scripts/telar/csv_utils.py (is_header_row valid_names). Note
+// these are framework-canonical names (e.g. `medium`, `protected`,
+// `object_type`) the Compositor normalises away (to `medium_genre`/`private`),
+// so they must be listed explicitly for detection even though they are not
+// normalisation targets.
+const FRAMEWORK_HEADER_TOKENS = [
+  "x", "y", "zoom", "page", "order", "story_id", "title", "subtitle",
+  "byline", "object_id", "description", "source_url", "creator", "period",
+  "medium", "dimensions", "location", "source", "credit", "thumbnail",
+  "year", "object_type", "subjects", "featured", "protected", "show_sections",
+];
+
+const KNOWN_BILINGUAL_VALUES = new Set<string>([
+  ...Object.keys(COLUMN_NAME_MAPPING),
+  ...Object.values(COLUMN_NAME_MAPPING),
+  ...FRAMEWORK_HEADER_TOKENS,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -163,6 +187,37 @@ export interface LandingData {
   objects_heading?: string;
   objects_intro?: string;
   welcome_body?: string;
+}
+
+/**
+ * SSRF guard for the live-site probe: the probe base comes from the repo's own
+ * _config.yml (untrusted on multi-author/imported repos). Require https and
+ * reject private/loopback/link-local hosts so the server can't be coerced into
+ * probing internal infrastructure.
+ */
+export function isSafeSiteBase(siteBase: string): boolean {
+  let u: URL;
+  try { u = new URL(siteBase); } catch { return false; }
+  if (u.protocol !== "https:") return false;
+  const h = u.hostname.toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost")) return false;
+  if (h === "::1" || h === "[::1]" || h === "0.0.0.0") return false;
+  // IPv4 loopback / RFC1918 / link-local
+  if (/^127\./.test(h)) return false;
+  if (/^10\./.test(h)) return false;
+  if (/^192\.168\./.test(h)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+  if (/^169\.254\./.test(h)) return false;
+  return true;
+}
+
+/**
+ * objectId allowlist — IDENTICAL shape to the framework pipeline's object_id
+ * guard (^[A-Za-z0-9_.-]+$). Used to reject path-traversal / injection before
+ * interpolating objectId into a probe URL.
+ */
+export function isSafeObjectId(objectId: string): boolean {
+  return /^[A-Za-z0-9_.-]+$/.test(objectId);
 }
 
 /**
@@ -410,7 +465,11 @@ function chunkForD1<T>(colCount: number, rows: T[]): T[][] {
  */
 export function isHeaderRow(row: Record<string, string>): boolean {
   const values = Object.values(row).filter((v) => v.trim() !== "");
-  if (values.length === 0) return false;
+  // A genuine bilingual second-row populates every column, so a row with fewer
+  // than two populated cells can never be one. Guarding here prevents a sparse
+  // data row whose single cell happens to equal a canonical word (e.g.
+  // term_id="source") from being a 100% false-positive match.
+  if (values.length < 2) return false;
   const matches = values.filter((v) =>
     KNOWN_BILINGUAL_VALUES.has(v.trim().toLowerCase()),
   );
@@ -435,7 +494,7 @@ export function parseTelarCsv(csvText: string): Record<string, string>[] {
   const result = Papa.parse<Record<string, string>>(csvText, {
     header: true,
     skipEmptyLines: true,
-    transformHeader: (h) => h.trim(),
+    transformHeader: (h) => { const t = h.trim(); return COLUMN_NAME_MAPPING[t.toLowerCase()] ?? t; },
     transform: (v) => v.trim(),
   });
   return result.data.filter((row) => !isHeaderRow(row) && !isCommentRow(row));
@@ -495,6 +554,16 @@ export function mapConfigToProjectConfig(
 // CSV column mapping
 // ---------------------------------------------------------------------------
 
+// objects.csv keys mapped to first-class D1 columns; any other column is
+// preserved verbatim in `extra_columns` (custom-column passthrough).
+// `object_type` is included because the mapper still reads it as a legacy
+// fallback for medium_genre.
+const KNOWN_OBJECT_KEYS = new Set([
+  "object_id", "title", "featured", "creator", "description", "source_url",
+  "period", "year", "medium_genre", "object_type", "subjects", "source",
+  "credit", "thumbnail", "alt_text", "dimensions",
+]);
+
 /**
  * Maps parsed objects.csv rows to the objects table insert shape.
  * The `featured` column accepts "true"/"yes"/"1" — anything else is false.
@@ -506,6 +575,16 @@ export function mapObjectsCsv(
   return rows.filter((row) => (row.object_id ?? "").trim() !== "").map((row) => {
     const featuredRaw = (row.featured ?? "").toLowerCase().trim();
     const featured = featuredRaw === "true" || featuredRaw === "yes" || featuredRaw === "1";
+    // Custom-column passthrough: capture every column the mapper doesn't
+    // consume first-class into extra_columns, so custom scholarly metadata survives
+    // import → D1. Empty/whitespace cells are dropped, matching the framework's
+    // extra_metadata collection in generate_collections.py.
+    const extras: Record<string, string> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (KNOWN_OBJECT_KEYS.has(key)) continue;
+      const v = (value ?? "").trim();
+      if (v) extras[key] = v;
+    }
     return {
       project_id: projectId ?? 0,
       object_id: row.object_id ?? "",
@@ -522,6 +601,8 @@ export function mapObjectsCsv(
       credit: row.credit || undefined,
       thumbnail: row.thumbnail || undefined,
       alt_text: row.alt_text || row.title || undefined,
+      dimensions: row.dimensions || undefined,
+      extra_columns: Object.keys(extras).length > 0 ? JSON.stringify(extras) : undefined,
       image_available: false,
     };
   });
@@ -536,20 +617,29 @@ export function mapProjectCsv(
   projectId?: number,
 ): Array<typeof stories.$inferInsert> {
   return rows.map((row) => {
+    // private — truthy whitelist matches the framework's processors/project.py:
+    // yes/true/sí/si (case-insensitive, trimmed). "1" is intentionally NOT
+    // accepted: the framework would publish such a story in cleartext, so
+    // accepting "1" here would make the Compositor UI claim protection the
+    // published site does not provide.
     const privateRaw = (row.private ?? "").toLowerCase().trim();
-    const isPrivate = privateRaw === "true" || privateRaw === "yes" || privateRaw === "1";
+    const isPrivate =
+      privateRaw === "true" ||
+      privateRaw === "yes" ||
+      privateRaw === "sí" ||
+      privateRaw === "si";
 
     // show_sections — canonical English column wins over the Spanish
     // mostrar_secciones alias when both are present. Truthy whitelist matches
     // the framework's processors/project.py: yes/true/sí/si (case-insensitive,
-    // trimmed). "1" preserved for parity with the private column convention.
+    // trimmed). "1" is intentionally NOT accepted — it would diverge from the
+    // framework's publish behaviour.
     const showSectionsRaw = (row.show_sections ?? row.mostrar_secciones ?? "").toLowerCase().trim();
     const showSections =
       showSectionsRaw === "true" ||
       showSectionsRaw === "yes" ||
       showSectionsRaw === "sí" ||
-      showSectionsRaw === "si" ||
-      showSectionsRaw === "1";
+      showSectionsRaw === "si";
 
     return {
       project_id: projectId ?? 0,
@@ -667,6 +757,25 @@ export function mapStoryCsv(
   return { steps: stepRows, layers: layerRows };
 }
 
+/**
+ * Maps parsed glossary.csv rows to the glossary_terms table insert shape.
+ * `related_terms` is a framework column: a pipe-`|`-separated list of
+ * related term_ids, stored verbatim as the cell string. Headers are normalised
+ * upstream (Spanish `términos_relacionados`/`terminos_relacionados` →
+ * `related_terms`), so the mapper reads `r.related_terms` directly.
+ */
+export function mapGlossaryCsv(
+  rows: Record<string, string>[],
+): Array<typeof glossary_terms.$inferInsert> {
+  return rows.map((r) => ({
+    project_id: 0,
+    term_id: r.term_id ?? "",
+    title: r.title || undefined,
+    definition: r.definition || undefined,
+    related_terms: r.related_terms || undefined,
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Main import orchestrator
 // ---------------------------------------------------------------------------
@@ -751,6 +860,7 @@ export async function deleteProjectCascade(
     db.delete(project_pages).where(eq(project_pages.project_id, projectId)),
     db.delete(project_members).where(eq(project_members.project_id, projectId)),
     db.delete(project_invites).where(eq(project_invites.project_id, projectId)),
+    db.delete(activity_log).where(eq(activity_log.project_id, projectId)),
     db.delete(projects).where(eq(projects.id, projectId)),
   );
 
@@ -939,12 +1049,7 @@ export async function importRepo({
           storyRows = mapProjectCsv(rows);
           storiesFound = storyRows.length;
         } else if (tabName === "glossary") {
-          glossaryRows = rows.map((r) => ({
-            project_id: 0,
-            term_id: r.term_id ?? "",
-            title: r.title || undefined,
-            definition: r.definition || undefined,
-          }));
+          glossaryRows = mapGlossaryCsv(rows);
         } else {
           // Candidate story tab — collect for second pass
           storyTabs.push(tab);
@@ -1027,12 +1132,7 @@ export async function importRepo({
 
     const glossaryContent = await getFileContent(token, owner, repo, "telar-content/spreadsheets/glossary.csv");
     if (glossaryContent) {
-      glossaryRows = parseTelarCsv(glossaryContent).map((r) => ({
-        project_id: 0,
-        term_id: r.term_id ?? "",
-        title: r.title || undefined,
-        definition: r.definition || undefined,
-      }));
+      glossaryRows = mapGlossaryCsv(parseTelarCsv(glossaryContent));
     }
 
     // ---- Pages import ----
@@ -1055,7 +1155,12 @@ export async function importRepo({
   // -------------------------------------------------------------------------
   // Tiles and large media files are generated/deployed by GitHub Actions to
   // GitHub Pages — they are NOT stored in the repo. We probe the live site.
-  if (siteBase) {
+  if (siteBase && !isSafeSiteBase(siteBase)) {
+    console.warn(
+      `[import] skipping live-site probe: unsafe url/baseurl in _config.yml (${siteBase})`,
+    );
+  }
+  if (siteBase && isSafeSiteBase(siteBase)) {
     const selfHostedIds = objectRows
       .filter((o) => {
         const src = o.source_url as string | null;
@@ -1065,16 +1170,22 @@ export async function importRepo({
 
     const probeResults = await Promise.allSettled(
       selfHostedIds.map(async (objectId) => {
+        if (!isSafeObjectId(objectId)) {
+          console.warn(`[import] skipping probe for unsafe object_id: ${objectId}`);
+          return { objectId, type: "unknown" as const };
+        }
+        const safeId = encodeURIComponent(objectId);
+
         // Check IIIF tiles
         try {
-          const tileRes = await fetch(`${siteBase}/iiif/objects/${objectId}/info.json`, { method: "HEAD" });
+          const tileRes = await fetch(`${siteBase}/iiif/objects/${safeId}/info.json`, { method: "HEAD" });
           if (tileRes.ok) return { objectId, type: "iiif" as const };
         } catch { /* site unreachable */ }
 
         // Check audio files
         for (const ext of audioExtensions) {
           try {
-            const audioRes = await fetch(`${siteBase}/telar-content/objects/${objectId}.${ext}`, { method: "HEAD" });
+            const audioRes = await fetch(`${siteBase}/telar-content/objects/${safeId}.${ext}`, { method: "HEAD" });
             if (audioRes.ok) return { objectId, type: "audio" as const, filename: `${objectId}.${ext}` };
           } catch { /* site unreachable */ }
         }
@@ -1193,16 +1304,22 @@ export async function importRepo({
     }
   }
 
-  // Insert content tables — chunked to stay within D1's 100-variable limit
-  // objects: 19 cols → max 5 rows; stories: 10 cols → max 10 rows;
-  // glossary: 6 cols → max 16 rows; pages: 7 cols → max 14 rows
+  // Insert content tables — chunked to stay within D1's 100-bound-parameter
+  // limit. The chunkForD1 divisor below is bound-params-per-row; it is a
+  // conservative over-estimate of each table's actual column count, so the
+  // resulting batch size (Math.floor(100 / divisor)) stays safely under 100
+  // bindings even if a column is added later:
+  //   objects: divisor 19 → max 5 rows/insert
+  //   stories: divisor 10 → max 10 rows/insert
+  //   glossary: divisor 7 → max 14 rows/insert
+  //   pages: divisor 7 → max 14 rows/insert
   for (const chunk of chunkForD1(19, objectsWithProjectId)) {
     await db.insert(objects).values(chunk);
   }
   for (const chunk of chunkForD1(10, storiesWithProjectId)) {
     await db.insert(stories).values(chunk);
   }
-  for (const chunk of chunkForD1(6, glossaryWithProjectId)) {
+  for (const chunk of chunkForD1(7, glossaryWithProjectId)) {
     await db.insert(glossary_terms).values(chunk);
   }
 

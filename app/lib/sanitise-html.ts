@@ -87,3 +87,21 @@ export function sanitiseHtml(html: string): string {
     transformTags: { img: rejectSvgDataUri },
   });
 }
+
+/**
+ * Inline-only policy for site config descriptions. The framework renders
+ * config.description RAW inside <p class="lead"> (telar/_layouts/index.html),
+ * so only inline tags are valid — block tags would break the paragraph. This
+ * also closes the XSS surface for a value that ships into a user's published
+ * site. disallowedTagsMode "discard" strips disallowed tags but keeps their
+ * text; script/style contents are dropped via sanitize-html's nonTextTags.
+ */
+export function sanitiseInlineHtml(html: string): string {
+  return sanitizeHtml(html, {
+    allowedTags: ["a", "em", "strong"],
+    allowedAttributes: { a: ["href"] },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowProtocolRelative: false,
+    disallowedTagsMode: "discard",
+  });
+}

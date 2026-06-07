@@ -10,7 +10,7 @@
  * path, the cascade-aware `deleteProjectCascade`, and the orphan-story
  * detection plus `.compositor-ignored` parsing.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
@@ -24,6 +24,7 @@ import {
   mapObjectsCsv,
   mapProjectCsv,
   mapStoryCsv,
+  mapGlossaryCsv,
   parseIndexMd,
   parsePageMarkdown,
   rollbackProjectImport,
@@ -31,6 +32,8 @@ import {
   parseCompositorIgnored,
   detectOrphanStoryIds,
   scanRepoOrphanStoryIds,
+  isSafeSiteBase,
+  isSafeObjectId,
 } from "~/lib/import.server";
 import { parseYaml } from "~/lib/yaml.server";
 import {
@@ -150,6 +153,41 @@ describe("isHeaderRow", () => {
     const row = { object_id: "", title: "", featured: "" };
     expect(isHeaderRow(row)).toBe(false);
   });
+
+  it("identifies English canonical header row including medium_genre", () => {
+    const row = {
+      a: "object_id",
+      b: "title",
+      c: "medium_genre",
+      d: "year",
+      e: "subjects",
+    };
+    expect(isHeaderRow(row)).toBe(true);
+  });
+
+  it("identifies header row using framework-canonical tokens (medium, object_type, protected)", () => {
+    const row = {
+      a: "object_id",
+      b: "title",
+      c: "medium",
+      d: "object_type",
+      e: "protected",
+      f: "year",
+    };
+    expect(isHeaderRow(row)).toBe(true);
+  });
+
+  it("returns false for a mixed real-value data row", () => {
+    const row = {
+      a: "painting-001",
+      b: "The Garden at Giverny",
+      c: "oil on canvas",
+      d: "1900",
+      e: "gardens, impressionism",
+      f: "Musee d'Orsay",
+    };
+    expect(isHeaderRow(row)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -201,6 +239,117 @@ describe("parseTelarCsv", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].object_id).toBe("painting-001");
     expect(rows[1].object_id).toBe("sculpture-002");
+  });
+
+  // -------------------------------------------------------------------------
+  // Spanish -> English header normalisation
+  // -------------------------------------------------------------------------
+
+  it("normalises Spanish objects headers to canonical English keys", () => {
+    const csv = "id_objeto,titulo,medio,dimensiones\npainting-001,The Garden,oil on canvas,80x60cm";
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      object_id: "painting-001",
+      title: "The Garden",
+      medium_genre: "oil on canvas",
+      dimensions: "80x60cm",
+    });
+  });
+
+  it("normalises Spanish project headers to canonical English keys", () => {
+    const csv = "orden,id_historia,privada\n1,my-story,true";
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      order: "1",
+      story_id: "my-story",
+      private: "true",
+    });
+  });
+
+  it("normalises Spanish story headers to canonical English keys", () => {
+    const csv = "paso,objeto,pregunta,boton_capa1\n1,painting-001,What is this?,More";
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      step: "1",
+      object: "painting-001",
+      question: "What is this?",
+      layer1_button: "More",
+    });
+  });
+
+  it("normalises Spanish glossary headers (with accents) to canonical English keys", () => {
+    const csv = "id_término,definición,términos_relacionados\nweave,A woven structure,loom";
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      term_id: "weave",
+      definition: "A woven structure",
+      related_terms: "loom",
+    });
+  });
+
+  it("leaves an all-English CSV unchanged (regression)", () => {
+    const csv = "object_id,title,medium_genre,dimensions\npainting-001,The Garden,oil,80x60";
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(Object.keys(rows[0])).toEqual(["object_id", "title", "medium_genre", "dimensions"]);
+    expect(rows[0]).toMatchObject({
+      object_id: "painting-001",
+      title: "The Garden",
+      medium_genre: "oil",
+      dimensions: "80x60",
+    });
+  });
+
+  it("passes through an unknown custom header verbatim, case-preserved", () => {
+    const csv = "object_id,Inventory_No\npainting-001,INV-42";
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveProperty("Inventory_No", "INV-42");
+    expect(rows[0]).toHaveProperty("object_id", "painting-001");
+  });
+
+  it("normalises capitalised known headers (Google Sheets casing) to lowercase canonical keys", () => {
+    const csv = "Title,Page\nThe Garden,about";
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveProperty("title", "The Garden");
+    expect(rows[0]).toHaveProperty("page", "about");
+  });
+
+  it("skips a Spanish bilingual second row, keeping only the data row", () => {
+    const csv = [
+      "object_id,title,creator,description",
+      "id_objeto,titulo,creador,descripcion",
+      "painting-001,The Garden,Monet,A garden",
+    ].join("\n");
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ object_id: "painting-001", title: "The Garden" });
+  });
+
+  it("skips an English bilingual second row, keeping only the data row", () => {
+    const csv = [
+      "object_id,title,creator,description",
+      "object_id,title,creator,description",
+      "painting-001,The Garden,Monet,A garden",
+    ].join("\n");
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ object_id: "painting-001", title: "The Garden" });
+  });
+
+  it("retains a sparse data row whose only populated cell equals a bilingual word", () => {
+    // Glossary row with term_id="source" (a canonical English word now in
+    // KNOWN_BILINGUAL_VALUES) and empty title/definition. A single populated
+    // cell yields a 1/1 = 100% match and was wrongly dropped as a header row.
+    const csv = ["term_id,title,definition", "source,,"].join("\n");
+    const rows = parseTelarCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].term_id).toBe("source");
   });
 });
 
@@ -349,6 +498,71 @@ describe("mapObjectsCsv", () => {
     const mapped = mapObjectsCsv(rows);
     expect(mapped).toHaveLength(0);
   });
+
+  it("maps the first-class dimensions column", () => {
+    const rows = [
+      { object_id: "a", title: "A", featured: "false", dimensions: "24 x 30 cm" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped[0].dimensions).toBe("24 x 30 cm");
+  });
+
+  it("captures custom columns into extra_columns as a JSON blob", () => {
+    const rows = [
+      {
+        object_id: "a",
+        title: "A",
+        featured: "false",
+        creator: "Claude Monet",
+        procedencia: "Bogotá",
+        inventory_no: "X-12",
+      },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(typeof mapped[0].extra_columns).toBe("string");
+    expect(JSON.parse(mapped[0].extra_columns as string)).toEqual({
+      procedencia: "Bogotá",
+      inventory_no: "X-12",
+    });
+  });
+
+  it("leaves extra_columns undefined when there are no custom columns", () => {
+    const rows = [
+      { object_id: "a", title: "A", featured: "false", creator: "Claude Monet" },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(mapped[0].extra_columns).toBeUndefined();
+  });
+
+  it("skips empty custom columns in extra_columns", () => {
+    const rows = [
+      {
+        object_id: "a",
+        title: "A",
+        featured: "false",
+        procedencia: "",
+        notes: "x",
+      },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    expect(JSON.parse(mapped[0].extra_columns as string)).toEqual({ notes: "x" });
+  });
+
+  it("does not capture known first-class fields into extra_columns", () => {
+    const rows = [
+      {
+        object_id: "a",
+        title: "A",
+        featured: "false",
+        creator: "Claude Monet",
+        procedencia: "Bogotá",
+      },
+    ];
+    const mapped = mapObjectsCsv(rows);
+    const extras = JSON.parse(mapped[0].extra_columns as string);
+    expect(extras.creator).toBeUndefined();
+    expect(mapped[0].creator).toBe("Claude Monet");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -407,6 +621,44 @@ describe("mapProjectCsv", () => {
         { story_id: "s1", show_sections: "false", mostrar_secciones: "true" },
       ]);
       expect(mapped[0].show_sections).toBe(false);
+    });
+
+    it("reads show_sections='1' as false (framework does not accept '1')", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", show_sections: "1" }]);
+      expect(mapped[0].show_sections).toBe(false);
+    });
+
+    it("reads show_sections='sí' as true (Spanish truthy with accent)", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", show_sections: "sí" }]);
+      expect(mapped[0].show_sections).toBe(true);
+    });
+  });
+
+  // --- private ---
+  // Truthy whitelist must match the framework's processors/project.py:
+  // yes/true/sí/si (case-insensitive, trimmed). "1" is intentionally NOT
+  // accepted — the framework would publish such a story in cleartext, so
+  // accepting "1" here would make the Compositor UI claim protection the
+  // published site does not provide.
+  describe("private", () => {
+    it("reads private='1' as false (framework does not accept '1')", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", private: "1" }]);
+      expect(mapped[0].private).toBe(false);
+    });
+
+    it("reads private='sí' as true (Spanish truthy with accent)", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", private: "sí" }]);
+      expect(mapped[0].private).toBe(true);
+    });
+
+    it("reads private='yes' as true", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", private: "yes" }]);
+      expect(mapped[0].private).toBe(true);
+    });
+
+    it("reads private='true' as true", () => {
+      const mapped = mapProjectCsv([{ story_id: "s1", private: "true" }]);
+      expect(mapped[0].private).toBe(true);
     });
   });
 });
@@ -514,6 +766,62 @@ describe("mapStoryCsv", () => {
       const result = mapStoryCsv(rows, 1);
       expect(result.steps).toHaveLength(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mapGlossaryCsv — read related_terms column
+// ---------------------------------------------------------------------------
+
+describe("mapGlossaryCsv", () => {
+  it("maps a glossary row to the D1 insert shape", () => {
+    const rows: Record<string, string>[] = [
+      { term_id: "loom", title: "Loom", definition: "A device for weaving." },
+    ];
+    const mapped = mapGlossaryCsv(rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0]).toMatchObject({
+      project_id: 0,
+      term_id: "loom",
+      title: "Loom",
+      definition: "A device for weaving.",
+    });
+  });
+
+  it("preserves related_terms verbatim, including the pipe separator", () => {
+    const rows: Record<string, string>[] = [
+      {
+        term_id: "weaving",
+        title: "Weaving",
+        definition: "Interlacing threads.",
+        related_terms: "loom|weaving",
+      },
+    ];
+    const mapped = mapGlossaryCsv(rows);
+    expect(mapped[0].related_terms).toBe("loom|weaving");
+  });
+
+  it("leaves related_terms undefined when the column is absent", () => {
+    const rows: Record<string, string>[] = [
+      { term_id: "loom", title: "Loom", definition: "A device for weaving." },
+    ];
+    const mapped = mapGlossaryCsv(rows);
+    expect(mapped[0].related_terms).toBeUndefined();
+  });
+
+  it("leaves related_terms undefined when the cell is empty", () => {
+    const rows: Record<string, string>[] = [
+      { term_id: "loom", title: "Loom", definition: "A device for weaving.", related_terms: "" },
+    ];
+    const mapped = mapGlossaryCsv(rows);
+    expect(mapped[0].related_terms).toBeUndefined();
+  });
+
+  it("reads related_terms from a Spanish-headered CSV via parseTelarCsv", () => {
+    const csv =
+      "id_término,título,definición,términos_relacionados\nweave,Weave,A woven structure,loom|warp";
+    const mapped = mapGlossaryCsv(parseTelarCsv(csv));
+    expect(mapped[0].related_terms).toBe("loom|warp");
   });
 });
 
@@ -1197,6 +1505,78 @@ describe("orphan detection + .compositor-ignored", () => {
 
       // story-real is the only direct-child orphan; story-old is in a sub-path and excluded
       expect(result).toEqual(["story-real"]);
+    });
+  });
+
+  describe("isSafeSiteBase (SSRF guard for live-site probe)", () => {
+    it("rejects the cloud metadata link-local address", () => {
+      expect(isSafeSiteBase("http://169.254.169.254")).toBe(false);
+    });
+
+    it("rejects non-https schemes", () => {
+      expect(isSafeSiteBase("http://example.com")).toBe(false);
+    });
+
+    it("rejects RFC1918 10.x addresses", () => {
+      expect(isSafeSiteBase("https://10.0.0.1")).toBe(false);
+    });
+
+    it("rejects localhost", () => {
+      expect(isSafeSiteBase("https://localhost")).toBe(false);
+    });
+
+    it("rejects IPv4 loopback", () => {
+      expect(isSafeSiteBase("https://127.0.0.1")).toBe(false);
+    });
+
+    it("rejects 172.16.x (inside the private range)", () => {
+      expect(isSafeSiteBase("https://172.16.0.1")).toBe(false);
+    });
+
+    it("allows 172.32.x (just outside the private 172.16-31 range)", () => {
+      expect(isSafeSiteBase("https://172.32.0.1")).toBe(true);
+    });
+
+    it("allows a github.io site", () => {
+      expect(isSafeSiteBase("https://owner.github.io")).toBe(true);
+    });
+
+    it("allows a custom domain", () => {
+      expect(isSafeSiteBase("https://my.custom-domain.org")).toBe(true);
+    });
+
+    it("rejects a garbage string", () => {
+      expect(isSafeSiteBase("not a url")).toBe(false);
+    });
+  });
+
+  describe("isSafeObjectId (path-traversal / injection guard)", () => {
+    it("accepts a simple object id", () => {
+      expect(isSafeObjectId("obj-001")).toBe(true);
+    });
+
+    it("accepts dots, underscores, and hyphens", () => {
+      expect(isSafeObjectId("a.b_c-1")).toBe(true);
+    });
+
+    it("rejects path traversal", () => {
+      expect(isSafeObjectId("../etc")).toBe(false);
+    });
+
+    it("rejects a slash", () => {
+      expect(isSafeObjectId("a/b")).toBe(false);
+    });
+
+    it("rejects a space", () => {
+      expect(isSafeObjectId("a b")).toBe(false);
+    });
+
+    it("rejects a percent-encoded sequence", () => {
+      expect(isSafeObjectId("a%2e")).toBe(false);
+    });
+
+    it("rejects an empty string", () => {
+      expect(isSafeObjectId("")).toBe(false);
     });
   });
 });

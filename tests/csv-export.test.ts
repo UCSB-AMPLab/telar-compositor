@@ -7,13 +7,13 @@ import {
   dbObjectToCsvRow,
   type ObjectDbRow,
 } from "~/lib/csv-export.server";
-import { mapObjectsCsv } from "~/lib/import.server";
+import { mapObjectsCsv, parseTelarCsv } from "~/lib/import.server";
 
 const EXPECTED_HEADER =
-  "object_id,title,featured,creator,description,source_url,period,year,medium_genre,subjects,source,credit,thumbnail,alt_text";
+  "object_id,title,alt_text,featured,creator,description,source_url,period,year,medium_genre,subjects,source,credit,thumbnail,dimensions";
 
 const EXPECTED_BILINGUAL_ROW =
-  "id_objeto,titulo,destacado,creador,descripcion,url_fuente,periodo,año,medio_genero,temas,fuente,credito,miniatura,texto_alt";
+  "id_objeto,titulo,texto_alt,destacado,creador,descripcion,url_fuente,periodo,año,medio_genero,temas,fuente,credito,miniatura,dimensiones";
 
 function makeObject(overrides: Partial<{
   object_id: string;
@@ -30,22 +30,26 @@ function makeObject(overrides: Partial<{
   credit: string | null;
   thumbnail: string | null;
   alt_text: string | null;
+  dimensions: string | null;
+  extra_columns: string | null;
 }> = {}) {
   return {
     object_id: "obj-001",
     title: "Test Object",
-    featured: false,
-    creator: null,
-    description: null,
-    source_url: null,
-    period: null,
-    year: null,
-    medium_genre: null,
-    subjects: null,
-    source: null,
-    credit: null,
-    thumbnail: null,
-    alt_text: null,
+    featured: false as boolean | null,
+    creator: null as string | null,
+    description: null as string | null,
+    source_url: null as string | null,
+    period: null as string | null,
+    year: null as string | null,
+    medium_genre: null as string | null,
+    subjects: null as string | null,
+    source: null as string | null,
+    credit: null as string | null,
+    thumbnail: null as string | null,
+    alt_text: null as string | null,
+    dimensions: null as string | null,
+    extra_columns: null as string | null,
     ...overrides,
   };
 }
@@ -128,10 +132,11 @@ describe("extractCommentRows", () => {
 });
 
 describe("OBJECTS_CSV_COLUMNS", () => {
-  it("has correct column order", () => {
+  it("has correct column order (matches framework shipped template)", () => {
     expect(OBJECTS_CSV_COLUMNS).toEqual([
       "object_id",
       "title",
+      "alt_text",
       "featured",
       "creator",
       "description",
@@ -143,7 +148,7 @@ describe("OBJECTS_CSV_COLUMNS", () => {
       "source",
       "credit",
       "thumbnail",
-      "alt_text",
+      "dimensions",
     ]);
   });
 });
@@ -159,6 +164,45 @@ describe("serializeObjectsCsv", () => {
     const csv = serializeObjectsCsv([makeObject()]);
     const lines = csv.split("\n");
     expect(lines[1]).toBe(EXPECTED_BILINGUAL_ROW);
+  });
+
+  it("Test 2b: third column is alt_text in header and texto_alt in bilingual row (framework template order)", () => {
+    const csv = serializeObjectsCsv([makeObject()]);
+    const lines = csv.split("\n");
+    expect(lines[0].split(",")[2]).toBe("alt_text");
+    expect(lines[1].split(",")[2]).toBe("texto_alt");
+  });
+
+  it("Test 2c: preserved comment-row cells stay aligned under framework-ordered headers", () => {
+    // A comment row whose per-column cells are aligned to the framework
+    // template order. The first cell carries the leading '#', subsequent
+    // cells annotate the column above them. After publish the header order
+    // matches the framework template, so these cells still sit under the
+    // headers they describe.
+    const existingCsv = [
+      EXPECTED_HEADER,
+      EXPECTED_BILINGUAL_ROW,
+      "# id note,title note,alt_text note,featured note,creator note,desc note,url note,period note,year note,genre note,subjects note,source note,credit note,thumb note,dim note",
+      "obj-001,Test Object,,,,,,,,,,,,,",
+    ].join("\n");
+
+    const output = serializeObjectsCsv([makeObject({ object_id: "obj-002", title: "New" })], existingCsv);
+    const lines = output.split("\n");
+
+    // Output header is the framework template order.
+    expect(lines[0]).toBe(EXPECTED_HEADER);
+
+    // The comment row is preserved verbatim (line index 2 = after header + bilingual).
+    expect(lines[2]).toBe(
+      "# id note,title note,alt_text note,featured note,creator note,desc note,url note,period note,year note,genre note,subjects note,source note,credit note,thumb note,dim note",
+    );
+
+    // Spot-check alignment: header[2] is alt_text and the comment cell[2]
+    // still annotates it.
+    const header = lines[0].split(",");
+    const commentCells = lines[2].split(",");
+    expect(header[2]).toBe("alt_text");
+    expect(commentCells[2]).toBe("alt_text note");
   });
 
   it("Test 3: featured=true serialises as 'yes', featured=false serialises as empty string", () => {
@@ -285,6 +329,127 @@ describe("serializeObjectsCsv", () => {
     const dataRow = parsed.data.find((r) => r.object_id === "obj-tricky");
     expect(dataRow).toBeDefined();
     expect(dataRow!.description).toBe('Contains, a comma and\na newline');
+  });
+
+  it("H17 (a): dimensions value emits a dimensions column with dimensiones bilingual label", () => {
+    const csv = serializeObjectsCsv([makeObject({ dimensions: "24 x 30 cm" })]);
+    const lines = csv.split("\n");
+    expect(lines[0]).toContain("dimensions");
+    expect(lines[1]).toContain("dimensiones");
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRow = parsed.data[1]; // skip bilingual row
+    expect(dataRow.dimensions).toBe("24 x 30 cm");
+  });
+
+  it("H17 (b): extra_columns union emits sorted custom columns after fixed columns, per-row values", () => {
+    const csv = serializeObjectsCsv([
+      makeObject({ object_id: "obj-a", extra_columns: '{"procedencia":"Bogotá"}' }),
+      makeObject({ object_id: "obj-b", extra_columns: '{"inventory_no":"X-12"}' }),
+    ]);
+    const header = csv.split("\n")[0];
+    // Both custom columns present, sorted alphabetically, after the fixed columns
+    expect(header).toBe(`${EXPECTED_HEADER},inventory_no,procedencia`);
+
+    const parsed = Papa.parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
+    const dataRows = parsed.data.slice(1); // skip bilingual row
+    const rowA = dataRows.find((r) => r.object_id === "obj-a")!;
+    const rowB = dataRows.find((r) => r.object_id === "obj-b")!;
+    expect(rowA.procedencia).toBe("Bogotá");
+    expect(rowA.inventory_no).toBe("");
+    expect(rowB.inventory_no).toBe("X-12");
+    expect(rowB.procedencia).toBe("");
+  });
+
+  it("H17 (c): null extra_columns yields only fixed columns + dimensions, no spurious columns", () => {
+    const csv = serializeObjectsCsv([makeObject({ extra_columns: null })]);
+    const header = csv.split("\n")[0];
+    expect(header).toBe(EXPECTED_HEADER);
+  });
+
+  it("H17 (d): corrupt extra_columns does not throw and emits no extra columns for that row", () => {
+    let csv = "";
+    expect(() => {
+      csv = serializeObjectsCsv([makeObject({ extra_columns: "{not json" })]);
+    }).not.toThrow();
+    const header = csv.split("\n")[0];
+    expect(header).toBe(EXPECTED_HEADER);
+  });
+
+  it("H17 (e): round-trip dimensions + custom column through parseTelarCsv + mapObjectsCsv", () => {
+    const csv = serializeObjectsCsv([
+      makeObject({
+        object_id: "obj-rt",
+        dimensions: "24 x 30 cm",
+        extra_columns: '{"procedencia":"Bogotá"}',
+      }),
+    ]);
+    const rows = parseTelarCsv(csv);
+    const mapped = mapObjectsCsv(rows, 1);
+    const obj = mapped.find((m) => m.object_id === "obj-rt")!;
+    expect(obj.dimensions).toBe("24 x 30 cm");
+    expect(obj.extra_columns).toBeDefined();
+    expect(JSON.parse(obj.extra_columns as string)).toEqual({ procedencia: "Bogotá" });
+  });
+
+  it("H17 (f): 5 custom columns round-trip without a phantom id_objeto data row", () => {
+    // With 15 fixed + 5 custom = 20 columns, the bilingual row used to echo the
+    // 5 custom keys verbatim → only 15/20 = 0.75 < 0.8 known → header detection
+    // failed and ingested the bilingual row as a phantom data object.
+    const original = [
+      makeObject({
+        object_id: "obj-c1",
+        title: "First",
+        extra_columns:
+          '{"acc_no":"A-1","loc":"Sala 1","prov":"Bogotá","cond":"Buena","rights":"CC-BY"}',
+      }),
+      makeObject({
+        object_id: "obj-c2",
+        title: "Second",
+        extra_columns:
+          '{"acc_no":"A-2","loc":"Sala 2","prov":"Cali","cond":"Regular","rights":"CC0"}',
+      }),
+    ];
+
+    const csv = serializeObjectsCsv(original);
+    const lines = csv.split("\n");
+
+    // The bilingual row's custom-column cells must be empty so they don't
+    // dilute header detection. Header + bilingual = lines[0], lines[1].
+    const header = lines[0].split(",");
+    const bilingual = lines[1].split(",");
+    const customStart = OBJECTS_CSV_COLUMNS.length;
+    for (let i = customStart; i < header.length; i++) {
+      expect(bilingual[i]).toBe("");
+    }
+
+    // No phantom id_objeto row, and exactly as many data rows as input objects.
+    const rows = parseTelarCsv(csv);
+    expect(rows.some((r) => r.object_id === "id_objeto")).toBe(false);
+    const mapped = mapObjectsCsv(rows, 1);
+    expect(mapped).toHaveLength(original.length);
+
+    // Custom column values round-trip per object.
+    const a = mapped.find((m) => m.object_id === "obj-c1")!;
+    const b = mapped.find((m) => m.object_id === "obj-c2")!;
+    expect(JSON.parse(a.extra_columns as string)).toMatchObject({
+      acc_no: "A-1",
+      prov: "Bogotá",
+    });
+    expect(JSON.parse(b.extra_columns as string)).toMatchObject({
+      acc_no: "A-2",
+      prov: "Cali",
+    });
+  });
+
+  it("H17 (g): with 4+ custom columns parseTelarCsv yields no object_id === 'id_objeto' row", () => {
+    const csv = serializeObjectsCsv([
+      makeObject({
+        object_id: "obj-4c",
+        extra_columns: '{"k1":"v1","k2":"v2","k3":"v3","k4":"v4"}',
+      }),
+    ]);
+    const rows = parseTelarCsv(csv);
+    expect(rows.find((r) => r.object_id === "id_objeto")).toBeUndefined();
   });
 });
 
