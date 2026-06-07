@@ -3,7 +3,7 @@
  * every table, column, type, and inferred TypeScript model the server
  * code reads or writes flows through here.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { sqliteTable, text, integer, real, unique, blob } from "drizzle-orm/sqlite-core";
@@ -20,6 +20,7 @@ export const users = sqliteTable("users", {
   refresh_token_expires_at: text("refresh_token_expires_at").notNull(),
   github_plan: text("github_plan"),
   ui_locale: text("ui_locale"),
+  last_seen_release: text("last_seen_release"),
   created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
@@ -39,6 +40,13 @@ export const projects = sqliteTable("projects", {
   yjs_state: blob("yjs_state"),  // Stores Y.encodeStateAsUpdate() binary output
   created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
+  // GitHub status cache (migration 0030) — keeps GitHub work off the per-nav
+  // _app loader. Refreshed out-of-band via /api/site-status?payload=gh-status.
+  gh_repo_available: integer("gh_repo_available"),       // null=cold, 1=available, 0=unavailable
+  gh_remote_head_sha: text("gh_remote_head_sha"),
+  gh_diverged: integer("gh_diverged"),                   // null=cold, 1=diverged, 0=in-sync
+  gh_diverged_against_sha: text("gh_diverged_against_sha"), // local head_sha the verdict applies to
+  gh_checked_at: text("gh_checked_at"),                  // ISO; null=cold cache
 });
 
 export const project_config = sqliteTable("project_config", {
@@ -90,7 +98,9 @@ export const objects = sqliteTable("objects", {
   missing_from_repo: integer("missing_from_repo", { mode: "boolean" }).default(false),
   origin: text("origin").default("repo"),
   alt_text: text("alt_text"),
-  order: integer("order").notNull().default(0),
+  dimensions: text("dimensions"),
+  extra_columns: text("extra_columns"), // JSON object of passthrough custom columns; null when none
+  created_by: integer("created_by").references(() => users.id),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -105,6 +115,7 @@ export const stories = sqliteTable("stories", {
   private: integer("private", { mode: "boolean" }).default(false),
   draft: integer("draft", { mode: "boolean" }).default(false),
   show_sections: integer("show_sections", { mode: "boolean" }).notNull().default(false),
+  created_by: integer("created_by").references(() => users.id),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -124,6 +135,7 @@ export const steps = sqliteTable("steps", {
   clip_start: text("clip_start"),
   clip_end: text("clip_end"),
   loop: text("loop"),
+  created_by: integer("created_by").references(() => users.id),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -134,6 +146,7 @@ export const layers = sqliteTable("layers", {
   title: text("title"),
   button_label: text("button_label"),
   content: text("content"),
+  created_by: integer("created_by").references(() => users.id),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -143,6 +156,8 @@ export const glossary_terms = sqliteTable("glossary_terms", {
   term_id: text("term_id").notNull(),
   title: text("title"),
   definition: text("definition"),
+  related_terms: text("related_terms"), // pipe-separated related term_ids (framework passthrough); null when none
+  created_by: integer("created_by").references(() => users.id),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 });
 
@@ -175,6 +190,9 @@ export const project_members = sqliteTable("project_members", {
   role: text("role", { enum: ["convenor", "collaborator"] }).notNull(),
   invited_at: text("invited_at").$defaultFn(() => new Date().toISOString()),
   joined_at: text("joined_at"),
+  // Null until a collaborator acknowledges the "you've been added" welcome
+  // modal on landing; set once (one-time landing notification).
+  welcomed_at: text("welcomed_at"),
   presence_color: text("presence_color"),
   contributions: text("contributions"),
 }, (table) => [
@@ -198,8 +216,25 @@ export const project_pages = sqliteTable("project_pages", {
   slug: text("slug").notNull(),
   body: text("body").default(""),
   order: integer("order").notNull().default(0),
+  created_by: integer("created_by").references(() => users.id),
   created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
   updated_at: text("updated_at").$defaultFn(() => new Date().toISOString()),
 }, (table) => [
   unique("project_pages_project_slug_unique").on(table.project_id, table.slug),
 ]);
+
+// Coarse per-save activity rows (actor + entity + verb + timestamp) feeding
+// the Start-tab activity feed. One row per save/create/sync, not
+// per-field. `verb` and `entity_type` are plain text validated in code (see
+// activity.server.ts) rather than Drizzle enums, to avoid migration churn as
+// new verbs appear — matching the loose-text convention used by objects.origin.
+export const activity_log = sqliteTable("activity_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  project_id: integer("project_id").notNull().references(() => projects.id),
+  actor_user_id: integer("actor_user_id").references(() => users.id), // nullable: system/sync events
+  verb: text("verb").notNull(),                 // 'edited'|'added'|'created'|'synced'|'published'
+  entity_type: text("entity_type").notNull(),   // 'story'|'object'|'term'|'page'|'config'|'site'
+  entity_id: text("entity_id"),                 // slug/story_id; nullable for site-level
+  entity_label: text("entity_label"),           // denormalised title (avoids a join at read)
+  created_at: text("created_at").$defaultFn(() => new Date().toISOString()),
+});
