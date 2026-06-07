@@ -7,7 +7,7 @@
  * search filter. Already-connected repos show a "Connected" badge
  * and an "Unlink" button instead of being selectable.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useMemo, useState } from "react";
@@ -228,7 +228,7 @@ export function StepConnect({
                       }}
                       className={`w-full flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-left transition-colors ${
                         isActive
-                          ? "border-terracotta bg-periwinkle/20"
+                          ? "border-terracotta bg-anil/20"
                           : "border-gray-200 hover:border-charcoal hover:bg-cream-dark"
                       }`}
                     >
@@ -386,7 +386,7 @@ export function StepConnect({
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={t("step_connect.search_placeholder")}
-        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle mb-4"
+        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400 mb-4"
       />
 
       {/* Repo list */}
@@ -404,7 +404,7 @@ export function StepConnect({
                 onClick={() => setSelected(repo)}
                 className={`w-full text-left rounded-lg p-3 flex items-start gap-3 hover:bg-gray-50 cursor-pointer transition-colors border ${
                   selected?.id === repo.id
-                    ? "border-periwinkle bg-periwinkle/10"
+                    ? "border-anil bg-anil/10"
                     : "border-transparent"
                 }`}
                 aria-pressed={selected?.id === repo.id}
@@ -416,7 +416,7 @@ export function StepConnect({
                       {repo.full_name}
                     </span>
                     {orphanRepoNameSet.has(repo.full_name) && (
-                      <span className="inline-flex items-center rounded-full bg-periwinkle/20 text-charcoal font-body text-xs px-2 py-0.5 flex-shrink-0">
+                      <span className="inline-flex items-center rounded-full bg-anil/20 text-charcoal font-body text-xs px-2 py-0.5 flex-shrink-0">
                         {t("step_connect.new_repo_badge")}
                       </span>
                     )}

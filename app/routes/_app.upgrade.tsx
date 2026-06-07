@@ -15,14 +15,14 @@
  * Renders a 4-stage state machine — review | upgrading | building |
  * done.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
-import { redirect, useFetcher, useRouteLoaderData } from "react-router";
+import { redirect, useFetcher } from "react-router";
 import { eq } from "drizzle-orm";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
+import { useIsConvenor } from "~/hooks/use-role";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
@@ -75,6 +75,7 @@ import {
 } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
+import { bumpProjectHead } from "~/lib/github-status.server";
 import { marked, Renderer } from "marked";
 import { sanitiseHtml } from "~/lib/sanitise-html";
 import { Button } from "~/components/ui/Button";
@@ -113,7 +114,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
   if (!resolved) {
-    throw redirect("/dashboard");
+    // No active project — onboarding, not /dashboard (which loops via /objects).
+    throw redirect("/onboarding");
   }
   const { project: activeProject } = resolved;
 
@@ -209,7 +211,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     if (!needsUpgrade && !isBelowMinimum) {
       const url = new URL(request.url);
       const from = url.searchParams.get("from");
-      throw redirect(from ?? "/dashboard");
+      throw redirect(from ?? "/objects");
     }
 
     // Convert markdown release notes to HTML (with heading IDs for anchor links)
@@ -535,10 +537,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           .update(project_config)
           .set({ telar_version: prepared.toVersion, updated_at: now })
           .where(eq(project_config.project_id, activeProject.id));
-        await db
-          .update(projects)
-          .set({ head_sha: newHeadSha, updated_at: now })
-          .where(eq(projects.id, activeProject.id));
+        await bumpProjectHead(db, activeProject.id, newHeadSha);
       } catch (d1Err) {
         console.error("D1 update after upgrade commit failed:", d1Err);
       }
@@ -895,12 +894,15 @@ function HintBox({ title, body }: { title: string; body: string }) {
 
 export default function UpgradePage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("upgrade");
-  const { t: tTeam } = useTranslation("team");
   const [searchParams] = useSearchParams();
   const fromPath = searchParams.get("from");
 
-  const appData = useRouteLoaderData("routes/_app") as { userRole?: string } | null;
-  const isCollaborator = appData?.userRole === "collaborator";
+  // Role read via the typed loader hook (replaces the ad-hoc useRouteLoaderData
+  // cast). Collaborators are redirected away from /upgrade by the routes/_app
+  // loader guard (→ /objects?denied=upgrade), so this don't-render is
+  // belt-and-braces — a collaborator never reaches this component. Render-gating
+  // is a UX layer only; the upgrade action stays convenor-gated server-side.
+  const isConvenor = useIsConvenor();
 
   const {
     siteVersion,
@@ -928,13 +930,7 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     return false; // "local"
   }
 
-  if (isCollaborator) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        <RestrictionBanner message={tTeam("restriction_upgrade")} />
-      </div>
-    );
-  }
+  if (!isConvenor) return null;
 
   const { provider } = useCollaborationContext();
 
@@ -1061,10 +1057,10 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
   // awareness. Collaborators see a freeze modal driven by state.upgrading;
   // error state surfaces a dismissable error modal.
   //
-  // This broadcast is owner-only in practice because the upgrade
-  // route loader already redirects non-convenors (RestrictionBanner path).
-  // Even if a collaborator spoofed upgrading=true elsewhere, the commit itself
-  // is server-gated by the role check in this route's action.
+  // This broadcast is owner-only in practice because the routes/_app
+  // loader guard redirects non-convenors away from /upgrade. Even if a
+  // collaborator spoofed upgrading=true elsewhere, the commit itself is
+  // server-gated by the role check in this route's action.
   useEffect(() => {
     if (!provider) return;
     const isActive = stage === "upgrading" || stage === "building";

@@ -5,10 +5,8 @@
  * provisioned. Mirrors existing onboarding patterns
  * (`StepConnect` / `SiteConfigConfirmation` / `StepSync`).
  *
- * Theme token: uses `periwinkle` accent (matches existing
- * `StepConnect` usage). Both `--color-lavender` and
- * `--color-periwinkle` exist at `#C6D0F8` in `app.css`; we keep
- * `periwinkle` to avoid a split in onboarding.
+ * Theme token: uses the `anil` accent (matches existing
+ * `StepConnect` usage).
  *
  * i18n note: `create_site.progress.*` currently ships with
  * `creating`, `still_setting_up`, and `success`. A dedicated
@@ -16,7 +14,7 @@
  * `create_site.installation_scope.waiting` as the closest existing
  * key for the second progress row.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -293,7 +291,7 @@ export function CreateSiteForm({
                       <a
                         key="config-link"
                         href="/config"
-                        className="text-amber-900 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-1 rounded-sm"
+                        className="text-amber-900 underline rounded-sm"
                       />,
                     ]}
                   />
@@ -306,7 +304,7 @@ export function CreateSiteForm({
                       setPendingRepo(null);
                       onSelect(repo);
                     }}
-                    className="mt-3 font-heading font-semibold text-xs uppercase tracking-wider text-amber-900 underline underline-offset-4 hover:text-amber-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-1 rounded-sm"
+                    className="mt-3 font-heading font-semibold text-xs uppercase tracking-wider text-amber-900 underline underline-offset-4 hover:text-amber-700 rounded-sm"
                   >
                     {t("preferences.create_site_lang_patch_failed_continue", { ns: "account" })}
                   </button>
@@ -439,7 +437,7 @@ export function CreateSiteForm({
             value={name}
             onChange={(e) => setName(e.target.value.toLowerCase())}
             placeholder={t("create_site.form.name_placeholder") as string}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400"
           />
           <p className="mt-1 font-body text-xs text-gray-500">
             {t("create_site.form.name_hint")}
@@ -505,6 +503,6 @@ function StateIcon({ state }: { state: "idle" | "pending" | "done" | "error" }) 
   if (state === "done") return <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />;
   if (state === "error") return <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />;
   if (state === "pending")
-    return <Loader2 className="w-4 h-4 text-periwinkle animate-spin mt-0.5 flex-shrink-0" />;
+    return <Loader2 className="w-4 h-4 text-anil animate-spin mt-0.5 flex-shrink-0" />;
   return <div className="w-4 h-4 rounded-full border border-gray-300 mt-0.5 flex-shrink-0" />;
 }

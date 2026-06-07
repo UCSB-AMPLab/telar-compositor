@@ -22,7 +22,7 @@
  * notifies the project's Durable Object so anyone editing in real time
  * gets dropped cleanly rather than finding out by silent failure.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useEffect, useState } from "react";
@@ -52,6 +52,7 @@ import {
   project_invites,
   projects,
   users,
+  activity_log,
 } from "~/db/schema";
 import {
   ConnectedSitesCard,
@@ -61,7 +62,7 @@ import { GitHubAccessCard } from "~/components/features/account/GitHubAccessCard
 import { DangerZoneCard } from "~/components/features/account/DangerZoneCard";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { useToast } from "~/hooks/use-toast";
-import { signInternalMarker } from "../../workers/auth";
+import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 
 export const handle = { i18n: ["common", "account"] };
 
@@ -200,22 +201,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 /**
- * Build the standard internal-marker headers for a DO RPC. Centralised
- * so the three call sites in this action share one shape.
- */
-async function makeInternalMarkerHeaders(
-  projectId: number,
-  secret: string,
-): Promise<Record<string, string>> {
-  const { sigHex, timestamp } = await signInternalMarker(projectId, secret);
-  return {
-    "X-Internal-Auth": sigHex,
-    "X-Internal-Timestamp": String(timestamp),
-    "X-Internal-Project": String(projectId),
-  };
-}
-
-/**
  * /account action.
  *
  * Three intents:
@@ -310,10 +295,13 @@ export async function action({ request, context }: Route.ActionArgs) {
       await deleteProjectCascade(db, p.id);
     }
 
-    // Atomic D1 batch — three operations, FK-dependent rows first.
+    // Atomic D1 batch — FK-dependent rows first.
     // project_invites.created_by is NOT NULL → users.id, so leaving these
     // rows would FK-violate when the users row is deleted. project_members
-    // references users.id too. Order: invites → members → users.
+    // references users.id too. activity_log.actor_user_id → users.id must
+    // also be cleared; these rows can reference other people's projects so
+    // they are not covered by deleteProjectCascade above.
+    // Order: invites → members → activity_log (actor) → users.
     // db.batch is transactional in D1 — any op failure rolls back the
     // whole batch (atomic-mutation pattern).
     await db.batch([
@@ -326,6 +314,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           ),
         ),
       db.delete(project_members).where(eq(project_members.user_id, user.id)),
+      db.delete(activity_log).where(eq(activity_log.actor_user_id, user.id)),
       db.delete(users).where(eq(users.id, user.id)),
     ]);
 
@@ -367,6 +356,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         const headers = await makeInternalMarkerHeaders(
           projectId,
           env.SESSION_SECRET,
+          "notify-deleted",
         );
         const stub = env.COLLABORATION.get(
           env.COLLABORATION.idFromName(String(projectId)),
@@ -410,6 +400,8 @@ export async function action({ request, context }: Route.ActionArgs) {
         const headers = await makeInternalMarkerHeaders(
           projectId,
           env.SESSION_SECRET,
+          "notify-deleted",
+          user.id,
         );
         const stub = env.COLLABORATION.get(
           env.COLLABORATION.idFromName(String(projectId)),
@@ -437,6 +429,8 @@ export async function action({ request, context }: Route.ActionArgs) {
         const headers = await makeInternalMarkerHeaders(
           projectId,
           env.SESSION_SECRET,
+          "active-ws-count",
+          user.id,
         );
         const stub = env.COLLABORATION.get(
           env.COLLABORATION.idFromName(String(projectId)),
@@ -539,7 +533,7 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
             <img
               src={`https://avatars.githubusercontent.com/u/${user.github_id}?s=160`}
               alt={t("field_avatar_alt", { name: primaryName })}
-              className="w-20 h-20 rounded-full object-cover bg-periwinkle"
+              className="w-20 h-20 rounded-full object-cover bg-anil"
               onError={(e) => {
                 const target = e.currentTarget;
                 target.style.display = "none";
@@ -548,7 +542,7 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
               }}
             />
             <span
-              className="absolute top-0 left-0 w-20 h-20 rounded-full bg-periwinkle text-charcoal font-heading font-semibold text-xl items-center justify-center hidden"
+              className="absolute top-0 left-0 w-20 h-20 rounded-full bg-anil text-charcoal font-heading font-semibold text-xl items-center justify-center hidden"
               aria-hidden="true"
             >
               {initials}
@@ -599,7 +593,7 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
         </h2>
 
         {/* Language pill — two-state segmented control. Active state ships
-            in periwinkle. Labels "EN"/"ES" hardcoded per the design system
+            in anil. Labels "EN"/"ES" hardcoded per the design system
             §i18n (mirrors LanguageToggle.tsx:24-26). Submits to /api/locale
             (the /api/locale endpoint). */}
         <div className="mt-4">
@@ -622,7 +616,7 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
                   <span
                     key={code}
                     aria-current="true"
-                    className="px-3.5 py-1.5 rounded-full bg-periwinkle text-charcoal font-body text-sm font-medium"
+                    className="px-3.5 py-1.5 rounded-full bg-anil text-charcoal font-body text-sm font-medium"
                   >
                     {label}
                   </span>
@@ -691,6 +685,9 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
                     aria-label={t("preferences.presence_color_swatch_aria", {
                       color: colorDisplay,
                     })}
+                    // Deliberate exception: this circular swatch keeps its own
+                    // focus-visible ring rather than the global anil-deep outline, to match the
+                    // terracotta selected-state ring it already uses on the same round element.
                     className={`w-8 h-8 rounded-full transition-transform duration-150 hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-charcoal/50 cursor-pointer ${
                       isCurrent
                         ? "ring-2 ring-offset-2 ring-terracotta"

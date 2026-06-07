@@ -13,7 +13,7 @@
  * Relative time uses Intl.RelativeTimeFormat for ≤30 days; absolute
  * Intl.DateTimeFormat short date thereafter.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useEffect, useState } from "react";
@@ -24,6 +24,7 @@ import { Button } from "~/components/ui/Button";
 import { KebabMenu, type KebabMenuItem } from "~/components/ui/KebabMenu";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { useToast } from "~/hooks/use-toast";
+import { formatRelative } from "~/lib/format-relative";
 
 type Role = "convenor" | "collaborator";
 
@@ -74,30 +75,11 @@ function formatLastEdited(
   nowMs: number = Date.now(),
 ): string | null {
   if (!iso) return null;
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return null;
-  const deltaMs = nowMs - then;
-  const deltaDays = Math.floor(deltaMs / (1000 * 60 * 60 * 24));
-
-  if (deltaDays > 30) {
-    return new Intl.DateTimeFormat(uiLocale, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    }).format(new Date(iso));
-  }
-
-  const rtf = new Intl.RelativeTimeFormat(uiLocale, { numeric: "auto" });
-  const deltaSec = Math.round(-deltaMs / 1000);
-  if (Math.abs(deltaSec) < 60) return rtf.format(deltaSec, "second");
-  const deltaMin = Math.round(deltaSec / 60);
-  if (Math.abs(deltaMin) < 60) return rtf.format(deltaMin, "minute");
-  const deltaHr = Math.round(deltaMin / 60);
-  if (Math.abs(deltaHr) < 24) return rtf.format(deltaHr, "hour");
-  const dayDelta = Math.round(deltaHr / 24);
-  if (Math.abs(dayDelta) < 7) return rtf.format(dayDelta, "day");
-  const weekDelta = Math.round(dayDelta / 7);
-  return rtf.format(weekDelta, "week");
+  if (Number.isNaN(new Date(iso).getTime())) return null;
+  // Delegates to the shared formatRelative (same buckets, plus a UTC-pinned
+  // absolute date) so the account list formats relative time identically to
+  // the rest of the app and stays hydration-safe given the loader's nowMs.
+  return formatRelative(iso, { now: nowMs, locale: uiLocale });
 }
 
 interface ProjectRowProps {
@@ -142,7 +124,7 @@ function ProjectRow({
     ? t("role_convenor")
     : t("role_collaborator");
   const badgeClass = isConvenor
-    ? "bg-lavender text-charcoal"
+    ? "bg-anil text-charcoal"
     : "bg-cream-dark text-charcoal";
 
   const relative =

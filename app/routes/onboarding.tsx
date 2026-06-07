@@ -9,7 +9,7 @@
  * (where the user's first Sheets URL was inaccessible and they enter a
  * corrected one).
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { redirect } from "react-router";
@@ -37,6 +37,7 @@ import {
   steps,
   layers,
   glossary_terms,
+  activity_log,
 } from "~/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { Header } from "~/components/layout/Header";
@@ -110,6 +111,7 @@ export async function unlinkProjectCascade(
     db.delete(project_landing).where(eq(project_landing.project_id, projectId)),
     db.delete(project_members).where(eq(project_members.project_id, projectId)),
     db.delete(project_invites).where(eq(project_invites.project_id, projectId)),
+    db.delete(activity_log).where(eq(activity_log.project_id, projectId)),
     db.delete(projects).where(eq(projects.id, projectId)),
   );
 
@@ -129,8 +131,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
 
-  // Check if user already has projects — if so, redirect to dashboard
-  // unless ?force=1 is in the query string
+  // Check if user already has projects — if so, redirect to the daily home
+  // (/objects) unless ?force=1 is in the query string. Dashboard is
+  // retired as a destination.
   const url = new URL(request.url);
   const force = url.searchParams.get("force") === "1";
 
@@ -142,24 +145,34 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const hasIncompleteOnboarding = existingProjects.some((p) => !p.onboarding_completed);
   if (!force && !hasIncompleteOnboarding && existingProjects.length > 0) {
-    throw redirect("/dashboard");
+    throw redirect("/objects");
   }
 
-  // Fetch all GitHub App installations and their repos
-  const { installations } = await listUserInstallations(token);
+  // Fetch all GitHub App installations and their repos.
+  // GitHub API failure is a soft error: degrade to empty lists so the
+  // repo-connect CTA (and install-app link) remain reachable. Mirrors the
+  // graceful-degradation pattern in _app.account.tsx loader (~lines 148-169).
+  let installations: Awaited<ReturnType<typeof listUserInstallations>>["installations"] = [];
+  let repos: RepoWithInstallation[] = [];
+  try {
+    const result = await listUserInstallations(token);
+    installations = result.installations;
 
-  const reposByInstallation = await Promise.all(
-    installations.map((installation) =>
-      listInstallationRepos(token, installation.id).then(({ repositories }) =>
-        repositories.map((repo): RepoWithInstallation => ({
-          ...repo,
-          installationId: installation.id,
-        })),
+    const reposByInstallation = await Promise.all(
+      installations.map((installation) =>
+        listInstallationRepos(token, installation.id).then(({ repositories }) =>
+          repositories.map((repo): RepoWithInstallation => ({
+            ...repo,
+            installationId: installation.id,
+          })),
+        ),
       ),
-    ),
-  );
-
-  const repos = reposByInstallation.flat();
+    );
+    repos = reposByInstallation.flat();
+  } catch {
+    // Swallow — GitHub 5xx / rate-limit / transient-401.
+    // Empty installations + repos keeps the page functional.
+  }
 
   // Orphan-repo detection. "App can see it AND no D1
   // row" — used by StepConnect to render a "New — connect to continue" badge
@@ -227,7 +240,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       if (result.valid && result.telarVersion) {
         const versionCheck = await checkTelarVersion(token, result.telarVersion);
         if (versionCheck.needsUpgrade) {
-          return redirect("/upgrade?from=/dashboard");
+          return redirect("/upgrade?from=/config");
         }
       }
       return result;
@@ -243,7 +256,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     if (result.valid && result.telarVersion) {
       const versionCheck = await checkTelarVersion(token, result.telarVersion);
       if (versionCheck.needsUpgrade) {
-        return redirect("/upgrade?from=/dashboard");
+        return redirect("/upgrade?from=/config");
       }
     }
     return result;
@@ -395,6 +408,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         head_sha: result.newHeadSha,
         ...(persistedPagesUrl ? { github_pages_url: persistedPagesUrl } : {}),
         updated_at: new Date().toISOString(),
+        gh_checked_at: null,
       }).where(eq(projects.id, projectId));
     }
 
