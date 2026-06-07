@@ -2,7 +2,7 @@
  * ThemeSwatches — theme color picker for the config editor.
  *
  * Shows swatches for each available Telar theme (from the repo's
- * _data/themes/ folder). Selected theme gets a periwinkle ring.
+ * _data/themes/ folder). Selected theme gets a anil ring.
  */
 
 import { useEffect, useState } from "react";
@@ -50,7 +50,7 @@ export function ThemeSwatches({ name, value: initialValue, themes, onChange }: T
             <span
               className={`w-8 h-8 rounded-full block transition-all ${
                 selected === theme.theme_id
-                  ? "ring-2 ring-periwinkle ring-offset-2"
+                  ? "ring-2 ring-anil ring-offset-2"
                   : "ring-1 ring-gray-200"
               }`}
               style={{ backgroundColor: theme.swatch_color || "#999" }}

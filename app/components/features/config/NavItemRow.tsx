@@ -87,7 +87,7 @@ export function NavItemRow({
           type="text"
           value={item.label}
           onChange={(e) => onLabelChange(e.target.value)}
-          className={`w-full font-body text-sm border-none bg-transparent px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-periwinkle rounded ${isHidden ? "text-gray-400" : "text-charcoal"}`}
+          className={`w-full font-body text-sm border-none bg-transparent px-2 py-0.5 rounded ${isHidden ? "text-gray-400" : "text-charcoal"}`}
           placeholder={item.type === "page" ? item.slug ?? "" : item.key ?? ""}
         />
         {isExternal && (
@@ -96,7 +96,7 @@ export function NavItemRow({
             value={item.url ?? ""}
             onChange={(e) => onUrlChange?.(e.target.value)}
             placeholder={t("external_link_url_placeholder")}
-            className="w-full font-body text-xs text-gray-500 border-none bg-transparent px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-periwinkle rounded mt-0.5"
+            className="w-full font-body text-xs text-gray-500 border-none bg-transparent px-2 py-0.5 rounded mt-0.5"
           />
         )}
       </div>
