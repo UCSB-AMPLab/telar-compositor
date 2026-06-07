@@ -20,7 +20,7 @@
  * `cloudflare:workers` so DurableObject is a plain class and the DO
  * receives the test ctx/env via super().
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -44,6 +44,7 @@ vi.mock("cloudflare:workers", () => ({
 // resolves to the stub above.
 import { ProjectCollaborationDO } from "../workers/collaboration";
 import { signInternalMarker, verifyInternalMarker } from "../workers/auth";
+import { buildActivityRows } from "../workers/collaboration-helpers";
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -110,6 +111,33 @@ function makeEnv() {
   };
 }
 
+/**
+ * Derive the op string + signed userId for a DO control path so the test's
+ * minted marker binds to exactly what the route's verifyInternalMarker call
+ * will re-derive from the request. Keeps the harness in lockstep with the
+ * production mint→op→userId map without each test re-stating it.
+ */
+function markerBindingFor(
+  pathname: string,
+  query?: string,
+): { op: string; userId?: number | string } {
+  const params = new URLSearchParams(query ?? "");
+  if (pathname.endsWith("/snapshot")) return { op: "snapshot" };
+  if (pathname.endsWith("/reset")) return { op: "reset" };
+  if (pathname.endsWith("/notify-deleted")) {
+    const userId = params.get("userId");
+    return userId !== null ? { op: "notify-deleted", userId } : { op: "notify-deleted" };
+  }
+  if (pathname.endsWith("/active-ws-count")) {
+    const exceptUserId = params.get("exceptUserId");
+    return exceptUserId !== null
+      ? { op: "active-ws-count", userId: exceptUserId }
+      : { op: "active-ws-count" };
+  }
+  if (pathname.endsWith("/restore-orphans")) return { op: "restore-orphans" };
+  return { op: "unknown" };
+}
+
 async function makeRequest(
   pathname: string,
   method: "GET" | "POST",
@@ -118,9 +146,12 @@ async function makeRequest(
   const url = `https://internal${pathname}${options.query ? `?${options.query}` : ""}`;
   const headers: Record<string, string> = {};
   if (options.signed !== false) {
+    const { op, userId } = markerBindingFor(pathname, options.query);
     const { sigHex, timestamp } = await signInternalMarker(
       TEST_PROJECT_ID,
       TEST_SECRET,
+      op,
+      userId,
     );
     headers["X-Internal-Auth"] = sigHex;
     headers["X-Internal-Timestamp"] = String(timestamp);
@@ -305,6 +336,7 @@ describe("verifyInternalMarker (direct)", () => {
     const { sigHex, timestamp } = await signInternalMarker(
       TEST_PROJECT_ID,
       TEST_SECRET,
+      "notify-deleted",
     );
     const fresh = new Request("https://internal/notify-deleted", {
       method: "POST",
@@ -314,10 +346,10 @@ describe("verifyInternalMarker (direct)", () => {
         "X-Internal-Project": String(TEST_PROJECT_ID),
       },
     });
-    expect(await verifyInternalMarker(fresh, TEST_SECRET)).toBeNull();
+    expect(await verifyInternalMarker(fresh, TEST_SECRET, "notify-deleted")).toBeNull();
 
     const bare = new Request("https://internal/notify-deleted", { method: "POST" });
-    const res = await verifyInternalMarker(bare, TEST_SECRET);
+    const res = await verifyInternalMarker(bare, TEST_SECRET, "notify-deleted");
     expect(res?.status).toBe(401);
   });
 });
@@ -382,7 +414,11 @@ describe("collaboration DO — POST /restore-orphans (hotfix)", () => {
   it("rejects malformed JSON body with 400", async () => {
     const { doInstance } = makeDoWithStubs();
     // Build a request whose body is invalid JSON.
-    const { sigHex, timestamp } = await signInternalMarker(TEST_PROJECT_ID, TEST_SECRET);
+    const { sigHex, timestamp } = await signInternalMarker(
+      TEST_PROJECT_ID,
+      TEST_SECRET,
+      "restore-orphans",
+    );
     const req = new Request("https://internal/restore-orphans", {
       method: "POST",
       headers: {
@@ -625,5 +661,158 @@ describe("collaboration DO — POST /restore-orphans (hotfix)", () => {
     // wire-format depth lives in y-protocols' own tests.
     expect(sA.send).toHaveBeenCalledTimes(1);
     expect(sB.send).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildActivityRows — snapshot activity emit
+// ---------------------------------------------------------------------------
+//
+// Editor edits never flow through React Router actions — they flow through the
+// Y.doc and are reconciled to D1 by snapshotToD1. The snapshot block iterates
+// activeUserIds with their userFieldSets (per-user field-path Sets) and emits
+// one coarse activity row per (user, entity) touched this snapshot window (one
+// row per save).
+// buildActivityRows is the pure derivation: it groups field-paths by their
+// entity prefix (collection:id) and maps the collection name to an
+// activity_log entity_type, deriving the verb (added vs edited) from whether
+// the id is a fresh client UUID (_temp_id) or an existing numeric D1 id.
+
+describe("buildActivityRows — snapshot activity emit", () => {
+  it("emits one row per (user, entity) for an editor edit, mapping collection → entity_type", () => {
+    // User 42 edited the title of an existing story (numeric id 9) and the
+    // label of an existing object (numeric id 3) this snapshot window.
+    const userFieldSets = new Map<number, Set<string>>([
+      [42, new Set<string>(["stories:9:title", "objects:3:label_en"])],
+    ]);
+    const rows = buildActivityRows([42], userFieldSets, 7);
+
+    expect(rows).toHaveLength(2);
+
+    const byType = new Map(rows.map((r) => [r.entityType, r]));
+    const story = byType.get("story");
+    const object = byType.get("object");
+
+    expect(story).toBeDefined();
+    expect(story!.projectId).toBe(7);
+    expect(story!.actorUserId).toBe(42);
+    expect(story!.entityId).toBe("9");
+    expect(story!.verb).toBe("edited");
+
+    expect(object).toBeDefined();
+    expect(object!.entityId).toBe("3");
+    expect(object!.entityType).toBe("object");
+    expect(object!.verb).toBe("edited");
+  });
+
+  it("coalesces multiple field edits on the same entity into one row (coarse)", () => {
+    const userFieldSets = new Map<number, Set<string>>([
+      [42, new Set<string>(["stories:9:title", "stories:9:subtitle", "stories:9:byline"])],
+    ]);
+    const rows = buildActivityRows([42], userFieldSets, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].entityType).toBe("story");
+    expect(rows[0].entityId).toBe("9");
+  });
+
+  it("derives verb 'added' when the entity id is a fresh client UUID (_temp_id)", () => {
+    const tempId = "550e8400-e29b-41d4-a716-446655440000";
+    const userFieldSets = new Map<number, Set<string>>([
+      [42, new Set<string>([`glossary:${tempId}:title`])],
+    ]);
+    const rows = buildActivityRows([42], userFieldSets, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].entityType).toBe("term");
+    expect(rows[0].verb).toBe("added");
+    expect(rows[0].entityId).toBe(tempId);
+  });
+
+  it("attributes each row to its own user (server-resolved actor, never shared)", () => {
+    const userFieldSets = new Map<number, Set<string>>([
+      [42, new Set<string>(["stories:9:title"])],
+      [99, new Set<string>(["pages:about:body"])],
+    ]);
+    const rows = buildActivityRows([42, 99], userFieldSets, 7);
+    expect(rows).toHaveLength(2);
+    const story = rows.find((r) => r.entityType === "story")!;
+    const page = rows.find((r) => r.entityType === "page")!;
+    expect(story.actorUserId).toBe(42);
+    expect(page.actorUserId).toBe(99);
+    expect(page.entityId).toBe("about");
+  });
+
+  it("skips users with no field edits and config edits map to entity_type 'config'", () => {
+    const userFieldSets = new Map<number, Set<string>>([
+      [42, new Set<string>(["config:title"])],
+      [99, new Set<string>()], // no edits — produces no rows
+    ]);
+    const rows = buildActivityRows([42, 99], userFieldSets, 7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].entityType).toBe("config");
+    expect(rows[0].actorUserId).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /snapshot — a thrown snapshot must surface as a non-200
+// response, never as a rejected fetch (which the publish action swallows).
+// ---------------------------------------------------------------------------
+
+describe("collaboration DO — POST /snapshot", () => {
+  it("returns 500 with body 'snapshot_failed' when snapshotToD1 throws", async () => {
+    const { doInstance, snapshotSpy } = makeDoWithStubs();
+    snapshotSpy.mockRejectedValueOnce(new Error("D1_ERROR: batch failed"));
+
+    const req = await makeRequest("/snapshot", "POST");
+    const res = await doInstance.fetch(req);
+
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe("snapshot_failed");
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 200 OK when snapshotToD1 succeeds", async () => {
+    const { doInstance, snapshotSpy } = makeDoWithStubs();
+    // makeDoWithStubs already mockResolvedValue(undefined)
+
+    const req = await makeRequest("/snapshot", "POST");
+    const res = await doInstance.fetch(req);
+
+    expect(res.status).toBe(200);
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an unsigned /snapshot reach with 401 and does not snapshot", async () => {
+    const { doInstance, snapshotSpy } = makeDoWithStubs();
+
+    const req = await makeRequest("/snapshot", "POST", { signed: false });
+    const res = await doInstance.fetch(req);
+
+    expect(res.status).toBe(401);
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// webSocketClose — the last-client-disconnect snapshot is best-effort. A
+// thrown snapshot must be swallowed-with-log, never surface as an unhandled
+// rejection that could crash the DO.
+// ---------------------------------------------------------------------------
+
+describe("collaboration DO — webSocketClose last-disconnect snapshot", () => {
+  it("does not reject when the last-disconnect snapshot throws", async () => {
+    // No sockets populated → ctx.getWebSockets().length === 0 after close,
+    // so the last-disconnect snapshot branch runs.
+    const { doInstance, snapshotSpy } = makeDoWithStubs([]);
+    snapshotSpy.mockRejectedValueOnce(new Error("D1_ERROR: batch failed"));
+
+    // Standalone socket with an attachment that has NO awarenessClientId,
+    // so the awareness-removal branch is skipped.
+    const ws = fakeSocket(1);
+
+    await expect(
+      doInstance.webSocketClose(ws as unknown as WebSocket, 1000),
+    ).resolves.toBeUndefined();
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
   });
 });

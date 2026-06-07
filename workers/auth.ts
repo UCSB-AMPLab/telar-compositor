@@ -13,7 +13,7 @@
  * `/ws/:projectId/reset` route in `workers/app.ts` can gate by
  * session + project membership before forwarding to the DO.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 /**
@@ -24,6 +24,36 @@ export function parseSessionCookie(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(/(?:^|;\s*)__compositor_session=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+/** Server-side session lifetime window — matches the cookie maxAge (7 days). */
+const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Shared server-side session-lifetime guard, used by BOTH auth paths (the
+ * websocket auth in getUserIdFromToken below AND the HTTP auth middleware) so a
+ * token's enforceable lifetime is checked identically everywhere.
+ *
+ * A session is valid only when it carries an enforceable lifetime that has not
+ * elapsed:
+ *   - past an explicit `expires`            -> invalid
+ *   - `createdAt` older than the 7-day window -> invalid
+ *   - NEITHER field present                  -> invalid (fail closed: no
+ *     enforceable lifetime means a copied/leaked cookie would live forever)
+ *
+ * Stamping `createdAt` at login (see app/routes/_auth.callback.tsx) is what
+ * makes legitimate tokens satisfy this; legacy tokens minted before that get a
+ * one-time clean logout.
+ */
+export function isSessionLifetimeValid(
+  createdAt: string | undefined,
+  expires: string | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (expires && new Date(expires).getTime() < now) return false;
+  if (createdAt && now - new Date(createdAt).getTime() > SESSION_MAX_AGE_MS) return false;
+  if (!expires && !createdAt) return false;
+  return true;
 }
 
 /**
@@ -67,15 +97,12 @@ export async function getUserIdFromToken(
     const payloadJson = new TextDecoder().decode(base64urlDecode(payloadB64));
     const payload = JSON.parse(payloadJson) as Record<string, unknown>;
 
-    // Check session expiry if present in the payload
+    // Enforce the session lifetime via the shared guard (same rule the HTTP
+    // auth middleware applies): reject past-expiry, >7-day-old, or
+    // lifetime-less tokens.
     const expires = payload["expires"] as string | undefined;
-    if (expires && new Date(expires) < new Date()) return null;
-
-    // Fallback: reject tokens older than 7 days (matches cookie maxAge)
     const createdAt = payload["createdAt"] as string | undefined;
-    if (createdAt && Date.now() - new Date(createdAt).getTime() > 7 * 24 * 60 * 60 * 1000) {
-      return null;
-    }
+    if (!isSessionLifetimeValid(createdAt, expires)) return null;
 
     // Extract userId — React Router stores it under the key used in the session
     const userId = payload["userId"] as number | undefined;
@@ -99,16 +126,45 @@ export interface SignedInternalMarker {
 }
 
 /**
- * Sign an internal marker for `ws-reset:<projectId>:<timestamp>` with the
- * provided secret. Returns the hex-encoded HMAC and the timestamp (seconds)
- * the worker entry should send as headers.
+ * Build the canonical marker message bound to a single internal operation and
+ * target. Both sign and verify derive the message through this one function so
+ * the binding can never drift between the two sides.
+ *
+ * Shape: `<op>:<projectId>:<userId ?? "-">:<timestamp>`.
+ *
+ * The userId is stringified so a number `5` mints `"5"` — the same string the
+ * verifying side reads back from a `?userId=5` query param via
+ * `URLSearchParams.get`. Operations with no per-user target use the literal
+ * `"-"` on both sides.
+ */
+function internalMarkerMessage(
+  op: string,
+  projectId: number | string,
+  userId: number | string | null | undefined,
+  timestamp: number,
+): string {
+  const userPart = userId === null || userId === undefined ? "-" : String(userId);
+  return `${op}:${projectId}:${userPart}:${timestamp}`;
+}
+
+/**
+ * Sign an internal marker bound to a single operation and (optional) user
+ * target with the provided secret. Returns the hex-encoded HMAC and the
+ * timestamp (seconds) the worker entry should send as headers.
+ *
+ * The marker signs `<op>:<projectId>:<userId ?? "-">:<timestamp>`, so a marker
+ * minted for one op/user cannot be replayed against a different op/user within
+ * the freshness window — the verifying side re-derives the same fields from its
+ * own request and a mismatch produces a signature failure.
  */
 export async function signInternalMarker(
   projectId: number,
   secret: string,
+  op: string,
+  userId?: number | string,
 ): Promise<SignedInternalMarker> {
   const timestamp = Math.floor(Date.now() / 1000);
-  const message = `ws-reset:${projectId}:${timestamp}`;
+  const message = internalMarkerMessage(op, projectId, userId, timestamp);
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
@@ -127,8 +183,15 @@ export async function signInternalMarker(
 /**
  * Verify a signed internal marker as forwarded to the DO. Reads the three
  * headers `X-Internal-Auth`, `X-Internal-Timestamp`, `X-Internal-Project`
- * from the request, recomputes the HMAC over `ws-reset:<project>:<ts>`, and
- * checks that the timestamp is within `maxAgeSeconds` of `now()`.
+ * from the request, recomputes the HMAC over
+ * `<expectedOp>:<X-Internal-Project>:<expectedUserId ?? "-">:<ts>`, and checks
+ * that the timestamp is within `maxAgeSeconds` of `now()`.
+ *
+ * The `expectedOp` and `expectedUserId` are supplied by the DO route from its
+ * OWN request (e.g. the matched path and the `?userId=` query param), never
+ * trusted from a header. A marker minted for a different op or a different
+ * userId therefore recomputes to a different message and fails the signature
+ * check — closing replay across operations and user targets.
  *
  * Returns null if the marker is valid; otherwise a `Response` with the
  * appropriate 401 status the caller can return directly.
@@ -136,6 +199,8 @@ export async function signInternalMarker(
 export async function verifyInternalMarker(
   request: Request,
   secret: string,
+  expectedOp: string,
+  expectedUserId?: number | string | null,
   maxAgeSeconds = 30,
 ): Promise<Response | null> {
   const sigHex = request.headers.get("X-Internal-Auth");
@@ -164,7 +229,7 @@ export async function verifyInternalMarker(
     false,
     ["verify"],
   );
-  const message = `ws-reset:${proj}:${tsNum}`;
+  const message = internalMarkerMessage(expectedOp, proj, expectedUserId, tsNum);
   const ok = await crypto.subtle.verify("HMAC", key, sigBytes, enc.encode(message));
   if (!ok) return new Response("Invalid internal marker", { status: 401 });
   return null;

@@ -5,7 +5,7 @@
  * Object class, and gates the `/ws/:projectId/reset` route by
  * session + project membership before forwarding to the DO.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { createRequestHandler, RouterContextProvider } from "react-router";
@@ -64,7 +64,7 @@ export default {
       // Sign an internal marker so the DO can reject direct reaches.
       // Sign the request with HMAC-SHA256(SESSION_SECRET, "ws-reset:<projectId>:<timestamp>").
       // Replay within the 30s window is accepted — DO routing is internal.
-      const { sigHex, timestamp } = await signInternalMarker(projectId, env.SESSION_SECRET);
+      const { sigHex, timestamp } = await signInternalMarker(projectId, env.SESSION_SECRET, "reset");
 
       const id = env.COLLABORATION.idFromName(projectIdStr);
       const stub = env.COLLABORATION.get(id);

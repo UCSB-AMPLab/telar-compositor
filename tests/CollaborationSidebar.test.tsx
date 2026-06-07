@@ -36,8 +36,11 @@ const mockContextValue: CollaborationContextValue = {
   connected: true,
   connectionStatus: "connected",
   isPublishing: false,
+  isBuilding: false,
   publishError: false,
   setIsPublishing: vi.fn(),
+  publishSha: null,
+  publishCommitUrl: null,
   isUpgrading: false,
   upgradeError: false,
   setIsUpgrading: vi.fn(),
@@ -287,5 +290,60 @@ describe("CollaborationSidebar", () => {
     const aside = container.querySelector("aside");
     // aria-hidden should be false (or absent) when open
     expect(aside?.getAttribute("aria-hidden")).toBe("false");
+  });
+
+  // -------------------------------------------------------------------------
+  // Online-now id-space test
+  // -------------------------------------------------------------------------
+  // Members have userId (D1 integer) and githubId (GitHub numeric id) — they
+  // are different number spaces. The presence/awareness layer only carries
+  // githubId. The Online-now filter must compare on githubId, not userId.
+  //
+  // Setup: member carol has userId=999, githubId=42.
+  //        Remote collaborator has githubId=42 (matches carol's githubId).
+  //        With the bug (set built from userId=999), has(42) → false → carol
+  //        does NOT appear online. After the fix (set built from githubId=42),
+  //        has(42) → true → carol appears.
+  it("Online-now matches on githubId, not D1 userId", () => {
+    const carolMember = {
+      userId: 999,
+      githubId: 42,
+      username: "carol",
+      role: "collaborator" as const,
+      contributions: null,
+      presenceColor: null,
+    };
+
+    const carolPresence = {
+      clientId: 555,
+      user: { githubId: 42, name: "carol", color: "#E74C3C" },
+      location: { route: "/stories", storyId: null, fieldKey: null },
+    };
+
+    const contextWithCarol: CollaborationContextValue = {
+      ...mockContextValue,
+      remoteCollaborators: [carolPresence],
+    };
+
+    render(
+      <CollaborationContext.Provider value={contextWithCarol}>
+        <CollaborationSidebar
+          open={true}
+          onClose={vi.fn()}
+          isConvenor={false}
+          members={[carolMember]}
+          seats={{ used: 1, limit: 6 }}
+          triggerRef={triggerRef}
+        />
+      </CollaborationContext.Provider>
+    );
+
+    // carol's username should appear in the Online-now section specifically,
+    // not just anywhere in the sidebar (the Team section also renders @carol
+    // via MemberRow, so we must scope the query to the Online-now section).
+    const onlineSection = document.getElementById("sb-online")?.closest("section");
+    expect(onlineSection).not.toBeNull();
+    const onlineText = onlineSection!.textContent ?? "";
+    expect(onlineText).toContain("@carol");
   });
 });

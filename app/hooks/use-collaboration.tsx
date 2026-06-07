@@ -10,7 +10,7 @@
  * disconnects on unmount. Offline edits queue automatically via
  * y-websocket's built-in reconnect/backoff behaviour.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -19,6 +19,7 @@ import { WebsocketProvider } from "y-websocket";
 import * as decoding from "lib0/decoding";
 import { useTranslation } from "react-i18next";
 import { useToast } from "~/hooks/use-toast";
+import { createUndoManager } from "~/lib/undo-manager";
 
 // Bespoke session-control protocol (mirrors workers/collaboration.ts).
 // Wire format = varuint(2) + uint8(subtype). Server→client only.
@@ -41,7 +42,7 @@ const SUB_REMOVED_FROM_PROJECT = 0x02;
 export interface AwarenessUser {
   clientId: number;
   user: { githubId: number; name: string; color: string };
-  location: { route: string; storyId: string | null; fieldKey: string | null } | null;
+  location: { route: string | null; storyId: string | null; fieldKey: string | null } | null;
 }
 
 export interface CollaborationContextValue {
@@ -51,8 +52,25 @@ export interface CollaborationContextValue {
   /** Three-state connection status. Replaces the binary `connected` boolean for UI. */
   connectionStatus: "connected" | "connecting" | "offline";
   isPublishing: boolean;
+  /**
+   * The GitHub Actions build is still running after a successful commit
+   * (broadcast by the publish route from commit-success until build-complete).
+   * Separate from isPublishing — which flips false on commit return and keeps
+   * the freeze/disable semantics — so the Site Status pill can stay in
+   * "publishing" through the build without freezing the whole UI.
+   */
+  isBuilding: boolean;
   publishError: boolean;
   setIsPublishing: (v: boolean) => void;
+  /**
+   * The commit SHA of the in-flight publish, broadcast off-route via awareness
+   * so the global Site Status pill's PublishingPopover can drive the existing
+   * poll-build loop from any route. null when no SHA
+   * has been produced yet (the popover then renders a generic in-progress row).
+   */
+  publishSha: string | null;
+  /** Direct GitHub commit URL for the in-flight publish (paired with publishSha). */
+  publishCommitUrl: string | null;
   isUpgrading: boolean;
   upgradeError: boolean;
   setIsUpgrading: (v: boolean) => void;
@@ -68,7 +86,7 @@ export interface CollaborationContextValue {
    * Per-user lifetime contribution data, keyed by userId (D1 integer ID).
    * Built from the authenticated projectMembers loader — only members with a
    * project_members row appear here (defence-in-depth).
-   * Consumed by the sidebar donut (plan 28-04).
+   * Consumed by the sidebar donut.
    */
   contributionsByUser: Map<number, { fields_edited: number }>;
 }
@@ -79,8 +97,11 @@ const defaultValue: CollaborationContextValue = {
   connected: false,
   connectionStatus: "offline",
   isPublishing: false,
+  isBuilding: false,
   publishError: false,
   setIsPublishing: () => {},
+  publishSha: null,
+  publishCommitUrl: null,
   isUpgrading: false,
   upgradeError: false,
   setIsUpgrading: () => {},
@@ -117,7 +138,10 @@ export function useCollaborationContext(): CollaborationContextValue {
  */
 export function useSetAwarenessLocation() {
   const { provider } = useCollaborationContext();
-  return (location: { route: string; storyId: string | null; fieldKey: string | null }) => {
+  // `route` accepts null so a route can clear its awareness location on teardown
+  // without reading the global window.location. Consumers (TabNav,
+  // PresenceBar) already guard with `location?.route` falsy checks.
+  return (location: { route: string | null; storyId: string | null; fieldKey: string | null }) => {
     provider?.awareness.setLocalStateField("location", location);
   };
 }
@@ -171,7 +195,10 @@ export function CollaborationProvider({
   const [connected, setConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "offline">("connecting");
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isBuilding, setIsBuilding] = useState(false);
   const [publishError, setPublishError] = useState(false);
+  const [publishSha, setPublishSha] = useState<string | null>(null);
+  const [publishCommitUrl, setPublishCommitUrl] = useState<string | null>(null);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [upgradeError, setUpgradeError] = useState(false);
   const [remoteCollaborators, setRemoteCollaborators] = useState<AwarenessUser[]>([]);
@@ -215,7 +242,7 @@ export function CollaborationProvider({
     // overriding index 2 is safe because Telar's server never sends
     // y-websocket auth messages.
     //
-    // Defensive guard: pre-Phase-41 test harnesses mock `WebsocketProvider`
+    // Defensive guard: some test harnesses mock `WebsocketProvider`
     // without a `messageHandlers` array. Skip the install when the array
     // is missing rather than crash those suites — production always has
     // the real provider with its pre-populated handler array.
@@ -299,6 +326,7 @@ export function CollaborationProvider({
     const handleChange = () => {
       const states = awareness.getStates();
       let publishing = false;
+      let building = false;
       let hasError = false;
       // upgrading is display-only — any client can broadcast it, but the
       // actual upgrade commit is gated by the owner role check in the upgrade
@@ -306,12 +334,20 @@ export function CollaborationProvider({
       // locally.
       let upgrading = false;
       let hasUpgradeError = false;
+      // The publish SHA/commit URL are broadcast by whichever client is running
+      // the publish (the publish route's awareness effect). The pill reads them
+      // off-route so its PublishingPopover can poll from anywhere.
+      let sha: string | null = null;
+      let commitUrl: string | null = null;
       const collaborators: AwarenessUser[] = [];
       states.forEach((state: Record<string, unknown>, clientId: number) => {
         if (state.publishing) publishing = true;
+        if (state.building) building = true;
         if (state.publishError) hasError = true;
         if (state.upgrading) upgrading = true;
         if (state.upgradeError) hasUpgradeError = true;
+        if (typeof state.publishSha === "string") sha = state.publishSha;
+        if (typeof state.publishCommitUrl === "string") commitUrl = state.publishCommitUrl;
         if (clientId !== awareness.clientID && state.user) {
           const user = state.user as AwarenessUser["user"];
           collaborators.push({
@@ -322,7 +358,10 @@ export function CollaborationProvider({
         }
       });
       setIsPublishing(publishing);
+      setIsBuilding(building);
       setPublishError(hasError);
+      setPublishSha(sha);
+      setPublishCommitUrl(commitUrl);
       setIsUpgrading(upgrading);
       setUpgradeError(hasUpgradeError);
       setRemoteCollaborators(collaborators);
@@ -367,15 +406,12 @@ export function CollaborationProvider({
 
     const handleSync = (isSynced: boolean) => {
       if (!isSynced || um) return;
-      um = new Y.UndoManager(
-        [
-          ydoc.getArray("stories"),
-          ydoc.getArray("objects"),
-          ydoc.getArray("glossary"),
-          ydoc.getArray("pages"),
-        ],
-        { captureTimeout: 500 }
-      );
+      um = createUndoManager([
+        ydoc.getArray("stories"),
+        ydoc.getArray("objects"),
+        ydoc.getArray("glossary"),
+        ydoc.getArray("pages"),
+      ]);
       um.on("stack-item-added", updateStacks);
       um.on("stack-item-popped", updateStacks);
       um.on("stack-cleared", updateStacks);
@@ -428,8 +464,11 @@ export function CollaborationProvider({
       connected,
       connectionStatus,
       isPublishing,
+      isBuilding,
       publishError,
       setIsPublishing,
+      publishSha,
+      publishCommitUrl,
       isUpgrading,
       upgradeError,
       setIsUpgrading,
@@ -449,7 +488,10 @@ export function CollaborationProvider({
       connected,
       connectionStatus,
       isPublishing,
+      isBuilding,
       publishError,
+      publishSha,
+      publishCommitUrl,
       isUpgrading,
       upgradeError,
       remoteCollaborators,

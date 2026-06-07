@@ -6,7 +6,7 @@
  * pulls from here so the Y.Doc-walking logic lives in one place instead of
  * being inlined everywhere a loader or hook needs it.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import * as Y from "yjs";
@@ -47,6 +47,23 @@ export function getYText(
   if (!yMap) return null;
   const val = yMap.get(fieldName);
   return val instanceof Y.Text ? val : null;
+}
+
+/**
+ * isPersistableLayerId — true only when `id` is a positive integer, i.e. a
+ * real D1 row that an `UPDATE ... WHERE id = ?` could actually persist to.
+ *
+ * A Yjs-only layer that has not yet been snapshotted to D1 carries
+ * `_id = null`, which the story loader coerces to `0`
+ * (`_app.stories.$storyId.tsx`). Posting `layerId = 0` to the autosave action
+ * trips its `resolveLayerProjectId` 400 guard, and the unawaited fetcher
+ * rejection surfaces in the in-app bug reporter. Callers use this to skip
+ * the D1 autosave fallback for ids that can never persist —
+ * persistence for such layers is the snapshot's job, not the fallback's.
+ */
+export function isPersistableLayerId(id: unknown): boolean {
+  const n = Number(id);
+  return Number.isInteger(n) && n > 0;
 }
 
 /**
