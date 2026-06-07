@@ -2,7 +2,7 @@
  * ProgressBar — horizontal numbered step indicator for the onboarding wizard.
  *
  * Shows 4 steps: Connect, Sync, Review, Done. Current step is highlighted with
- * periwinkle bg. Completed steps show a green CheckCircle icon.
+ * anil bg. Completed steps show a green CheckCircle icon.
  */
 
 import { CheckCircle } from "lucide-react";
@@ -51,7 +51,7 @@ export function ProgressBar({ currentStep, className = "" }: ProgressBarProps) {
                   isCompleted
                     ? "bg-green-100"
                     : isCurrent
-                    ? "bg-periwinkle"
+                    ? "bg-anil"
                     : "bg-gray-100"
                 }`}
                 aria-current={isCurrent ? "step" : undefined}

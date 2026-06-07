@@ -3,9 +3,11 @@
  *
  * Renders as an absolute overlay within the ViewerColumn's `children` slot.
  * Uses autosave mode — title and content save automatically.
- * Layer 1 = lavender, Layer 2 = terracotta. Stacked card effect.
+ * Layer 1 = anil, Layer 2 = terracotta. Stacked card effect.
  * Navigation: "← BACK" pill on both layers and X close.
  * Editor background matches panel colour — no white box.
+ *
+ * @version v1.3.0-beta
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -14,8 +16,10 @@ import { useFetcher } from "react-router";
 import * as Y from "yjs";
 import { Trash2, X, ArrowLeft, ChevronRight, Pencil, Check } from "lucide-react";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
+import { DocsLink } from "~/components/ui/DocsLink";
 import { Dialog } from "~/components/ui/Dialog";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { isPersistableLayerId } from "~/lib/yjs-helpers";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -46,14 +50,24 @@ interface LayerPanelProps {
   /**
    * Yjs-backed bindings for layer fields. When provided, edits write directly
    * to the shared Y.Text instances instead of the D1-only autosave-layer
-   * fetcher (which posts the layer id as a `layerId` form field per R10, and
-   * would be silently overwritten by snapshotToD1 on the next cycle). Pass
-   * null in non-Yjs fallback mode.
+   * fetcher (which posts the layer id as a `layerId` form field, and would be
+   * silently overwritten by snapshotToD1 on the next cycle). Pass null in
+   * non-Yjs fallback mode.
    */
   titleYText?: Y.Text | null;
   contentYText?: Y.Text | null;
   /** Y.Text for layer 2's button_label, when layer 2 exists. */
   layer2ButtonLabelYText?: Y.Text | null;
+  /**
+   * Y.Text for THIS panel's own layer button_label — written by the pinned
+   * button-label strip. The SAME Y.Text the step-view trigger pill writes, so
+   * both surfaces stay in sync live.
+   */
+  buttonLabelYText?: Y.Text | null;
+  /** Story title for the breadcrumb (falls back to breadcrumb.untitled). */
+  storyTitle?: string | null;
+  /** 1-based step number for the breadcrumb `Story / Step N / Layer M`. */
+  stepNumber?: number;
   /**
    * When true, the trash button bypasses this component's internal Dialog and
    * calls `onDelete` immediately — the parent renders a centralised
@@ -62,6 +76,8 @@ interface LayerPanelProps {
   skipInternalConfirm?: boolean;
   /** Tooltip shown when canDelete is false. */
   deleteTooltip?: string;
+  /** Callback to open the in-product docs drawer — threaded from the _app shell via outlet context. */
+  onOpenDoc?: (id: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +103,10 @@ export function LayerPanel({
   titleYText = null,
   contentYText = null,
   layer2ButtonLabelYText = null,
+  buttonLabelYText = null,
+  storyTitle = null,
+  stepNumber,
+  onOpenDoc,
 }: LayerPanelProps) {
   const { t } = useTranslation("editor");
   const { ydoc } = useCollaborationContext();
@@ -130,6 +150,41 @@ export function LayerPanel({
     }
   }, [editingL2Label]);
 
+  // Pinned button-label strip — edits THIS layer's button_label via the same
+  // Y.Text the step-view trigger pill writes. Debounced like the title field,
+  // with a D1 fetcher fallback when no Y.Text is available.
+  const stripDefaultLabel =
+    layer.layer_number === 1
+      ? t("layer.default_label_1")
+      : t("layer.default_label_2");
+  const [stripLabel, setStripLabel] = useState(layer.button_label ?? stripDefaultLabel);
+  const stripFetcher = useFetcher();
+  const stripTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleStripChange = useCallback(
+    (value: string) => {
+      setStripLabel(value);
+      if (stripTimerRef.current) clearTimeout(stripTimerRef.current);
+      stripTimerRef.current = setTimeout(() => {
+        if (writeYText(buttonLabelYText, value)) return;
+        if (!isPersistableLayerId(layer.id)) return;
+        stripFetcher
+          .submit(
+            {
+              intent: "autosave-layer",
+              field: "button_label",
+              value,
+              layerId: String(layer.id),
+            },
+            { method: "post", action: actionUrl }
+          )
+          .catch((err) => {
+            console.error("LayerPanel button_label autosave failed", err);
+          });
+      }, 1500);
+    },
+    [buttonLabelYText, writeYText, stripFetcher, layer.id, actionUrl]
+  );
+
   // Debounced autosave for panel title
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleTitleChange = useCallback(
@@ -138,15 +193,20 @@ export function LayerPanel({
       if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
       titleTimerRef.current = setTimeout(() => {
         if (writeYText(titleYText, value)) return;
-        titleFetcher.submit(
-          {
-            intent: "autosave-layer",
-            field: "title",
-            value,
-            layerId: String(layer.id),
-          },
-          { method: "post", action: actionUrl }
-        );
+        if (!isPersistableLayerId(layer.id)) return;
+        titleFetcher
+          .submit(
+            {
+              intent: "autosave-layer",
+              field: "title",
+              value,
+              layerId: String(layer.id),
+            },
+            { method: "post", action: actionUrl }
+          )
+          .catch((err) => {
+            console.error("LayerPanel title autosave failed", err);
+          });
       }, 1500);
     },
     [layer.id, actionUrl, titleFetcher, titleYText, writeYText]
@@ -157,8 +217,9 @@ export function LayerPanel({
     const trimmed = l2Label.trim() || t("layer.default_label_2");
     setL2Label(trimmed);
     if (writeYText(layer2ButtonLabelYText, trimmed)) return;
-    if (layer2Id) {
-      l2LabelFetcher.submit(
+    if (!isPersistableLayerId(layer2Id)) return;
+    l2LabelFetcher
+      .submit(
         {
           intent: "autosave-layer",
           field: "button_label",
@@ -166,18 +227,20 @@ export function LayerPanel({
           layerId: String(layer2Id),
         },
         { method: "post", action: actionUrl }
-      );
-    }
+      )
+      .catch((err) => {
+        console.error("LayerPanel layer-2 label autosave failed", err);
+      });
   }
 
   // Visual theme per layer number
   const isLayer1 = layer.layer_number === 1;
-  const panelBg = isLayer1 ? "bg-lavender" : "bg-terracotta";
-  const panelBorder = isLayer1 ? "border-lavender" : "border-terracotta";
+  const panelBg = isLayer1 ? "bg-anil" : "bg-terracotta";
+  const panelBorder = isLayer1 ? "border-anil" : "border-terracotta";
   const labelColor = isLayer1 ? "text-charcoal/60" : "text-cream/70";
   const borderColor = isLayer1 ? "border-charcoal/10" : "border-cream/20";
   const inputBg = isLayer1
-    ? "bg-lavender/50 border-charcoal/15 text-charcoal placeholder-charcoal/40"
+    ? "bg-anil/50 border-charcoal/15 text-charcoal placeholder-charcoal/40"
     : "bg-terracotta/80 border-cream/20 text-cream placeholder-cream/50";
   const backBtnStyle = isLayer1
     ? "bg-charcoal/10 text-charcoal/70 hover:bg-charcoal/20"
@@ -210,6 +273,24 @@ export function LayerPanel({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
+        {/* Breadcrumb — Story / Step N / Layer M */}
+        <nav
+          className={`flex items-center gap-1.5 px-4 pt-3 font-heading text-xs ${labelColor} shrink-0`}
+          aria-label={t("breadcrumb.layer", { number: layer.layer_number })}
+        >
+          <span className="truncate max-w-[10rem]">
+            {storyTitle?.trim() || t("breadcrumb.untitled")}
+          </span>
+          {stepNumber != null && (
+            <>
+              <ChevronRight className="w-3 h-3 text-fg-subtle shrink-0" />
+              <span>{t("breadcrumb.step", { number: stepNumber })}</span>
+            </>
+          )}
+          <ChevronRight className="w-3 h-3 text-fg-subtle shrink-0" />
+          <span>{t("breadcrumb.layer", { number: layer.layer_number })}</span>
+        </nav>
+
         {/* Navigation bar */}
         <div className="flex items-center justify-between px-4 py-3 shrink-0">
           <div className="flex items-center gap-2">
@@ -259,16 +340,42 @@ export function LayerPanel({
             type="text"
             value={panelTitle}
             onChange={(e) => handleTitleChange(e.target.value)}
-            className={`w-full px-4 py-2 font-heading font-semibold text-lg border rounded-lg focus:outline-none focus:ring-2 focus:ring-white/30 ${inputBg}`}
+            className={`w-full px-4 py-2 font-heading font-semibold text-lg border rounded-lg ${inputBg}`}
             aria-label={t("layer.panel_title_aria")}
+          />
+        </div>
+
+        {/* Button label — the text on the step-view trigger pill. Styled like
+            the other labelled fields (no tinted box) and placed below the title.
+            Writes the SAME Y.Text the step-view pill reads. */}
+        <div className="px-6 pb-4 shrink-0">
+          <label className={`block font-heading text-xs font-semibold ${labelColor} uppercase tracking-wider mb-2`}>
+            {t("layer.button_label_strip_label")}
+          </label>
+          <input
+            type="text"
+            value={stripLabel}
+            onChange={(e) => handleStripChange(e.target.value)}
+            placeholder={stripDefaultLabel}
+            className={`w-full px-4 py-2 font-heading font-semibold text-base border rounded-lg ${inputBg}`}
+            aria-label={t("layer.button_label_strip_label")}
           />
         </div>
 
         {/* Content editor — fills remaining height, blends into panel */}
         <div className="flex-1 min-h-0 flex flex-col px-6 pb-4">
-          <label className={`block font-heading text-xs font-semibold ${labelColor} uppercase tracking-wider mb-2`}>
-            {t("layer.content_label")}
-          </label>
+          <div className="flex items-center justify-between mb-2">
+            <label className={`block font-heading text-xs font-semibold ${labelColor} uppercase tracking-wider`}>
+              {t("layer.content_label")}
+            </label>
+            {onOpenDoc && (
+              <DocsLink
+                docId="markdown"
+                onOpenDoc={onOpenDoc}
+                className={isLayer1 ? "" : "!text-cream/70 hover:!text-cream"}
+              />
+            )}
+          </div>
           <div className="flex-1 min-h-0 overflow-y-auto">
             <MarkdownEditor
               key={layer.id}
@@ -314,7 +421,7 @@ export function LayerPanel({
                         if (e.key === "Enter") handleSaveL2Label();
                         if (e.key === "Escape") { setL2Label(layer2ButtonLabel ?? t("layer.default_label_2")); setEditingL2Label(false); }
                       }}
-                      className="px-3 py-1.5 font-heading font-semibold text-sm text-charcoal bg-white border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-periwinkle/50 min-w-[8rem]"
+                      className="px-3 py-1.5 font-heading font-semibold text-sm text-charcoal bg-white border border-gray-300 rounded-full min-w-[8rem]"
                     />
                     <button type="button" onClick={handleSaveL2Label} className="p-1 text-green-600 hover:text-green-700" aria-label={t("layer.save_label_aria")}>
                       <Check className="w-3.5 h-3.5" />

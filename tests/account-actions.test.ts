@@ -10,7 +10,7 @@
  * RouterContext stub; assert on the recorded mock calls and the action's
  * return value.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -452,7 +452,7 @@ describe("/account action — delete-account intent", () => {
     mocks.deleteProjectCascadeMock.mockResolvedValue(undefined);
   });
 
-  it("happy path: race-guard sees 0 convened projects → batch(3) → 302 redirect + Set-Cookie", async () => {
+  it("happy path: race-guard sees 0 convened projects → batch(4) → 302 redirect + Set-Cookie", async () => {
     // Two sequential SELECTs: race-guard (collab-only) → []; then
     // solo-cascade scan → also []. Both return empty so the action skips
     // straight to the user-row batch.
@@ -471,12 +471,14 @@ describe("/account action — delete-account intent", () => {
     // Set-Cookie is whatever destroySession returned.
     expect(r.headers.get("Set-Cookie")).toContain("Max-Age=0");
 
-    // batch called exactly once with three operations.
+    // batch called exactly once with four operations (invites, members,
+    // activity_log, users — activity_log added to unblock FK violation on
+    // actor_user_id → users).
     expect(mocks.dbBatchMock).toHaveBeenCalledTimes(1);
     const ops = (mocks.dbBatchMock.mock.calls[0] as unknown as [
       Array<{ toSQL: () => { sql: string } }>,
     ])[0];
-    expect(ops).toHaveLength(3);
+    expect(ops).toHaveLength(4);
 
     expect(mocks.destroySessionMock).toHaveBeenCalledTimes(1);
   });
@@ -556,7 +558,7 @@ describe("/account action — delete-account intent", () => {
     expect(mocks.destroySessionMock).not.toHaveBeenCalled();
   });
 
-  it("FK ordering: batch ops are passed in [project_invites, project_members, users] order", async () => {
+  it("FK ordering: batch ops are passed in [project_invites, project_members, activity_log, users] order", async () => {
     mocks.dbSelectMock.mockReturnValueOnce([]).mockReturnValueOnce([]);
     const ctx = makeContext({ userId: 7 });
     const req = makeFormRequest({ intent: "delete-account" });
@@ -567,14 +569,15 @@ describe("/account action — delete-account intent", () => {
     const ops = (mocks.dbBatchMock.mock.calls[0] as unknown as [
       Array<{ toSQL: () => { sql: string } }>,
     ])[0];
-    expect(ops).toHaveLength(3);
+    expect(ops).toHaveLength(4);
 
     // Per-index SQL substring assertions. A misordered cascade MUST fail
-    // this test (project_invites and project_members both
+    // this test (project_invites, project_members, and activity_log all
     // FK-reference users.id, so users MUST be the last op).
     expect(ops[0].toSQL().sql).toMatch(/project_invites/i);
     expect(ops[1].toSQL().sql).toMatch(/project_members/i);
-    expect(ops[2].toSQL().sql).toMatch(/\busers\b/i);
+    expect(ops[2].toSQL().sql).toMatch(/activity_log/i);
+    expect(ops[3].toSQL().sql).toMatch(/\busers\b/i);
   });
 });
 
@@ -658,7 +661,7 @@ describe("/account action — delete-account intent (solo-cascade)", () => {
 // Sanity: signed marker shape is what we expect (regression on shared infra).
 describe("signInternalMarker (regression)", () => {
   it("returns 64-char sigHex + numeric timestamp", async () => {
-    const { sigHex, timestamp } = await signInternalMarker(42, TEST_SECRET);
+    const { sigHex, timestamp } = await signInternalMarker(42, TEST_SECRET, "reset");
     expect(sigHex).toMatch(/^[0-9a-f]{64}$/);
     expect(typeof timestamp).toBe("number");
   });

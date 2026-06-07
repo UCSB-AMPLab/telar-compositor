@@ -5,7 +5,7 @@
  * A Pencil icon (12px, text-gray-400) appears on hover; clicking it or the URL
  * preview text enters edit mode.
  *
- * Edit state: controlled input with periwinkle border. normaliseSlug runs on every
+ * Edit state: controlled input with anil border. normaliseSlug runs on every
  * keystroke. Confirms on blur or Enter; cancels on Escape.
  *
  * Auto-suffix alert: when makeUniqueSlug returns wasAdjusted:true, an amber inline
@@ -91,7 +91,7 @@ export function SlugField({
           onKeyDown={handleKeyDown}
           onBlur={commitEdit}
           placeholder={t("slug_placeholder")}
-          className="font-body text-sm border border-periwinkle rounded-md px-2 py-1 w-full focus:outline-none"
+          className="font-body text-sm border border-anil rounded-md px-2 py-1 w-full"
         />
         {isAdjusted && (
           <div className="mt-1 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 text-xs text-amber-800">

@@ -23,15 +23,15 @@ describe("app.css Tailwind theme tokens", () => {
   });
 
   it("contains --color-terracotta: #883C36", () => {
-    expect(css).toContain("--color-terracotta: #883C36");
+    expect(css).toMatch(/--color-terracotta:\s+#883C36/);
   });
 
-  it("contains --color-lavender: #C6D0F8", () => {
-    expect(css).toContain("--color-lavender: #C6D0F8");
+  it("contains --color-anil: #C6D0F8 (renamed from --color-lavender, same hex)", () => {
+    expect(css).toMatch(/--color-anil:\s+#C6D0F8/);
   });
 
   it("contains --color-cream: #FFF6EF", () => {
-    expect(css).toContain("--color-cream: #FFF6EF");
+    expect(css).toMatch(/--color-cream:\s+#FFF6EF/);
   });
 
   it('contains --font-heading: "Space Grotesk"', () => {

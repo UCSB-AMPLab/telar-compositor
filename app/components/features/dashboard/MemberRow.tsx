@@ -22,6 +22,8 @@ export interface RemoveTarget {
 
 interface MemberRowProps {
   githubId: number;
+  /** Database userId — required when onRemoveRequest is used. */
+  userId?: number;
   username: string;
   role: "convenor" | "collaborator";
   isPending?: boolean;
@@ -113,6 +115,7 @@ function MemberRowKebab({
 
 export function MemberRow({
   githubId,
+  userId,
   username,
   role,
   isPending = false,
@@ -148,6 +151,7 @@ export function MemberRow({
       {canShowKebab && (
         <MemberRowKebab
           username={username}
+          userId={userId}
           onRemove={onRemove}
           onRemoveRequest={onRemoveRequest}
         />

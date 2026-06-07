@@ -1,11 +1,12 @@
 /**
- * ProjectStatusBar — unified repo status bar with single status indicator,
- * detailed sync/publish timestamps, and project switcher.
+ * ProjectStatusBar — repo bar with detailed sync/publish timestamps and the
+ * project switcher.
  *
- * Layout: [ repo-name | status-chip | synced-timestamp | published-timestamp | switch-repos ▾ ]
+ * Layout: [ repo-name | synced-timestamp | published-timestamp | switch-repos ▾ ]
  *
- * Single status chip priority: out_of_sync (red) > unpublished (amber) > up_to_date (green).
- * Clicking the chip actions it: out_of_sync opens sync dialog, unpublished links to /publish.
+ * The sync/publish status chip (out_of_sync / unpublished / up_to_date) that
+ * used to live here was retired — that signal now lives in the Site Status
+ * pill (Header). The repo name, timestamps, and switcher remain here.
  */
 
 import { useState } from "react";
@@ -23,12 +24,9 @@ interface ProjectStatusBarProps {
   repoName: string;
   lastPublished: string | null;
   lastSynced: string | null;
-  unpublishedCount: number;
-  headDiverged: boolean;
   allProjects: Project[];
   activeProjectId: number;
   onSwitchProject: (projectId: number) => void;
-  onSyncClick: () => void;
   className?: string;
 }
 
@@ -36,12 +34,9 @@ export function ProjectStatusBar({
   repoName,
   lastPublished,
   lastSynced,
-  unpublishedCount,
-  headDiverged,
   allProjects,
   activeProjectId,
   onSwitchProject,
-  onSyncClick,
   className = "",
 }: ProjectStatusBarProps) {
   const { t } = useTranslation("dashboard");
@@ -52,26 +47,6 @@ export function ProjectStatusBar({
   // shows empty until mount; a null one shows the neverLabel immediately.
   const syncedRelative = useRelativeTime(lastSynced, neverLabel);
   const publishedRelative = useRelativeTime(lastPublished, neverLabel);
-
-  // Single status: out_of_sync > unpublished > up_to_date
-  const status = headDiverged
-    ? "out_of_sync"
-    : unpublishedCount > 0
-    ? "unpublished"
-    : "up_to_date";
-
-  const statusStyles = {
-    out_of_sync: "bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer",
-    unpublished: "bg-amber-50 text-amber-700 hover:bg-amber-100 cursor-pointer",
-    up_to_date: "bg-green-50 text-green-700",
-  };
-
-  const statusChip = (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium rounded-full px-2.5 py-1 transition-colors shrink-0 ${statusStyles[status]}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${status === "out_of_sync" ? "bg-red-500" : status === "unpublished" ? "bg-amber-500" : "bg-green-500"}`} />
-      {t(`sync_status.${status}`)}
-    </span>
-  );
 
   return (
     <div
@@ -89,19 +64,6 @@ export function ProjectStatusBar({
         <Github className="w-4 h-4 text-gray-400" />
         <span>{repoName}</span>
       </a>
-
-      {/* Status chip — clickable when actionable */}
-      {status === "out_of_sync" ? (
-        <button type="button" onClick={onSyncClick}>
-          {statusChip}
-        </button>
-      ) : status === "unpublished" ? (
-        <Link to="/publish">
-          {statusChip}
-        </Link>
-      ) : (
-        statusChip
-      )}
 
       {/* Timestamps */}
       <div className="flex items-center gap-6 text-gray-500">
@@ -159,7 +121,7 @@ export function ProjectStatusBar({
               <Link
                 to="/onboarding?force=1"
                 onClick={() => setDropdownOpen(false)}
-                className="block px-4 py-2.5 font-body text-sm text-lavender hover:bg-gray-50 transition-colors"
+                className="block px-4 py-2.5 font-body text-sm text-anil hover:bg-gray-50 transition-colors"
               >
                 {t("connect_new_repo")}
               </Link>

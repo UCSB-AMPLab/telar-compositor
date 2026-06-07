@@ -98,7 +98,7 @@ export function InviteForm({ projectId, isOwner, className }: InviteFormProps) {
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="inline-flex items-center gap-2 bg-periwinkle text-charcoal font-heading text-sm font-semibold rounded-full px-4 py-2 hover:bg-periwinkle/80 transition-colors"
+          className="inline-flex items-center gap-2 bg-anil text-charcoal font-heading text-sm font-semibold rounded-full px-4 py-2 hover:bg-anil/80 transition-colors"
         >
           <UserPlus size={15} aria-hidden="true" />
           {t("invite_button")}
@@ -116,7 +116,7 @@ export function InviteForm({ projectId, isOwner, className }: InviteFormProps) {
                 setSelectedUser(null);
               }}
               placeholder={t("search_placeholder")}
-              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 font-body text-sm text-charcoal placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle/50"
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 font-body text-sm text-charcoal placeholder:text-gray-400"
             />
 
             {/* Search results dropdown */}
@@ -155,7 +155,7 @@ export function InviteForm({ projectId, isOwner, className }: InviteFormProps) {
                 type="button"
                 onClick={handleSendInvite}
                 disabled={sending}
-                className="inline-flex items-center gap-1.5 bg-periwinkle text-charcoal font-heading text-sm font-semibold rounded-full px-4 py-1.5 hover:bg-periwinkle/80 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1.5 bg-anil text-charcoal font-heading text-sm font-semibold rounded-full px-4 py-1.5 hover:bg-anil/80 disabled:bg-disabled disabled:text-fg-disabled transition-colors"
               >
                 {t("send_button")}
               </button>
@@ -168,7 +168,7 @@ export function InviteForm({ projectId, isOwner, className }: InviteFormProps) {
               type="button"
               onClick={handleGenerateInvite}
               disabled={generateFetcher.state !== "idle"}
-              className="inline-flex items-center gap-2 font-body text-sm text-charcoal/70 hover:text-charcoal transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-2 font-body text-sm text-charcoal/70 hover:text-charcoal transition-colors disabled:text-fg-disabled"
             >
               {copyState === "copied" ? (
                 <Check size={15} className="text-green-600" aria-hidden="true" />

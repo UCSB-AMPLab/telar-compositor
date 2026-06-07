@@ -15,9 +15,8 @@
  *     modal instance.
  *
  *   - Enabled state (`convenedProjects.length === 0`): the Delete
- *     account button is the terracotta-bordered destructive primary
- *     (terracotta is locked — NOT amber, NOT red-600). On click,
- *     opens `DeleteConfirmationModal` with `entityType="account"`,
+ *     account button is the terracotta-bordered destructive primary.
+ *     On click, opens `DeleteConfirmationModal` with `entityType="account"`,
  *     `confirmText = user.github_login` (case-sensitive no-trim
  *     gate), and `destructiveColor="terracotta"`. On confirm,
  *     submits `intent=delete-account` via `useFetcher` — the
@@ -28,7 +27,7 @@
  *     client-side: a destructive toast with
  *     `danger_zone.race_guard_error`.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useEffect, useState } from "react";
@@ -109,10 +108,10 @@ export function DangerZoneCard({
 
   // Terracotta destructive button styling — matches the
   // DeleteConfirmationModal's `destructiveColor="terracotta"` register
-  // exactly (modal lines 170-173). Token-based per CLAUDE.md (no raw
-  // hex), Space Grotesk uppercase per the brand button conventions.
+  // exactly. Token-based (no raw hex), Space Grotesk uppercase per the
+  // brand button conventions.
   const destructiveButtonClass =
-    "inline-flex items-center justify-center gap-2 font-heading font-semibold uppercase tracking-wider rounded-full px-6 py-2.5 text-sm text-white bg-terracotta hover:bg-terracotta/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center gap-2 font-heading font-semibold uppercase tracking-wider rounded-full px-6 py-2.5 text-sm text-white bg-terracotta hover:bg-terracotta/90 transition-colors disabled:bg-disabled disabled:text-fg-disabled disabled:cursor-not-allowed";
 
   return (
     <section className="bg-white rounded-lg border border-terracotta/40 shadow-sm p-6 mt-8">
@@ -142,10 +141,10 @@ export function DangerZoneCard({
             <span className="font-medium text-charcoal">
               {t("danger_zone.gated_list_label")}
             </span>{" "}
-            {/* Inline buttons — CONTEXT discretion bullet 4 recommends
-                an inline sentence form over a vertical <ul>. Each
-                button calls onOpenDeleteProject(id) which drives the
-                route's shared delete-project modal. */}
+            {/* Inline buttons — an inline sentence form reads better
+                here than a vertical <ul>. Each button calls
+                onOpenDeleteProject(id) which drives the route's shared
+                delete-project modal. */}
             {convenedProjects.map((p, i) => (
               <span key={p.id}>
                 <button

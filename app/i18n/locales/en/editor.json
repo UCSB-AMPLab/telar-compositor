@@ -38,7 +38,13 @@
   "word_count_other": "{{count}} words",
   "breadcrumb": {
     "dashboard": "Start",
-    "untitled": "Untitled Story"
+    "untitled": "Untitled Story",
+    "step": "Step {{number}}",
+    "layer": "Layer {{number}}"
+  },
+  "capture_toast": {
+    "captured": "Captured position",
+    "undo": "Undo"
   },
   "title_card": {
     "title_label": "Story title",
@@ -153,11 +159,22 @@
     "open_layer2": "Open second panel",
     "panel_title": "Panel title",
     "button_label": "Button label",
+    "button_label_strip_label": "Button label",
+    "marker_l1": "L1",
+    "marker_l2": "L2",
     "edit_button_label": "Edit button label",
     "content_label": "Content",
     "close_panel_aria": "Close panel",
     "panel_title_aria": "Panel title",
     "save_label_aria": "Save label",
     "edit_button_label_aria": "Edit button label"
+  },
+  "error": {
+    "not_available_title": "This story isn't available yet",
+    "not_available_body": "It may still be saving. Give it a moment, then try again.",
+    "back_to_stories": "Back to stories",
+    "retry": "Try again",
+    "generic_title": "Something went wrong",
+    "generic_body": "This story couldn't be opened. Go back to your stories and try again."
   }
 }

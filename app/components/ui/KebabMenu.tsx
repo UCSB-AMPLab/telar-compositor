@@ -24,7 +24,7 @@
  *     `bg-terracotta` — terracotta backgrounds are reserved for
  *     primary destructive CTAs).
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import {
@@ -187,7 +187,7 @@ export function KebabMenu({
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         aria-label={ariaLabel}
-        className="w-9 h-9 inline-flex items-center justify-center rounded-md text-charcoal hover:bg-cream focus:outline-none focus:ring-2 focus:ring-charcoal/30"
+        className="w-9 h-9 inline-flex items-center justify-center rounded-md text-charcoal hover:bg-cream"
       >
         <MoreVertical className="w-5 h-5" aria-hidden="true" />
       </button>
@@ -215,9 +215,9 @@ export function KebabMenu({
                 closeAndReturnFocus();
               }}
               onKeyDown={(e) => handleItemKeyDown(e, index)}
-              className={`w-full text-left px-4 py-2 text-sm font-body hover:bg-cream focus:outline-none focus:bg-cream ${
+              className={`w-full text-left px-4 py-2 text-sm font-body hover:bg-cream focus:bg-cream ${
                 item.destructive ? "text-terracotta" : "text-charcoal"
-              } ${item.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+              } ${item.disabled ? "text-fg-disabled cursor-not-allowed" : ""}`}
             >
               {item.label}
             </button>

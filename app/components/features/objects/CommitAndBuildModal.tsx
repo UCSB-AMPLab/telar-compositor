@@ -411,7 +411,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
         {/* --- Committing step --- */}
         {step === "committing" && (
           <div className="p-6 flex flex-col items-center gap-3 py-10">
-            <Loader2 className="w-8 h-8 text-periwinkle animate-spin" />
+            <Loader2 className="w-8 h-8 text-anil animate-spin" />
             <p className="font-body text-sm text-gray-600">{t("committingToRepo")}</p>
           </div>
         )}
@@ -476,7 +476,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
         {/* --- Inserting step (D1 insert after build success) --- */}
         {step === "inserting" && (
           <div className="p-6 flex flex-col items-center gap-3 py-10">
-            <Loader2 className="w-8 h-8 text-periwinkle animate-spin" />
+            <Loader2 className="w-8 h-8 text-anil animate-spin" />
             <p className="font-body text-sm text-gray-600">{t("commitModal.insertingObjects")}</p>
           </div>
         )}

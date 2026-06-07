@@ -38,7 +38,13 @@
   "word_count_other": "{{count}} palabras",
   "breadcrumb": {
     "dashboard": "Inicio",
-    "untitled": "Historia sin título"
+    "untitled": "Historia sin título",
+    "step": "Paso {{number}}",
+    "layer": "Capa {{number}}"
+  },
+  "capture_toast": {
+    "captured": "Posición capturada",
+    "undo": "Deshacer"
   },
   "title_card": {
     "title_label": "Título de la historia",
@@ -153,11 +159,22 @@
     "open_layer2": "Abrir segundo panel",
     "panel_title": "Título del panel",
     "button_label": "Etiqueta del botón",
+    "button_label_strip_label": "Etiqueta del botón",
+    "marker_l1": "C1",
+    "marker_l2": "C2",
     "edit_button_label": "Editar contenido del botón",
     "content_label": "Contenido",
     "close_panel_aria": "Cerrar panel",
     "panel_title_aria": "Título del panel",
     "save_label_aria": "Guardar etiqueta",
     "edit_button_label_aria": "Editar etiqueta del botón"
+  },
+  "error": {
+    "not_available_title": "Esta historia aún no está disponible",
+    "not_available_body": "Es posible que aún se esté guardando. Espera unos segundos e intenta de nuevo.",
+    "back_to_stories": "Volver a las historias",
+    "retry": "Reintentar",
+    "generic_title": "Algo salió mal",
+    "generic_body": "No pudimos abrir esta historia. Vuelve a tus historias e intenta de nuevo."
   }
 }

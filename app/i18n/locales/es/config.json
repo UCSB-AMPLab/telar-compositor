@@ -1,5 +1,6 @@
 {
   "title": "Configuración del sitio",
+  "intro": "Configura aquí los ajustes de tu sitio: el nombre, el tema, el idioma y la descripción, además de los datos de autoría, el alojamiento y cómo se les presentan las historias y la colección a quienes visitan el sitio.",
   "account_link_note": "Para los ajustes de tu cuenta de usuario, como el idioma de la interfaz, <1>ve a tu cuenta</1>.",
   "save": "Guardar cambios",
   "saving": "Guardando…",

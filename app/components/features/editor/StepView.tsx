@@ -9,15 +9,18 @@
  * Layer buttons (up to 2) appear below the answer, styled as pills.
  * Each layer button has a pencil icon to edit the button label inline.
  * Vertically centered within the narrative column.
+ *
+ * @version v1.3.0-beta
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useFetcher } from "react-router";
 import { Pencil, Check, X, PencilLine } from "lucide-react";
 import * as Y from "yjs";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
+import { DocsLink } from "~/components/ui/DocsLink";
+import { useCollaborationContext } from "~/hooks/use-collaboration";
 
 interface LayerData {
   id: number;
@@ -44,7 +47,11 @@ interface StepViewProps {
   questionYText: Y.Text | null;
   answerYText: Y.Text | null;
   altTextYText: Y.Text | null;
+  /** Y.Text for layer 1's button_label — the SAME Y.Text the panel strip writes. */
+  buttonLabelYText: Y.Text | null;
   storySlug: string;
+  /** Callback to open the in-product docs drawer — threaded from the _app shell via outlet context. */
+  onOpenDoc?: (id: string) => void;
 }
 
 /** Inline editor for a layer button label — appears on pencil click. */
@@ -53,19 +60,34 @@ function LayerButtonWithEdit({
   defaultLabel,
   buttonClassName,
   onOpenLayer,
-  actionUrl,
+  buttonLabelYText,
 }: {
   layer: LayerData;
   defaultLabel: string;
   buttonClassName: string;
   onOpenLayer: (layer: LayerData) => void;
-  actionUrl: string;
+  buttonLabelYText: Y.Text | null;
 }) {
   const { t } = useTranslation("editor");
+  const { ydoc } = useCollaborationContext();
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(layer.button_label ?? defaultLabel);
   const inputRef = useRef<HTMLInputElement>(null);
-  const fetcher = useFetcher();
+
+  // Replace the contents of a Y.Text without losing the shared identity (so
+  // remote observers — and the panel strip writing the same Y.Text — see a
+  // single update, not a destroy+create). Copied from LayerPanel.tsx.
+  const writeYText = useCallback(
+    (yText: Y.Text | null, value: string): boolean => {
+      if (!ydoc || !yText) return false;
+      ydoc.transact(() => {
+        if (yText.length > 0) yText.delete(0, yText.length);
+        if (value.length > 0) yText.insert(0, value);
+      });
+      return true;
+    },
+    [ydoc]
+  );
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -74,20 +96,22 @@ function LayerButtonWithEdit({
     }
   }, [editing]);
 
+  // Re-seed the local edit buffer whenever the shared button_label changes
+  // (panel strip write or remote peer) AND the inline editor is NOT open.
+  // Without this the buffer is seeded once at mount and only re-synced on
+  // Cancel, so opening the pencil after an external change shows a STALE value
+  // and Save would clobber the newer shared value with the stale snapshot.
+  // Guarded on !editing so we never stomp the user's in-progress typing.
+  useEffect(() => {
+    if (!editing) setLabel(layer.button_label ?? defaultLabel);
+  }, [layer.button_label, defaultLabel, editing]);
+
   const handleSave = useCallback(() => {
     setEditing(false);
     const trimmed = label.trim() || defaultLabel;
     setLabel(trimmed);
-    fetcher.submit(
-      {
-        intent: "autosave-layer",
-        field: "button_label",
-        value: trimmed,
-        projectId: String(layer.id),
-      },
-      { method: "post", action: actionUrl }
-    );
-  }, [label, defaultLabel, layer.id, actionUrl, fetcher]);
+    writeYText(buttonLabelYText, trimmed);
+  }, [label, defaultLabel, buttonLabelYText, writeYText]);
 
   const handleCancel = useCallback(() => {
     setLabel(layer.button_label ?? defaultLabel);
@@ -106,7 +130,7 @@ function LayerButtonWithEdit({
             if (e.key === "Enter") handleSave();
             if (e.key === "Escape") handleCancel();
           }}
-          className="px-3 py-1.5 font-heading font-semibold text-sm text-charcoal bg-white border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-periwinkle/50 min-w-[8rem]"
+          className="px-3 py-1.5 font-heading font-semibold text-sm text-charcoal bg-white border border-gray-300 rounded-full min-w-[8rem]"
         />
         <button
           type="button"
@@ -157,12 +181,13 @@ export function StepView({
   layers,
   onOpenLayer,
   onCreateLayer,
-  actionUrl,
   isFirstStep,
   questionYText,
   answerYText,
   altTextYText,
+  buttonLabelYText,
   storySlug,
+  onOpenDoc,
 }: StepViewProps) {
   const { t } = useTranslation("editor");
   const questionRef = useRef<HTMLDivElement>(null);
@@ -178,9 +203,15 @@ export function StepView({
 
   return (
     <div className="min-h-full flex flex-col justify-center">
-      <div className="px-6 py-8 border-l-4 border-lavender">
+      <div className="px-6 py-8 border-l-4 border-anil">
         {/* Question + Answer card */}
         <div className="rounded-lg bg-white px-5 py-6 shadow-sm border border-gray-100 min-h-[200px]">
+          {/* Docs link */}
+          <div className="flex justify-end mb-4">
+            {onOpenDoc && (
+              <DocsLink docId="narrative" onOpenDoc={onOpenDoc} />
+            )}
+          </div>
           {/* Question */}
           <div className="group/field relative mb-6" ref={questionRef}>
             <button
@@ -253,9 +284,9 @@ export function StepView({
             <LayerButtonWithEdit
               layer={layer1}
               defaultLabel={t("layer.default_label_1")}
-              buttonClassName="px-5 py-2 bg-lavender/40 text-charcoal font-heading font-semibold text-sm rounded-full hover:bg-lavender/60 transition-colors"
+              buttonClassName="px-5 py-2 bg-anil/40 text-charcoal font-heading font-semibold text-sm rounded-full hover:bg-anil/60 transition-colors"
               onOpenLayer={onOpenLayer}
-              actionUrl={actionUrl}
+              buttonLabelYText={buttonLabelYText}
             />
           ) : (
             <button

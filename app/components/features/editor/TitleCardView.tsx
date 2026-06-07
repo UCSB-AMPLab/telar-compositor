@@ -11,7 +11,7 @@
  * Each field has a pencil icon that darkens on hover with a "Click
  * to edit" affordance.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useRef } from "react";
@@ -60,8 +60,8 @@ function ShowSectionsSwitch({
       aria-checked={checked}
       aria-label={ariaLabel}
       onClick={() => onChange(!checked)}
-      className={`relative w-9 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-periwinkle focus:ring-offset-1 shrink-0 ${
-        checked ? "bg-periwinkle" : "bg-gray-200"
+      className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+        checked ? "bg-anil" : "bg-gray-200"
       }`}
     >
       <span

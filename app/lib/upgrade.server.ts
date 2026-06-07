@@ -1,18 +1,24 @@
 /**
  * This file is the library powering the site-upgrade flow — version
  * comparison, framework tree diffing, line-based config mutation, GitHub
- * Releases lookup, and manifest-chain loading.
+ * Releases lookup, manifest-chain loading, and best-effort publish-time
+ * healing of build-critical framework files missing from a user's repo.
  *
  * Design notes:
- *   - Pure functions (parseTelarVersion, compareVersions, isFrameworkPath,
+ *   - Pure functions (parseTelarVersion, compareVersions, compareTelarVersion,
+ *     isFrameworkPath, findMissingFrameworkFiles, buildYmlUsesNpmCi,
  *     updateTelarVersionInConfig) are unit-testable without any network calls.
  *   - Async functions (fetchLatestRelease, fetchAllReleases,
- *     getFrameworkTreeAtTag, computeUpgradeDiff, checkTelarVersion) interact
+ *     getFrameworkTreeAtTag, computeUpgradeDiff, checkTelarVersion,
+ *     fetchFrameworkFilesAtVersion, healMissingFrameworkFiles) interact
  *     with the GitHub REST API and are tested with mocked fetch.
  *   - `_config.yml` mutation is line-based (not full YAML parse) to preserve
  *     comments, whitespace, and user-authored content exactly.
  *   - checkTelarVersion fails open: if the GitHub API is unreachable, the
  *     function returns `needsUpgrade: false` rather than blocking the user.
+ *   - healMissingFrameworkFiles fails open too: any failure (bad tag, tree
+ *     read, content fetch) degrades to an empty result so publish is never
+ *     blocked; the missing file retries on the next publish.
  *
  * Framework repo: UCSB-AMPLab/telar (public — user OAuth token is sufficient).
  * Truncation note: the framework repo has no IIIF tiles, so the 100,000-entry
@@ -21,10 +27,10 @@
  * alphabetically, so they will be present even in a truncated tree. Revisit
  * if truncation is ever detected in practice.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
-import { githubHeaders, decodeGitHubContent } from "~/lib/github.server";
+import { githubHeaders, decodeGitHubContent, getRepoTree, getFileContent } from "~/lib/github.server";
 import type { TreeEntry } from "~/lib/github.server";
 import type { CommitFile } from "~/lib/commit.server";
 import { validateManifest, type Manifest } from "~/lib/manifest-schema.server";
@@ -56,12 +62,20 @@ export const FRAMEWORK_PREFIXES = [
 
 /** Individual files that belong to the Telar framework.
  *
- * Dependency manifests (package.json, Gemfile, Gemfile.lock, requirements.txt)
- * must travel with upgrades: the framework's JS/Ruby/Python build steps break
- * when source files (e.g. scroll-engine.js) import libraries that haven't
- * been added to the user's manifest. Before they were listed here, upgrades
- * shipped new framework code without bumping the deps and CI failed with
+ * Dependency manifests (package.json, package-lock.json, Gemfile, Gemfile.lock,
+ * requirements.txt) must travel with upgrades: the framework's JS/Ruby/Python
+ * build steps break when source files (e.g. scroll-engine.js) import libraries
+ * that haven't been added to the user's manifest. Before they were listed here,
+ * upgrades shipped new framework code without bumping the deps and CI failed with
  * unresolved-module errors.
+ *
+ * package-lock.json specifically: the framework now builds user sites with
+ * `npm install` (no lockfile required), so it is NOT delivered universally. The
+ * publish-time heal scopes lockfile delivery to legacy sites whose
+ * .github/workflows/build.yml still runs `npm ci` — those break at the build
+ * step without a committed lockfile. See healMissingFrameworkFiles /
+ * buildYmlUsesNpmCi. It stays listed here so findMissingFrameworkFiles still
+ * detects its absence; the heal then decides whether to actually deliver it.
  */
 export const FRAMEWORK_FILES = [
   "_data/navigation.yml",
@@ -69,7 +83,10 @@ export const FRAMEWORK_FILES = [
   // README.md is the only v1.3.0 framework file not covered by FRAMEWORK_PREFIXES.
   "README.md",
   // Dependency manifests — source files assume these deps, CI fails otherwise.
+  // package-lock.json is listed for detection only; the heal delivers it just to
+  // legacy `npm ci` sites (see the package-lock.json note above).
   "package.json",
+  "package-lock.json",
   "Gemfile",
   "Gemfile.lock",
   "requirements.txt",
@@ -198,6 +215,149 @@ export function isFrameworkPath(path: string): boolean {
   return (FRAMEWORK_PREFIXES as readonly string[]).some((prefix) =>
     path.startsWith(prefix),
   );
+}
+
+/**
+ * Returns the FRAMEWORK_FILES entries that are entirely absent from a user
+ * repo's tree paths. Exact-path match only — "docs/package.json" does NOT
+ * count as "package.json". Used by the publish-time heal to restore
+ * build-critical framework files the version-gated upgrade flow can't deliver.
+ */
+export function findMissingFrameworkFiles(repoTreePaths: string[]): string[] {
+  const present = new Set(repoTreePaths);
+  return FRAMEWORK_FILES.filter((path) => !present.has(path));
+}
+
+/**
+ * Returns true if a build workflow YAML genuinely invokes `npm ci` — i.e. a
+ * site that still depends on a committed package-lock.json to build.
+ *
+ * The framework reverted user-site builds to `npm install` (no lockfile
+ * required), so the publish-time heal only delivers package-lock.json to
+ * legacy sites whose build.yml still runs `npm ci`. This detector decides that.
+ *
+ * Matching is line-based and deliberately strict:
+ *   - The npm command on the line must be exactly `ci` (word boundary, so
+ *     `npm cilantro` does not match).
+ *   - A `npm ci || npm install` fallback line does NOT count — those sites
+ *     already degrade to npm install when the lockfile is absent, so they
+ *     don't need one delivered.
+ *   - Commented lines (`# npm ci`) are ignored.
+ */
+export function buildYmlUsesNpmCi(content: string): boolean {
+  if (!content) return false;
+  return content.split("\n").some((line) => {
+    // Drop anything after a `#` comment marker so commented commands don't match.
+    const code = line.replace(/#.*$/, "");
+    if (!/(^|\s)npm\s+ci\b/.test(code)) return false;
+    // Exclude the `npm ci || npm install` fallback — those sites don't need a
+    // lockfile delivered (they fall back to npm install when it's absent).
+    if (/npm\s+ci\b\s*\|\|\s*npm\s+install\b/.test(code)) return false;
+    return true;
+  });
+}
+
+/**
+ * Fetches the given framework file paths from the framework repo at a specific
+ * version tag, returning a CommitFile for each one that exists. Paths the
+ * framework did not ship at that tag (content fetch returns null) OR that fail
+ * to fetch due to transient error are dropped — e.g. a site pinned below the
+ * version that introduced package-lock.json has nothing to restore, and a
+ * network failure on one file doesn't block the rest. Order of the returned
+ * array follows the input order.
+ */
+export async function fetchFrameworkFilesAtVersion(
+  token: string,
+  paths: string[],
+  tagName: string,
+): Promise<CommitFile[]> {
+  // Fetch in parallel so a fresh repo missing many files doesn't serialise into
+  // a multi-second stall on the publish hot path. Order is preserved by
+  // Promise.all. A file absent at that tag (null) OR a transient fetch error is
+  // dropped so one failure never loses the files that did resolve.
+  const results = await Promise.all(
+    paths.map(async (path) => {
+      try {
+        const content = await getFrameworkFileContent(token, path, tagName);
+        return content !== null ? { path, content } : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter((f): f is CommitFile => f !== null);
+}
+
+/**
+ * Best-effort publish-time heal: restores framework files that are entirely
+ * missing from the user's repo, fetched at the site's pinned version tag.
+ *
+ * NEVER throws and NEVER blocks publish — any failure (falsy tag, tree read
+ * error, content fetch error) degrades to an empty result, and the missing
+ * file gets another chance on the next publish. This is deliberately fail-OPEN,
+ * unlike the publish snapshot guard, which fails closed: a heal miss only
+ * delays a fix, whereas a stale snapshot would ship wrong data.
+ *
+ * Additive only — returns files to ADD; it does not detect or overwrite files
+ * the user already has (that is the upgrade flow's responsibility).
+ */
+export async function healMissingFrameworkFiles(
+  token: string,
+  owner: string,
+  repo: string,
+  tagName: string,
+): Promise<CommitFile[]> {
+  if (!tagName) return [];
+  try {
+    const { tree, truncated } = await getRepoTree(token, owner, repo);
+    // A truncated tree (very large repos — e.g. thousands of self-hosted IIIF
+    // tiles exceeding GitHub's 100k-entry recursive limit) may OMIT framework
+    // files that are actually present. Treating them as missing would re-fetch
+    // and re-commit them on every publish, breaking the additive-only / never-
+    // overwrite guarantee. We cannot trust absence here, so skip the heal.
+    if (truncated) {
+      console.warn(
+        "healMissingFrameworkFiles: repo tree truncated, skipping heal",
+      );
+      return [];
+    }
+    const paths = tree.filter((e) => e.type === "blob").map((e) => e.path);
+    let missing = findMissingFrameworkFiles(paths);
+    if (missing.length === 0) return [];
+
+    // package-lock.json is delivered ONLY to legacy sites whose build.yml still
+    // runs `npm ci` — the framework otherwise builds with `npm install` and
+    // needs no lockfile. We only pay the extra build.yml read when the lockfile
+    // is actually among the missing files; sites missing nothing else pay
+    // nothing. Fail-OPEN by dropping the lockfile whenever we can't positively
+    // confirm npm ci (build.yml uses npm install, is absent, or fails to read),
+    // so we never deliver an unneeded lockfile.
+    if (missing.includes("package-lock.json")) {
+      let usesNpmCi = false;
+      try {
+        const buildYml = await getFileContent(
+          token,
+          owner,
+          repo,
+          ".github/workflows/build.yml",
+        );
+        usesNpmCi = buildYml !== null && buildYmlUsesNpmCi(buildYml);
+      } catch {
+        usesNpmCi = false;
+      }
+      if (!usesNpmCi) {
+        missing = missing.filter((p) => p !== "package-lock.json");
+        if (missing.length === 0) return [];
+      }
+    }
+
+    return await fetchFrameworkFilesAtVersion(token, missing, tagName);
+  } catch (err) {
+    // warn, not error: this is a best-effort skip (publish still succeeds), so
+    // a transient GitHub 5xx here should not trip error-level log alerts.
+    console.warn("healMissingFrameworkFiles: skipping heal —", err);
+    return [];
+  }
 }
 
 /**
@@ -479,6 +639,40 @@ export async function computeUpgradeDiff(
 }
 
 /**
+ * Pure version-comparison logic extracted from checkTelarVersion.
+ *
+ * Derives needsUpgrade and isBelowMinimum from a pre-fetched latestTag and the
+ * site's current version, with no network calls. Callers that cache the latest
+ * tag (e.g. github-status.server.ts) can call this directly.
+ *
+ * Fails open: if latestTag is null, returns { needsUpgrade: false,
+ * isBelowMinimum: false } rather than blocking the user.
+ */
+export function compareTelarVersion(
+  siteVersion: string | null,
+  latestTag: string | null,
+): { needsUpgrade: boolean; isBelowMinimum: boolean } {
+  if (!latestTag) return { needsUpgrade: false, isBelowMinimum: false };
+
+  // Normalise site version: the DB stores version without "v" prefix
+  const siteTag = siteVersion
+    ? siteVersion.startsWith("v")
+      ? siteVersion
+      : `v${siteVersion}`
+    : null;
+
+  const isBelowMinimum = siteTag
+    ? compareVersions(siteTag, MIN_SUPPORTED_VERSION) < 0
+    : false;
+
+  const needsUpgrade = siteTag
+    ? compareVersions(siteTag, latestTag) < 0
+    : false;
+
+  return { needsUpgrade, isBelowMinimum };
+}
+
+/**
  * Checks whether the user's site needs an upgrade.
  *
  * Fetches the latest release from GitHub and compares against the site's
@@ -496,24 +690,8 @@ export async function checkTelarVersion(
 ): Promise<{ needsUpgrade: boolean; latestTag: string | null; isBelowMinimum: boolean }> {
   try {
     const latest = await fetchLatestRelease(token);
-    const latestTag = latest.tagName;
-
-    // Normalise site version: the DB stores version without "v" prefix
-    const siteTag = siteVersion
-      ? siteVersion.startsWith("v")
-        ? siteVersion
-        : `v${siteVersion}`
-      : null;
-
-    const isBelowMinimum = siteTag
-      ? compareVersions(siteTag, MIN_SUPPORTED_VERSION) < 0
-      : false;
-
-    const needsUpgrade = siteTag
-      ? compareVersions(siteTag, latestTag) < 0
-      : false;
-
-    return { needsUpgrade, latestTag, isBelowMinimum };
+    const { needsUpgrade, isBelowMinimum } = compareTelarVersion(siteVersion, latest.tagName);
+    return { needsUpgrade, latestTag: latest.tagName, isBelowMinimum };
   } catch {
     // Fail open: GitHub API failure should not block the user
     return { needsUpgrade: false, latestTag: null, isBelowMinimum: false };
@@ -542,10 +720,9 @@ export function __clearManifestCacheForTests(): void {
 /**
  * Fetch migration.json from a specific framework release. Returns null when
  * the release has no migration.json asset, or when the release tag 404s —
- * callers treat null as "no manifest available" and fail closed (see
- * Throws on validation failure and on non-404
- * GitHub API errors so upgrade actions surface the failure rather than
- * silently proceed.
+ * callers treat null as "no manifest available" and fail closed. Throws on
+ * validation failure and on non-404 GitHub API errors so upgrade actions
+ * surface the failure rather than silently proceed.
  */
 export async function fetchReleaseManifest(
   token: string,
@@ -759,7 +936,7 @@ export function collectFilesReferencedByChain(chain: Manifest[]): Set<string> {
         case "csv_add_column":
         case "csv_rename_column":
         case "regex_replace":
-          // Glob-scoped — phase 30 bring-up: known CSV paths enumerated here.
+          // Glob-scoped — known CSV paths enumerated here.
           paths.add("telar-content/spreadsheets/project.csv");
           paths.add("telar-content/spreadsheets/proyecto.csv");
           break;

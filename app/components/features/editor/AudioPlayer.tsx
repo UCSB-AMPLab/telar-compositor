@@ -3,7 +3,7 @@
  *
  * Renders a waveform with a draggable region overlay for setting clip
  * start/end times. Matches the Telar framework's audio object page design:
- * periwinkle background, white/charcoal waveform, region handles, and
+ * anil background, white/charcoal waveform, region handles, and
  * play/rewind/volume controls.
  *
  * When `clipStart`/`clipEnd` are provided, the region is initialised to
@@ -125,7 +125,7 @@ export function AudioPlayer({
               start,
               end,
               color: isSaved
-                ? "rgba(218, 185, 92, 0.25)"  // gold when saved
+                ? "rgba(156, 123, 31, 0.25)"  // qolle when saved
                 : "rgba(136, 60, 54, 0.15)",   // terracotta when unsaved
               drag: true,
               resize: true,
@@ -138,8 +138,8 @@ export function AudioPlayer({
               setRegionStart(s);
               setRegionEnd(e);
               onClipChange?.(s, e);
-              // Turn gold and show saved message
-              region.setOptions({ color: "rgba(218, 185, 92, 0.25)" });
+              // Turn qolle and show saved message
+              region.setOptions({ color: "rgba(156, 123, 31, 0.25)" });
               setSaved(true);
               setShowSavedMsg(true);
               setTimeout(() => setShowSavedMsg(false), 2000);
@@ -210,7 +210,7 @@ export function AudioPlayer({
 
   if (hasError) {
     return (
-      <div className="w-full rounded-lg bg-periwinkle p-6 flex items-center justify-center">
+      <div className="w-full rounded-lg bg-anil p-6 flex items-center justify-center">
         <p className="font-body text-sm text-charcoal/50">
           {t("media.media_preview_unavailable")}
         </p>
@@ -220,7 +220,7 @@ export function AudioPlayer({
 
   return (
     <div className="w-full">
-    <div className="rounded-lg bg-periwinkle overflow-hidden">
+    <div className="rounded-lg bg-anil overflow-hidden">
       {/* Waveform area */}
       <div className="px-4 pt-4 pb-2">
         {isLoading && (
@@ -282,7 +282,7 @@ export function AudioPlayer({
     {/* Saved clip indicator — below the player */}
     {shouldShowRegion && (saved || showSavedMsg) && (
       <div className="mt-1.5 text-center">
-        <span className={`font-mono text-xs text-[#DAB95C] transition-opacity ${showSavedMsg ? "opacity-100" : "opacity-70"}`}>
+        <span className={`font-mono text-xs text-qolle-deep transition-opacity ${showSavedMsg ? "opacity-100" : "opacity-70"}`}>
           {formatTime(regionStart)} → {formatTime(regionEnd)}
           {showSavedMsg && (
             <span className="ml-2 font-body text-[10px] uppercase tracking-wider">

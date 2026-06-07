@@ -37,7 +37,7 @@ export function NewStoryForm({ onSave, onCancel }: NewStoryFormProps) {
   const isEmpty = title.trim().length === 0;
 
   return (
-    <div className="bg-white border border-periwinkle rounded-lg px-4 py-3 mb-2">
+    <div className="bg-white border border-anil rounded-lg px-4 py-3 mb-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
         <input
           type="text"
@@ -69,7 +69,7 @@ export function NewStoryForm({ onSave, onCancel }: NewStoryFormProps) {
             type="button"
             onClick={handleSave}
             disabled={isEmpty}
-            className="px-3 py-1.5 bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-xs uppercase tracking-wider rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-xs uppercase tracking-wider rounded-full transition-colors disabled:bg-disabled disabled:text-fg-disabled disabled:cursor-not-allowed"
           >
             {t("save")}
           </button>

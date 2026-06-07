@@ -1,7 +1,10 @@
 /**
  * StepDone — success confirmation step.
  *
- * Large green checkmark, success heading, and link to the dashboard.
+ * Large green checkmark, success heading, and a link to Site settings
+ * (`/config`). Onboarding owns workflow education and deposits the
+ * user on Site settings, where the "next: add your first object →" hint
+ * lives.
  */
 
 import { CheckCircle } from "lucide-react";
@@ -28,9 +31,9 @@ export function StepDone({ onDone: _onDone, className = "" }: StepDoneProps) {
         {t("step_done.description")}
       </p>
 
-      <Link to="/dashboard">
+      <Link to="/config">
         <Button variant="primary">
-          {t("step_done.go_to_dashboard")}
+          {t("step_done.go_to_settings")}
         </Button>
       </Link>
     </div>

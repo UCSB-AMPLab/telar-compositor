@@ -162,7 +162,7 @@ export function SiteConfigConfirmation({
           <button
             type="button"
             onClick={onConfirmed}
-            className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-periwinkle hover:bg-periwinkle-hover text-charcoal uppercase tracking-wider rounded-full px-5 py-2.5 transition-colors"
+            className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-anil hover:bg-anil-hover text-charcoal uppercase tracking-wider rounded-full px-5 py-2.5 transition-colors"
           >
             {t("site_config.continue")}
           </button>
@@ -172,7 +172,7 @@ export function SiteConfigConfirmation({
               type="button"
               onClick={onConfirmed}
               disabled={isSubmitting}
-              className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-terracotta hover:opacity-90 text-cream uppercase tracking-wider rounded-full px-5 py-2.5 transition-opacity disabled:opacity-50"
+              className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-terracotta hover:opacity-90 text-cream uppercase tracking-wider rounded-full px-5 py-2.5 transition-opacity disabled:bg-disabled disabled:text-fg-disabled"
             >
               {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
               {t("site_config.confirm")}

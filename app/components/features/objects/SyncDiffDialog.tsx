@@ -41,6 +41,7 @@ const FIELD_LABELS: Record<SyncField, string> = {
   period: "Period",
   year: "Year",
   object_type: "Object type",
+  dimensions: "Dimensions",
   subjects: "Subjects",
   source: "Source",
   credit: "Credit",
@@ -159,7 +160,7 @@ export function SyncDiffDialog({
         {/* Loading state */}
         {isComputing && (
           <div className="flex items-center justify-center py-12">
-            <div className="w-6 h-6 border-2 border-periwinkle border-t-transparent rounded-full animate-spin mr-3" />
+            <div className="w-6 h-6 border-2 border-anil border-t-transparent rounded-full animate-spin mr-3" />
             <span className="font-body text-sm text-gray-500">Computing diff…</span>
           </div>
         )}
@@ -419,7 +420,7 @@ export function SyncDiffDialog({
           type="button"
           onClick={onClose}
           disabled={isApplying}
-          className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:opacity-50"
+          className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:text-fg-disabled"
         >
           {t("sync_cancel")}
         </button>
@@ -428,7 +429,7 @@ export function SyncDiffDialog({
             type="button"
             onClick={handleApply}
             disabled={!hasAnyChecked || isApplying}
-            className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-periwinkle hover:bg-periwinkle-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:opacity-50"
+            className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-anil hover:bg-anil-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:bg-disabled disabled:text-fg-disabled"
           >
             {isApplying && (
               <div className="w-4 h-4 border-2 border-charcoal border-t-transparent rounded-full animate-spin" />

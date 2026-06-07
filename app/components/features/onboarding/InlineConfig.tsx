@@ -66,7 +66,7 @@ export function InlineConfig({ configFields, projectId, themes, onSaved, classNa
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal"
             />
           </div>
 
@@ -78,7 +78,7 @@ export function InlineConfig({ configFields, projectId, themes, onSaved, classNa
             <select
               value={lang}
               onChange={(e) => setLang(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle bg-white"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal bg-white"
             >
               <option value="en">English</option>
               <option value="es">Español</option>
@@ -106,7 +106,7 @@ export function InlineConfig({ configFields, projectId, themes, onSaved, classNa
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.com"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400"
             />
             <p className="text-xs font-body text-gray-400 mt-1">
               Your GitHub Pages or custom domain URL
@@ -123,7 +123,7 @@ export function InlineConfig({ configFields, projectId, themes, onSaved, classNa
               value={baseurl}
               onChange={(e) => setBaseurl(e.target.value)}
               placeholder="/my-repo"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400"
             />
             <p className="text-xs font-body text-gray-400 mt-1">
               Path prefix for GitHub Pages project sites (e.g. /my-repo)

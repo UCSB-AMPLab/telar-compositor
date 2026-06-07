@@ -12,7 +12,7 @@
  * Exit animation: 200ms fade before the container removes the toast
  * from the DOM (handled by the provider via `dismissToast`).
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { X } from "lucide-react";
@@ -57,7 +57,7 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
       ? "border-l-4 border-red-500"
       : toast.type === "warning"
         ? "border-l-4 border-amber-400"
-        : "border-l-4 border-lavender";
+        : "border-l-4 border-anil";
 
   // `critical` swaps the default polite role="status" for
   // the assertive role="alert" so screen readers announce the message

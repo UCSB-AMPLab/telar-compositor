@@ -1,7 +1,8 @@
 /**
- * This file is the Publish route — the 3-step publish wizard
- * (Review, Checks, Publish) the user runs to push their D1-stored
- * compositor content out to GitHub as a Telar-format commit.
+ * This file is the Publish route — one scrollable page with three stacked
+ * sections (What's changing / What we checked / Publish) that the user runs to
+ * push their D1-stored compositor content out to GitHub as a Telar-format
+ * commit. (This single-page flow replaced the prior 3-step wizard.)
  *
  * Loader fetches the active project, computes a change summary
  * against the stored publish snapshot, and returns project + user
@@ -12,25 +13,36 @@
  *     `ValidationResult`
  *   - `publish` — assembles the full file set, commits, updates D1,
  *     returns the new SHA
- *   - `poll-build` — polls GitHub Actions and returns phase
- *     statuses for the build tracker
+ *   - `poll-build` — polls GitHub Actions and returns the build
+ *     status/conclusion (driven headless by this page's poll loop)
  *   - `dismiss-intro` — no-op (dismissal handled client-side via
  *     localStorage)
  *
- * Renders the wizard with `PublishProgressBar`, `ChangeSummary`,
- * `GitEducationPanel`, `ValidationChecks`, `CommitMessageEditor`,
- * and `BuildTracker`.
+ * Renders three sections with `ChangeSummary` (chips), `ValidationChecks`
+ * (chilca-pale passed-checks list + blockers), and an inline terracotta
+ * Publish section (mono commit card + click-to-reveal `CommitMessageEditor`).
  *
- * @version v1.2.0-beta
+ * Post-commit: the in-route BuildTracker is GONE. Build
+ * chrome (the 5-row phase log) is owned by the Site Status pill via the
+ * awareness broadcast. This page only shows an honest "Publishing…
+ * — track progress in the status pill" inline state while a headless
+ * `poll-build` loop watches the build to completion, then swaps to a single
+ * success card ("Published. <url>" + primary Open + secondary View commit) on
+ * `buildConclusion === "success"`, or a failure/retry card otherwise. The swap
+ * is NEVER keyed off `isPublishing` (which flips false on commit return, before
+ * the build runs — the landmine).
+ *
+ * @version v1.3.0-beta
  */
 
 import { eq } from "drizzle-orm";
 import { useEffect, useRef, useState } from "react";
-import { redirect, useFetcher, useRouteLoaderData } from "react-router";
+import { redirect, useFetcher, useOutletContext, useRouteLoaderData } from "react-router";
 import { useTranslation } from "react-i18next";
+import { AlertTriangle, CheckCircle2, ExternalLink, Pencil, XCircle } from "lucide-react";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { useIsConvenor } from "~/hooks/use-role";
 import type { Route } from "./+types/_app.publish";
-import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { projects, stories, objects, steps, project_config, project_landing, project_pages, glossary_terms } from "~/db/schema";
@@ -38,6 +50,7 @@ import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
 import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
+import { recordActivity } from "~/lib/activity.server";
 import { signInternalMarker } from "../../workers/auth";
 import {
   commitFilesToRepo,
@@ -46,26 +59,28 @@ import {
   mapStepsToBuildPhases,
   StaleHeadError,
 } from "~/lib/commit.server";
+import { healMissingFrameworkFiles } from "~/lib/upgrade.server";
+import type { BuildPhaseStatus } from "~/lib/commit.server";
+import { resolvePublishSteps } from "~/components/features/site-status/build-phase-collapse";
+import { PublishingStepper } from "~/components/features/site-status/PublishingStepper";
 import {
   computeChangeSummary,
   computeStoryDeletions,
   runPrePublishValidation,
   buildPublishFileSet,
-  buildConfigManagedFields,
+  buildConfigChangeFields,
   buildPageContentHashes,
   buildEntityHashes,
   findEntityMaxUpdatedAt,
   ENTITY_HASHES_VERSION,
 } from "~/lib/publish.server";
 import type { PublishSnapshot, ChangeSummary, ValidationResult } from "~/lib/publish.server";
+import { settingsChangeI18nKey, SETTINGS_CHANGE_FALLBACK_KEY } from "~/lib/settings-change-i18n";
 import { Button } from "~/components/ui/Button";
-import { PublishProgressBar } from "~/components/features/publish/PublishProgressBar";
-import type { PublishStep } from "~/components/features/publish/PublishProgressBar";
+import { DocsLink } from "~/components/ui/DocsLink";
 import { ChangeSummary as ChangeSummaryComponent } from "~/components/features/publish/ChangeSummary";
-import { GitEducationPanel } from "~/components/features/publish/GitEducationPanel";
 import { ValidationChecks } from "~/components/features/publish/ValidationChecks";
 import { CommitMessageEditor } from "~/components/features/publish/CommitMessageEditor";
-import { BuildTracker } from "~/components/features/publish/BuildTracker";
 
 export const handle = { i18n: ["common", "publish", "team"] };
 
@@ -130,19 +145,22 @@ function autoGenerateCommitMessage(summary: ChangeSummary, t: (key: string, opts
     // significant change up front (language change reads naturally as the
     // primary action). Same ordering used by both surfaces consuming
     // computeChangeSummary so commit subject and Review modal stay aligned.
+    // settingsChangeI18nKey is the single source of truth for the i18n key of
+    // each entry (lang / collection_mode / nested block on-off / flat field);
+    // the popover resolves identical labels via the same helper. The generic
+    // fallback guards any future managed field that lacks a dedicated string,
+    // so an unmapped key degrades to "update a setting" rather than leaking.
+    const resolveSetting = (entry: { key: string; label: string; value?: string }) =>
+      t(`auto_commit.${settingsChangeI18nKey(entry)}`, {
+        defaultValue: t(`auto_commit.${SETTINGS_CHANGE_FALLBACK_KEY}`),
+      });
     const langEntry = settingsChanges.find((e) => e.key === "lang");
     if (langEntry) {
-      const targetLang = langEntry.label; // "en" | "es" — post-change value
-      settingsParts.push(t(`auto_commit.change_language_to_${targetLang}`));
+      settingsParts.push(resolveSetting(langEntry));
     }
     for (const entry of settingsChanges) {
       if (entry.key === "lang") continue;
-      if (entry.key === "collection_mode") {
-        // entry.label is "on" | "off" — see computeChangeSummary
-        settingsParts.push(t(`auto_commit.change_collection_mode_${entry.label}`));
-        continue;
-      }
-      settingsParts.push(t(`auto_commit.change_${entry.key}`));
+      settingsParts.push(resolveSetting(entry));
     }
     parts.push(...settingsParts);
   }
@@ -228,7 +246,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
   if (!resolved) {
-    return redirect("/dashboard");
+    // No active project — onboarding, not /dashboard (which loops via /objects).
+    return redirect("/onboarding");
   }
   const { project: activeProject } = resolved;
 
@@ -246,6 +265,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     const { sigHex, timestamp } = await signInternalMarker(
       activeProject.id,
       env.SESSION_SECRET,
+      "snapshot",
     );
     const snapshotReq = new Request(`https://internal/snapshot`, {
       method: "POST",
@@ -311,9 +331,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     allStoryIds: storyRows.map((s) => s.story_id),
   };
 
-  const snapshot: PublishSnapshot | null = activeProject.publish_snapshot
-    ? (JSON.parse(activeProject.publish_snapshot) as PublishSnapshot)
-    : null;
+  // Guard the snapshot parse. `publish_snapshot` is stored JSON in D1;
+  // a partial write or manual DB edit can leave it non-JSON. A raw SyntaxError
+  // here would escape the loader and break the whole Publish page render, so
+  // treat a corrupt snapshot as "no snapshot" (loud first-publish bootstrap) —
+  // consistent with how publish.server.ts wraps every other JSON.parse.
+  let snapshot: PublishSnapshot | null = null;
+  if (activeProject.publish_snapshot) {
+    try {
+      snapshot = JSON.parse(activeProject.publish_snapshot) as PublishSnapshot;
+    } catch {
+      snapshot = null;
+    }
+  }
 
   // Silent-bootstrap detection: when the snapshot's entity_hashes is
   // missing OR has a stale version (hash format changed), AND nothing has
@@ -476,6 +506,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           const { sigHex, timestamp } = await signInternalMarker(
             activeProject.id,
             env.SESSION_SECRET,
+            "snapshot",
           );
           const snapshotReq = new Request(`https://internal/snapshot`, {
             method: "POST",
@@ -487,20 +518,73 @@ export async function action({ request, context }: Route.ActionArgs) {
           });
           const snapshotRes = await doStub.fetch(snapshotReq);
           if (!snapshotRes.ok) {
+            // Fix #13(B): a non-200 here means the DO's forced snapshot THREW
+            // (e.g. a D1-batch failure). Fail closed — publishing now would
+            // ship stale D1. The handler converts the throw into this 500 so
+            // it is distinguishable from a fetch rejection below.
             return { ok: false, intent: "publish", error: "snapshot_failed" };
           }
         } catch {
-          // If the DO is unreachable, continue — D1 already has the last persisted state
+          // Fix #13(B): a THROWN fetch means the DO is genuinely unreachable /
+          // no instance is alive (no active collaborators — the normal case).
+          // Continue: D1 already holds the last persisted state. A snapshot
+          // that threw does NOT land here — it returns a 500 handled above.
         }
 
-        const files = await buildPublishFileSet({
-          token,
-          owner,
-          repo,
-          branch: "main",
-          projectId: activeProject.id,
-          env,
-        });
+        // Read the user-content file set and the site's pinned framework version
+        // concurrently — the version read (for the heal below) is independent of
+        // the file-set assembly, so don't serialise an extra D1 round-trip onto
+        // the publish hot path. The version read is self-contained and fail-safe:
+        // if it errors, siteVersion is null and the heal simply skips.
+        const [files, siteVersion] = await Promise.all([
+          buildPublishFileSet({
+            token,
+            owner,
+            repo,
+            branch: "main",
+            projectId: activeProject.id,
+            env,
+          }),
+          (async (): Promise<string | null> => {
+            try {
+              const cfgRow = await db
+                .select({ telar_version: project_config.telar_version })
+                .from(project_config)
+                .where(eq(project_config.project_id, activeProject.id))
+                .limit(1);
+              return cfgRow[0]?.telar_version ?? null;
+            } catch (err) {
+              console.warn("Framework-file heal: telar_version read failed —", err);
+              return null;
+            }
+          })(),
+        ]);
+
+        // Best-effort framework-file heal (issue #18): restore any framework
+        // file entirely missing from the user repo (e.g. package-lock.json,
+        // which the v1.5.0 `npm ci` build requires). Reaches sites the
+        // version-gated upgrade flow can't — it self-redirects when the site is
+        // already on the latest framework version. Fail-open: never blocks the
+        // publish; a miss retries next publish.
+        const healedPaths: string[] = [];
+        try {
+          const tag = siteVersion
+            ? siteVersion.startsWith("v") ? siteVersion : `v${siteVersion}`
+            : "";
+          const healed = await healMissingFrameworkFiles(token, owner, repo, tag);
+          // Additive only — never shadow a user-content file already in the set.
+          const existing = new Set(files.map((f) => f.path));
+          for (const f of healed) {
+            if (!existing.has(f.path)) {
+              files.push(f);
+              healedPaths.push(f.path);
+            }
+          }
+        } catch (err) {
+          // Fail-open: warn, not error — a heal miss is a recoverable skip and
+          // must not trip error-level alerts (matches healMissingFrameworkFiles).
+          console.warn("Framework-file heal skipped:", err);
+        }
 
         // Hard-deleted stories (present in prior publish's
         // file set, no longer in D1) get their {story_id}.csv deleted on
@@ -514,9 +598,16 @@ export async function action({ request, context }: Route.ActionArgs) {
           .select({ story_id: stories.story_id })
           .from(stories)
           .where(eq(stories.project_id, activeProject.id));
-        const priorSnapshot: PublishSnapshot | null = activeProject.publish_snapshot
-          ? (JSON.parse(activeProject.publish_snapshot) as PublishSnapshot)
-          : null;
+        // Same guard as the loader — a corrupt persisted snapshot
+        // would otherwise throw out of the publish action mid-flight.
+        let priorSnapshot: PublishSnapshot | null = null;
+        if (activeProject.publish_snapshot) {
+          try {
+            priorSnapshot = JSON.parse(activeProject.publish_snapshot) as PublishSnapshot;
+          } catch {
+            priorSnapshot = null;
+          }
+        }
         const deletions = computeStoryDeletions(
           currentStoryIdsForDeletion.map((r) => r.story_id),
           priorSnapshot,
@@ -531,7 +622,9 @@ export async function action({ request, context }: Route.ActionArgs) {
           "main",
           files,
           commitMessage,
-          commitBody,
+          healedPaths.length > 0
+            ? `${commitBody ? `${commitBody}\n\n` : ""}Restored framework files: ${healedPaths.join(", ")}`
+            : commitBody,
           deletions.length > 0 ? deletions : undefined,
         );
 
@@ -571,7 +664,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         // Per-field managed-fields map — independent of entity_hashes
         // because computeChangeSummary's per-field settings diff uses it
         // (drives lang/title/etc. labels in the commit message).
-        const newConfigManaged = config ? buildConfigManagedFields(config) : {};
+        const newConfigManaged = config ? buildConfigChangeFields(config) : {};
         let newNavigationHash = "";
         if (config?.navigation_json) {
           try {
@@ -611,7 +704,17 @@ export async function action({ request, context }: Route.ActionArgs) {
           last_published_at: now,
           publish_snapshot: JSON.stringify(newSnapshot),
           updated_at: now,
+          gh_checked_at: null,
         }).where(eq(projects.id, activeProject.id));
+
+        // Activity feed: one site-level row per publish.
+        // Actor is the server-resolved authenticated user.id. Fails open.
+        await recordActivity(db, {
+          projectId: activeProject.id,
+          actorUserId: user.id,
+          verb: "published",
+          entityType: "site",
+        });
 
         // commitUrl derived from commit SHA
         const commitUrl = `https://github.com/${owner}/${repo}/commit/${newHeadSha}`;
@@ -719,41 +822,112 @@ type PublishActionData =
 // ---------------------------------------------------------------------------
 
 export default function PublishPage({ loaderData }: Route.ComponentProps) {
+  const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
+  const appData = useRouteLoaderData("routes/_app") as
+    | { repoUnavailable?: boolean; repoFullName?: string | null }
+    | null;
+  const repoUnavailable = appData?.repoUnavailable ?? false;
+  const repoFullName = appData?.repoFullName ?? null;
   const { t } = useTranslation("publish");
-  const { t: tTeam } = useTranslation("team");
   const { project, changeSummary } = loaderData;
 
-  const appData = useRouteLoaderData("routes/_app") as { userRole?: string } | null;
-  const isCollaborator = appData?.userRole === "collaborator";
-
-  if (isCollaborator) {
-    return (
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        <RestrictionBanner message={tTeam("restriction_publish")} />
-      </div>
-    );
-  }
+  // Role read via the typed loader hook (replaces the ad-hoc useRouteLoaderData
+  // cast). Collaborators are redirected away from /publish by the routes/_app
+  // loader guard (→ /objects?denied=publish), so this is a belt-and-braces
+  // don't-render: a collaborator never reaches this component, but if they did
+  // we render nothing rather than a restriction notice. Render-gating is a
+  // UX layer only — the publish action is enforced convenor-only server-side.
+  const isConvenor = useIsConvenor();
+  if (!isConvenor) return null;
 
   const { provider } = useCollaborationContext();
 
-  const [wizardStep, setWizardStep] = useState<PublishStep>("review");
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [publishResult, setPublishResult] = useState<{ newHeadSha: string; commitUrl: string } | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  // Commit-message editing: the mono card shows the auto-generated message
+  // by default; the textarea (CommitMessageEditor) is revealed only on click.
+  // `editedMessage` overrides the auto-generated message once the user touches
+  // it.
+  const [isEditingMessage, setIsEditingMessage] = useState(false);
+  const [editedMessage, setEditedMessage] = useState<string | null>(null);
 
-  // Broadcast publish state to all connected clients via Yjs awareness
+  // Clear the publish awareness fields on TRUE unmount. Without this, a user who
+  // starts a publish and navigates away from /publish before it resolves leaves
+  // this client's awareness pinned at `publishing: true` — the global pill reads
+  // isPublishing off awareness and it dominates precedence, so the pill would
+  // stay stuck in "Publishing…" until the socket reconnects. Empty deps so
+  // the cleanup runs only on unmount; the latest provider is read from a ref.
+  const providerRef = useRef(provider);
   useEffect(() => {
-    if (!provider) return;
-    provider.awareness.setLocalStateField("publishing", isPublishing);
-    provider.awareness.setLocalStateField("publishError", publishError !== null);
-  }, [isPublishing, publishError, provider]);
+    providerRef.current = provider;
+  }, [provider]);
+  useEffect(() => {
+    return () => {
+      const p = providerRef.current;
+      if (!p) return;
+      p.awareness.setLocalStateField("publishing", false);
+      p.awareness.setLocalStateField("building", false);
+      p.awareness.setLocalStateField("publishError", false);
+      p.awareness.setLocalStateField("publishSha", null);
+      p.awareness.setLocalStateField("publishCommitUrl", null);
+    };
+  }, []);
 
   const validationFetcher = useFetcher();
   const publishFetcher = useFetcher();
+  // Headless build-complete poll. This
+  // page is where the success card lives, so it owns the poll loop that watches
+  // the GitHub Actions build to completion — the Site Status pill drives the
+  // build chrome, but the pill's `isPublishing` flips false on commit return
+  // (before the build runs), so the page cannot read completion off awareness.
+  const pollFetcher = useFetcher();
 
   const validationData = validationFetcher.data as PublishActionData;
   const publishData = publishFetcher.data as PublishActionData;
+  const pollData = pollFetcher.data as PublishActionData;
+
+  // Build-completion state, driven only by the headless poll (never by
+  // isPublishing — the landmine). `buildStatus === "completed"` stops the loop;
+  // `buildConclusion` then decides success vs failure card.
+  const [buildStatus, setBuildStatus] = useState<string>("pending");
+  const [buildConclusion, setBuildConclusion] = useState<string | null>(null);
+  const [buildUrl, setBuildUrl] = useState<string | null>(null);
+  const [runId, setRunId] = useState<number | null>(null);
+  // The 6 real BUILD_PHASES from the headless poll, kept so the inline tracker
+  // (PublishingStepper) shows live per-step progress. Null until the first poll
+  // lands; resolvePublishSteps synthesises a dispatching state.
+  const [buildPhases, setBuildPhases] = useState<BuildPhaseStatus[] | null>(null);
+  const isBuildComplete = buildStatus === "completed";
+
+  // Broadcast publish state to all connected clients via Yjs awareness.
+  // The SHA/commitUrl are lifted off-route here so the global
+  // Site Status pill's PublishingPopover can drive the existing poll-build
+  // loop from any route — they survive navigation away from /publish.
+  // Declared after isBuildComplete because the "building" field depends on it.
+  useEffect(() => {
+    if (!provider) return;
+    provider.awareness.setLocalStateField("publishing", isPublishing);
+    // "building" stays true from commit-success (publishResult set) until the
+    // build completes — keeping the Site Status pill in "publishing" through the
+    // build (isPublishing flips false on commit return). Separate from
+    // isPublishing so the page/UI freeze (Header) is NOT held for the whole build.
+    provider.awareness.setLocalStateField("building", !!publishResult && !isBuildComplete);
+    provider.awareness.setLocalStateField("publishError", publishError !== null);
+    provider.awareness.setLocalStateField("publishSha", publishResult?.newHeadSha ?? null);
+    provider.awareness.setLocalStateField("publishCommitUrl", publishResult?.commitUrl ?? null);
+  }, [isPublishing, publishError, publishResult, isBuildComplete, provider]);
+
+  // The live published-site URL for the success card's primary Open button.
+  // Falls back to the default GitHub Pages pattern when github_pages_url isn't
+  // persisted yet (older imports, sites that never ran configure-site).
+  const pagesUrl =
+    project.github_pages_url ??
+    (() => {
+      const [owner, repo] = project.github_repo_full_name.split("/");
+      return `https://${owner.toLowerCase()}.github.io/${repo}`;
+    })();
 
   const hasBlockers = validationResult !== null && validationResult.blockers.length > 0;
 
@@ -790,18 +964,68 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
     }
   }, [publishData, t]);
 
-  // Run validation automatically when entering "checks" step
+  // Process headless poll-build results. Mirrors BuildTracker's poll-result
+  // handling minus the per-phase UI state (the pill owns the phase log). Once
+  // buildStatus is "completed" we latch the conclusion and the loop stops.
+  useEffect(() => {
+    if (!pollData?.ok || pollData.intent !== "poll-build") return;
+    if (pollData.buildUrl) setBuildUrl(pollData.buildUrl);
+    if (pollData.runId != null) setRunId(pollData.runId);
+    if (pollData.phases) setBuildPhases(pollData.phases as BuildPhaseStatus[]);
+    setBuildStatus(pollData.buildStatus);
+    if (pollData.buildStatus === "completed") {
+      setBuildConclusion(pollData.buildConclusion);
+    }
+  }, [pollData]);
+
+  // Headless poll loop (harvested from BuildTracker.tsx:153-194, with the
+  // runId ref-threading idiom from PublishingPopover.tsx:94-122 so later polls
+  // carry runId without the interval closing over a stale null). Fires only
+  // after a successful commit (publishResult set), immediately then every 5s,
+  // and stops when the build completes. NOT gated on isPublishing.
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const runIdRef = useRef<number | null>(runId);
+  useEffect(() => {
+    runIdRef.current = runId;
+  }, [runId]);
+  useEffect(() => {
+    const sha = publishResult?.newHeadSha;
+    if (!sha || isBuildComplete) {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      return;
+    }
+    function doPoll() {
+      const formData: Record<string, string> = { intent: "poll-build", sha: sha as string };
+      if (runIdRef.current != null) formData.runId = String(runIdRef.current);
+      pollFetcher.submit(formData, { method: "post" });
+    }
+    doPoll();
+    pollIntervalRef.current = setInterval(doPoll, 5000);
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishResult?.newHeadSha, isBuildComplete]);
+
+  // Belt-and-braces: clear the poll interval on unmount.
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
+  // Run validation automatically on MOUNT (single-page render — all three
+  // sections are visible at once, so the "What we checked" section needs its
+  // result without a wizard step transition). Guarded by a ref so it fires
+  // exactly once per page mount.
   const hasRunValidationRef = useRef(false);
   useEffect(() => {
-    if (wizardStep === "checks" && !hasRunValidationRef.current) {
-      hasRunValidationRef.current = true;
-      validationFetcher.submit({ intent: "run-validation" }, { method: "post" });
-    }
-    if (wizardStep !== "checks") {
-      hasRunValidationRef.current = false;
-    }
+    if (hasRunValidationRef.current) return;
+    if (repoUnavailable) return;
+    hasRunValidationRef.current = true;
+    validationFetcher.submit({ intent: "run-validation" }, { method: "post" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wizardStep]);
+  }, []);
 
   function handlePublish(fullMessage: string) {
     setIsPublishing(true);
@@ -821,137 +1045,232 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
     setPublishError(null);
     setIsPublishing(false);
     setValidationResult(null);
-    setWizardStep("review");
+    setIsEditingMessage(false);
+    setEditedMessage(null);
+    // Reset the headless build-poll state so a re-publish starts a fresh poll.
+    setBuildStatus("pending");
+    setBuildConclusion(null);
+    setBuildUrl(null);
+    setRunId(null);
+    setBuildPhases(null);
+    hasRunValidationRef.current = false;
   }
+
+  const isUpToDate = changeSummary.isUpToDate;
+  const publishDisabled = isPublishing || hasBlockers || isUpToDate;
+
+  // Post-commit swap is gated on the headless poll's build conclusion, NEVER on
+  // isPublishing (honest over snappy). Until the build completes, an
+  // honest "Publishing…" inline state points at the Site Status pill.
+  const buildSucceeded = isBuildComplete && buildConclusion === "success";
+  const buildFailed = isBuildComplete && buildConclusion !== "success";
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h1 className="font-heading font-bold text-2xl text-charcoal mb-6">
+      <h1 className="font-heading font-bold text-2xl text-charcoal mb-3">
         {t("title")}
       </h1>
 
-      {/* Progress bar — hidden once publish result is showing */}
-      {!publishResult && (
-        <PublishProgressBar currentStep={wizardStep} className="mb-8" />
-      )}
+      <div className="space-y-2 mb-6 max-w-2xl">
+        <p className="text-sm font-body text-charcoal/70">{t("intro")}</p>
+        {openDoc && <DocsLink docId="publish" onOpenDoc={openDoc} />}
+      </div>
 
-      {/* === REVIEW STEP === */}
-      {wizardStep === "review" && !publishResult && (
-        <>
-          <GitEducationPanel />
-
-          <h2 className="font-heading font-semibold text-lg text-charcoal mb-3">
-            {t("review.heading")}
-          </h2>
-
-          {changeSummary.isUpToDate ? (
-            <div className="flex flex-col items-center justify-center py-10 text-center bg-cream rounded-lg border border-gray-200">
-              <p className="font-heading font-semibold text-charcoal mb-1">
-                {t("review.up_to_date")}
+      {/* Post-commit: the in-route BuildTracker is gone —
+          the Site Status pill owns the 5-row build chrome via the awareness
+          broadcast. This page shows an honest "Publishing…" inline state while
+          a headless poll watches the build, then a single success/failure
+          card on real completion. Never claims "Published" before the build
+          conclusion is success. */}
+      {repoUnavailable ? (
+        <div className="py-4">
+          <div className="rounded-lg bg-terracotta-pale border border-terracotta px-6 py-8 text-center">
+            <AlertTriangle className="w-12 h-12 text-terracotta mx-auto mb-3" aria-hidden="true" />
+            <h2 className="font-heading font-bold text-xl text-charcoal-deep mb-2">
+              {t("repo_unavailable.heading")}
+            </h2>
+            <p className="font-body text-sm text-charcoal mb-1">
+              {t("repo_unavailable.lead", { repo: repoFullName ?? "" })}
+            </p>
+            <p className="font-body text-sm text-charcoal/70 max-w-md mx-auto mb-6">
+              {t("repo_unavailable.body")}
+            </p>
+            <a
+              href="https://github.com/settings/installations"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 font-heading font-semibold text-sm uppercase tracking-wider bg-terracotta hover:opacity-90 text-cream rounded-full px-6 py-2.5 transition-opacity"
+            >
+              {t("repo_unavailable.manage_cta")}
+              <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+            </a>
+          </div>
+        </div>
+      ) : publishResult ? (
+        <div className="py-4">
+          {buildSucceeded ? (
+            /* === SUCCESS CARD === */
+            <div className="rounded-lg bg-chilca-pale border border-chilca px-6 py-8 text-center">
+              <CheckCircle2 className="w-12 h-12 text-chilca mx-auto mb-3" />
+              <h2 className="font-heading font-bold text-xl text-charcoal-deep mb-6 break-words">
+                {t("success_card.heading", { url: pagesUrl })}
+              </h2>
+              <div className="flex flex-col items-center justify-center gap-3">
+                <a
+                  href={pagesUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 font-heading font-semibold text-sm uppercase tracking-wider bg-anil hover:bg-anil-hover text-charcoal rounded-full px-6 py-2.5 transition-colors"
+                >
+                  {t("success_card.open")}
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+                <a
+                  href={publishResult.commitUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 font-body text-sm text-anil-ink hover:underline"
+                >
+                  {t("success_card.view_commit")}
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+            </div>
+          ) : buildFailed ? (
+            /* === FAILURE / RETRY CARD === */
+            <div className="rounded-lg bg-terracotta-pale border border-terracotta px-6 py-8 text-center">
+              <XCircle className="w-12 h-12 text-terracotta mx-auto mb-3" />
+              <h2 className="font-heading font-bold text-xl text-charcoal-deep mb-2">
+                {t("failure_card.heading")}
+              </h2>
+              <p className="font-body text-sm text-charcoal/70 mb-6">
+                {t("failure_card.description")}
               </p>
-              <p className="font-body text-sm text-gray-500">
-                {t("review.up_to_date_description")}
-              </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                {buildUrl && (
+                  <a
+                    href={buildUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 font-body text-sm text-anil-ink hover:underline"
+                  >
+                    {t("failure_card.view_actions")}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+                <Button type="button" variant="primary" onClick={handleRetry}>
+                  {t("failure_card.try_again")}
+                </Button>
+              </div>
             </div>
           ) : (
-            <ChangeSummaryComponent summary={changeSummary} />
-          )}
-
-          <div className="flex justify-end mt-6">
-            <Button
-              variant="primary"
-              type="button"
-              onClick={() => setWizardStep("checks")}
-              disabled={changeSummary.isUpToDate}
-            >
-              {t("nav.next_checks")}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {/* === CHECKS STEP === */}
-      {wizardStep === "checks" && !publishResult && (
-        <>
-          <h2 className="font-heading font-semibold text-lg text-charcoal mb-4">
-            {t("checks.heading")}
-          </h2>
-
-          <ValidationChecks
-            validation={validationResult}
-            className="mb-6"
-          />
-
-          <div className="flex justify-between mt-6">
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={() => setWizardStep("review")}
-            >
-              {t("nav.back")}
-            </Button>
-            <Button
-              variant="primary"
-              type="button"
-              onClick={() => setWizardStep("publish")}
-              disabled={hasBlockers || validationResult === null}
-            >
-              {t("nav.next_publish")}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {/* === PUBLISH STEP (pre-commit) === */}
-      {wizardStep === "publish" && !publishResult && (
-        <>
-          {publishError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-              <p className="font-body text-sm text-red-900">{publishError}</p>
-            </div>
-          )}
-
-          <CommitMessageEditor
-            defaultMessage={autoGeneratedMessage}
-            onPublish={handlePublish}
-            loading={isPublishing}
-          />
-
-          <div className="flex justify-between mt-6">
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={() => setWizardStep("checks")}
-              disabled={isPublishing}
-            >
-              {t("nav.back")}
-            </Button>
-          </div>
-        </>
-      )}
-
-      {/* === BUILD TRACKER (post-commit) === */}
-      {publishResult && (
-        <BuildTracker
-          sha={publishResult.newHeadSha}
-          commitUrl={publishResult.commitUrl}
-          // Fall back to the default GitHub Pages URL pattern when the
-          // project doesn't have github_pages_url persisted yet (older
-          // imports, sites that never went through configure-site, etc.).
-          // A future iteration will populate this field reliably for newly-created
-          // sites; until then, the default pattern is always correct for
-          // project Pages sites and gives users a working "View site"
-          // button immediately after a successful build.
-          pagesUrl={
-            project.github_pages_url ??
+            /* === PUBLISHING… INLINE TRACKER (honest — live horizontal stepper) ===
+               The horizontal PublishingStepper shows the 7-step build progress
+               driven by the page's own headless build poll. Terminal states use
+               the success/failure cards above (never claim "Published"
+               before the real build conclusion). */
             (() => {
-              const [owner, repo] = project.github_repo_full_name.split("/");
-              return `https://${owner.toLowerCase()}.github.io/${repo}`;
+              const { steps, activeStep, totalSteps } = resolvePublishSteps(buildPhases);
+              return (
+                <PublishingStepper
+                  steps={steps}
+                  activeStep={activeStep}
+                  totalSteps={totalSteps}
+                  buildUrl={buildUrl}
+                />
+              );
             })()
-          }
-          onRetry={handleRetry}
-          className="py-4"
-        />
+          )}
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {/* === WHAT'S CHANGING === */}
+          <section>
+            <h2 className="font-heading font-semibold text-lg text-charcoal mb-3">
+              {t("sections.whats_changing")}
+            </h2>
+            {isUpToDate ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center bg-cream rounded-lg border border-cream-dark">
+                <p className="font-heading font-semibold text-charcoal mb-1">
+                  {t("review.up_to_date")}
+                </p>
+                <p className="font-body text-sm text-charcoal/60">
+                  {t("review.up_to_date_description")}
+                </p>
+              </div>
+            ) : (
+              <ChangeSummaryComponent summary={changeSummary} />
+            )}
+          </section>
+
+          {/* === WHAT WE CHECKED === */}
+          <section>
+            <h2 className="font-heading font-semibold text-lg text-charcoal mb-3">
+              {t("sections.what_we_checked")}
+            </h2>
+            <ValidationChecks validation={validationResult} />
+          </section>
+
+          {/* === PUBLISH === */}
+          <section className="rounded-lg bg-terracotta px-6 py-5">
+            <h2 className="font-heading font-semibold text-lg text-cream mb-4">
+              {t("sections.publish")}
+            </h2>
+
+            {publishError && (
+              <div className="bg-cream border border-terracotta-deep rounded-lg p-3 mb-4">
+                <p className="font-body text-sm text-terracotta-deep">{publishError}</p>
+              </div>
+            )}
+
+            {isEditingMessage ? (
+              <div className="rounded-lg bg-cream px-4 py-3">
+                <CommitMessageEditor
+                  defaultMessage={editedMessage ?? autoGeneratedMessage}
+                  onPublish={handlePublish}
+                  loading={isPublishing}
+                />
+              </div>
+            ) : (
+              <>
+                <label className="block font-body text-sm text-cream/90 mb-1.5">
+                  {t("publish_section.commit_message_label")}
+                </label>
+                <pre className="rounded-lg bg-cream text-charcoal font-mono text-sm whitespace-pre-wrap break-words px-4 py-3 mb-4">
+                  {editedMessage ?? autoGeneratedMessage}
+                </pre>
+
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingMessage(true)}
+                    disabled={isPublishing}
+                    className="inline-flex items-center gap-1.5 font-heading text-sm text-cream underline-offset-2 hover:underline disabled:opacity-60"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    {t("publish_section.edit_message")}
+                  </button>
+
+                  <Button
+                    type="button"
+                    variant="primary"
+                    loading={isPublishing}
+                    disabled={publishDisabled}
+                    onClick={() => handlePublish(editedMessage ?? autoGeneratedMessage)}
+                  >
+                    {t("publish_section.publish_now")}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {hasBlockers && !isEditingMessage && (
+              <p className="font-body text-sm text-cream/90 mt-3">
+                {t("publish_section.blocked_note")}
+              </p>
+            )}
+          </section>
+        </div>
       )}
     </div>
   );

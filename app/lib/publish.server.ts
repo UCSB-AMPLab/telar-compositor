@@ -18,7 +18,7 @@
  *
  * Called by the Publish route — no UI logic lives here.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import Papa from "papaparse";
@@ -29,6 +29,7 @@ import { parseYaml } from "~/lib/yaml.server";
 import { slugify } from "~/lib/slugify";
 import { extractCommentRows, serializeObjectsCsv } from "~/lib/csv-export.server";
 import type { CommitFile } from "~/lib/commit.server";
+import { sanitiseInlineHtml } from "~/lib/sanitise-html";
 import {
   V121_BODIES,
   V121_FRONTMATTER_DEFAULTS,
@@ -66,8 +67,19 @@ import {
  *       not the page file.
  *   2 — drop `order` from object and page hashes. Stories keep `order`
  *       because serializeProjectCsv DOES sort by it and write the column.
+ *   3 — add `dimensions` and `extra_columns` to the object hash. Both are
+ *       D1 fields serializeObjectsCsv now reads (the custom-column
+ *       passthrough blob included); without them, edits to either would
+ *       not be detected as a change and publish would skip re-emitting
+ *       the row. extra_columns is canonicalised (keys sorted) before
+ *       hashing so equivalent data hashes identically regardless of
+ *       stored key order.
+ *   4 — add glossary `related_terms` to the glossary hash. It's a D1 field
+ *       serializeGlossaryCsv now reads and writes; without it, edits to a
+ *       term's related terms would not be detected as a change and publish
+ *       would skip re-emitting the row.
  */
-export const ENTITY_HASHES_VERSION = 2;
+export const ENTITY_HASHES_VERSION = 4;
 
 /**
  * Per-entity content hashes keyed by entity ID. The diff in
@@ -242,7 +254,7 @@ export interface ChangeSummary {
     modified: { term_id: string; title: string | null }[];
     deleted: { term_id: string; title: string | null }[];
   };
-  settings: { changed: { key: string; label: string }[] };
+  settings: { changed: { key: string; label: string; value?: string }[] };
   landing: { changed: boolean };
   navigation: { changed: boolean };
   /**
@@ -452,7 +464,7 @@ export interface StepWithLayers {
   /**
    * Distinguishes a section-card step (chapter heading) from a regular
    * media step. The framework signal in stories.csv is empty `object` column;
-   * the writer enforces that signal defensively for kind='section' (W-05).
+   * the writer enforces that signal defensively for kind='section'.
    */
   kind: "media" | "section";
   object_id: string | null;
@@ -474,6 +486,10 @@ export interface StepWithLayers {
  * Fully empty steps are skipped during publish (they are not valid rows).
  */
 function isFullyEmptyStep(step: StepWithLayers): boolean {
+  // A section step is a heading card that is meaningful on its own (its title
+  // lives outside object/question/answer/layer content), so it must never be
+  // dropped — even when titled-but-otherwise-empty.
+  if (step.kind === "section") return false;
   if (step.object_id) return false;
   if (step.question) return false;
   if (step.answer) return false;
@@ -482,17 +498,45 @@ function isFullyEmptyStep(step: StepWithLayers): boolean {
 }
 
 /**
- * Serialises D1 step rows (with layers) to a Telar story CSV.
+ * A layer markdown file referenced by a story CSV. The `filename` here is the
+ * SAME value written into the CSV's `layerN_content` cell, so the file the
+ * publish loop writes can never disagree with the CSV's reference.
+ */
+export interface StoryLayerFile {
+  /** Bare filename (no path) — matches the CSV `layerN_content` cell exactly. */
+  filename: string;
+  /** Layer title (drives frontmatter via layerFileContent). */
+  title: string | null;
+  /** Layer body content (non-empty — empty layers are not emitted). */
+  content: string;
+}
+
+/**
+ * Result of serialising a story: the CSV string plus the exact list of layer
+ * markdown files it references. Both are produced in a SINGLE pass over the
+ * sorted, empty-filtered steps using ONE `usedFilenames` Set, so filename
+ * assignment happens exactly once and the CSV and the on-disk files cannot
+ * diverge (e.g. when two layers share a title after a step reorder).
+ */
+export interface SerializedStory {
+  csv: string;
+  layerFiles: StoryLayerFile[];
+}
+
+/**
+ * Serialises D1 step rows (with layers) into a Telar story CSV AND the layer
+ * markdown files that CSV references — in one pass, with one filename-collision
+ * Set. This is the single source of truth for layer filename assignment.
  *
  * @param stepRows The steps to serialise, each containing their layers
  * @param storySlug The slug of the story — used as prefix for layer filenames
  * @param existingCsv Optional existing CSV content for comment preservation
  */
-export function serializeStoryCsv(
+export function serializeStory(
   stepRows: StepWithLayers[],
   storySlug: string,
   existingCsv?: string,
-): string {
+): SerializedStory {
   const columns = STORY_CSV_COLUMNS as unknown as string[];
 
   const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
@@ -506,6 +550,11 @@ export function serializeStoryCsv(
 
   // Track used filenames per story to detect duplicates
   const usedFilenames = new Set<string>();
+
+  // Layer files referenced by the CSV, collected in the SAME pass / SAME order
+  // / SAME usedFilenames Set as the CSV cells below — guarantees the file the
+  // publish loop writes matches the CSV's `layerN_content` reference.
+  const layerFiles: StoryLayerFile[] = [];
 
   // Sort by step_number ascending so editor reorder survives publish.
   // Mirrors serializeProjectCsv's `.sort((a, b) => a.order - b.order)` pattern.
@@ -528,15 +577,40 @@ export function serializeStoryCsv(
       ? layerFilename(storySlug, step.step_number, 2, layer2?.title, usedFilenames)
       : "";
 
+    // Emit the layer file alongside the cell that references it, using the
+    // filename just resolved. layer1HasContent guarantees layer1.content is a
+    // non-empty string here, so the non-null assertion is safe.
+    if (layer1HasContent) {
+      layerFiles.push({
+        filename: layer1Filename,
+        title: layer1!.title,
+        content: layer1!.content!,
+      });
+    }
+    if (layer2HasContent) {
+      layerFiles.push({
+        filename: layer2Filename,
+        title: layer2!.title,
+        content: layer2!.content!,
+      });
+    }
+
+    // A step only has a positionable IIIF viewer when it's a media step with
+    // an object. Section steps (heading cards) and object-less steps have no
+    // viewer, so they must emit EMPTY coordinate cells rather than the
+    // 0.5/0.5/1 defaults — otherwise phantom coords round-trip wrong and churn
+    // the entity hash.
+    const hasViewer = step.kind !== "section" && !!step.object_id;
+
     return {
       step: String(step.step_number),
       // Defensive empty-object write for kind='section' steps — guarantees the
       // framework's section-card signal even if internal kind/object_id state
-      // has drifted (W-05).
+      // has drifted.
       object: step.kind === "section" ? "" : (step.object_id ?? ""),
-      x: String(step.x ?? 0.5),
-      y: String(step.y ?? 0.5),
-      zoom: String(step.zoom ?? 1),
+      x: hasViewer ? String(step.x ?? 0.5) : "",
+      y: hasViewer ? String(step.y ?? 0.5) : "",
+      zoom: hasViewer ? String(step.zoom ?? 1) : "",
       page: step.page && step.page !== "1" ? step.page : "",
       question: step.question ?? "",
       answer: step.answer ?? "",
@@ -556,7 +630,29 @@ export function serializeStoryCsv(
     .slice(1)
     .join("\n");
 
-  return [headerCsv, bilingualRow, ...commentRows, dataCsv].join("\n");
+  const csv = [headerCsv, bilingualRow, ...commentRows, dataCsv].join("\n");
+
+  return { csv, layerFiles };
+}
+
+/**
+ * Serialises D1 step rows (with layers) to a Telar story CSV.
+ *
+ * Thin wrapper over {@link serializeStory} for callers that only need the CSV
+ * string (e.g. unit tests pinning CSV output). The publish path uses
+ * `serializeStory` directly so the layer files it writes are guaranteed to
+ * match the filenames recorded in this CSV.
+ *
+ * @param stepRows The steps to serialise, each containing their layers
+ * @param storySlug The slug of the story — used as prefix for layer filenames
+ * @param existingCsv Optional existing CSV content for comment preservation
+ */
+export function serializeStoryCsv(
+  stepRows: StepWithLayers[],
+  storySlug: string,
+  existingCsv?: string,
+): string {
+  return serializeStory(stepRows, storySlug, existingCsv).csv;
 }
 
 // ---------------------------------------------------------------------------
@@ -612,7 +708,11 @@ export function layerFileContent(
   if (!title || title.trim() === "") {
     return content;
   }
-  return `---\ntitle: "${title}"\n---\n\n${content}`;
+  // Route the title through yamlQuote so a title containing a double
+  // quote or newline can't break the YAML frontmatter (mirrors
+  // serializePageMarkdown). yamlQuote is a hoisted function declaration so the
+  // forward reference here is safe.
+  return `---\ntitle: ${yamlQuote(title)}\n---\n\n${content}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -832,6 +932,90 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
 }
 
 /**
+ * Writes managed NESTED block fields (story_interface, collection_interface)
+ * into a _config.yml string via line-based surgical mutation — the block-level
+ * analogue of updateConfigFields. Values are written verbatim (the caller emits
+ * unquoted bool/int via buildConfigManagedBlocks); comments, indentation, and
+ * unmanaged keys are preserved.
+ *
+ * Per block: replace each managed key's value in place (preserving the line's
+ * indent + trailing comment); insert managed keys not present at the end of the
+ * block's child region; append the whole block at EOF if absent. Hardening:
+ * flow-style blocks (`key: {...}`) are refused (left untouched — line-based
+ * editing would corrupt them; the publish parse-gate keeps the build valid and
+ * the toggle simply doesn't apply); duplicate top-level block keys operate on
+ * the LAST occurrence (js-yaml + the framework read the last); line endings are
+ * normalised to the file's dominant EOL to avoid mixed \r\n / \n.
+ */
+export function updateConfigBlocks(
+  yaml: string,
+  blocks: Record<string, Record<string, string>>,
+): string {
+  if (Object.keys(blocks).length === 0) return yaml;
+  const eol = yaml.includes("\r\n") ? "\r\n" : "\n";
+  let lines = yaml.split(/\r?\n/);
+
+  for (const [blockKey, fields] of Object.entries(blocks)) {
+    if (Object.keys(fields).length === 0) continue;
+    const headerRe = new RegExp(`^${blockKey}:(.*)$`);
+
+    const occurrences: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (headerRe.test(lines[i])) occurrences.push(i);
+    }
+
+    if (occurrences.length === 0) {
+      let end = lines.length;
+      while (end > 0 && lines[end - 1].trim() === "") end--;
+      const appended = [`${blockKey}:`, ...Object.entries(fields).map(([k, v]) => `  ${k}: ${v}`)];
+      lines = [...lines.slice(0, end), ...appended, ...lines.slice(end)];
+      continue;
+    }
+
+    const headerIdx = occurrences[occurrences.length - 1]; // LAST occurrence
+    const afterColon = lines[headerIdx].slice(blockKey.length + 1).trim();
+    if (afterColon !== "" && !afterColon.startsWith("#")) continue; // flow/inline → refuse
+
+    let regionEnd = headerIdx + 1;
+    while (regionEnd < lines.length) {
+      const line = lines[regionEnd];
+      if (line.trim() === "" || /^\s*#/.test(line) || /^\s/.test(line)) { regionEnd++; continue; }
+      break;
+    }
+
+    let childIndent = "  ";
+    for (let i = headerIdx + 1; i < regionEnd; i++) {
+      if (/^\s*#/.test(lines[i])) continue;
+      const m = lines[i].match(/^(\s+)\S/);
+      if (m) { childIndent = m[1]; break; }
+    }
+
+    const written = new Set<string>();
+    for (let i = headerIdx + 1; i < regionEnd; i++) {
+      if (/^\s*#/.test(lines[i])) continue;
+      const m = lines[i].match(/^(\s+)([A-Za-z0-9_-]+):\s*([^#]*?)(\s*#.*)?$/);
+      if (!m) continue;
+      const [, indent, key, , comment] = m;
+      if (fields[key] !== undefined && !written.has(key)) {
+        lines[i] = `${indent}${key}: ${fields[key]}${comment ?? ""}`;
+        written.add(key);
+      }
+    }
+
+    const toInsert = Object.entries(fields)
+      .filter(([k]) => !written.has(k))
+      .map(([k, v]) => `${childIndent}${k}: ${v}`);
+    if (toInsert.length > 0) {
+      let insertAt = regionEnd;
+      while (insertAt > headerIdx + 1 && lines[insertAt - 1].trim() === "") insertAt--;
+      lines = [...lines.slice(0, insertAt), ...toInsert, ...lines.slice(insertAt)];
+    }
+  }
+
+  return lines.join(eol);
+}
+
+/**
  * Managed free-text string fields — the only source of _config.yml scalar
  * corruption. Kept in sync with the string fields in buildConfigManagedFields.
  */
@@ -892,28 +1076,44 @@ function stripManagedStringScalars(yaml: string): string {
 /**
  * Produces a guaranteed-valid _config.yml for the publish commit.
  *
- * 1. Surgical update — escape managed fields and self-heal orphaned multi-line
- *    scalars, preserving comments, field order, and unmanaged framework keys.
- * 2. Hygiene gate — if the surgical result still does not parse as YAML (an
- *    exotic pre-existing corruption the line-based heal can't fully repair),
- *    rescue by stripping the managed string scalars and re-applying them clean.
+ * Applies two kinds of update: top-level managed fields (`fields`, via
+ * `updateConfigFields`) and nested managed-block children (`blocks`, via
+ * `updateConfigBlocks` — e.g. `story_interface.include_demo_content`). Both are
+ * written surgically, preserving comments, field order, and unmanaged framework
+ * keys/toggles. `blocks` defaults to `{}`, so existing two-argument callers are
+ * unaffected.
  *
- * This is the single entry point the publish path uses, so no publish can ever
- * commit a _config.yml that breaks the Jekyll build.
+ * It threads them through a four-tier fallback so no publish can ever commit a
+ * _config.yml that breaks the Jekyll build:
+ *
+ * 1. Surgical fields + nested blocks. If it parses, ship it.
+ * 2. Rescue — strip corrupt managed string scalars (an exotic pre-existing
+ *    corruption the line-based heal can't fully repair), then re-apply both
+ *    passes. Settings-safe: preserves every unmanaged key, re-emitting only
+ *    managed fields, which already reflect the user's intent from D1.
+ * 3. Guaranteed-valid fallback — drop the block write rather than corrupt
+ *    (e.g. a flow-style block `story_interface: {}` the line heal can't extend),
+ *    keeping the rescued top-level field update.
+ * 4. Original behaviour — plain field update; the call site parse-gates this too.
+ *
+ * This is the single entry point the publish path uses.
  */
 export function healConfigYaml(
   existingYaml: string,
   fields: Record<string, string>,
+  blocks: Record<string, Record<string, string>> = {},
 ): string {
-  const updated = updateConfigFields(existingYaml, fields);
-  if (isParseableYaml(updated)) return updated;
-  // Rescue: strip the corrupt managed scalars from the repo file and re-apply
-  // them clean from D1. Guaranteed valid for this bug — whose corruption is
-  // confined to managed string scalars — and settings-safe: it preserves every
-  // unmanaged framework key and toggle (story_interface, collection_interface,
-  // telar_theme, …) exactly as they are in the user's repo, re-emitting only the
-  // managed fields, which already reflect the user's intent from D1.
-  return updateConfigFields(stripManagedStringScalars(existingYaml), fields);
+  // Tier 1: surgical top-level + nested-block update.
+  const withBlocks = updateConfigBlocks(updateConfigFields(existingYaml, fields), blocks);
+  if (isParseableYaml(withBlocks)) return withBlocks;
+  // Tier 2: rescue corrupt managed string scalars, then re-apply both passes.
+  const rescuedFields = updateConfigFields(stripManagedStringScalars(existingYaml), fields);
+  const rescued = updateConfigBlocks(rescuedFields, blocks);
+  if (isParseableYaml(rescued)) return rescued;
+  // Tier 3: same rescued fields, drop the block write rather than corrupt.
+  if (isParseableYaml(rescuedFields)) return rescuedFields;
+  // Tier 4: original behaviour (the call site parse-gates this too).
+  return updateConfigFields(existingYaml, fields);
 }
 
 // ---------------------------------------------------------------------------
@@ -1123,9 +1323,15 @@ export function computeChangeSummary(
   //   - "lang" — config.lang is stored under "telar_language" in the
   //     managed map but exposed as "lang" here so the commit-message
   //     helper can resolve the target-language label.
+  //   - dotted `block.key` entries (e.g. story_interface.include_demo_content,
+  //     collection_interface.featured_count) from buildConfigChangeFields —
+  //     these have no special-casing and fall through to the default label
+  //     branch. Back-compat: snapshots written before block-field tracking
+  //     lack these entries, so they surface as changed on the first
+  //     post-upgrade publish, then settle.
   //   - "all" — emitted only by the first-publish branch above.
   const currentManaged = currentState.config
-    ? buildConfigManagedFields(currentState.config)
+    ? buildConfigChangeFields(currentState.config)
     : {};
   const snapshotManaged = snapshot.config_managed ?? {};
   const changedKeys = new Set<string>([
@@ -1149,7 +1355,10 @@ export function computeChangeSummary(
       } else {
         labelValue = summaryKey;
       }
-      settingsChanged.push({ key: summaryKey, label: labelValue });
+      // value carries the post-change raw value ("true"/"false"/number) so the
+      // commit-message + popover label resolver can pick an on/off variant for
+      // nested boolean block fields (see app/lib/settings-change-i18n.ts).
+      settingsChanged.push({ key: summaryKey, label: labelValue, value: currentManaged[key] });
     }
   }
 
@@ -1363,14 +1572,21 @@ export function runPrePublishValidation(params: {
   // user from advancing past the Checks step until they either name the page
   // or delete it. Multiple page blockers are possible; the rendering side
   // keys by code+entityId.
+  //
+  // A titleless page has an empty or temp slug, so the old slug-interpolated
+  // copy rendered the unhelpful `Page ""…`. The reworded message is
+  // recovery-oriented and does NOT depend on slug, so we drop
+  // `params: { slug }`. We still need a unique, non-slug-derived `entityId`
+  // per blocker so the renderer (keyed by code+entityId) gives each untitled
+  // page a distinct React key — use a 1-based ordinal among untitled pages.
+  let untitledPageOrdinal = 0;
   for (const page of params.pages) {
     if (!page.title || page.title.trim() === "") {
-      const slug = (page.slug ?? "").trim();
+      untitledPageOrdinal += 1;
       blockers.push({
         code: "page_no_title",
         message: "page_no_title",
-        entityId: slug,
-        params: { slug },
+        entityId: `untitled-${untitledPageOrdinal}`,
       });
     }
   }
@@ -1435,10 +1651,11 @@ export function buildConfigManagedFields(
   if (config.title != null) fields["title"] = yamlQuote(config.title);
   if (config.url != null) fields["url"] = yamlQuote(config.url);
   if (config.baseurl != null) fields["baseurl"] = yamlQuote(config.baseurl);
-  if (config.description != null) fields["description"] = yamlQuote(config.description);
+  if (config.description != null) fields["description"] = yamlQuote(sanitiseInlineHtml(config.description));
   if (config.author != null) fields["author"] = yamlQuote(config.author);
   if (config.email != null) fields["email"] = yamlQuote(config.email);
   if (config.logo != null) fields["logo"] = yamlQuote(config.logo);
+  if (config.theme != null) fields["telar_theme"] = yamlQuote(config.theme);
   if (config.story_key != null) fields["story_key"] = config.story_key;
   if (config.lang != null) fields["telar_language"] = config.lang;
   if (config.collection_mode != null) {
@@ -1448,12 +1665,57 @@ export function buildConfigManagedFields(
 }
 
 /**
+ * Builds the managed NESTED config blocks (story_interface, collection_interface)
+ * from a project_config row. Values are emitted UNQUOTED — js-yaml coerces
+ * unquoted true/false/4 to boolean/number, which import.server.ts relies on
+ * (a quoted "false" would be read back as a truthy string). Null fields are
+ * omitted; empty blocks are dropped. google_sheets is intentionally excluded
+ * (nested string = corruption-risk class; not Config-UI editable).
+ */
+export function buildConfigManagedBlocks(
+  config: typeof project_config.$inferSelect,
+): Record<string, Record<string, string>> {
+  const b = (v: boolean) => (v ? "true" : "false");
+  const story: Record<string, string> = {};
+  if (config.show_on_homepage != null) story["show_on_homepage"] = b(config.show_on_homepage);
+  if (config.show_story_steps != null) story["show_story_steps"] = b(config.show_story_steps);
+  if (config.show_object_credits != null) story["show_object_credits"] = b(config.show_object_credits);
+  if (config.include_demo_content != null) story["include_demo_content"] = b(config.include_demo_content);
+
+  const collection: Record<string, string> = {};
+  if (config.browse_and_search != null) collection["browse_and_search"] = b(config.browse_and_search);
+  if (config.show_link_on_homepage != null) collection["show_link_on_homepage"] = b(config.show_link_on_homepage);
+  if (config.show_sample_on_homepage != null) collection["show_sample_on_homepage"] = b(config.show_sample_on_homepage);
+  if (config.featured_count != null) collection["featured_count"] = String(config.featured_count);
+
+  const blocks: Record<string, Record<string, string>> = {};
+  if (Object.keys(story).length > 0) blocks["story_interface"] = story;
+  if (Object.keys(collection).length > 0) blocks["collection_interface"] = collection;
+  return blocks;
+}
+
+/**
+ * Flattened managed view used for CHANGE DETECTION only (not for writing):
+ * top-level managed fields plus each block field under a `block.key` dotted key.
+ * Ensures a pure nested-toggle change (e.g. demo content off) is detected as an
+ * unpublished change and stored in the publish snapshot's config_managed.
+ */
+export function buildConfigChangeFields(
+  config: typeof project_config.$inferSelect,
+): Record<string, string> {
+  const fields = buildConfigManagedFields(config);
+  for (const [blockKey, kv] of Object.entries(buildConfigManagedBlocks(config)))
+    for (const [k, v] of Object.entries(kv)) fields[`${blockKey}.${k}`] = v;
+  return fields;
+}
+
+/**
  * Convert page rows from D1 into commit files. Pure — no DB access.
  *
  * Skip rows with empty/null/whitespace slug so a nameless
  * page never produces `telar-content/texts/pages/.md`. The trim is load-bearing —
- * collaborative inputs sometimes carry trailing whitespace from CSV imports
- * (see feedback_csv_trimming memory). The trimmed slug is used in the path
+ * collaborative inputs sometimes carry trailing whitespace from CSV imports.
+ * The trimmed slug is used in the path
  * interpolation so a row with a whitespace-only slug never produces
  * `pages/   .md` either.
  */
@@ -1549,6 +1811,21 @@ export function buildPageContentHashes(
  *   - Empty/whitespace-slug pages are excluded for the same reason — they
  *     never land in the commit (`pageRowsToCommitFiles` skips them).
  */
+// Canonicalise the passthrough blob so equivalent custom-column data hashes
+// identically regardless of stored key order. Corrupt/absent → "".
+function canonicalExtraColumns(raw: string | null | undefined): string {
+  if (!raw) return "";
+  try {
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== "object" || Array.isArray(o)) return "";
+    const sorted: Record<string, unknown> = {};
+    for (const k of Object.keys(o).sort()) sorted[k] = o[k];
+    return JSON.stringify(sorted);
+  } catch {
+    return "";
+  }
+}
+
 export async function buildEntityHashes(
   db: ReturnType<typeof getDb>,
   projectId: number,
@@ -1577,6 +1854,7 @@ export async function buildEntityHashes(
         term_id: glossary_terms.term_id,
         title: glossary_terms.title,
         definition: glossary_terms.definition,
+        related_terms: glossary_terms.related_terms,
       })
       .from(glossary_terms)
       .where(eq(glossary_terms.project_id, projectId)),
@@ -1599,14 +1877,15 @@ export async function buildEntityHashes(
   // (title + body + slug + order), keyed by trimmed slug.
   const pages = buildPageContentHashes(pageRows);
 
-  // Objects — every D1 field that serializeObjectsCsv reads. `order` is
-  // deliberately EXCLUDED: although objects.order exists in D1 and the
-  // editor has reorder UI, serializeObjectsCsv doesn't write the column
-  // and buildPublishFileSet doesn't sort by it. The published objects.csv
-  // row order is determined by D1 query order (auto-increment id ≈
-  // insertion order), so an editor reorder produces no change in the
-  // committed file. Hashing `order` would produce a false-positive
-  // Modified flag for a publish that ships zero diff.
+  // Objects — every D1 field that serializeObjectsCsv reads, including
+  // dimensions and the extra_columns custom-column passthrough blob. Objects
+  // have no order field: they are not reorderable in the compositor and the
+  // published Telar framework has no object order (it renders featured
+  // objects in natural CSV order and sorts the objects index by title).
+  // The published objects.csv row order is determined by D1 query order
+  // (auto-increment id ≈ insertion order). extra_columns is canonicalised
+  // (keys sorted) so equivalent data hashes identically regardless of stored
+  // key order.
   const objectHashes: Record<string, string> = {};
   for (const o of objectRows) {
     objectHashes[o.object_id] = JSON.stringify({
@@ -1624,6 +1903,8 @@ export async function buildEntityHashes(
       credit: o.credit ?? "",
       thumbnail: o.thumbnail ?? "",
       alt_text: o.alt_text ?? "",
+      dimensions: o.dimensions ?? "",
+      extra_columns: canonicalExtraColumns(o.extra_columns),
     });
   }
 
@@ -1696,6 +1977,7 @@ export async function buildEntityHashes(
       term_id: term.term_id,
       title: term.title ?? "",
       definition: term.definition ?? "",
+      related_terms: term.related_terms ?? "",
     });
   }
 
@@ -1728,7 +2010,7 @@ export async function buildEntityHashes(
   // separately in computeChangeSummary against snapshot.config_managed,
   // so this hash exists for completeness/symmetry only.
   const settingsHash = config
-    ? JSON.stringify(buildConfigManagedFields(config))
+    ? JSON.stringify(buildConfigChangeFields(config))
     : "";
 
   return {
@@ -1850,11 +2132,13 @@ export async function buildPublishFileSet(
   const landing = landingRow[0];
 
   // Fetch repo files for comment/format preservation
-  const [existingConfigYml, existingObjectsCsv, existingIndexMd] = await Promise.all([
-    getFileContent(token, owner, repo, "_config.yml"),
-    getFileContent(token, owner, repo, "telar-content/spreadsheets/objects.csv"),
-    getFileContent(token, owner, repo, "index.md"),
-  ]);
+  const [existingConfigYml, existingObjectsCsv, existingIndexMd, existingGlossaryCsv] =
+    await Promise.all([
+      getFileContent(token, owner, repo, "_config.yml"),
+      getFileContent(token, owner, repo, "telar-content/spreadsheets/objects.csv"),
+      getFileContent(token, owner, repo, "index.md"),
+      getFileContent(token, owner, repo, "telar-content/spreadsheets/glossary.csv"),
+    ]);
 
   const files: CommitFile[] = [];
 
@@ -1869,7 +2153,8 @@ export async function buildPublishFileSet(
   // manual follow-up; the rest of the publish still proceeds.
   if (existingConfigYml && config) {
     const managedFields = buildConfigManagedFields(config);
-    const updatedConfig = healConfigYaml(existingConfigYml, managedFields);
+    const managedBlocks = buildConfigManagedBlocks(config);
+    const updatedConfig = healConfigYaml(existingConfigYml, managedFields, managedBlocks);
     if (isParseableYaml(updatedConfig)) {
       files.push({ path: "_config.yml", content: updatedConfig });
     } else {
@@ -1916,6 +2201,8 @@ export async function buildPublishFileSet(
       credit: o.credit ?? null,
       thumbnail: o.thumbnail ?? null,
       alt_text: o.alt_text ?? null,
+      dimensions: o.dimensions ?? null,
+      extra_columns: o.extra_columns ?? null,
     })),
     existingObjectsCsv ?? undefined,
   );
@@ -1982,31 +2269,27 @@ export async function buildPublishFileSet(
 
     const storySlug = story.story_id;
 
-    // Story CSV
-    const storyCsvContent = serializeStoryCsv(stepsWithLayers, storySlug);
+    // Story CSV + the layer files it references — produced together in one
+    // pass so filename assignment happens exactly once. The file-writing loop
+    // below uses serializeStory's `layerFiles` directly, so a file's path can
+    // never disagree with the CSV's `layerN_content` cell (the divergence bug
+    // that occurred when titles collided after a step reorder).
+    const { csv: storyCsvContent, layerFiles } = serializeStory(
+      stepsWithLayers,
+      storySlug,
+    );
     files.push({
       path: `telar-content/spreadsheets/${storySlug}.csv`,
       content: storyCsvContent,
     });
 
-    // Layer markdown files
-    const usedFilenames = new Set<string>();
-    for (const step of stepsWithLayers) {
-      for (const layer of step.layers) {
-        if (!layer.content) continue;
-        const filename = layerFilename(
-          storySlug,
-          step.step_number,
-          layer.layer_number,
-          layer.title,
-          usedFilenames,
-        );
-        const fileContent = layerFileContent(layer.title, layer.content);
-        files.push({
-          path: `telar-content/texts/stories/${filename}`,
-          content: fileContent,
-        });
-      }
+    // Layer markdown files — one per CSV-referenced layer, using the exact
+    // filename + content the CSV recorded.
+    for (const layerFile of layerFiles) {
+      files.push({
+        path: `telar-content/texts/stories/${layerFile.filename}`,
+        content: layerFileContent(layerFile.title, layerFile.content),
+      });
     }
   }
 
@@ -2035,27 +2318,27 @@ export async function buildPublishFileSet(
         // Defensive gates against re-emitting v1.2.1 English literals
         // that survived the upgrade-time cleanup (sites that bypass the compositor's
         // upgrade flow). Sync `===` for short frontmatter strings and
-        // `normalizeBody` equality for the welcome body — never async (Pitfall
-        // 2: making serializeProjectToCommitFiles async cascades through the
-        // entire publish path).
+        // `normalizeBody` equality for the welcome body — never async, because
+        // making serializeProjectToCommitFiles async would cascade through the
+        // entire publish path.
         const managedLines: string[] = [];
         if (
           landing.stories_heading &&
           landing.stories_heading !== V121_FRONTMATTER_DEFAULTS.stories_heading
         )
-          managedLines.push(`stories_heading: "${landing.stories_heading}"`);
+          managedLines.push(`stories_heading: ${yamlQuote(landing.stories_heading)}`);
         if (landing.stories_intro)
-          managedLines.push(`stories_intro: "${landing.stories_intro}"`);
+          managedLines.push(`stories_intro: ${yamlQuote(landing.stories_intro)}`);
         if (
           landing.objects_heading &&
           landing.objects_heading !== V121_FRONTMATTER_DEFAULTS.objects_heading
         )
-          managedLines.push(`objects_heading: "${landing.objects_heading}"`);
+          managedLines.push(`objects_heading: ${yamlQuote(landing.objects_heading)}`);
         if (
           landing.objects_intro &&
           landing.objects_intro !== V121_FRONTMATTER_DEFAULTS.objects_intro
         )
-          managedLines.push(`objects_intro: "${landing.objects_intro}"`);
+          managedLines.push(`objects_intro: ${yamlQuote(landing.objects_intro)}`);
 
         const allFrontmatterLines = [...preservedLines, ...managedLines].filter(
           (l) => l.trim() !== "",
@@ -2101,13 +2384,13 @@ export async function buildPublishFileSet(
 
   // --- glossary.csv ---
   const glossaryRows = await db
-    .select({ term_id: glossary_terms.term_id, title: glossary_terms.title, definition: glossary_terms.definition })
+    .select({ term_id: glossary_terms.term_id, title: glossary_terms.title, definition: glossary_terms.definition, related_terms: glossary_terms.related_terms })
     .from(glossary_terms)
     .where(eq(glossary_terms.project_id, projectId));
   if (glossaryRows.length > 0) {
     files.push({
       path: "telar-content/spreadsheets/glossary.csv",
-      content: serializeGlossaryCsv(glossaryRows),
+      content: serializeGlossaryCsv(glossaryRows, existingGlossaryCsv ?? undefined),
     });
   }
 
@@ -2175,18 +2458,62 @@ export function buildNavigationYml(navItems: NavItem[]): string {
 /**
  * Serialises glossary terms to a CSV string suitable for glossary.csv.
  *
- * Double-quotes within values are escaped by doubling them per RFC 4180.
+ * Output structure mirrors serializeObjectsCsv (SSOT alignment):
+ *   Line 1: English header row (column names)
+ *   Line 2: Spanish bilingual row
+ *   Lines 3+: Comment/instruction rows (preserved from existing CSV)
+ *   Remaining: Data rows (one per term)
+ *
+ * Built via Papa.unparse, which quotes only fields that need it per RFC 4180.
+ * This avoids the latent corruption of the prior hand-built concat, which left
+ * `term_id` unquoted — a term_id containing a comma or quote broke the row.
+ * Output uses LF line endings.
+ *
+ * @param terms Glossary terms to serialise
+ * @param existingCsv Optional existing CSV content — comment rows are extracted
+ *                    and preserved in the output
  */
 export function serializeGlossaryCsv(
-  terms: Array<{ term_id: string; title: string | null; definition: string | null }>,
+  terms: Array<{
+    term_id: string;
+    title: string | null;
+    definition: string | null;
+    related_terms: string | null;
+  }>,
+  existingCsv?: string,
 ): string {
-  const header = "term_id,title,definition";
-  const rows = terms.map((t) => {
-    const def = (t.definition ?? "").replace(/"/g, '""');
-    const title = (t.title ?? "").replace(/"/g, '""');
-    return `${t.term_id},"${title}","${def}"`;
-  });
-  return [header, ...rows].join("\n") + "\n";
+  const columns = ["term_id", "title", "definition", "related_terms"];
+  const normalise = (s: string) => s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  // Header line only (PapaParse always adds a header when unparsing objects)
+  const headerCsv = normalise(Papa.unparse([{}], { columns })).split("\n")[0];
+
+  // Spanish bilingual second row. These are framework-recognised header tokens
+  // (KNOWN_BILINGUAL_VALUES), so a re-import skips this row via isHeaderRow
+  // rather than ingesting it as a phantom term. related_terms ->
+  // términos_relacionados.
+  const bilingualRow = normalise(
+    Papa.unparse(
+      [["id_término", "titulo", "definición", "términos_relacionados"]],
+      { header: false },
+    ),
+  );
+
+  // Preserve comment rows from existing CSV
+  const commentRows = existingCsv ? extractCommentRows(existingCsv) : [];
+
+  const dataRows = terms.map((t) => ({
+    term_id: t.term_id,
+    title: t.title ?? "",
+    definition: t.definition ?? "",
+    related_terms: t.related_terms ?? "",
+  }));
+  const dataCsv = normalise(Papa.unparse(dataRows, { columns }))
+    .split("\n")
+    .slice(1)
+    .join("\n");
+
+  return [headerCsv, bilingualRow, ...commentRows, dataCsv].join("\n") + "\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -2205,7 +2532,15 @@ export function serializeGlossaryCsv(
  */
 /** Quote a value for safe YAML output — double-quote and escape inner quotes/newlines. */
 function yamlQuote(val: string): string {
-  return `"${val.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+  // Normalize CR/CRLF to LF first so no raw carriage return can survive into
+  // the double-quoted scalar. extractConfigFields reads values back with a
+  // line regex whose `.` excludes \r, so a bare CR would truncate the value
+  // on round-trip; normalizing here removes that hazard for every field.
+  return `"${val
+    .replace(/\r\n?/g, "\n")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")}"`;
 }
 
 export function serializePageMarkdown(title: string, body: string): string {
@@ -2238,18 +2573,18 @@ export function buildIndexMd(
     landing.stories_heading &&
     landing.stories_heading !== V121_FRONTMATTER_DEFAULTS.stories_heading
   )
-    lines.push(`stories_heading: "${landing.stories_heading}"`);
-  if (landing.stories_intro) lines.push(`stories_intro: "${landing.stories_intro}"`);
+    lines.push(`stories_heading: ${yamlQuote(landing.stories_heading)}`);
+  if (landing.stories_intro) lines.push(`stories_intro: ${yamlQuote(landing.stories_intro)}`);
   if (
     landing.objects_heading &&
     landing.objects_heading !== V121_FRONTMATTER_DEFAULTS.objects_heading
   )
-    lines.push(`objects_heading: "${landing.objects_heading}"`);
+    lines.push(`objects_heading: ${yamlQuote(landing.objects_heading)}`);
   if (
     landing.objects_intro &&
     landing.objects_intro !== V121_FRONTMATTER_DEFAULTS.objects_intro
   )
-    lines.push(`objects_intro: "${landing.objects_intro}"`);
+    lines.push(`objects_intro: ${yamlQuote(landing.objects_intro)}`);
 
   const frontmatter = lines.length > 0 ? `---\n${lines.join("\n")}\n---\n\n` : "";
   // Drop welcome_body when it equals the v1.2.1 default. First-publish

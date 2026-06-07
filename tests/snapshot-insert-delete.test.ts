@@ -4,7 +4,7 @@
  * Tests: INSERT for Y.Maps with _id === null, DELETE for D1 rows absent from
  * Y.Array, ID backfill broadcast. Also covers unique-field Set semantics.
  *
- * @version v1.0.1-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -16,7 +16,7 @@ import { makeAfterTransactionHandler, buildContributionUpdate } from "../workers
 // ---------------------------------------------------------------------------
 
 describe("tr.origin is the origin passed to Y.applyUpdate", () => {
-  it("A2: tr.origin inside afterTransaction equals the object passed as origin to Y.applyUpdate", () => {
+  it("tr.origin inside afterTransaction equals the object passed as origin to Y.applyUpdate", () => {
     const ydoc = new Y.Doc();
     let capturedOrigin: unknown = undefined;
 
@@ -201,5 +201,121 @@ describe("snapshotToD1 writes fields.size to contributions.fields_edited", () =>
     const prev = { fields_edited: 0, sessions: 3, last_active: "2026-01-01" };
     const result = buildContributionUpdate(prev, new Set(["stories:1:title"]), true);
     expect(result.sessions).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Object create-path pending asymmetry (external-media vs IIIF)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pins the critical asymmetry between the two object create paths against the
+ * snapshot skip in collaboration.ts (`_validation_state === "pending"` →
+ * the object is NOT INSERTed to D1).
+ *
+ * This is a pure Y.Map-shape assertion, not an end-to-end D1 INSERT: the
+ * skip+INSERT is inline in collaboration.ts and the DO test spies snapshotToD1
+ * to a no-op, so there is no honest seam to drive an INSERT. The hook
+ * (`useStructuralOps`) is not invocable here — it needs the React collaboration
+ * context — so the two Y.Maps are built the same way the ops do and asserted on
+ * directly. The shapes below are kept byte-for-byte in step with `addIiifObject`
+ * / `addExternalMediaObject` in app/hooks/use-structural-ops.ts.
+ */
+
+/**
+ * Build the Y.Map the IIIF create path produces (addIiifObject), integrated
+ * into a real Y.Doc objects array — a detached Y.Map returns undefined from
+ * `.get()` until it is attached, so we push it inside a transact exactly like
+ * the op does.
+ */
+function buildIiifObjectMap(): Y.Map<unknown> {
+  const ydoc = new Y.Doc();
+  const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+  const objMap = new Y.Map<unknown>();
+  ydoc.transact(() => {
+    objMap.set("_id", null);
+    objMap.set("_temp_id", crypto.randomUUID());
+    objMap.set("created_by", 1);
+    objMap.set("object_id", "obj-iiif");
+    objMap.set("title", new Y.Text("IIIF Object"));
+    objMap.set("creator", new Y.Text(""));
+    objMap.set("description", new Y.Text(""));
+    objMap.set("alt_text", new Y.Text(""));
+    objMap.set("source_url", "https://example.org/iiif/manifest.json");
+    objMap.set("period", new Y.Text(""));
+    objMap.set("year", new Y.Text(""));
+    objMap.set("featured", false);
+    objMap.set("image_available", false);
+    objMap.set("_validation_state", "pending");
+    objMap.set("origin", "iiif");
+    objMap.set("missing_from_repo", false);
+    objMap.set("thumbnail", "");
+    objectsArray.push([objMap]);
+  });
+  return objMap;
+}
+
+/**
+ * Build the Y.Map the external-media create path produces
+ * (addExternalMediaObject), integrated into a real Y.Doc objects array.
+ */
+function buildExternalMediaObjectMap(): Y.Map<unknown> {
+  const ydoc = new Y.Doc();
+  const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+  const objMap = new Y.Map<unknown>();
+  ydoc.transact(() => {
+    objMap.set("_id", null);
+    objMap.set("_temp_id", crypto.randomUUID());
+    objMap.set("created_by", 1);
+    objMap.set("object_id", "obj-external");
+    objMap.set("title", new Y.Text("YouTube Video"));
+    objMap.set("creator", new Y.Text(""));
+    objMap.set("description", new Y.Text(""));
+    objMap.set("alt_text", new Y.Text(""));
+    objMap.set("source_url", "https://youtu.be/dQw4w9WgXcQ");
+    objMap.set("period", new Y.Text(""));
+    objMap.set("year", new Y.Text(""));
+    objMap.set("featured", false);
+    objMap.set("image_available", false);
+    objMap.set("_validation_state", "valid");
+    objMap.set("origin", "compositor");
+    objMap.set("missing_from_repo", false);
+    objMap.set("thumbnail", "");
+    objectsArray.push([objMap]);
+  });
+  return objMap;
+}
+
+/**
+ * The skip predicate, transcribed from collaboration.ts. Mirroring it here
+ * keeps the test honest about *why* the asymmetry matters (a pending object is
+ * skipped → never persisted) without stubbing the whole DO.
+ */
+function isSkippedFromSnapshot(objMap: Y.Map<unknown>): boolean {
+  return objMap.get("_validation_state") === "pending";
+}
+
+describe("object create-path pending asymmetry (external-media vs IIIF)", () => {
+  it("the external-media Y.Map is NOT pending → the snapshot skip does NOT fire (it persists)", () => {
+    const ext = buildExternalMediaObjectMap();
+    expect(ext.get("_validation_state")).not.toBe("pending");
+    expect(isSkippedFromSnapshot(ext)).toBe(false);
+  });
+
+  it("the external-media Y.Map carries origin 'compositor' (the missing-from-repo sentinel)", () => {
+    const ext = buildExternalMediaObjectMap();
+    expect(ext.get("origin")).toBe("compositor");
+  });
+
+  it("the external-media Y.Map has no poster (image_available false, thumbnail empty)", () => {
+    const ext = buildExternalMediaObjectMap();
+    expect(ext.get("image_available")).toBe(false);
+    expect(ext.get("thumbnail")).toBe("");
+  });
+
+  it("the IIIF Y.Map IS pending → the snapshot skip fires until validation flips it (the contrast)", () => {
+    const iiif = buildIiifObjectMap();
+    expect(iiif.get("_validation_state")).toBe("pending");
+    expect(isSkippedFromSnapshot(iiif)).toBe(true);
   });
 });

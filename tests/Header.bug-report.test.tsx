@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 /**
- * This file pins the bug-report button's placement and behaviour inside the
- * shared `Header` — it must appear after the users-toggle in DOM order so
- * the rightmost icon in the bar is always the report-issue affordance.
+ * This file pins the bug-report trigger's behaviour inside the shared `Header`.
+ * The trigger lives in the user menu as a "Report a problem" item, and a
+ * standalone header bug button sits to the right of the user menu — so there
+ * are now two entry points, both opening the existing BugReportPanel. These
+ * assertions pin both, plus the panel-open coverage in its home file
+ * (Header.test.tsx does not duplicate it).
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
@@ -26,6 +29,20 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+// Header reads the project-switcher data via useRouteLoaderData and renders a
+// sign-out <Form>; a plain MemoryRouter is not a data router. Stub the hook and
+// Form while keeping the rest of react-router (MemoryRouter, Link) real.
+vi.mock("react-router", async () => {
+  const actual = await vi.importActual<typeof import("react-router")>("react-router");
+  return {
+    ...actual,
+    useRouteLoaderData: () => null,
+    Form: ({ children, ...rest }: { children: React.ReactNode }) => (
+      <form {...rest}>{children}</form>
+    ),
+  };
+});
+
 vi.mock("~/hooks/use-collaboration", () => ({
   useCollaborationContext: () => ({
     connectionStatus: "connected",
@@ -42,6 +59,13 @@ vi.mock("~/components/ui/ConnectionPill", () => ({
   ConnectionPill: () => null,
 }));
 
+// The Site Status pill is a sibling in the right cluster, not under test here.
+// Stub it (mirroring PresenceBar / ConnectionPill above) — it consumes
+// useRouteLoaderData via useSiteStatus, which a plain MemoryRouter can't supply.
+vi.mock("~/components/features/site-status/SiteStatusPill", () => ({
+  SiteStatusPill: () => null,
+}));
+
 vi.mock("~/hooks/use-toast", () => ({
   useToast: () => ({ showToast: vi.fn(), dismissToast: vi.fn() }),
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -54,8 +78,15 @@ const baseUser = {
   github_email: "test@example.com",
 };
 
-describe("Header bug-report button", () => {
-  it("renders a button with aria-label 'button_aria' in the header", () => {
+/** Open the user menu, then return the "Report a problem" menu item. */
+function openReportItem() {
+  const menuButton = screen.getByRole("button", { name: "user_menu_aria" });
+  fireEvent.click(menuButton);
+  return screen.getByRole("button", { name: "user_menu.report_problem" });
+}
+
+describe("Header bug-report trigger (standalone button + user-menu item)", () => {
+  it("renders the standalone header bug button (restored to the right of the user menu)", () => {
     render(
       <MemoryRouter>
         <Header user={baseUser} hasProject={true} />
@@ -66,30 +97,22 @@ describe("Header bug-report button", () => {
     ).not.toBeNull();
   });
 
-  it("bug-report button appears AFTER the Users-toggle in DOM order (rightmost position)", () => {
-    render(
-      <MemoryRouter>
-        <Header user={baseUser} hasProject={true} onToggleSidebar={vi.fn()} />
-      </MemoryRouter>,
-    );
-    const bugBtn = screen.getByRole("button", { name: "button_aria" });
-    const usersBtn = screen.getByRole("button", {
-      name: "sidebar_open_aria",
-    });
-    expect(
-      bugBtn.compareDocumentPosition(usersBtn) &
-        Node.DOCUMENT_POSITION_PRECEDING,
-    ).toBeTruthy();
-  });
-
-  it("clicking the button opens the panel (panel_title appears)", () => {
+  it("renders a 'Report a problem' item inside the user menu", () => {
     render(
       <MemoryRouter>
         <Header user={baseUser} hasProject={true} />
       </MemoryRouter>,
     );
-    const bugBtn = screen.getByRole("button", { name: "button_aria" });
-    fireEvent.click(bugBtn);
+    expect(openReportItem()).not.toBeNull();
+  });
+
+  it("clicking 'Report a problem' opens the panel (panel_title appears)", () => {
+    render(
+      <MemoryRouter>
+        <Header user={baseUser} hasProject={true} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(openReportItem());
     expect(screen.queryByText("panel_title")).not.toBeNull();
   });
 });

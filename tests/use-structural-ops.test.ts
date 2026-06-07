@@ -3,8 +3,9 @@
  * use-structural-ops.test.ts — unit tests for the useStructuralOps hook.
  *
  * Tests: canDelete permission logic, UndoManager stack tracking on
- * Y.Array mutation, and the reorderInPlace helper that backs all four
- * structural reorder operations (steps, stories, pages, objects).
+ * Y.Array mutation, and the reorderInPlace helper that backs the three
+ * structural reorder operations (steps, stories, pages). Objects are not
+ * reorderable.
  */
 
 import { describe, it, expect } from "vitest";

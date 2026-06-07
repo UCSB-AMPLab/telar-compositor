@@ -14,7 +14,7 @@
  *     the X-Internal-Auth header is rejected with 401 by verifyInternalMarker
  *     so an attacker that bypasses the worker entry cannot reach the DO.
  *
- * @version v1.0.1-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -213,7 +213,7 @@ describe("DO /reset marker check", () => {
   it("Case 6: DO rejects a direct call missing the internal marker with 401", async () => {
     const bareRequest = new Request("https://internal/reset", { method: "POST" });
 
-    const res = await verifyInternalMarker(bareRequest, TEST_SECRET);
+    const res = await verifyInternalMarker(bareRequest, TEST_SECRET, "reset");
 
     expect(res).not.toBeNull();
     expect(res!.status).toBe(401);
@@ -221,7 +221,7 @@ describe("DO /reset marker check", () => {
 
   it("rejects a stale marker (timestamp older than 30s) with 401", async () => {
     const staleTimestamp = Math.floor(Date.now() / 1000) - 120; // 2 minutes ago
-    const message = `ws-reset:42:${staleTimestamp}`;
+    const message = `reset:42:-:${staleTimestamp}`;
     const enc = new TextEncoder();
     const key = await crypto.subtle.importKey(
       "raw",
@@ -244,7 +244,7 @@ describe("DO /reset marker check", () => {
       },
     });
 
-    const res = await verifyInternalMarker(staleRequest, TEST_SECRET);
+    const res = await verifyInternalMarker(staleRequest, TEST_SECRET, "reset");
 
     expect(res).not.toBeNull();
     expect(res!.status).toBe(401);
@@ -252,7 +252,7 @@ describe("DO /reset marker check", () => {
 
   it("accepts a freshly-signed marker", async () => {
     // signInternalMarker uses the current clock; verifyInternalMarker should accept it.
-    const { sigHex, timestamp } = await signInternalMarker(42, TEST_SECRET);
+    const { sigHex, timestamp } = await signInternalMarker(42, TEST_SECRET, "reset");
 
     const freshRequest = new Request("https://internal/reset", {
       method: "POST",
@@ -263,8 +263,78 @@ describe("DO /reset marker check", () => {
       },
     });
 
-    const res = await verifyInternalMarker(freshRequest, TEST_SECRET);
+    const res = await verifyInternalMarker(freshRequest, TEST_SECRET, "reset");
 
     expect(res).toBeNull(); // null = valid marker
+  });
+
+  it("rejects a marker minted for one op replayed on another (cross-op)", async () => {
+    // Mint a marker for op="snapshot" but present it on the /reset verify path.
+    const { sigHex, timestamp } = await signInternalMarker(42, TEST_SECRET, "snapshot");
+
+    const crossOpRequest = new Request("https://internal/reset", {
+      method: "POST",
+      headers: {
+        "X-Internal-Auth": sigHex,
+        "X-Internal-Timestamp": String(timestamp),
+        "X-Internal-Project": "42",
+      },
+    });
+
+    const res = await verifyInternalMarker(crossOpRequest, TEST_SECRET, "reset");
+
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(401);
+  });
+
+  it("rejects a marker minted for one user replayed for another (cross-user)", async () => {
+    // Mint for op="notify-deleted", userId=1; verify with expectedUserId="2".
+    const { sigHex, timestamp } = await signInternalMarker(
+      42,
+      TEST_SECRET,
+      "notify-deleted",
+      1,
+    );
+
+    const crossUserRequest = new Request("https://internal/notify-deleted?userId=2", {
+      method: "POST",
+      headers: {
+        "X-Internal-Auth": sigHex,
+        "X-Internal-Timestamp": String(timestamp),
+        "X-Internal-Project": "42",
+      },
+    });
+
+    const res = await verifyInternalMarker(
+      crossUserRequest,
+      TEST_SECRET,
+      "notify-deleted",
+      "2",
+    );
+
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(401);
+  });
+
+  it("accepts a marker bound to a userId when the expected userId matches", async () => {
+    const { sigHex, timestamp } = await signInternalMarker(
+      42,
+      TEST_SECRET,
+      "notify-deleted",
+      1,
+    );
+
+    const req = new Request("https://internal/notify-deleted?userId=1", {
+      method: "POST",
+      headers: {
+        "X-Internal-Auth": sigHex,
+        "X-Internal-Timestamp": String(timestamp),
+        "X-Internal-Project": "42",
+      },
+    });
+
+    const res = await verifyInternalMarker(req, TEST_SECRET, "notify-deleted", "1");
+
+    expect(res).toBeNull();
   });
 });

@@ -109,12 +109,15 @@ import { requireProjectMember } from "~/lib/membership.server";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildRequest(formFields: Record<string, string>): Request {
+function buildRequest(
+  formFields: Record<string, string>,
+  path = "/homepage",
+): Request {
   const form = new URLSearchParams();
   for (const [key, value] of Object.entries(formFields)) {
     form.set(key, value);
   }
-  return new Request("https://compositor.telar.org/homepage", {
+  return new Request(`https://compositor.telar.org${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
@@ -158,7 +161,7 @@ const ALLOWED_FIELDS = [
   "welcome_body",
 ] as const;
 
-describe("homepage action: autosave-landing (R2 — IDOR guard)", () => {
+describe("homepage action: autosave-landing (IDOR guard)", () => {
   it("returns 403 when the signed-in user is not a member of the forged projectId", async () => {
     // Forged projectId — user 7 is NOT a member of project 999.
     vi.mocked(requireProjectMember).mockRejectedValueOnce(
@@ -236,6 +239,37 @@ describe("homepage action: autosave-landing (R2 — IDOR guard)", () => {
     expect(result.intent).toBe("autosave-landing");
     expect(insertMock).toHaveBeenCalledTimes(1);
     expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("persists the welcome body when the editor is served at /pages/index", async () => {
+    // The homepage module is registered to BOTH /homepage and /pages/index
+    // (routes.ts). Its `autosave-landing` action must persist welcome_body
+    // regardless of which path the MarkdownEditor's default actionUrl resolves
+    // to — proving the action travels with the editor at its new canonical
+    // path (/dashboard's action does NOT handle autosave-landing, so
+    // /pages/index must be served by THIS module).
+    vi.mocked(requireProjectMember).mockResolvedValueOnce(undefined);
+
+    const result = (await action({
+      request: buildRequest(
+        {
+          intent: "autosave-landing",
+          entityId: "1",
+          field: "welcome_body",
+          value: "Welcome from /pages/index!",
+        },
+        "/pages/index",
+      ),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; intent: string };
+
+    expect(result.ok).toBe(true);
+    expect(result.intent).toBe("autosave-landing");
+    // Existing row → update branch wrote welcome_body exactly once.
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(insertMock).not.toHaveBeenCalled();
+    expect(vi.mocked(requireProjectMember)).toHaveBeenCalledWith(dbMock, 1, 7);
   });
 
   it("rejects non-finite projectId with 400 before calling requireProjectMember", async () => {

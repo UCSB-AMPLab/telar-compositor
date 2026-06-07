@@ -17,11 +17,11 @@
  * `target="_blank"` always carries `rel="noreferrer"` to mitigate
  * tab-nabbing.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useTranslation } from "react-i18next";
-import { Github } from "lucide-react";
+import { Github, ArrowUpRight } from "lucide-react";
 import { Button } from "~/components/ui/Button";
 import type { Installation } from "~/lib/github.server";
 
@@ -68,9 +68,10 @@ function InstallationRow({ installation }: InstallationRowProps) {
         aria-label={t("github_manage_aria", {
           login: installation.account.login,
         })}
-        className="text-sm font-body font-medium text-terracotta hover:underline"
+        className="inline-flex items-center gap-1 text-sm font-body font-medium text-terracotta hover:underline"
       >
         {t("github_manage_link")}
+        <ArrowUpRight className="w-3 h-3 opacity-60" aria-hidden="true" />
       </a>
     </li>
   );

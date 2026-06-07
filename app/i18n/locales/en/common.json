@@ -3,6 +3,7 @@
   "language_toggle": "ES",
   "loading": "Loading...",
   "error": "Something went wrong",
+  "learn_more": "Learn more",
   "coming_soon": "This section will be available in a future update.",
   "autosave": {
     "saving": "Saving...",
@@ -14,15 +15,34 @@
   },
   "nav": {
     "dashboard": "Start",
-    "config": "Config",
+    "start": "Start",
+    "docs": "Docs",
+    "config": "Site settings",
     "homepage": "Homepage",
     "objects": "Objects",
     "stories": "Stories",
-    "pages": "Pages",
+    "pages": "Home and Pages",
     "glossary": "Glossary",
     "publish": "Publish",
     "site": "Site",
     "site_aria": "Open published site in a new tab"
+  },
+  "role": {
+    "convenor": "Convenor",
+    "collaborator": "Collaborator",
+    "denied_publish": "Only the convenor can publish.",
+    "denied_upgrade": "Only the convenor can update Telar.",
+    "ask_convenor_publish": "Ask convenor to publish"
+  },
+  "user_menu": {
+    "report_problem": "Report a problem"
+  },
+  "objects": {
+    "empty_heading": "No objects yet",
+    "empty_body": "Add your first object to start building stories. New here? Finish setup in Site settings."
+  },
+  "onboarding": {
+    "next_add_object": "Next: add your first object"
   },
   "sync_banner": {
     "message": "Your GitHub repository has changed since the last sync. Review the changes to keep the compositor's working copy up to date.",
@@ -32,5 +52,18 @@
     "dismiss_cancel": "Go back",
     "dismiss_confirm": "Close"
   },
-  "user_menu_aria": "User menu"
+  "user_menu_aria": "User menu",
+  "status": {
+    "in_sync": "In sync",
+    "unpublished_one": "{{n}} unpublished change",
+    "unpublished_other": "{{n}} unpublished changes",
+    "publish_cta": "Publish",
+    "out_of_sync": "GitHub has changed",
+    "review_cta": "Review",
+    "publishing": "Publishing…",
+    "upgrade": "Telar {{version}} available",
+    "upgrade_cta": "Run upgrade",
+    "saving": "Saving…",
+    "repo_unavailable": "Repo unavailable"
+  }
 }

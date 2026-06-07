@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
-import { X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { DonutChart } from "~/components/features/collaboration/DonutChart";
@@ -118,7 +118,7 @@ export function CollaborationSidebar({
   }, [open, onClose]);
 
   // Build online-now list: filter remoteCollaborators to only authenticated project members
-  const memberUserIds = new Set(members.map((m) => m.userId));
+  const memberUserIds = new Set(members.map((m) => m.githubId));
   const onlineList = remoteCollaborators.filter(
     (c) => memberUserIds.has(c.user.githubId)
   );
@@ -189,6 +189,13 @@ export function CollaborationSidebar({
           </button>
         </header>
 
+        {/* Open-beta notice — a permanent reminder that collaboration is in
+            testing, with how to report bugs. Stays put above the scroll area. */}
+        <div className="flex items-start gap-2 bg-qolle-pale px-4 py-2.5 text-xs leading-snug text-qolle-deep border-b border-qolle/30 shrink-0">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden="true" />
+          <span>{t("collaboration:beta_banner")}</span>
+        </div>
+
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
           {/* Section 1: Online now */}
@@ -244,12 +251,13 @@ export function CollaborationSidebar({
                 <MemberRow
                   key={m.userId}
                   githubId={m.githubId}
+                  userId={m.userId}
                   username={m.username}
                   role={m.role}
                   isCurrentUserOwner={isConvenor}
                   isConvenor={isConvenor}
                   onRemoveRequest={(target) =>
-                    setRemoveTarget({ userId: m.userId, username: m.username })
+                    setRemoveTarget({ userId: target.userId, username: target.username })
                   }
                 />
               ))}

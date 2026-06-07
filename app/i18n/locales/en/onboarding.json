@@ -84,7 +84,8 @@
   "step_done": {
     "heading": "You're All Set!",
     "description": "Your Telar site has been imported successfully.",
-    "go_to_dashboard": "Go to Start"
+    "go_to_dashboard": "Go to Start",
+    "go_to_settings": "Go to Site settings"
   },
   "inline_config": {
     "heading": "Essential Settings",

@@ -5,6 +5,7 @@
  * installation token). Endpoints used:
  *   - GET /user/installations
  *   - GET /user/installations/{id}/repositories
+ *   - GET /repos/{owner}/{repo}
  *   - GET /repos/{owner}/{repo}/git/trees/HEAD?recursive=1
  *   - GET /repos/{owner}/{repo}/contents/{path}
  *   - GraphQL GetHeadOid (for getRepoHead)
@@ -176,6 +177,40 @@ export async function getFileContent(
     return decodeGitHubContent(data.content);
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// checkRepoAvailability
+// ---------------------------------------------------------------------------
+
+export type RepoAvailability = "available" | "unavailable" | "error";
+
+/**
+ * Probes whether the user can still reach a repository via
+ * GET /repos/{owner}/{repo}.
+ *
+ * Distinguishes "gone / no access" (404 or 403) from transient failures
+ * (5xx, network). GitHub deliberately returns 404 for BOTH a deleted repo
+ * and a private repo the caller can't see, so "unavailable" deliberately
+ * conflates deleted / renamed / made-private / access-removed — callers
+ * alert on it. "error" is for transient problems, so callers fail open and
+ * never false-alarm on a GitHub blip.
+ */
+export async function checkRepoAvailability(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<RepoAvailability> {
+  try {
+    const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
+      headers: githubHeaders(token),
+    });
+    if (res.ok) return "available";
+    if (res.status === 404 || res.status === 403) return "unavailable";
+    return "error";
+  } catch {
+    return "error";
+  }
 }
 
 // ---------------------------------------------------------------------------

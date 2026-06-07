@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.3.0-beta (2026-06-06)
+
+The largest compositor release since v1.0.0-beta: a top-to-bottom redesign of the workspace, real-time collaboration moving into open beta, and a wave of stability and user-reported bug fixes. Upgrading runs eight D1 migrations — one of them, dropping a vestigial column, is forwards-only. No new environment variables or bindings.
+
+### New features
+
+- **Redesigned workspace** — A refreshed visual identity across the whole app: a new type system, palette, and a set of shared UI primitives that bring every tab into one consistent design language. The header, tab navigation, and project switcher were rebuilt around it.
+- **Guided Start tab** — A new landing tab inside each project that orients you: a workflow map showing the six steps of building a Telar site (configure, objects, stories, glossary, pages, publish) with the live state of each, an activity feed of the latest edits, short documentation excerpts you can read in a drawer without leaving the compositor, and a first-run checklist tailored to whether you convene the project or collaborate on it.
+- **Site-status pill** — A single status indicator in the header that shows where the site stands and opens the right popover: a step-by-step publish progress tracker while a build runs, an "in sync" / "GitHub has changed" view, and a prompt when a new Telar version is available.
+- **Real-time collaboration — open beta** — Working on a site together with your team is now in open beta, with live presence (live, reconnecting, or working solo), an in-app notice while the feature is in beta, and a welcome when someone adds you to a project. Edits save automatically, and nothing goes live until the convenor publishes.
+- **Scoped undo and redo** — Undo now affects only your own recent edits, never a teammate's, with a toast (and one-click reverse) when an undo touches something off-screen, and a clear "nothing of yours to undo" message.
+- **Rebuilt glossary editor** — Rename a term and see what it affects, trace where each term is used, and preview entries live as you edit.
+- **Restructured story editor** — The story editor was reorganised around steps and layers, with clearer per-step and per-layer labels.
+- **One add-object dialog** — Uploading an image, pasting an IIIF manifest, and linking external media (Vimeo, YouTube, Google Drive) now happen in a single add-object dialog, alongside a refreshed objects table.
+- **Rewritten Pages and Publish** — Publish now shows what's changing and what was checked before you commit, with clearer success and failure cards.
+- **Rich site-description editor** — The homepage description is now a collaborative inline-HTML editor (bold, links) with a view/edit toggle, replacing a plain-text field that had been silently dropping links.
+- **Project switcher** — Switch between your projects, or add and remove a repo, from the header.
+- **Activity log and "What's new" card** — Projects keep an activity log, and a dismissable, bilingual "What's new" card greets you at sign-in after a release.
+
+### Data layer
+
+- D1 migrations 0026–0033: an activity-log table, a per-collaborator "welcomed" stamp, a created-by column, a GitHub-status cache, object dimensions and extra columns, glossary related-terms, and a last-seen-release stamp. Migration 0028 drops the vestigial `objects.order` column and is **forwards-only** — self-hosters cannot roll the database back past this release without manual schema work. The rest are additive and backwards-compatible.
+
+### Security and stability
+
+- **Multiplayer hardening** — Closed several access-control gaps where one user could act on another's project, made a removed collaborator's live session end immediately, and made snapshot ordering and de-duplication robust under concurrent editing.
+- **Authentication hardened; broader key support** — Sign-in paths were hardened, and the GitHub App integration now accepts both PKCS#1 and PKCS#8 private keys.
+- **Faster navigation** — GitHub status is cached between checks so moving between tabs stays fast, and the cache is cleared on publish so status stays accurate.
+- **Framework files self-heal on publish** — A site missing its `package-lock.json` (required since the framework's build switched to `npm ci`) now has it restored automatically on the next publish.
+- **Readable settings changes** — Settings changes now appear in human-readable form in both the commit message and the unpublished-changes popover, instead of raw keys.
+
+### Bug fixes
+
+- **Turning off demo content now works** — Nested settings such as "show demo content" were silently dropped at publish, so toggling demo content off never reached the live site. Publish now writes the nested `story_interface` and `collection_interface` blocks (and `telar_theme`) back to `_config.yml`, so every toggle takes effect.
+- **Editing a brand-new story no longer errors** — Opening a just-created story, or navigating to one that doesn't exist yet, now shows an in-app recovery card instead of crashing the page.
+- **Renaming a layer button no longer fails** — Editing the label or expander on a freshly-created layer no longer triggers a failed save.
+- **Publish no longer ships stale content** — If a pre-publish snapshot fails, publish now stops instead of shipping the previous state.
+
 ## v1.2.1-beta (2026-05-29)
 
 A patch release with three fixes, all live on production. No D1 migrations, no

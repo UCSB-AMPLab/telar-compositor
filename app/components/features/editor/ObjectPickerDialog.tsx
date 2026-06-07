@@ -60,9 +60,9 @@ function ObjectCard({
     <button
       type="button"
       onClick={() => onSelect(obj.object_id)}
-      className={`group flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors hover:border-periwinkle focus:outline-none focus:ring-2 focus:ring-periwinkle/50 ${
+      className={`group flex flex-col overflow-hidden rounded-lg border-2 text-left transition-colors hover:border-anil ${
         isSelected
-          ? "border-periwinkle bg-periwinkle/10"
+          ? "border-anil bg-anil/10"
           : "border-gray-100 bg-white hover:bg-gray-50"
       }`}
     >
@@ -140,7 +140,7 @@ export function ObjectPickerDialog({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("object_picker.search_placeholder")}
-            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg font-body text-sm text-charcoal placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle/50"
+            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg font-body text-sm text-charcoal placeholder-gray-400"
             autoFocus
           />
         </div>

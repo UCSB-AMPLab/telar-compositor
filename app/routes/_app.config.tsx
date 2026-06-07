@@ -10,12 +10,12 @@
  * tracked — navigating away with unsaved changes shows a
  * confirmation modal.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { eq } from "drizzle-orm";
-import { Form, Link, useBlocker, useFetcher, useNavigation } from "react-router";
+import { Form, Link, useBlocker, useFetcher, useNavigation, useOutletContext } from "react-router";
 import { Trans, useTranslation } from "react-i18next";
 import { AlertTriangle, Check, Loader2, RefreshCw } from "lucide-react";
 import * as Y from "yjs";
@@ -34,8 +34,11 @@ import { ToggleField } from "~/components/features/config/ToggleField";
 import { ThemeSwatches } from "~/components/features/config/ThemeSwatches";
 // NavigationEditor removed — navigation is managed from the Pages tab
 import { Button } from "~/components/ui/Button";
+import { DocsLink } from "~/components/ui/DocsLink";
+import { InlineHtmlEditor } from "~/components/ui/InlineHtmlEditor";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { detectThemeAlert } from "~/lib/theme-recognition";
+import { getYText } from "~/lib/yjs-helpers";
 
 export const handle = { i18n: ["common", "config"], hideAutosaveIndicator: true };
 
@@ -197,6 +200,7 @@ function syncFormToYjs(form: HTMLFormElement, yConfig: Y.Map<unknown>) {
 }
 
 export default function ConfigPage({ loaderData, actionData }: Route.ComponentProps) {
+  const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
   const { t } = useTranslation("config");
   const themeFetcher = useFetcher();
   const isRefreshingThemes = themeFetcher.state !== "idle";
@@ -263,6 +267,22 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
     [ydoc, markDirty],
   );
 
+  // Resolve the shared Y.Text for `description` so the rich editor and the
+  // Configure tab both bind to the same Yjs value.
+  const configDescriptionYText = getYText(ydoc?.getMap<unknown>("config") ?? null, "description");
+
+  // Mirror the live Y.Text value into a hidden form field so the Save action
+  // still receives `description` (InlineHtmlEditor is Yjs-bound, not a native
+  // form field, so without this the form would submit an empty string).
+  const [descMirror, setDescMirror] = useState<string>(loaderData.config?.description ?? "");
+  useEffect(() => {
+    if (!configDescriptionYText) return;
+    setDescMirror(configDescriptionYText.toString());
+    const obs = () => setDescMirror(configDescriptionYText.toString());
+    configDescriptionYText.observe(obs);
+    return () => configDescriptionYText.unobserve(obs);
+  }, [configDescriptionYText]);
+
   // Unsaved changes blocker — uses ref so onSubmit can clear it synchronously
   const blocker = useBlocker(() => dirtyRef.current);
 
@@ -274,7 +294,7 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
         </p>
         <Link
           to="/onboarding"
-          className="inline-flex items-center justify-center bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-2.5 transition-colors"
+          className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-2.5 transition-colors"
         >
           Connect a Repository
         </Link>
@@ -297,22 +317,26 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
 
   return (
     <div className="max-w-3xl mx-auto pb-8">
-      <h1 className="font-heading font-bold text-2xl text-charcoal mb-6">{t("title")}</h1>
+      <h1 className="font-heading font-bold text-2xl text-charcoal mb-3">{t("title")}</h1>
 
-      <p className="text-sm font-body text-charcoal/70 mb-6">
-        <Trans
-          ns="config"
-          i18nKey="account_link_note"
-          components={{
-            1: (
-              <Link
-                to="/account"
-                className="underline underline-offset-2 text-charcoal hover:text-terracotta"
-              />
-            ),
-          }}
-        />
-      </p>
+      <div className="space-y-2 mb-6 max-w-2xl">
+        <p className="text-sm font-body text-charcoal/70">{t("intro")}</p>
+        <p className="text-sm font-body text-charcoal/70">
+          <Trans
+            ns="config"
+            i18nKey="account_link_note"
+            components={{
+              1: (
+                <Link
+                  to="/account"
+                  className="underline underline-offset-2 text-charcoal hover:text-terracotta"
+                />
+              ),
+            }}
+          />
+        </p>
+        {openDoc && <DocsLink docId="configure" onOpenDoc={openDoc} />}
+      </div>
 
       <Form method="post" ref={formRef} onSubmit={() => { dirtyRef.current = false; }}>
         {/* 1. Site Settings */}
@@ -324,14 +348,20 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
             help={t("sections.site_settings.field_title_help")}
             onChange={onFieldChange}
           />
-          <FieldWithHelp
-            label={t("sections.site_settings.field_description")}
-            name="description"
-            type="textarea"
-            value={config?.description ?? ""}
-            help={t("sections.site_settings.field_description_help")}
-            onChange={onFieldChange}
-          />
+          <div className="mb-4">
+            <span className="font-body font-medium text-sm text-charcoal mb-1 block">
+              {t("sections.site_settings.field_description")}
+            </span>
+            <InlineHtmlEditor
+              initialValue={config?.description ?? ""}
+              yText={configDescriptionYText}
+              ariaLabel={t("sections.site_settings.field_description")}
+            />
+            <p className="mt-1 text-xs text-gray-400">{t("sections.site_settings.field_description_help")}</p>
+            {/* Hidden mirror so the form action still receives `description`
+                (the editor is Yjs-bound, not a native form field). */}
+            <textarea name="description" value={descMirror} readOnly hidden aria-hidden />
+          </div>
           <FieldWithHelp
             label={t("sections.site_settings.field_author")}
             name="author"

@@ -25,9 +25,12 @@ import {
   computeFullSyncDiff,
   applyFullSyncChanges,
   computeSyncDiff,
+  applySyncChanges,
   computeGlossarySyncDiff,
   extractTelarVersion,
+  extractConfigFields,
   hasDivergentChanges,
+  SYNC_FIELDS,
 } from "~/lib/sync.server";
 import type { FullSyncDiff } from "~/lib/sync.server";
 
@@ -580,6 +583,76 @@ describe("applyFullSyncChanges", () => {
     );
     expect(titleUpdates.length).toBeGreaterThan(0);
   });
+
+  it("writes repo related_terms into the D1 update when a glossary change is accepted", async () => {
+    const updates: Array<{ table: unknown; set: unknown }> = [];
+
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_TWO_STORIES;
+      if (path === "_config.yml") return CONFIG_YML_BASE;
+      if (path === "telar-content/spreadsheets/glossary.csv") {
+        return `term_id,title,definition,related_terms\nenc,"Encomienda","A labor system","mita|repartimiento"`;
+      }
+      return null;
+    });
+
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (table, set) => {
+        updates.push({ table, set });
+      },
+    });
+
+    const changes = {
+      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+      stories: { accept: [], reject: [], insertNew: [] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: ["enc"], reject: [], insertNew: [] },
+    };
+
+    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb);
+
+    const relatedUpdates = updates.filter(
+      (u) => u.set !== null && typeof u.set === "object" && (u.set as Record<string, unknown>).related_terms === "mita|repartimiento"
+    );
+    expect(relatedUpdates.length).toBeGreaterThan(0);
+  });
+
+  it("inserts a new glossary term with its related_terms", async () => {
+    const inserted: Array<{ table: unknown; values: unknown }> = [];
+
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_TWO_STORIES;
+      if (path === "_config.yml") return CONFIG_YML_BASE;
+      if (path === "telar-content/spreadsheets/glossary.csv") {
+        return `term_id,title,definition,related_terms\nmita,"Mita","Mandatory service","enc|repartimiento"`;
+      }
+      return null;
+    });
+
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onInsert: (table, vals) => {
+        inserted.push({ table, values: vals });
+      },
+    });
+
+    const changes = {
+      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+      stories: { accept: [], reject: [], insertNew: [] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: ["mita"] },
+    };
+
+    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb);
+
+    const relatedInserts = inserted.filter(
+      (i) => i.values !== null && typeof i.values === "object" && (i.values as Record<string, unknown>).related_terms === "enc|repartimiento"
+    );
+    expect(relatedInserts.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -624,15 +697,23 @@ describe("FullSyncDiff return structure", () => {
 // glossary sync diff
 // ---------------------------------------------------------------------------
 
-const GLOSSARY_CSV_ONE_TERM = `term_id,title,definition
-enc,"Encomienda","A labor system used in colonial Spanish America"`;
+const GLOSSARY_CSV_ONE_TERM = `term_id,title,definition,related_terms
+enc,"Encomienda","A labor system used in colonial Spanish America",`;
 
-const GLOSSARY_CSV_TWO_TERMS = `term_id,title,definition
-enc,"Encomienda","A labor system used in colonial Spanish America"
-mita,"Mita","Mandatory public service system"`;
+const GLOSSARY_CSV_TWO_TERMS = `term_id,title,definition,related_terms
+enc,"Encomienda","A labor system used in colonial Spanish America",
+mita,"Mita","Mandatory public service system","enc|repartimiento"`;
 
-const GLOSSARY_CSV_CHANGED_DEF = `term_id,title,definition
-enc,"Encomienda","Updated definition for encomienda"`;
+const GLOSSARY_CSV_CHANGED_DEF = `term_id,title,definition,related_terms
+enc,"Encomienda","Updated definition for encomienda",`;
+
+// Definition identical to D1; only related_terms differs (repo adds links).
+const GLOSSARY_CSV_CHANGED_RELATED = `term_id,title,definition,related_terms
+enc,"Encomienda","A labor system used in colonial Spanish America","mita|repartimiento"`;
+
+// Spanish headers (términos_relacionados → related_terms via parseTelarCsv).
+const GLOSSARY_CSV_SPANISH_HEADERS = `term_id,title,definition,términos_relacionados
+enc,"Encomienda","A labor system used in colonial Spanish America","mita"`;
 
 describe("glossary sync diff", () => {
   const projectId = 1;
@@ -728,10 +809,96 @@ describe("glossary sync diff", () => {
     expect(result.added).toHaveLength(0);
     expect(result.changed).toHaveLength(0);
   });
+
+  it("detects changed related_terms when definition is identical", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return GLOSSARY_CSV_CHANGED_RELATED;
+      return null;
+    });
+
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system used in colonial Spanish America", related_terms: "", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changed).toHaveLength(1);
+    expect(result.changed[0].term_id).toBe("enc");
+    expect(result.changed[0].d1RelatedTerms).toBe("");
+    expect(result.changed[0].repoRelatedTerms).toBe("mita|repartimiento");
+    // Definition unchanged on both sides
+    expect(result.changed[0].d1Definition).toBe("A labor system used in colonial Spanish America");
+    expect(result.changed[0].repoDefinition).toBe("A labor system used in colonial Spanish America");
+    expect(result.added).toHaveLength(0);
+    expect(result.removed).toHaveLength(0);
+  });
+
+  it("still detects changed definition when related_terms is identical (regression)", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return GLOSSARY_CSV_CHANGED_DEF;
+      return null;
+    });
+
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system used in colonial Spanish America", related_terms: "", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changed).toHaveLength(1);
+    expect(result.changed[0].term_id).toBe("enc");
+    expect(result.changed[0].repoDefinition).toBe("Updated definition for encomienda");
+    expect(result.changed[0].d1Definition).toBe("A labor system used in colonial Spanish America");
+    // related_terms identical on both sides
+    expect(result.changed[0].d1RelatedTerms).toBe("");
+    expect(result.changed[0].repoRelatedTerms).toBe("");
+  });
+
+  it("carries related_terms on added glossary terms", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return GLOSSARY_CSV_TWO_TERMS;
+      return null;
+    });
+
+    // D1 has only "enc"; "mita" (with related_terms) is the added term.
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system used in colonial Spanish America", related_terms: "", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.added).toHaveLength(1);
+    expect(result.added[0].term_id).toBe("mita");
+    expect(result.added[0].related_terms).toBe("enc|repartimiento");
+  });
+
+  it("reads related_terms from Spanish CSV headers (términos_relacionados)", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return GLOSSARY_CSV_SPANISH_HEADERS;
+      return null;
+    });
+
+    const d1Terms = [
+      { id: 1, project_id: projectId, term_id: "enc", title: "Encomienda", definition: "A labor system used in colonial Spanish America", related_terms: "", updated_at: null },
+    ];
+
+    const mockDb = createSequentialMockDb([d1Terms]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changed).toHaveLength(1);
+    expect(result.changed[0].repoRelatedTerms).toBe("mita");
+  });
 });
 
 // ---------------------------------------------------------------------------
-// computeSyncDiff — origin-aware missing object classification (DATA-03)
+// computeSyncDiff — origin-aware missing object classification
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -1287,5 +1454,257 @@ describe("hasDivergentChanges", () => {
       (diff.glossary[key] as unknown[]).push({ term_id: "t" });
       expect(hasDivergentChanges(diff)).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SYNC_FIELDS guard — IIIF-wipe-on-sync regression pin
+// ---------------------------------------------------------------------------
+//
+// Sync compares only repo-authored object metadata. The compositor-managed
+// ---------------------------------------------------------------------------
+// computeSyncDiff — dimensions reconciliation
+//
+// `dimensions` is a first-class nullable metadata field that must reconcile
+// like creator/source/etc. A repo-side edit to an object's dimensions must be
+// flagged in changedFields so it isn't reverted on the next publish.
+// ---------------------------------------------------------------------------
+
+describe("computeSyncDiff — dimensions reconciliation", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  // Realistic multi-column objects.csv so parseTelarCsv keeps the data row
+  // (a sparse row risks the bilingual-header heuristic). Header uses canonical
+  // English names; `dimensions` maps to itself.
+  function objectsCsv(dimensions: string): string {
+    return [
+      "object_id,title,creator,description,object_type,dimensions,source,credit",
+      `obj-1,Woven Cloth,Jane Weaver,A handwoven textile,Textile,${dimensions},Museum Collection,Photo by J. Weaver`,
+    ].join("\n");
+  }
+
+  function d1Object(dimensions: string | null) {
+    return {
+      id: 1,
+      project_id: projectId,
+      object_id: "obj-1",
+      title: "Woven Cloth",
+      origin: "repo",
+      featured: false,
+      missing_from_repo: false,
+      creator: "Jane Weaver",
+      description: "A handwoven textile",
+      source_url: null,
+      period: null,
+      year: null,
+      object_type: "Textile",
+      subjects: null,
+      source: "Museum Collection",
+      credit: "Photo by J. Weaver",
+      thumbnail: null,
+      dimensions,
+      image_available: true,
+      updated_at: null,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+  });
+
+  it("flags dimensions in changedFields when repo differs from D1, with both values", async () => {
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(objectsCsv("24 x 30 cm"));
+    // computeSyncDiff queries: d1Objects, stepRefs, storyRows
+    const mockDb = createSequentialMockDb([[d1Object("10 x 10 cm")], [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changedObjects).toHaveLength(1);
+    const changed = result.changedObjects[0];
+    expect(changed.object_id).toBe("obj-1");
+    expect(changed.changedFields).toContain("dimensions");
+    expect(changed.d1Values.dimensions).toBe("10 x 10 cm");
+    expect(changed.repoValues.dimensions).toBe("24 x 30 cm");
+  });
+
+  it("does NOT flag dimensions when repo and D1 match", async () => {
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(objectsCsv("10 x 10 cm"));
+    const mockDb = createSequentialMockDb([[d1Object("10 x 10 cm")], [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    const changed = result.changedObjects.find((o) => o.object_id === "obj-1");
+    expect(changed?.changedFields ?? []).not.toContain("dimensions");
+  });
+
+  it("does NOT flag dimensions when repo is empty but D1 has a value", async () => {
+    // Empty repo dimensions cell — matches the "repo empty isn't a conflict" rule
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(objectsCsv(""));
+    const mockDb = createSequentialMockDb([[d1Object("10 x 10 cm")], [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    const changed = result.changedObjects.find((o) => o.object_id === "obj-1");
+    expect(changed?.changedFields ?? []).not.toContain("dimensions");
+  });
+
+  it("apply with dimensions choice 'repo' writes the repo value into the D1 update payload", async () => {
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(objectsCsv("24 x 30 cm"));
+
+    let captured: Record<string, unknown> | null = null;
+    // applySyncChanges queries: d1Objects (then update via .set/.where)
+    const mockDb = createTrackedMockDb({
+      responses: [[d1Object("10 x 10 cm")]],
+      onUpdate: (_table, set) => {
+        captured = set as Record<string, unknown>;
+      },
+    });
+
+    await applySyncChanges(
+      projectId,
+      {
+        newObjectIds: [],
+        changedObjectIds: ["obj-1"],
+        fieldChoices: { "obj-1": { dimensions: "repo" } },
+        removedObjectIds: [],
+        unregisteredObjectIds: [],
+      },
+      token,
+      owner,
+      repo,
+      mockDb,
+    );
+
+    expect(captured).not.toBeNull();
+    expect(captured!.dimensions).toBe("24 x 30 cm");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New-object sync carries dimensions + extra_columns
+//
+// An object brand-new to D1 (present in repo CSV, absent from D1) is pulled in
+// via the sync new-object path (PendingObject → client → D1 insert). Both the
+// first-class `dimensions` field and the `extra_columns` custom-column blob
+// must travel on the PendingObject so they survive the round-trip. Also pin
+// that computeSyncDiff's newObjects entry carries `dimensions`.
+// ---------------------------------------------------------------------------
+
+describe("sync new-object path carries dimensions + extra_columns", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  // objects.csv with a brand-new object that has `dimensions` AND a custom
+  // column (`accession_number`) so mapObjectsCsv populates extra_columns.
+  const NEW_OBJECT_CSV = [
+    "object_id,title,creator,description,object_type,dimensions,source,credit,accession_number",
+    "new-obj,Carved Mask,Ana Talla,A wooden mask,Sculpture,40 x 20 cm,Museum Collection,Photo by A. Talla,ACC-2026-001",
+  ].join("\n");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(NEW_OBJECT_CSV);
+  });
+
+  it("applySyncChanges returns a pendingObject carrying dimensions and extra_columns", async () => {
+    // D1 has no objects → repo's new-obj is brand-new.
+    // applySyncChanges queries: d1Objects (empty)
+    const mockDb = createTrackedMockDb({ responses: [[]] });
+
+    const result = await applySyncChanges(
+      projectId,
+      {
+        newObjectIds: ["new-obj"],
+        changedObjectIds: [],
+        fieldChoices: {},
+        removedObjectIds: [],
+        unregisteredObjectIds: [],
+      },
+      token,
+      owner,
+      repo,
+      mockDb,
+    );
+
+    expect(result.pendingObjects).toHaveLength(1);
+    const pending = result.pendingObjects[0];
+    expect(pending.object_id).toBe("new-obj");
+    expect(pending.dimensions).toBe("40 x 20 cm");
+
+    // extra_columns is the canonical JSON passthrough blob for custom columns.
+    const extra = pending.extra_columns;
+    expect(extra).toBeTruthy();
+    expect(JSON.parse(extra as string)).toEqual({ accession_number: "ACC-2026-001" });
+  });
+
+  it("computeSyncDiff newObjects entry carries dimensions", async () => {
+    // computeSyncDiff queries: d1Objects (empty), stepRefs, storyRows
+    const mockDb = createSequentialMockDb([[], [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.newObjects).toHaveLength(1);
+    const newObj = result.newObjects[0];
+    expect(newObj.object_id).toBe("new-obj");
+    expect(newObj.dimensions).toBe("40 x 20 cm");
+  });
+});
+
+// IIIF fields (source_url, thumbnail, image_available) must NEVER appear in
+// SYNC_FIELDS — including them would let a GitHub round-trip overwrite the
+// uploaded-object image state with the repo's (empty) values, wiping IIIF
+// images on sync. This guard asserts their ABSENCE so a future edit to the
+// field set can't silently re-introduce the wipe.
+
+describe("SYNC_FIELDS — IIIF-wipe guard", () => {
+  it.each(["source_url", "thumbnail", "image_available"] as const)(
+    "does NOT include the compositor-managed IIIF field %j",
+    (field) => {
+      expect(SYNC_FIELDS as readonly string[]).not.toContain(field);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// extractConfigFields — quoted-scalar parser
+// ---------------------------------------------------------------------------
+
+describe("extractConfigFields", () => {
+  it("parses a double-quoted HTML value with single-quoted attributes (the demo case)", () => {
+    const yaml = `title: My Site\ndescription: "Telar (a 'loom') — <a href='https://x.org'>Telar</a> by us."\nauthor: Jane`;
+    const out = extractConfigFields(yaml);
+    expect(out.description).toBe("Telar (a 'loom') — <a href='https://x.org'>Telar</a> by us.");
+    expect(out.title).toBe("My Site");
+    expect(out.author).toBe("Jane");
+  });
+
+  it("un-escapes double-quote and backslash escapes (inverse of yamlQuote)", () => {
+    const yaml = `description: "say \\"hi\\" and a path C:\\\\x"`;
+    const out = extractConfigFields(yaml);
+    expect(out.description).toBe('say "hi" and a path C:\\x');
+  });
+
+  it("parses a single-quoted value with YAML doubled-quote escaping", () => {
+    const yaml = `description: 'it''s fine'`;
+    const out = extractConfigFields(yaml);
+    expect(out.description).toBe("it's fine");
+  });
+
+  it("parses a bare scalar and strips a trailing comment", () => {
+    const yaml = `description: plain text  # a note`;
+    const out = extractConfigFields(yaml);
+    expect(out.description).toBe("plain text");
+  });
+
+  it("returns null for an absent key", () => {
+    const out = extractConfigFields(`title: only`);
+    expect(out.description).toBeNull();
   });
 });

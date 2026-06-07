@@ -9,7 +9,7 @@
  * children write directly to the Yjs document instead of going
  * through HTTP autosave.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import * as Y from "yjs";
@@ -63,6 +63,10 @@ interface NarrativeColumnProps {
   questionYText: Y.Text | null;
   answerYText: Y.Text | null;
   altTextYText: Y.Text | null;
+  /** Y.Text for layer 1's button_label — threaded to StepView's trigger pill. */
+  buttonLabelYText?: Y.Text | null;
+  /** Callback to open the in-product docs drawer — threaded from the _app shell via outlet context. */
+  onOpenDoc?: (id: string) => void;
 }
 
 export function NarrativeColumn({
@@ -83,6 +87,8 @@ export function NarrativeColumn({
   questionYText,
   answerYText,
   altTextYText,
+  buttonLabelYText,
+  onOpenDoc,
 }: NarrativeColumnProps) {
   if (activeStepIndex === 0) {
     return (
@@ -111,7 +117,9 @@ export function NarrativeColumn({
       questionYText={questionYText}
       answerYText={answerYText}
       altTextYText={altTextYText}
+      buttonLabelYText={buttonLabelYText ?? null}
       storySlug={storyId}
+      onOpenDoc={onOpenDoc}
     />
   );
 }

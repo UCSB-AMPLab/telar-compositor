@@ -50,7 +50,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 // Rotating singleton fetcher registry — 5 slots matching WizardShell's 5
-// useFetcher calls AFTER plan 38-03-02 lands.
+// useFetcher calls.
 type FakeFetcher = {
   state: "idle" | "submitting" | "loading";
   data: unknown;
@@ -179,7 +179,7 @@ const baseProps = {
   },
   hasInstallations: true,
   orphanRepoNames: [],
-  githubAppSlug: "telar-compositor-dev",
+  githubAppSlug: "telar-compositor",
 };
 
 describe("WizardShell — scope pre-check orchestration", () => {

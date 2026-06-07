@@ -24,7 +24,7 @@
  * makes the DO durable against forced eviction without any state
  * loss beyond the in-flight edit window.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import * as Y from "yjs";
@@ -33,7 +33,7 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { DurableObject } from "cloudflare:workers";
-import { makeAfterTransactionHandler, buildContributionUpdate } from "./collaboration-helpers";
+import { makeAfterTransactionHandler, buildContributionUpdate, buildActivityRows, ACTIVITY_RETENTION_CAP } from "./collaboration-helpers";
 import {
   parseSessionCookie,
   getUserIdFromToken as getUserIdFromTokenShared,
@@ -84,6 +84,7 @@ interface StoryRow {
   private: number;
   draft: number;
   show_sections: number;
+  created_by: number | null;
 }
 
 interface StepRow {
@@ -102,6 +103,7 @@ interface StepRow {
   clip_start: string | null;
   clip_end: string | null;
   loop: string | null;
+  created_by: number | null;
 }
 
 interface LayerRow {
@@ -111,6 +113,7 @@ interface LayerRow {
   title: string | null;
   button_label: string | null;
   content: string | null;
+  created_by: number | null;
 }
 
 interface ObjectRow {
@@ -125,6 +128,7 @@ interface ObjectRow {
   year: string | null;
   featured: number;
   image_available: number;
+  created_by: number | null;
 }
 
 interface GlossaryRow {
@@ -132,6 +136,7 @@ interface GlossaryRow {
   term_id: string;
   title: string | null;
   definition: string | null;
+  created_by: number | null;
 }
 
 interface PageRow {
@@ -140,6 +145,7 @@ interface PageRow {
   slug: string;
   body: string | null;
   order: number;
+  created_by: number | null;
 }
 
 interface ConfigRow {
@@ -199,6 +205,13 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
   private docLoaded = false;
   private userFieldSets: Map<number, Set<string>> = new Map();
   private newSessions: Set<number> = new Set();
+  // Per-user set of `collection:id` entity keys already emitted to activity_log
+  // this DO lifetime. userFieldSets accumulates across snapshots and is never
+  // cleared, so without this tracker every 30s snapshot would re-INSERT a row
+  // for every entity ever touched. We emit one coarse activity row per
+  // (user, entity) the first time it appears, then record it here so later
+  // snapshots skip it. Resets on cold start (a returning editor emits afresh).
+  private activityEmitted: Map<number, Set<string>> = new Map();
   private isSnapshotting = false;
   // Re-entrancy guard for the unauthorised-delete revert handler. The
   // revert itself fires afterTransaction; we must not recurse into the
@@ -276,14 +289,23 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     if (url.pathname.endsWith("/snapshot") && request.method === "POST") {
       // Same signed-marker check as /reset — direct reaches that bypass the
       // worker entry lack the marker and are rejected with 401.
-      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET, "snapshot");
       if (markerError) return markerError;
 
       if (this.projectId !== null) {
-        await this.ctx.blockConcurrencyWhile(async () => {
-          await this.ensureDocLoaded();
-          await this.snapshotToD1();
-        });
+        try {
+          await this.ctx.blockConcurrencyWhile(async () => {
+            await this.ensureDocLoaded();
+            await this.snapshotToD1();
+          });
+        } catch (err) {
+          // Fix #13(B): a thrown D1-batch failure here would otherwise reject
+          // the DO fetch, and the publish action's outer catch swallows it and
+          // ships stale D1. Convert the throw into a non-200 the action can
+          // distinguish from a genuine "DO unreachable" fetch rejection.
+          console.error("[snapshot] forced snapshot failed", err);
+          return new Response("snapshot_failed", { status: 500 });
+        }
       }
       return new Response("OK", { status: 200 });
     }
@@ -298,7 +320,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       // X-Internal-Auth / X-Internal-Timestamp / X-Internal-Project headers.
       // Direct reaches that bypass the worker entry lack the marker and are
       // rejected with 401.
-      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET, "reset");
       if (markerError) return markerError;
 
       if (this.projectId !== null) {
@@ -341,10 +363,15 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // BEFORE invoking this endpoint so any reconnect attempt fails fast
     // against the missing project_members row (graceful no-op end state).
     if (url.pathname.endsWith("/notify-deleted") && request.method === "POST") {
-      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      const targetUserId = url.searchParams.get("userId");
+      const markerError = await verifyInternalMarker(
+        request,
+        this.env.SESSION_SECRET,
+        "notify-deleted",
+        targetUserId,
+      );
       if (markerError) return markerError;
 
-      const targetUserId = url.searchParams.get("userId");
       const subtype = targetUserId ? subRemovedFromProject : subProjectDeleted;
       const closeReason = targetUserId ? "removed_from_project" : "project_deleted";
 
@@ -367,14 +394,19 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // awareness_state may lag); informational, NOT a gate (the convenor
     // can confirm regardless of count or fetch failure).
     if (url.pathname.endsWith("/active-ws-count") && request.method === "GET") {
-      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
-      if (markerError) return markerError;
       // Count distinct OTHER users with live sockets, excluding the
       // requester. The warning text ("N collaborators are editing right
       // now") is about people the convenor will disconnect — they
       // themselves aren't disconnecting themselves, and a single user
       // with several tabs is still one collaborator.
       const exceptUserIdParam = url.searchParams.get("exceptUserId");
+      const markerError = await verifyInternalMarker(
+        request,
+        this.env.SESSION_SECRET,
+        "active-ws-count",
+        exceptUserIdParam,
+      );
+      if (markerError) return markerError;
       const exceptUserId =
         exceptUserIdParam !== null ? Number(exceptUserIdParam) : NaN;
       const otherUserIds = new Set<number>();
@@ -404,7 +436,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // on restore. Order is computed as max(existing order) + 1 + i so
     // restored entries push onto the end of the array deterministically.
     if (url.pathname.endsWith("/restore-orphans") && request.method === "POST") {
-      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET);
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET, "restore-orphans");
       if (markerError) return markerError;
 
       let payload: {
@@ -777,9 +809,18 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       // Already closed
     }
 
-    // On last-client disconnect, snapshot immediately
+    // On last-client disconnect, snapshot immediately. Best-effort: a thrown
+    // D1 failure here must not surface as an unhandled rejection that could
+    // crash the DO. Retry happens on the next connect/forced/publish
+    // snapshot, or via the alarm doSnapshot reschedules on a batch failure
+    // (note: the periodic alarm does not re-fire once all clients have
+    // disconnected).
     if (this.ctx.getWebSockets().length === 0) {
-      await this.snapshotToD1();
+      try {
+        await this.snapshotToD1();
+      } catch (err) {
+        console.error("[snapshot] last-disconnect snapshot failed", err);
+      }
     }
   }
 
@@ -885,7 +926,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         this.env.DB
           .prepare(
             "SELECT id, object_id, title, creator, description, alt_text, source_url, " +
-            "period, year, featured, image_available FROM objects WHERE project_id = ? ORDER BY id ASC",
+            "period, year, featured, image_available, created_by FROM objects WHERE project_id = ? ORDER BY id ASC",
           )
           .bind(this.projectId)
           .all<ObjectRow>(),
@@ -894,7 +935,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           .bind(this.projectId)
           .all<GlossaryRow>(),
         this.env.DB
-          .prepare("SELECT id, title, slug, body, \"order\" FROM project_pages WHERE project_id = ? ORDER BY \"order\" ASC")
+          .prepare("SELECT id, title, slug, body, \"order\", created_by FROM project_pages WHERE project_id = ? ORDER BY \"order\" ASC")
           .bind(this.projectId)
           .all<PageRow>(),
       ]);
@@ -999,6 +1040,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         storyMap.set("private", story.private === 1);
         storyMap.set("draft", story.draft === 1);
         storyMap.set("show_sections", story.show_sections === 1);
+        storyMap.set("created_by", story.created_by ?? null);
 
         // ---- steps ----
         const stepsArray = new Y.Array<Y.Map<unknown>>();
@@ -1018,6 +1060,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           stepMap.set("clip_start", step.clip_start ?? "");
           stepMap.set("clip_end", step.clip_end ?? "");
           stepMap.set("loop", step.loop ?? "");
+          stepMap.set("created_by", step.created_by ?? null);
 
           // ---- layers ----
           const layersArray = new Y.Array<Y.Map<unknown>>();
@@ -1028,6 +1071,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             layerMap.set("title", new Y.Text(layer.title ?? ""));
             layerMap.set("button_label", new Y.Text(layer.button_label ?? ""));
             layerMap.set("content", new Y.Text(layer.content ?? ""));
+            layerMap.set("created_by", layer.created_by ?? null);
             layersArray.push([layerMap]);
           }
           stepMap.set("layers", layersArray);
@@ -1052,6 +1096,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         objMap.set("year", new Y.Text(obj.year ?? ""));
         objMap.set("featured", obj.featured === 1);
         objMap.set("image_available", obj.image_available === 1);
+        objMap.set("created_by", obj.created_by ?? null);
         objectsArray.push([objMap]);
       }
 
@@ -1063,6 +1108,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         termMap.set("term_id", term.term_id);
         termMap.set("title", new Y.Text(term.title ?? ""));
         termMap.set("definition", new Y.Text(term.definition ?? ""));
+        termMap.set("created_by", term.created_by ?? null);
         glossaryArray.push([termMap]);
       }
 
@@ -1075,6 +1121,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         pageMap.set("slug", pg.slug);
         pageMap.set("body", new Y.Text(pg.body ?? ""));
         pageMap.set("order", pg.order ?? 0);
+        pageMap.set("created_by", pg.created_by ?? null);
         pagesArray.push([pageMap]);
       }
     });
@@ -1141,6 +1188,67 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     }
   }
 
+  /**
+   * Remove duplicate entries from a Y.Array<Y.Map> by _id in place.
+   * The first occurrence wins; later duplicates are appended to toDelete and
+   * removed synchronously (caller is responsible for wrapping in a transact).
+   * Items with a null/undefined _id are distinct pending inserts — never removed.
+   */
+  private dedupeByIdInPlace(arr: Y.Array<Y.Map<unknown>>): void {
+    const seen = new Set<number>();
+    const toDelete: number[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      const id = arr.get(i).get("_id") as number | null | undefined;
+      if (id !== null && id !== undefined) {
+        if (seen.has(id)) {
+          toDelete.push(i);
+          continue;
+        }
+        seen.add(id);
+      }
+    }
+    // Delete in reverse order so earlier indices stay valid
+    for (let i = toDelete.length - 1; i >= 0; i--) {
+      arr.delete(toDelete[i], 1);
+    }
+    if (toDelete.length > 0) {
+      console.warn(
+        `[snapshot] Deduplicated nested array: removed ${toDelete.length} duplicate(s)`,
+      );
+    }
+  }
+
+  /**
+   * Walk each story's `steps` array (and each step's `layers` array) and
+   * remove entries whose `_id` already appeared (first occurrence wins).
+   * Mirrors `deduplicateYArray` for the nested level that the top-level pass
+   * cannot reach.
+   *
+   * All mutations are wrapped in a single ydoc.transact so peers receive one
+   * atomic update rather than a delete per duplicate.
+   */
+  private deduplicateNestedStepArrays(): void {
+    const storiesArray = this.ydoc.getArray<Y.Map<unknown>>("stories");
+    if (storiesArray.length === 0) return;
+
+    this.ydoc.transact(() => {
+      for (let s = 0; s < storiesArray.length; s++) {
+        const stepsArr = storiesArray.get(s).get("steps");
+        if (!(stepsArr instanceof Y.Array)) continue;
+
+        const steps = stepsArr as Y.Array<Y.Map<unknown>>;
+        this.dedupeByIdInPlace(steps);
+
+        for (let i = 0; i < steps.length; i++) {
+          const layersArr = steps.get(i).get("layers");
+          if (layersArr instanceof Y.Array) {
+            this.dedupeByIdInPlace(layersArr as Y.Array<Y.Map<unknown>>);
+          }
+        }
+      }
+    });
+  }
+
   async snapshotToD1(): Promise<void> {
     if (!this.projectId || !this.docLoaded) return;
     if (this.isSnapshotting) return; // Prevent duplicate INSERTs from concurrent calls
@@ -1152,32 +1260,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     }
   }
 
-  private async doSnapshot(): Promise<void> {
-    if (!this.projectId || !this.docLoaded) return;
-
-    // --- Corruption guard: deduplicate Y.Arrays before snapshot ---
-    // If a bug (e.g. broken reorder) introduced duplicate entries, remove them
-    // here to prevent the corruption from persisting to D1. Duplicates are
-    // detected by _id (D1 primary key) for existing items, and by entity key
-    // (story_id, object_id) for all items. The first occurrence wins.
-    this.deduplicateYArray("stories", "story_id");
-    this.deduplicateYArray("objects", "object_id");
-    this.deduplicateYArray("glossary", "term_id");
-    this.deduplicateYArray("pages", "slug");
-
-    // Track whether we performed any INSERTs that backfilled _id onto Y.Maps —
-    // if so, broadcast the updated Y.Doc state to all connected clients at the
-    // end so they converge on the canonical D1 IDs.
-    let didBackfill = false;
-    const now = new Date().toISOString();
-
-    const statements: D1PreparedStatement[] = [];
-
-    // NOTE: projects.yjs_state blob write is appended at the end of this method
-    // so the encoded state includes any INSERT ID backfills applied by sections
-    // 5-8. Otherwise a cold-start restore from the blob would see _id: null
-    // items that have already been INSERTed to D1 and would re-INSERT them.
-
+  /** Sections 3+4: project_config + project_landing UPDATEs. No INSERTs. */
+  private snapshotConfig(statements: D1PreparedStatement[], now: string): void {
     // 3. Snapshot config
     const config = this.ydoc.getMap<unknown>("config");
     const landing = config.get("landing") as Y.Map<unknown> | undefined;
@@ -1241,7 +1325,18 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           ),
       );
     }
+  }
 
+  /**
+   * Section 5: stories + nested steps + layers. INSERT (with _id backfill),
+   * UPDATE, DELETE, and the story→steps→layers cascade. Returns whether any
+   * INSERT backfilled an _id onto a Y.Map (the caller's didBackfill).
+   */
+  private async snapshotStories(
+    statements: D1PreparedStatement[],
+    now: string,
+  ): Promise<boolean> {
+    let didBackfill = false;
     // 5. Snapshot stories, steps, and layers — handles INSERT for new Y.Maps
     //    (with _id === null), UPDATE for existing ones, DELETE for D1 rows
     //    absent from the Y.Array, and cascade deletes (story → steps → layers).
@@ -1262,8 +1357,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         // INSERT — await individually so we can capture last_row_id for backfill
         const storyResult = await this.env.DB
           .prepare(
-            'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, updated_at) ' +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, created_by, updated_at) ' +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .bind(
             this.projectId,
@@ -1275,6 +1370,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             storyMap.get("private") ? 1 : 0,
             storyMap.get("draft") ? 1 : 0,
             storyMap.get("show_sections") ? 1 : 0,
+            (storyMap.get("created_by") as number | null) ?? null,
             now,
           )
           .run();
@@ -1321,8 +1417,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           if (stepId === null || stepId === undefined) {
             const stepResult = await this.env.DB
               .prepare(
-                "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, created_by, updated_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               )
               .bind(
                 storyId,
@@ -1339,6 +1435,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
                 String(stepMap.get("clip_start") ?? ""),
                 String(stepMap.get("clip_end") ?? ""),
                 String(stepMap.get("loop") ?? ""),
+                (stepMap.get("created_by") as number | null) ?? null,
                 now,
               )
               .run();
@@ -1391,8 +1488,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
               if (layerId === null || layerId === undefined) {
                 const layerResult = await this.env.DB
                   .prepare(
-                    "INSERT INTO layers (step_id, layer_number, title, button_label, content, updated_at) " +
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO layers (step_id, layer_number, title, button_label, content, created_by, updated_at) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
                   )
                   .bind(
                     stepId,
@@ -1400,6 +1497,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
                     yTextToString(layerMap.get("title")),
                     yTextToString(layerMap.get("button_label")),
                     yTextToString(layerMap.get("content")),
+                    (layerMap.get("created_by") as number | null) ?? null,
                     now,
                   )
                   .run();
@@ -1478,7 +1576,15 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           .bind(orphanStoryId),
       );
     }
+    return didBackfill;
+  }
 
+  /** Section 6: objects INSERT (with _id backfill) / UPDATE / DELETE. */
+  private async snapshotObjects(
+    statements: D1PreparedStatement[],
+    now: string,
+  ): Promise<boolean> {
+    let didBackfill = false;
     // 6. Snapshot objects — INSERT for new IIIF items (with _id === null),
     //    UPDATE for existing ones, DELETE for orphans. Objects with
     //    _validation_state === "pending" are skipped so the object does
@@ -1506,7 +1612,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       if (objId === null || objId === undefined) {
         const objResult = await this.env.DB
           .prepare(
-            'INSERT INTO objects (project_id, object_id, title, creator, description, alt_text, source_url, period, year, featured, image_available, origin, missing_from_repo, "order", updated_at) ' +
+            "INSERT INTO objects (project_id, object_id, title, creator, description, alt_text, source_url, period, year, featured, image_available, origin, missing_from_repo, created_by, updated_at) " +
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .bind(
@@ -1523,7 +1629,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             objMap.get("image_available") ? 1 : 0,
             String(objMap.get("origin") ?? "iiif"),
             0, // missing_from_repo = false on insert
-            oi, // order from Y.Array index
+            (objMap.get("created_by") as number | null) ?? null,
             now,
           )
           .run();
@@ -1535,9 +1641,9 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         statements.push(
           this.env.DB
             .prepare(
-              'UPDATE objects SET title = ?, creator = ?, description = ?, alt_text = ?, ' +
-              'source_url = ?, period = ?, year = ?, featured = ?, image_available = ?, ' +
-              '"order" = ?, updated_at = ? WHERE id = ?',
+              "UPDATE objects SET title = ?, creator = ?, description = ?, alt_text = ?, " +
+              "source_url = ?, period = ?, year = ?, featured = ?, image_available = ?, " +
+              "updated_at = ? WHERE id = ?",
             )
             .bind(
               yTextToString(objMap.get("title")),
@@ -1549,7 +1655,6 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
               yTextToString(objMap.get("year")),
               objMap.get("featured") ? 1 : 0,
               objMap.get("image_available") ? 1 : 0,
-              oi, // order from Y.Array index
               now,
               objId,
             ),
@@ -1566,7 +1671,15 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           .bind(orphanObjId),
       );
     }
+    return didBackfill;
+  }
 
+  /** Section 7: glossary_terms INSERT (with _id backfill) / UPDATE / DELETE. */
+  private async snapshotGlossary(
+    statements: D1PreparedStatement[],
+    now: string,
+  ): Promise<boolean> {
+    let didBackfill = false;
     // 7. Snapshot glossary — INSERT / UPDATE / DELETE.
     //    term_id on INSERT: slugify the title if present, otherwise fall back
     //    to the Y.Map's _temp_id (UUID) so the NOT NULL constraint is satisfied.
@@ -1594,13 +1707,14 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
         const termResult = await this.env.DB
           .prepare(
-            "INSERT INTO glossary_terms (project_id, term_id, title, definition, updated_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO glossary_terms (project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
           )
           .bind(
             this.projectId,
             resolvedTermId,
             titleStr,
             yTextToString(termMap.get("definition")),
+            (termMap.get("created_by") as number | null) ?? null,
             now,
           )
           .run();
@@ -1636,7 +1750,15 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           .bind(orphanTermId),
       );
     }
+    return didBackfill;
+  }
 
+  /** Section 8: project_pages INSERT (with _id backfill) / UPDATE / DELETE. */
+  private async snapshotPages(
+    statements: D1PreparedStatement[],
+    now: string,
+  ): Promise<boolean> {
+    let didBackfill = false;
     // 8. Snapshot pages — INSERT / UPDATE / DELETE. Order written from Y.Array
     //    index so D1 stays aligned with the Yjs position.
     const pagesArray = this.ydoc.getArray<Y.Map<unknown>>("pages");
@@ -1653,8 +1775,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       if (pageId === null || pageId === undefined) {
         const pageResult = await this.env.DB
           .prepare(
-            'INSERT INTO project_pages (project_id, title, slug, body, "order", updated_at) ' +
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            'INSERT INTO project_pages (project_id, title, slug, body, "order", created_by, updated_at) ' +
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
           )
           .bind(
             this.projectId,
@@ -1662,6 +1784,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             String(pageMap.get("slug") ?? ""),
             yTextToString(pageMap.get("body")),
             pi, // order from Y.Array index
+            (pageMap.get("created_by") as number | null) ?? null,
             now,
           )
           .run();
@@ -1697,12 +1820,28 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           .bind(orphanPageId),
       );
     }
+    return didBackfill;
+  }
 
+  /**
+   * Section 9: project_members contribution UPDATEs + activity_log INSERTs +
+   * retention prune. Returns the activity keys to commit to `activityEmitted`
+   * only AFTER the batch succeeds (the caller owns that deferral).
+   */
+  private async snapshotContributions(
+    statements: D1PreparedStatement[],
+    now: string,
+  ): Promise<Array<{ actorUserId: number; entityKey: string }>> {
     // 9. Snapshot contribution data to project_members.
     // fields_edited is sourced from userFieldSets.get(userId).size (unique-field
     // Set semantics). The Set is NOT cleared after snapshot — it keeps accumulating
     // within the DO's lifetime (accepted behaviour).
     // Contribution UPDATE statements are added to the same batch for atomicity.
+    //
+    // Deferred in-memory mutations (E2 fix): activityEmitted and newSessions are
+    // updated only AFTER the batch succeeds. Declared here so they remain in
+    // scope at the commit point after the try/catch.
+    const newlyEmittedKeys: Array<{ actorUserId: number; entityKey: string }> = [];
     if (this.projectId) {
       const allUserIds = new Set<number>([...this.userFieldSets.keys(), ...this.newSessions]);
       // Include all users with field edits or new sessions
@@ -1739,22 +1878,145 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
               .bind(JSON.stringify(updated), this.projectId, userId),
           );
         }
+
+        // Emit coarse activity rows for editor edits.
+        // buildActivityRows derives one row per (user, entity) touched from the
+        // accumulated field-paths; we filter against activityEmitted so each
+        // entity emits at most once per DO lifetime (userFieldSets never clears,
+        // so an unfiltered emit would re-INSERT every entity every snapshot).
+        // Rows ride the same atomic this.env.DB.batch(statements) as the
+        // contribution UPDATEs. Raw DB.prepare/bind (not Drizzle) — the DO
+        // writes through the raw D1 binding. Actor is the server-resolved
+        // userId, never client-supplied (spoofing mitigation).
+        const activityRows = buildActivityRows(activeUserIds, this.userFieldSets, this.projectId);
+        let activityInserts = 0;
+        // Collect keys to commit to activityEmitted only AFTER the batch
+        // succeeds — see newlyEmittedKeys declaration at block top (E2 fix).
+        // buildActivityRows already deduplicates (actorUserId, entityKey)
+        // pairs within a single call, so a plain array is sufficient.
+        for (const row of activityRows) {
+          let emitted = this.activityEmitted.get(row.actorUserId);
+          if (!emitted) {
+            emitted = new Set<string>();
+            this.activityEmitted.set(row.actorUserId, emitted);
+          }
+          const entityKey = `${row.entityType}:${row.entityId}`;
+          if (emitted.has(entityKey)) continue; // already recorded this lifetime
+          // Defer the actual emitted.add() until after the batch succeeds.
+          newlyEmittedKeys.push({ actorUserId: row.actorUserId, entityKey });
+          activityInserts++;
+          statements.push(
+            this.env.DB
+              .prepare(
+                "INSERT INTO activity_log (project_id, actor_user_id, verb, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              )
+              .bind(this.projectId, row.actorUserId, row.verb, row.entityType, row.entityId, now),
+          );
+        }
+
+        // Opportunistic prune: editor edits are the high-volume
+        // activity producer and write the raw INSERTs above, NOT recordActivity,
+        // so the per-project retention cap must be enforced here too — otherwise
+        // the table grows unbounded for active projects. Mirrors the prune in
+        // activity.server.ts and shares ACTIVITY_RETENTION_CAP as the single
+        // source of truth. Rides the same atomic batch AFTER the inserts (D1
+        // batch is sequential+transactional, so the subquery sees the new rows).
+        // project-scoped — never touches another project's rows. Only when rows
+        // were actually inserted, to avoid a needless DELETE every snapshot.
+        if (activityInserts > 0) {
+          statements.push(
+            this.env.DB
+              .prepare(
+                `DELETE FROM activity_log
+                 WHERE project_id = ?
+                   AND id NOT IN (
+                     SELECT id FROM activity_log
+                     WHERE project_id = ?
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT ?
+                   )`,
+              )
+              .bind(this.projectId, this.projectId, ACTIVITY_RETENTION_CAP),
+          );
+        }
       }
       // userFieldSets Sets are NOT cleared — they keep accumulating.
-      this.newSessions.clear();
+      // NOTE: newSessions.clear() and activityEmitted updates are deferred;
+      // they happen after the batch succeeds (below).
     }
+    return newlyEmittedKeys;
+  }
+
+  private async doSnapshot(): Promise<void> {
+    if (!this.projectId || !this.docLoaded) return;
+
+    // --- Corruption guard: deduplicate Y.Arrays before snapshot ---
+    // If a bug (e.g. broken reorder) introduced duplicate entries, remove them
+    // here to prevent the corruption from persisting to D1. Duplicates are
+    // detected by _id (D1 primary key) for existing items, and by entity key
+    // (story_id, object_id) for all items. The first occurrence wins.
+    this.deduplicateYArray("stories", "story_id");
+    this.deduplicateYArray("objects", "object_id");
+    this.deduplicateYArray("glossary", "term_id");
+    this.deduplicateYArray("pages", "slug");
+    this.deduplicateNestedStepArrays();
+
+    // Track whether we performed any INSERTs that backfilled _id onto Y.Maps —
+    // if so, broadcast the updated Y.Doc state to all connected clients at the
+    // end so they converge on the canonical D1 IDs.
+    let didBackfill = false;
+    const now = new Date().toISOString();
+
+    const statements: D1PreparedStatement[] = [];
+
+    // NOTE: projects.yjs_state blob write is appended at the end of this method
+    // so the encoded state includes any INSERT ID backfills applied by sections
+    // 5-8. Otherwise a cold-start restore from the blob would see _id: null
+    // items that have already been INSERTed to D1 and would re-INSERT them.
+
+    this.snapshotConfig(statements, now);
+
+    if (await this.snapshotStories(statements, now)) didBackfill = true;
+
+    if (await this.snapshotObjects(statements, now)) didBackfill = true;
+
+    if (await this.snapshotGlossary(statements, now)) didBackfill = true;
+
+    if (await this.snapshotPages(statements, now)) didBackfill = true;
+
+    const newlyEmittedKeys = await this.snapshotContributions(statements, now);
 
     // Encode the full Y.Doc state as a binary blob AFTER all backfills so the
     // restored state on cold start matches the D1 rows inserted above.
+    //
+    // Write the blob standalone FIRST so it always reflects the entity INSERTs
+    // already committed above (and their backfilled _ids). If the UPDATE/DELETE
+    // batch later fails, the blob + INSERTs stay consistent and a cold-start
+    // restore won't orphan-delete the new entities.
     const blob = Y.encodeStateAsUpdate(this.ydoc);
-    statements.push(
-      this.env.DB
-        .prepare("UPDATE projects SET yjs_state = ?, updated_at = ? WHERE id = ?")
-        .bind(blob, now, this.projectId),
-    );
+    await this.env.DB
+      .prepare("UPDATE projects SET yjs_state = ?, updated_at = ? WHERE id = ?")
+      .bind(blob, now, this.projectId)
+      .run();
+    if (statements.length > 0) {
+      try {
+        await this.env.DB.batch(statements);
+      } catch (err) {
+        // INSERTs and the blob are durable and consistent; the failed
+        // UPDATE/DELETE batch will be retried on the next snapshot.
+        this.scheduleSnapshot();
+        throw err;
+      }
+    }
 
-    // Execute all updates atomically
-    await this.env.DB.batch(statements);
+    // Commit deferred in-memory mutations — only reached when the batch
+    // succeeded (the catch above rethrows, so any code here is success-only).
+    // Mutating these before the batch would permanently mark entities as
+    // emitted and clear session counts even when the DB writes failed (E2 fix).
+    for (const { actorUserId, entityKey } of newlyEmittedKeys) {
+      this.activityEmitted.get(actorUserId)?.add(entityKey);
+    }
+    this.newSessions.clear();
 
     // Broadcast ID-backfill updates to all connected clients.
     // The DO's in-memory Y.Doc received ydoc.transact() mutations during INSERT

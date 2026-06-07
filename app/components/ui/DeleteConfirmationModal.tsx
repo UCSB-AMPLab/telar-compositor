@@ -23,7 +23,7 @@
  * set, in which case focus moves to the type-to-confirm input so
  * the user can start typing immediately.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -237,7 +237,7 @@ export function DeleteConfirmationModal({
                 type="text"
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
-                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 font-body text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-terracotta/40"
+                className="mt-1 w-full rounded border border-gray-300 px-3 py-2 font-body text-sm text-charcoal"
                 aria-label={t("type_to_confirm_aria", {
                   defaultValue: "Type {{value}} to confirm",
                   value: confirmText,
@@ -262,7 +262,7 @@ export function DeleteConfirmationModal({
             type="button"
             onClick={onConfirm}
             disabled={confirmDisabled}
-            className={`font-heading text-sm uppercase tracking-wider px-4 py-2 rounded text-white ${destructiveBgClass} transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`font-heading text-sm uppercase tracking-wider px-4 py-2 rounded text-white ${destructiveBgClass} transition-colors disabled:bg-disabled disabled:text-fg-disabled disabled:cursor-not-allowed`}
           >
             {confirmLabel}
           </button>

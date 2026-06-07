@@ -1,0 +1,367 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`doSnapshot characterization — Scenario 1: all-existing entities > pins the D1-write stream for a doc whose entities all have real _id 1`] = `
+[
+  {
+    "binds": [
+      "<uint8array:nonempty>",
+      "2026-01-01T00:00:00.000Z",
+      42,
+    ],
+    "op": "run",
+    "sql": "UPDATE projects SET yjs_state = ?, updated_at = ? WHERE id = ?",
+  },
+  {
+    "op": "batch",
+    "statements": [
+      {
+        "binds": [
+          "Demo",
+          "Desc",
+          "Author",
+          "a@b.c",
+          "en",
+          "",
+          "",
+          "",
+          "",
+          0,
+          0,
+          "",
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          4,
+          "",
+          "[]",
+          "2026-01-01T00:00:00.000Z",
+          42,
+        ],
+        "sql": "UPDATE project_config SET title = ?, description = ?, author = ?, email = ?, lang = ?, baseurl = ?, url = ?, theme = ?, logo = ?, include_demo_content = ?, google_sheets_enabled = ?, google_sheets_published_url = ?, show_on_homepage = ?, show_story_steps = ?, show_object_credits = ?, browse_and_search = ?, show_link_on_homepage = ?, show_sample_on_homepage = ?, featured_count = ?, story_key = ?, navigation_json = ?, updated_at = ? WHERE project_id = ?",
+      },
+      {
+        "binds": [
+          "Story One",
+          "",
+          "",
+          0,
+          0,
+          0,
+          0,
+          "2026-01-01T00:00:00.000Z",
+          11,
+        ],
+        "sql": "UPDATE stories SET title = ?, subtitle = ?, byline = ?, "order" = ?, private = ?, draft = ?, show_sections = ?, updated_at = ? WHERE id = ?",
+      },
+    ],
+  },
+]
+`;
+
+exports[`doSnapshot characterization — Scenario 2: new entities (INSERT + backfill) > pins the interleaved INSERT/run() stream and blob-after-inserts ordering 1`] = `
+[
+  {
+    "binds": [
+      42,
+      "new-s",
+      "New Story",
+      "",
+      "",
+      0,
+      0,
+      0,
+      0,
+      null,
+      "2026-01-01T00:00:00.000Z",
+    ],
+    "op": "run",
+    "sql": "INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "binds": [
+      1001,
+      1,
+      "text",
+      "",
+      undefined,
+      undefined,
+      undefined,
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      null,
+      "2026-01-01T00:00:00.000Z",
+    ],
+    "op": "run",
+    "sql": "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "binds": [
+      1002,
+      1,
+      "Layer",
+      "",
+      "",
+      null,
+      "2026-01-01T00:00:00.000Z",
+    ],
+    "op": "run",
+    "sql": "INSERT INTO layers (step_id, layer_number, title, button_label, content, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "binds": [
+      42,
+      "new-o",
+      "Obj",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      0,
+      0,
+      "iiif",
+      0,
+      null,
+      "2026-01-01T00:00:00.000Z",
+    ],
+    "op": "run",
+    "sql": "INSERT INTO objects (project_id, object_id, title, creator, description, alt_text, source_url, period, year, featured, image_available, origin, missing_from_repo, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "binds": [
+      42,
+      "new-t",
+      "Term",
+      "Def",
+      null,
+      "2026-01-01T00:00:00.000Z",
+    ],
+    "op": "run",
+    "sql": "INSERT INTO glossary_terms (project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "binds": [
+      42,
+      "Page",
+      "new-p",
+      "Body",
+      0,
+      null,
+      "2026-01-01T00:00:00.000Z",
+    ],
+    "op": "run",
+    "sql": "INSERT INTO project_pages (project_id, title, slug, body, "order", created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  },
+  {
+    "binds": [
+      "<uint8array:nonempty>",
+      "2026-01-01T00:00:00.000Z",
+      42,
+    ],
+    "op": "run",
+    "sql": "UPDATE projects SET yjs_state = ?, updated_at = ? WHERE id = ?",
+  },
+  {
+    "op": "batch",
+    "statements": [
+      {
+        "binds": [
+          "Demo",
+          "Desc",
+          "Author",
+          "a@b.c",
+          "en",
+          "",
+          "",
+          "",
+          "",
+          0,
+          0,
+          "",
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          4,
+          "",
+          "[]",
+          "2026-01-01T00:00:00.000Z",
+          42,
+        ],
+        "sql": "UPDATE project_config SET title = ?, description = ?, author = ?, email = ?, lang = ?, baseurl = ?, url = ?, theme = ?, logo = ?, include_demo_content = ?, google_sheets_enabled = ?, google_sheets_published_url = ?, show_on_homepage = ?, show_story_steps = ?, show_object_credits = ?, browse_and_search = ?, show_link_on_homepage = ?, show_sample_on_homepage = ?, featured_count = ?, story_key = ?, navigation_json = ?, updated_at = ? WHERE project_id = ?",
+      },
+    ],
+  },
+]
+`;
+
+exports[`doSnapshot characterization — Scenario 3: cascade delete > pins the story+steps+layers DELETE statements for an orphaned story 1`] = `
+[
+  {
+    "binds": [
+      "<uint8array:nonempty>",
+      "2026-01-01T00:00:00.000Z",
+      42,
+    ],
+    "op": "run",
+    "sql": "UPDATE projects SET yjs_state = ?, updated_at = ? WHERE id = ?",
+  },
+  {
+    "op": "batch",
+    "statements": [
+      {
+        "binds": [
+          "Demo",
+          "Desc",
+          "Author",
+          "a@b.c",
+          "en",
+          "",
+          "",
+          "",
+          "",
+          0,
+          0,
+          "",
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          4,
+          "",
+          "[]",
+          "2026-01-01T00:00:00.000Z",
+          42,
+        ],
+        "sql": "UPDATE project_config SET title = ?, description = ?, author = ?, email = ?, lang = ?, baseurl = ?, url = ?, theme = ?, logo = ?, include_demo_content = ?, google_sheets_enabled = ?, google_sheets_published_url = ?, show_on_homepage = ?, show_story_steps = ?, show_object_credits = ?, browse_and_search = ?, show_link_on_homepage = ?, show_sample_on_homepage = ?, featured_count = ?, story_key = ?, navigation_json = ?, updated_at = ? WHERE project_id = ?",
+      },
+      {
+        "binds": [
+          21,
+        ],
+        "sql": "DELETE FROM layers WHERE step_id = ?",
+      },
+      {
+        "binds": [
+          11,
+        ],
+        "sql": "DELETE FROM steps WHERE story_id = ?",
+      },
+      {
+        "binds": [
+          11,
+        ],
+        "sql": "DELETE FROM stories WHERE id = ?",
+      },
+    ],
+  },
+]
+`;
+
+exports[`doSnapshot characterization — Scenario 4: contributions + activity > pins project_members UPDATEs, activity_log INSERTs, and the retention prune 1`] = `
+[
+  {
+    "binds": [
+      "<uint8array:nonempty>",
+      "2026-01-01T00:00:00.000Z",
+      42,
+    ],
+    "op": "run",
+    "sql": "UPDATE projects SET yjs_state = ?, updated_at = ? WHERE id = ?",
+  },
+  {
+    "op": "batch",
+    "statements": [
+      {
+        "binds": [
+          "Demo",
+          "Desc",
+          "Author",
+          "a@b.c",
+          "en",
+          "",
+          "",
+          "",
+          "",
+          0,
+          0,
+          "",
+          1,
+          1,
+          1,
+          1,
+          1,
+          0,
+          4,
+          "",
+          "[]",
+          "2026-01-01T00:00:00.000Z",
+          42,
+        ],
+        "sql": "UPDATE project_config SET title = ?, description = ?, author = ?, email = ?, lang = ?, baseurl = ?, url = ?, theme = ?, logo = ?, include_demo_content = ?, google_sheets_enabled = ?, google_sheets_published_url = ?, show_on_homepage = ?, show_story_steps = ?, show_object_credits = ?, browse_and_search = ?, show_link_on_homepage = ?, show_sample_on_homepage = ?, featured_count = ?, story_key = ?, navigation_json = ?, updated_at = ? WHERE project_id = ?",
+      },
+      {
+        "binds": [
+          "Story One",
+          "",
+          "",
+          0,
+          0,
+          0,
+          0,
+          "2026-01-01T00:00:00.000Z",
+          11,
+        ],
+        "sql": "UPDATE stories SET title = ?, subtitle = ?, byline = ?, "order" = ?, private = ?, draft = ?, show_sections = ?, updated_at = ? WHERE id = ?",
+      },
+      {
+        "binds": [
+          "{"stories_edited":[],"objects_edited":[],"fields_edited":1,"sessions":1,"last_active":"2026-01-01T00:00:00.000Z"}",
+          42,
+          7,
+        ],
+        "sql": "UPDATE project_members SET contributions = ? WHERE project_id = ? AND user_id = ?",
+      },
+      {
+        "binds": [
+          42,
+          7,
+          "edited",
+          "story",
+          "11",
+          "2026-01-01T00:00:00.000Z",
+        ],
+        "sql": "INSERT INTO activity_log (project_id, actor_user_id, verb, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      },
+      {
+        "binds": [
+          42,
+          42,
+          200,
+        ],
+        "sql": "DELETE FROM activity_log
+                 WHERE project_id = ?
+                   AND id NOT IN (
+                     SELECT id FROM activity_log
+                     WHERE project_id = ?
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT ?
+                   )",
+      },
+    ],
+  },
+]
+`;

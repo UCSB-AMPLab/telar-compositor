@@ -17,11 +17,17 @@
  * `ViewerColumn`. Reads steps and layers from the Y.Array when a
  * Y.Doc is available, otherwise falls back to loader data.
  *
- * @version v1.2.0-beta
+ * Computes a plain `layersByStep` map so the sidebar can render nested
+ * L1/L2 navigation sub-rows, and additively mirrors in-editor
+ * navigation into `?step`/`?layer` via `setSearchParams(…, { replace: true })`
+ * on the step-select / layer-open / layer-close handlers — never
+ * inside the one-shot `deepLinkConsumedRef` mount read.
+ *
+ * @version v1.3.0-beta
  */
 
-import { useState, useEffect, useRef } from "react";
-import { redirect, useFetcher, useNavigate } from "react-router";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { redirect, useFetcher, useNavigate, useOutletContext, useSearchParams, Link, useRouteError, isRouteErrorResponse } from "react-router";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Route } from "./+types/_app.stories.$storyId";
 import { userContext } from "~/middleware/auth.server";
@@ -31,6 +37,7 @@ import { resolveActiveProject, requireProjectMember } from "~/lib/membership.ser
 import { createSessionStorage } from "~/lib/session.server";
 import { EditorShell } from "~/components/features/editor/EditorShell";
 import { StepSidebar } from "~/components/features/editor/StepSidebar";
+import type { SidebarLayerSummary } from "~/components/features/editor/StepSidebar";
 import { NarrativeColumn } from "~/components/features/editor/NarrativeColumn";
 import { SectionCardView } from "~/components/features/editor/SectionCardView";
 import { ViewerColumn } from "~/components/features/editor/ViewerColumn";
@@ -44,6 +51,7 @@ import { useCollaborationContext, useSetAwarenessLocation } from "~/hooks/use-co
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useToast } from "~/hooks/use-toast";
 import { findYMapById, getYText } from "~/lib/yjs-helpers";
+import { recordError } from "~/lib/error-capture";
 import * as Y from "yjs";
 
 export const handle = { i18n: ["editor", "common"] };
@@ -162,12 +170,22 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   const intent = formData.get("intent") as string;
   const now = new Date().toISOString();
 
-  // Helper: touch the story's updated_at so the stories list reflects recent edits
-  async function touchStory() {
+  // Helper: touch the story's updated_at so the stories list reflects recent
+  // edits. story_id is the per-project slug, NOT globally unique (the
+  // loader fetches by project_id AND story_id). Scoping only by story_id would
+  // bump updated_at on EVERY story sharing that slug across ALL projects,
+  // corrupting the "recently edited" ordering of unrelated stories. The caller
+  // passes the project id it already resolved for its membership check.
+  async function touchStory(projectId: number) {
     await db
       .update(stories)
       .set({ updated_at: now })
-      .where(eq(stories.story_id, params.storyId));
+      .where(
+        and(
+          eq(stories.story_id, params.storyId),
+          eq(stories.project_id, projectId)
+        )
+      );
   }
 
   // Resolve the owning project for a layer via the layers → steps →
@@ -190,9 +208,32 @@ export async function action({ request, params, context }: Route.ActionArgs) {
     return row.projectId;
   }
 
+  // Resolve the owning project for a step via the steps → stories join,
+  // so capture-position / change-object can gate on project membership before
+  // any mutation (mirrors resolveLayerProjectId). 400 for non-finite stepId,
+  // 404 for unknown stepId. Without this, any authenticated user could mutate
+  // any step's position or object by POSTing an arbitrary stepId (IDOR).
+  async function resolveStepProjectId(stepId: number): Promise<number> {
+    if (!Number.isFinite(stepId) || stepId <= 0) {
+      throw new Response("Bad request", { status: 400 });
+    }
+    const rows = await db
+      .select({ projectId: stories.project_id })
+      .from(steps)
+      .innerJoin(stories, eq(steps.story_id, stories.id))
+      .where(eq(steps.id, stepId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) throw new Response("Not found", { status: 404 });
+    return row.projectId;
+  }
+
   switch (intent) {
     case "capture-position": {
       const stepId = Number(formData.get("stepId"));
+      // Gate on project membership before mutating the step.
+      const projectId = await resolveStepProjectId(stepId);
+      await requireProjectMember(db, projectId, user.id);
       const x = parseFloat(formData.get("x") as string);
       const y = parseFloat(formData.get("y") as string);
       const zoom = parseFloat(formData.get("zoom") as string);
@@ -203,19 +244,22 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         .set({ x, y, zoom, page, updated_at: now })
         .where(eq(steps.id, stepId));
 
-      await touchStory();
+      await touchStory(projectId);
       return { ok: true, intent: "capture-position" };
     }
 
     case "change-object": {
       const stepId = Number(formData.get("stepId"));
+      // Gate on project membership before mutating the step.
+      const projectId = await resolveStepProjectId(stepId);
+      await requireProjectMember(db, projectId, user.id);
       const objectId = formData.get("objectId") as string;
 
       await db
         .update(steps)
         .set({ object_id: objectId, updated_at: now })
         .where(eq(steps.id, stepId));
-      await touchStory();
+      await touchStory(projectId);
 
       return { ok: true, intent: "change-object" };
     }
@@ -234,7 +278,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         .update(layers)
         .set({ content, button_label: buttonLabel, updated_at: now })
         .where(eq(layers.id, layerId));
-      await touchStory();
+      await touchStory(projectId);
       return { ok: true, intent: "save-layer" };
     }
 
@@ -249,7 +293,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       if (field === "title") updateData.title = value;
       if (field === "button_label") updateData.button_label = value;
       await db.update(layers).set(updateData).where(eq(layers.id, layerId));
-      await touchStory();
+      await touchStory(projectId);
       return { ok: true, intent: "autosave-layer" };
     }
 
@@ -361,8 +405,8 @@ function stepFromYMap(s: Y.Map<unknown>): EditorStep {
   return {
     id: (s.get("_id") as number | null) ?? 0,
     step_number: (s.get("step_number") as number) ?? 0,
-    // Per phase 33-03 hydration, every step Y.Map carries an explicit kind;
-    // ?? 'media' guards against legacy Y.Maps from before plan 33-03 shipped.
+    // Every step Y.Map carries an explicit kind after hydration;
+    // ?? 'media' guards against legacy Y.Maps from before that field existed.
     kind: ((s.get("kind") as string | undefined) ?? "media") as "media" | "section",
     question: readScalarText(s, "question"),
     answer: readScalarText(s, "answer"),
@@ -438,11 +482,13 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   } = loaderData;
   const { t } = useTranslation("editor");
   const { t: tStructural } = useTranslation("structural");
+  const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
   const { ydoc, remoteCollaborators } = useCollaborationContext();
   const setAwarenessLocation = useSetAwarenessLocation();
   const ops = useStructuralOps(currentUserId, userRole);
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Broadcast storyId to awareness so story card badges and header tooltips
   // can show which story this collaborator is editing.
@@ -453,8 +499,13 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
       fieldKey: null,
     });
     return () => {
+      // On teardown the component is unmounting (or the story changed),
+      // so clear the awareness location entirely. The previous code read
+      // `location.pathname` from the global `window.location` (no react-router
+      // `location` was in scope) — undefined on SSR/worker render, and in the
+      // browser it reflected the already-navigated URL, recording a wrong route.
       setAwarenessLocation({
-        route: location.pathname,
+        route: null,
         storyId: null,
         fieldKey: null,
       });
@@ -477,9 +528,32 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   const [layer1Open, setLayer1Open] = useState(false);
   const [layer2Open, setLayer2Open] = useState(false);
 
+  // Capture-position Undo. The baseline is the step's
+  // x/y/zoom/page snapshotted BEFORE the capture transaction, keyed to the
+  // step it belongs to. A repeated capture replaces it (re-baselines); selecting
+  // a different step clears it (the undo is scoped to the just-captured step).
+  // The baseline identifies its step by BOTH the D1 id and
+  // the Yjs _tempId. A freshly-added step has only a _tempId at capture time;
+  // after snapshotToD1 backfills the real id the step's stable key flips from
+  // _tempId to the numeric id. Storing a single `stepKey` (the pre-backfill
+  // key) would then fail to resolve the target in handleUndoCapture, silently
+  // no-op'ing the Undo while the pill is still shown. Matching on either id OR
+  // _tempId survives the backfill.
+  const [captureUndo, setCaptureUndo] = useState<{
+    id: number | null;
+    tempId: string | null;
+    prior: { x: unknown; y: unknown; zoom: unknown; page: unknown };
+    // Bumped on every capture so a repeated capture of the SAME step re-shows
+    // the toast and resets its 5s auto-dismiss timer (replace-on-recapture).
+    nonce: number;
+  } | null>(null);
+
   const captureFetcher = useFetcher();
   const changeObjectFetcher = useFetcher();
-  const clipFetcher = useFetcher();
+  // clipFetcher removed — clip/loop values flow through the Y.Doc only;
+  // there is no "autosave-step-field" action handler, so the prior fallback
+  // POST silently failed. The no-ydoc edge now warns instead (see
+  // handleCaptureClip / handleToggleLoop).
 
   // ---------------------------------------------------------------------------
   // Y.Array-backed step state
@@ -579,6 +653,180 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   const isSectionCard = !isStepZero && activeStep?.kind === "section";
   const totalSteps = sidebarSteps.length;
 
+  // Per-step layer summaries for the sidebar's nested L1/L2 sub-rows.
+  // Computed here (plain data) so SortableStepItem never reads `_yMap`. Keyed by
+  // the step's stable key (id > 0 ? id : _tempId) — matching StepSidebar.keyFor.
+  // In Yjs mode every step Y.Map carries a `layers` Y.Array; in the D1 fallback
+  // the flat `storyLayers` list is grouped by step_id. Reactive because it
+  // derives from sidebarSteps (recomputed by the stepsArray observeDeep) and
+  // storyLayers.
+  const layersByStep = useMemo<Record<string, SidebarLayerSummary[]>>(() => {
+    const map: Record<string, SidebarLayerSummary[]> = {};
+    for (const s of sidebarSteps) {
+      if (s.kind === "section") continue;
+      const key = String(s.id > 0 ? s.id : s._tempId ?? "");
+      if (!key) continue;
+      let summaries: SidebarLayerSummary[] = [];
+      const layersArr = s._yMap?.get("layers");
+      if (s._yMap && layersArr instanceof Y.Array) {
+        const arr = layersArr as Y.Array<Y.Map<unknown>>;
+        summaries = [];
+        for (let i = 0; i < arr.length; i++) {
+          const l = layerFromYMap(arr.get(i), s.id);
+          summaries.push({
+            layer_number: l.layer_number,
+            button_label: l.button_label,
+          });
+        }
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        summaries = (storyLayers as any[])
+          .filter((l) => l.step_id === s.id)
+          .map((l) => ({
+            layer_number: l.layer_number as number,
+            button_label: (l.button_label as string | null) ?? null,
+          }));
+      }
+      if (summaries.length > 0) map[key] = summaries;
+    }
+    return map;
+  }, [sidebarSteps, storyLayers]);
+
+  // ---------------------------------------------------------------------------
+  // Deep-link: ?step=N&layer=M mount-time read.
+  //
+  // MINIMAL ADDITIVE read — NOT a refactor of the activeStepIndex navigation
+  // model. The glossary "Used in" jump (UsedInPanel) navigates here with
+  // ?step=N (1-based, mapping directly to activeStepIndex; 0 = title card) and
+  // optional ?layer=M (1 | 2). We consume the params ONCE, the first time the
+  // sidebar steps are available, then let component state own navigation so the
+  // read never fights normal in-editor clicks. Forward-compatible with
+  // the ?step=N&layer=M deep-link contract.
+  //
+  // Tampering guard: step/layer are parsed as integers and bounds-checked
+  // against the actual step count and the layer set {1,2}. An out-of-range or
+  // non-numeric param is ignored (falls back to the title card / no layer),
+  // never throws or indexes out of bounds.
+  const deepLinkConsumedRef = useRef(false);
+  // The deep-link pulse timer is held in a ref, NOT torn down by the
+  // consume effect's cleanup. The consume effect depends on [totalSteps,
+  // searchParams]; if searchParams changes within the 350ms before the pulse
+  // fires (e.g. the URL-mirror write the effect's own setActiveStepIndex
+  // triggers, or a fast click), the effect's cleanup would clear the timer and
+  // the re-run returns early (consume guard) without re-registering it — so the
+  // chip never pulses. A ref survives re-runs; a single unmount-only effect
+  // clears it.
+  const pulseTimerRef = useRef<number | null>(null);
+  const pulseRemoveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (pulseTimerRef.current !== null) window.clearTimeout(pulseTimerRef.current);
+      if (pulseRemoveTimerRef.current !== null) window.clearTimeout(pulseRemoveTimerRef.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (deepLinkConsumedRef.current) return;
+    // Wait until the sidebar steps are actually available — in Yjs mode they
+    // load asynchronously, so consuming the param before then would bounds-check
+    // against an empty list and silently drop a valid deep link.
+    if (totalSteps === 0) return;
+
+    deepLinkConsumedRef.current = true;
+
+    const rawStep = searchParams.get("step");
+    if (rawStep === null) return;
+
+    const parsedStep = Number.parseInt(rawStep, 10);
+    // Valid range: 1..totalSteps. 0 / negative / non-numeric / out-of-range are
+    // ignored (the title card stays active). String(parsedStep) === rawStep
+    // rejects values like "1.5" or "1abc" that parseInt would otherwise coerce.
+    if (
+      !Number.isInteger(parsedStep) ||
+      String(parsedStep) !== rawStep.trim() ||
+      parsedStep < 1 ||
+      parsedStep > totalSteps
+    ) {
+      return;
+    }
+
+    setActiveStepIndex(parsedStep);
+
+    // Optional ?layer=M — open layer 1 or 2 so the [[term]] occurrence is
+    // visible. Layer-WITHIN-step precision (pulsing the exact occurrence inside
+    // the correct expanded panel) is a Phase-50 layer-panel-DOM concern; here we
+    // open the requested layer and pulse the first glossary chip that mounts.
+    const rawLayer = searchParams.get("layer");
+    const parsedLayer = rawLayer === null ? null : Number.parseInt(rawLayer, 10);
+    const validLayer =
+      parsedLayer === 1 || parsedLayer === 2 ? parsedLayer : null;
+    if (validLayer === 1) setLayer1Open(true);
+    else if (validLayer === 2) {
+      setLayer1Open(true);
+      setLayer2Open(true);
+    }
+
+    // After the step (and any layer panel) mounts, scroll the [[term]] chip —
+    // rendered as a `.cm-glossary-chip` widget by the editor's ViewPlugin — into
+    // view with a transient pulse that fades. The chip DOM is guaranteed present
+    // by the glossary-chip rendering. Deferred so the layer panel + its CodeMirror have
+    // mounted; if no chip is present (e.g. step-level landing only) this is a
+    // no-op and the step navigate above still stands.
+    pulseTimerRef.current = window.setTimeout(() => {
+      const chip = document.querySelector<HTMLElement>(".cm-glossary-chip");
+      if (!chip) return;
+      chip.scrollIntoView({ behavior: "smooth", block: "center" });
+      chip.classList.add("cm-glossary-chip-pulse");
+      pulseRemoveTimerRef.current = window.setTimeout(
+        () => chip.classList.remove("cm-glossary-chip-pulse"),
+        2400,
+      );
+    }, 350);
+
+    // No effect-level cleanup tearing down the pulse timer — it lives in
+    // pulseTimerRef and is cleared only on unmount. A re-run of this effect
+    // (searchParams change) returns early via deepLinkConsumedRef, so it would
+    // never re-register the timer; clearing it here would lose the pulse.
+  }, [totalSteps, searchParams]);
+
+  // ---------------------------------------------------------------------------
+  // Additive URL mirror. `activeStepIndex` + `layer1Open`/
+  // `layer2Open` remain the navigation drivers; these helpers mirror the
+  // current position into ?step/?layer with REPLACE history so the URL is a
+  // restorable + shareable bookmark and browser Back exits the editor rather
+  // than stepping through every click.
+  //
+  // CRITICAL: these writes hang ONLY off the user-action handlers
+  // (step select, layer open, layer close). They are NEVER called inside the
+  // one-shot deepLinkConsumedRef read effect above — that effect consumes-then-
+  // guards (sets .current = true before reading), so a mirror write changing
+  // searchParams can never re-trigger the read.
+  //
+  // Mapping: step select index N>0 → ?step=N (drop ?layer); index 0 (title card)
+  // → drop both; open L1 → ?layer=1; open L2 → ?layer=2; close → drop ?layer.
+  const mirrorStepParam = (index: number) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (index > 0) next.set("step", String(index));
+        else next.delete("step");
+        next.delete("layer"); // selecting a step closes any open layer
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const mirrorLayerParam = (layer: 1 | 2 | null) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (layer === null) next.delete("layer");
+        else next.set("layer", String(layer));
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
   // Section-card count drives the helper-text visibility on the title-card
   // show_sections toggle.
   const sectionCardCount = sidebarSteps.filter((s) => s.kind === "section").length;
@@ -611,6 +859,17 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     ? String(activeStep.id > 0 ? activeStep.id : activeStep._tempId ?? "")
     : null;
 
+  // The remote-delete effect below has deps [sidebarSteps, useYjs,
+  // userRole] (exhaustive-deps disabled) but reads activeStepIndex (for the
+  // toast step number) and remoteCollaborators (for the deleter name). Reading
+  // those directly captures a stale closure — the toast could show the wrong
+  // step number or attribute the deletion to a stale/empty collaborator. Mirror
+  // both into refs written during render so the effect reads current values.
+  const activeStepIndexRef = useRef(activeStepIndex);
+  activeStepIndexRef.current = activeStepIndex;
+  const remoteCollaboratorsRef = useRef(remoteCollaborators);
+  remoteCollaboratorsRef.current = remoteCollaborators;
+
   useEffect(() => {
     if (!useYjs) return;
     const curr = new Set<string>();
@@ -626,10 +885,10 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
     // If the active step was deleted, toast + reset to title card.
     const activeKey = activeStepKeyRef.current;
-    const deleterName = remoteCollaborators[0]?.user.name ?? "";
+    const deleterName = remoteCollaboratorsRef.current[0]?.user.name ?? "";
     if (activeKey && deletedKeys.includes(activeKey)) {
       const stepLabel = tStructural("entity_step", {
-        number: activeStepIndex,
+        number: activeStepIndexRef.current,
       });
       const message = deleterName
         ? tStructural("toast_item_deleted", {
@@ -645,7 +904,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               action: {
                 label: tStructural("toast_item_deleted_undo"),
                 onClick: () => {
-                  // The global TabNav Undo button / Ctrl+Z (plan 27-04) drives
+                  // The global TabNav Undo button / Ctrl+Z drives
                   // the shared UndoManager — no direct call here.
                 },
               },
@@ -685,6 +944,29 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   // For step 0, show step 1's object in the viewer (Telar convention)
   const viewerStep = isStepZero ? (sidebarSteps[0] ?? null) : activeStep;
   const viewerObjectId = viewerStep?.object_id ?? null;
+
+  // Does a capture baseline refer to the given step? Matches
+  // on either the D1 id OR the Yjs _tempId so the match survives the id-backfill
+  // that flips a step's stable key after snapshotToD1.
+  const captureUndoMatchesStep = (
+    baseline: { id: number | null; tempId: string | null },
+    step: { id: number; _tempId: string | null } | null,
+  ): boolean => {
+    if (!step) return false;
+    if (baseline.id !== null && step.id > 0 && step.id === baseline.id) return true;
+    if (baseline.tempId !== null && step._tempId === baseline.tempId) return true;
+    return false;
+  };
+
+  // The capture-undo toast shows only while the captured step
+  // is still the active step (switching steps dismisses it). This gate is the
+  // belt-and-braces complement to the explicit setCaptureUndo(null) on the
+  // step-select handlers. The nonce changes on every capture so ViewerColumn
+  // re-shows the toast and resets its 5s timer on a repeated capture.
+  const captureUndoNonce =
+    captureUndo !== null && captureUndoMatchesStep(captureUndo, activeStep)
+      ? captureUndo.nonce
+      : null;
 
   const { manifestUrl, infoJsonUrl, isSelfHosted } = resolveIiifUrls(
     viewerObjectId,
@@ -807,7 +1089,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   // Per-story show_sections toggle. Mirrors the existing
   // storyYMap.set("draft", ...) / storyYMap.set("private", ...) patterns
   // in app/routes/_app.stories.tsx — Y.Doc is the source of truth, snapshotToD1
-  // (extended in plan 33-3) reconciles the boolean back to D1.
+  // reconciles the boolean back to D1.
   function handleToggleShowSections(value: boolean) {
     if (useYjs && storyYMap && ydoc) {
       ydoc.transact(() => {
@@ -853,6 +1135,23 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     // snapshotToD1 reconciles. The D1-only fetcher would be clobbered.
     if (useYjs && ydoc && activeStep._yMap) {
       const stepYMap = activeStep._yMap;
+      // Snapshot the step's CURRENT four values
+      // BEFORE the capture transact, stashed as the undo baseline keyed to the
+      // active step. Reading after the write would capture the post-write state
+      // and Undo would be a no-op. Replaces any existing baseline
+      // (repeated-capture re-baselining).
+      const prior = {
+        x: stepYMap.get("x"),
+        y: stepYMap.get("y"),
+        zoom: stepYMap.get("zoom"),
+        page: stepYMap.get("page"),
+      };
+      setCaptureUndo((prevUndo) => ({
+        id: activeStep.id > 0 ? activeStep.id : null,
+        tempId: activeStep._tempId ?? null,
+        prior,
+        nonce: (prevUndo?.nonce ?? 0) + 1,
+      }));
       ydoc.transact(() => {
         stepYMap.set("x", pos.x);
         stepYMap.set("y", pos.y);
@@ -872,6 +1171,32 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
       },
       { method: "post" }
     );
+  }
+
+  // Revert the just-captured step to its pre-capture
+  // baseline in ONE transaction. Last-write-wins — we simply write the snapshot
+  // back with no conflict detection, even if a remote peer changed the keys
+  // after capture. Clears the toast afterwards.
+  function handleUndoCapture() {
+    if (!captureUndo) return;
+    // Resolve the target by matching either the D1 id OR the
+    // Yjs _tempId. The baseline may have been captured before snapshotToD1
+    // backfilled the real id (flipping the step's stable key), so a single-key
+    // match would return undefined and silently no-op the Undo.
+    const target = sidebarSteps.find((s) =>
+      captureUndoMatchesStep(captureUndo, s)
+    );
+    const stepYMap = target?._yMap;
+    if (ydoc && stepYMap) {
+      const { prior } = captureUndo;
+      ydoc.transact(() => {
+        stepYMap.set("x", prior.x);
+        stepYMap.set("y", prior.y);
+        stepYMap.set("zoom", prior.zoom);
+        stepYMap.set("page", prior.page);
+      });
+    }
+    setCaptureUndo(null);
   }
 
   function handleChangeObject(objectId: string) {
@@ -897,10 +1222,10 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
   function handleCaptureClip(field: "clip_start" | "clip_end", value: string) {
     if (!activeStep) return;
-    // The "autosave-step-field" action handler does not exist; clip values
-    // live only in the Y.Doc and reach D1 via snapshotToD1. In non-Yjs
-    // fallback mode there is no save path, but useYjs is effectively always
-    // true once the collab connection is up.
+    // Clip values live in the Y.Doc and reach D1 via snapshotToD1. There is no
+    // "autosave-step-field" action handler — useYjs is effectively always true
+    // once the collab connection is up, so the no-ydoc branch is the
+    // connection-not-yet-up edge.
     if (useYjs && ydoc && activeStep._yMap) {
       const stepYMap = activeStep._yMap;
       ydoc.transact(() => {
@@ -908,10 +1233,12 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
       });
       return;
     }
-    clipFetcher.submit(
-      { intent: "autosave-step-field", field, value, entityId: String(activeStep.id) },
-      { method: "post" }
-    );
+    // Previously this POSTed intent "autosave-step-field", which the
+    // action switch does not handle (default → { error: "Unknown intent" }),
+    // silently dropping the value. Mirror the no-ydoc visibility pattern used by
+    // handleAddStep et al. rather than shipping a silent-failing POST.
+    // eslint-disable-next-line no-console
+    console.warn("[story-editor] capture-clip without active ydoc; ignored");
   }
 
   function handleToggleLoop(value: string) {
@@ -923,10 +1250,9 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
       });
       return;
     }
-    clipFetcher.submit(
-      { intent: "autosave-step-field", field: "loop", value, entityId: String(activeStep.id) },
-      { method: "post" }
-    );
+    // See handleCaptureClip — no silent POST to an unhandled intent.
+    // eslint-disable-next-line no-console
+    console.warn("[story-editor] toggle-loop without active ydoc; ignored");
   }
 
   function handleCreateLayer(_stepId: number, layerNumber: number, defaultLabel: string) {
@@ -1002,6 +1328,12 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   const activeLayer2: EditorLayer | null =
     activeLayers.find((l) => l.layer_number === 2) ?? null;
 
+  // Resolve layer 1's button_label Y.Text once and thread it through
+  // NarrativeColumn → StepView so the trigger pill writes the SAME Y.Text the
+  // layer-panel strip writes (live two-place sync). Mirrors the existing L2
+  // resolution at the LayerPanel render below.
+  const layer1ButtonLabelYText = getYText(activeLayer1?._yMap ?? null, "button_label");
+
   // Strip source_url from objects for the MarkdownEditor image picker (keep image_available for thumbnail guard)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorObjects = (projectObjects as any[]).map((o) => ({
@@ -1021,7 +1353,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
           steps={sidebarSteps}
           storyTitle={story.title}
           activeStepIndex={activeStepIndex}
-          onStepSelect={(idx: number) => { setActiveStepIndex(idx); setLayer1Open(false); setLayer2Open(false); }}
+          onStepSelect={(idx: number) => { setActiveStepIndex(idx); setLayer1Open(false); setLayer2Open(false); mirrorStepParam(idx); setCaptureUndo(null); }}
           onReorderSteps={handleReorderSteps}
           onAddStep={handleAddStep}
           onAddSectionCard={handleAddSectionCard}
@@ -1051,6 +1383,24 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
           deleteTooltip={tStructural("tooltip_cannot_delete")}
           highlightColorByKey={highlightedStepKeys}
           fadingKeys={fadingStepKeys}
+          layersByStep={layersByStep}
+          openLayerNumber={layer2Open ? 2 : layer1Open ? 1 : null}
+          onOpenLayer={(stepIndex: number, layerNumber: number) => {
+            // Navigate to a layer from a sidebar sub-row: select the step, then
+            // open the requested layer. Opening L2 implies L1 is open beneath it.
+            // Mirror both the step and the layer into the URL.
+            if (stepIndex !== activeStepIndex) setCaptureUndo(null);
+            setActiveStepIndex(stepIndex);
+            if (layerNumber === 2) {
+              setLayer1Open(true);
+              setLayer2Open(true);
+            } else {
+              setLayer1Open(true);
+              setLayer2Open(false);
+            }
+            mirrorStepParam(stepIndex);
+            mirrorLayerParam(layerNumber === 2 ? 2 : 1);
+          }}
         />
       }
       narrative={
@@ -1081,8 +1431,13 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
             activeStep={activeStep}
             layers={activeLayers}
             onOpenLayer={(layer) => {
-              if (layer.layer_number === 1) setLayer1Open(true);
-              else setLayer2Open(true);
+              if (layer.layer_number === 1) {
+                setLayer1Open(true);
+                mirrorLayerParam(1);
+              } else {
+                setLayer2Open(true);
+                mirrorLayerParam(2);
+              }
             }}
             onCreateLayer={handleCreateLayer}
             actionUrl={`/stories/${story.story_id}`}
@@ -1095,6 +1450,8 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
             questionYText={questionYText}
             answerYText={answerYText}
             altTextYText={altTextYText}
+            buttonLabelYText={layer1ButtonLabelYText}
+            onOpenDoc={openDoc}
           />
         )
       }
@@ -1114,6 +1471,9 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
           onCaptureClip={handleCaptureClip}
           onToggleLoop={handleToggleLoop}
           repoFullName={repoFullName}
+          captureUndoNonce={captureUndoNonce}
+          onUndoCapture={handleUndoCapture}
+          onOpenDoc={openDoc}
         >
           {/* Layer 1 panel */}
           {activeLayer1 && (
@@ -1126,7 +1486,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
                 content: activeLayer1.content,
               }}
               open={layer1Open}
-              onClose={() => { setLayer1Open(false); setLayer2Open(false); }}
+              onClose={() => { setLayer1Open(false); setLayer2Open(false); mirrorLayerParam(null); }}
               onDelete={handleDeleteLayer}
               actionUrl={`/stories/${story.story_id}`}
               canDelete={
@@ -1148,12 +1508,16 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
                   t("layer.default_label_2")
                 )
               }
-              onOpenLayer2={() => setLayer2Open(true)}
+              onOpenLayer2={() => { setLayer2Open(true); mirrorLayerParam(2); }}
               objects={editorObjects}
               siteBaseUrl={siteBaseUrl}
               titleYText={getYText(activeLayer1._yMap, "title")}
               contentYText={getYText(activeLayer1._yMap, "content")}
               layer2ButtonLabelYText={getYText(activeLayer2?._yMap ?? null, "button_label")}
+              buttonLabelYText={layer1ButtonLabelYText}
+              storyTitle={story.title}
+              stepNumber={activeStepIndex}
+              onOpenDoc={openDoc}
             />
           )}
           {/* Layer 2 panel — stacked on top of layer 1 */}
@@ -1167,7 +1531,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
                 content: activeLayer2.content,
               }}
               open={layer2Open}
-              onClose={() => setLayer2Open(false)}
+              onClose={() => { setLayer2Open(false); mirrorLayerParam(1); }}
               onDelete={handleDeleteLayer}
               actionUrl={`/stories/${story.story_id}`}
               canDelete={
@@ -1179,9 +1543,13 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
               skipInternalConfirm={useYjs}
               titleYText={getYText(activeLayer2._yMap, "title")}
               contentYText={getYText(activeLayer2._yMap, "content")}
+              buttonLabelYText={getYText(activeLayer2._yMap, "button_label")}
+              storyTitle={story.title}
+              stepNumber={activeStepIndex}
               hasLayer2={false}
               objects={editorObjects}
               siteBaseUrl={siteBaseUrl}
+              onOpenDoc={openDoc}
             />
           )}
         </ViewerColumn>
@@ -1277,5 +1645,75 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
       }
     />
     </>
+  );
+}
+
+/**
+ * Route-level ErrorBoundary for the Story Editor.
+ *
+ * The stories list renders from the Y.Doc (app/routes/_app.stories.tsx), so a
+ * story that exists in Yjs but has not yet been snapshotted to D1 still shows an
+ * Edit link. The loader queries D1 only and throws a 404 on miss. Without a
+ * route boundary that 404 bubbles to the ROOT boundary (app/root.tsx) and
+ * renders the full-app crash screen. Because React Router resolves the NEAREST
+ * boundary, this one intercepts the throw first and renders a recoverable,
+ * in-shell card (inside _app.tsx's header / TabNav shell) rather than replacing
+ * the whole app.
+ *
+ * Error-reporting parity (CRITICAL): the root boundary reports EVERY error via
+ * `recordError(error, "boundary")` (app/root.tsx — inside its useEffect). By
+ * intercepting here we take over that responsibility for this route, so we must
+ * preserve reporting for genuine crashes:
+ *   - A 404 is the EXPECTED transient "not snapshotted yet" state. It is a
+ *     recoverable, non-crash condition, so we deliberately do NOT report it —
+ *     reporting it would flood the crash buffer with normal user navigation.
+ *   - Any NON-404 error is a real failure. We call the SAME `recordError(error,
+ *     "boundary")` that root uses (via useEffect, the SSR guard — useEffect does
+ *     not run during worker SSR, so the browser-only capture singleton is never
+ *     touched on the server) AND render a generic in-shell card. We do NOT
+ *     re-throw: re-throwing from a route ErrorBoundary is not a supported React
+ *     Router recovery path (the throw would itself be uncaught), so calling
+ *     recordError directly is how we keep non-404s reported without losing the
+ *     in-shell recovery.
+ */
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const { t } = useTranslation("editor");
+  const is404 = isRouteErrorResponse(error) && error.status === 404;
+
+  useEffect(() => {
+    // SSR guard: useEffect runs only after client mount. Report non-404 errors
+    // through the same path the root boundary uses so genuine crashes on this
+    // route are never silently swallowed by the recoverable-card UI. A 404 is an
+    // expected transient state, so it is intentionally not reported.
+    if (!is404) recordError(error, "boundary");
+  }, [error, is404]);
+
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-white rounded-lg shadow-md p-6 text-center">
+        <h1 className="font-heading text-xl font-semibold text-charcoal">
+          {is404 ? t("error.not_available_title") : t("error.generic_title")}
+        </h1>
+        <p className="font-body text-sm text-gray-600 mt-3">
+          {is404 ? t("error.not_available_body") : t("error.generic_body")}
+        </p>
+        <div className="flex gap-3 justify-center mt-6">
+          <Link
+            to="/stories"
+            className="font-heading text-sm uppercase tracking-wider px-4 py-2 rounded text-charcoal bg-gray-100 hover:bg-gray-200 transition-colors"
+          >
+            {t("error.back_to_stories")}
+          </Link>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="font-heading text-sm uppercase tracking-wider px-4 py-2 rounded text-white bg-terracotta hover:bg-terracotta/90 transition-colors"
+          >
+            {t("error.retry")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

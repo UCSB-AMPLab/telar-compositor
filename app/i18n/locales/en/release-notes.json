@@ -1,0 +1,23 @@
+{
+  "v1_3_0_beta": {
+    "title": "New in the compositor",
+    "features_label": "New features",
+    "features": [
+      "Real-time collaboration — work on a site together with your team",
+      "Redesigned workspace with a guided first run",
+      "Faster navigation and a clearer publish progress tracker",
+      "Safer undo that only affects your own recent edits"
+    ],
+    "fixes_label": "Fixes",
+    "fixes": [
+      "Turning off demo content now works",
+      "Editing a brand-new story no longer errors",
+      "Renaming a layer button no longer fails",
+      "Deleting the site description no longer breaks the page"
+    ],
+    "thanks_label": "Thanks to",
+    "thanks_suffix": "for reporting bugs and issues.",
+    "thanks_cta": "You can help us make Telar and the compositor better by reporting any issues you find too, using the bug button",
+    "dismiss": "Got it"
+  }
+}

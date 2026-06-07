@@ -1,0 +1,115 @@
+{
+  "welcome": {
+    "eyebrow_default": "Project",
+    "eyebrow_collab_empty": "You were invited",
+    "title_collab_empty": "Welcome to {{project}}",
+    "open_repo_github": "Open repository on GitHub",
+    "convened_by_one": "convened by {{convenor}} · {{count}} collaborator · created {{year}}",
+    "convened_by_other": "convened by {{convenor}} · {{count}} collaborators · created {{year}}",
+    "created_year": "created {{year}}"
+  },
+  "role_chip": {
+    "convenor": "You · Convenor",
+    "collaborator": "You · Collaborator"
+  },
+  "orientation": {
+    "what_is_compositor": "What is the compositor?",
+    "plan_narrative": "Plan your narrative",
+    "add_collaborators": "Add collaborators"
+  },
+  "section": {
+    "workflow_map": "How the compositor works",
+    "activity": "Activity · latest",
+    "from_the_docs": "From the docs",
+    "other_projects": "Your other projects · {{N}}"
+  },
+  "workflow": {
+    "hint": "Telar sites are built in six steps, from setup to publishing. The tiles below show you the state of each part.",
+    "learn_more": "Learn more"
+  },
+  "tip": {
+    "configure": "Configure your site's settings here — its name, theme, language, and a short description, along with author details, hosting, and how your stories and collection appear to readers.",
+    "objects": "Add or modify the images, videos, and audio files that your site uses. You can either upload them or integrate them from IIIF, Vimeo, YouTube and Google Drive.",
+    "stories": "Stories are the core of Telar sites, pairing a series of questions and short answers with a framed view of an object, plus up to two layer panels for further information.",
+    "glossary": "You can add additional panels with definitions of key terms, concepts, people, places, or anything else you like. Manage them here and use them in your stories and pages.",
+    "pages": "Your Telar site has a homepage and can include additional pages, such as an About, Credits, or Bibliography page. Edit them here.",
+    "publish_collaborator": "Only the convenor can publish the site. When your changes are ready, let them know.",
+    "publish_convenor": "When you're ready, bundle your edits into a commit to GitHub, where your site rebuilds in about two minutes."
+  },
+  "activity": {
+    "empty": "No edits yet. When you or a teammate touches a story, an object, or a term, it will show up here.",
+    "fail_open": "Activity unavailable — check back shortly",
+    "see_all": "See all activity"
+  },
+  "recovery": {
+    "eyebrow": "Needs your attention",
+    "body": "{{N}} story files exist in your GitHub repo but aren't in the compositor. They likely came from a hand-edit on GitHub or a teammate working outside the editor. Restore them here as drafts, or ignore.",
+    "primary_cta": "Restore as drafts",
+    "secondary_cta": "Ignore",
+    "ignore_aria": "Ignore orphaned stories"
+  },
+  "from_docs": {
+    "hint": "Short excerpts from the guides, to read without leaving the compositor. The full documentation lives at <docsLink>telar.org/docs</docsLink>.",
+    "desc_start": "Sign in, connect a repo, and make your first edits.",
+    "desc_intro": "What the Compositor is and how it works.",
+    "desc_configure": "Set your site's name, theme, language, and description.",
+    "desc_narrative": "How stories, steps, and panels fit together.",
+    "desc_markdown": "Format panel text — emphasis, links, lists.",
+    "desc_iiif": "Use high-resolution images from museums, libraries, and archives.",
+    "desc_objects": "Browse, edit, upload, and add objects.",
+    "desc_publish": "Review changes, commit to GitHub, track the build.",
+    "desc_stories": "Build a story with the visual editor.",
+    "desc_video": "Capture clips and set loop points for media steps.",
+    "desc_refine": "Set image coordinates and polish your exhibition.",
+    "desc_sync": "Re-sync with your repository and upgrade Telar.",
+    "desc_glossary": "Define terms and link to them with [[term]].",
+    "desc_pages": "Build your homepage and standalone pages like About, Credits, or Bibliography."
+  },
+  "other_projects": {
+    "pill_unpublished": "{{N}} unpublished",
+    "pill_unpublished_some": "Unpublished",
+    "pill_in_sync": "In sync",
+    "pill_draft": "Draft",
+    "edited_relative": "edited {{relative}}"
+  },
+  "checklist": {
+    "convenor_heading": "Set up your project — three things first",
+    "convenor_step1": "Confirm site title and theme in Site settings — Sets the language, theme, and what visitors see on the published landing page.",
+    "convenor_step2": "Add your first object — Upload an image, paste an IIIF manifest, or link external media. Objects are what stories point at.",
+    "convenor_step3": "Invite your team and write a first story — A story is a sequence of steps that zoom and pan around objects with your analysis.",
+    "collaborator_heading": "Today, three things to get started",
+    "collaborator_step1": "Start with “What is the compositor?” — See how Telar pages, objects, stories, and the glossary fit together.",
+    "collaborator_step2": "Browse the Objects tab — See what the convenor has set up so far. Pick one to read closely.",
+    "collaborator_step3": "Open a story step and start writing — Your edits save automatically. Nothing goes live until the convenor publishes."
+  },
+  "tile": {
+    "configure": "Configure",
+    "objects": "Objects",
+    "stories": "Stories",
+    "glossary": "Glossary",
+    "pages": "Home and Pages",
+    "publish": "Publish"
+  },
+  "pill": {
+    "done": "Done",
+    "not_started": "Not started",
+    "empty": "Empty",
+    "none_yet": "None yet",
+    "landing_only": "Landing only",
+    "convenor_only": "Convenor-only",
+    "nothing_to_publish": "Nothing to publish yet",
+    "to_ship_one": "{{N}} change to push",
+    "to_ship_other": "{{N}} changes to push",
+    "objects_unused": "{{N}} · {{U}} unused",
+    "stories_drafts": "{{N}} · {{D}} drafts",
+    "terms": "{{N}} terms",
+    "pages": "{{N}} pages"
+  },
+  "drawer": {
+    "open_on_telar": "Open on telar.org",
+    "see_also": "See also",
+    "next": "Next: {{title}}",
+    "close": "Close",
+    "breadcrumb": "telar.org · Docs · {{chapter}}"
+  }
+}

@@ -8,7 +8,7 @@
  * (D1 is the cross-browser source of truth for language), creates
  * the session, and redirects to /dashboard.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { redirect } from "react-router";
@@ -20,6 +20,7 @@ import { getDb } from "~/lib/db.server";
 import { users } from "~/db/schema";
 import { eq } from "drizzle-orm";
 import { localeCookie } from "~/i18n/i18next.server";
+import { CURRENT_RELEASE } from "~/lib/release-notes";
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
@@ -104,6 +105,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         github_name: githubUser.name,
         github_email: githubUser.email,
         github_plan: githubUser.plan,
+        last_seen_release: CURRENT_RELEASE.id,
         encrypted_access_token: encAccessToken,
         encrypted_refresh_token: encRefreshToken,
         access_token_expires_at: accessTokenExpiresAt,
@@ -117,6 +119,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const sessionStorage = createSessionStorage(env.SESSION_SECRET);
   const session = await sessionStorage.getSession();
   session.set("userId", userId);
+  // Stamp the session creation time so the server-side lifetime guard
+  // (isSessionLifetimeValid, enforced on both the HTTP and websocket auth
+  // paths) can bound this token to the 7-day window. Without it the token has
+  // no server-enforceable lifetime and a copied cookie would live forever.
+  session.set("createdAt", new Date().toISOString());
 
   // Hydrate locale cookie from D1 — D1 is the cross-browser source of truth.
   // If ui_locale is set, override any incoming cookie; if null, leave it alone.

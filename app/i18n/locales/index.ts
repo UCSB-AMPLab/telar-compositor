@@ -18,6 +18,10 @@ import enTeam from "./en/team.json";
 import enCollaboration from "./en/collaboration.json";
 import enStructural from "./en/structural.json";
 import enBugReport from "./en/bug-report.json";
+import enPopover from "./en/popover.json";
+import enStart from "./en/start.json";
+import enProjectSwitcher from "./en/project_switcher.json";
+import enReleaseNotes from "./en/release-notes.json";
 
 import esAccount from "./es/account.json";
 import esCommon from "./es/common.json";
@@ -37,6 +41,10 @@ import esTeam from "./es/team.json";
 import esCollaboration from "./es/collaboration.json";
 import esStructural from "./es/structural.json";
 import esBugReport from "./es/bug-report.json";
+import esPopover from "./es/popover.json";
+import esStart from "./es/start.json";
+import esProjectSwitcher from "./es/project_switcher.json";
+import esReleaseNotes from "./es/release-notes.json";
 
 export default {
   en: {
@@ -58,6 +66,10 @@ export default {
     collaboration: enCollaboration,
     structural: enStructural,
     "bug-report": enBugReport,
+    popover: enPopover,
+    start: enStart,
+    project_switcher: enProjectSwitcher,
+    "release-notes": enReleaseNotes,
   },
   es: {
     account: esAccount,
@@ -78,5 +90,9 @@ export default {
     collaboration: esCollaboration,
     structural: esStructural,
     "bug-report": esBugReport,
+    popover: esPopover,
+    start: esStart,
+    project_switcher: esProjectSwitcher,
+    "release-notes": esReleaseNotes,
   },
 } satisfies Resource;

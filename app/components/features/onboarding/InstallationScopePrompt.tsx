@@ -19,7 +19,7 @@
  *  - Anchor uses `rel="noopener noreferrer"`.
  *  - Never renders raw fetcher error messages.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useEffect, useRef } from "react";
@@ -121,7 +121,7 @@ export function InstallationScopePrompt({
         href={`https://github.com/settings/installations/${installationId}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center justify-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider bg-periwinkle hover:bg-periwinkle-hover text-charcoal rounded-full px-6 py-2.5 transition-colors"
+        className="inline-flex items-center justify-center gap-2 font-heading font-semibold text-sm uppercase tracking-wider bg-anil hover:bg-anil-hover text-charcoal rounded-full px-6 py-2.5 transition-colors"
       >
         {t(`${i18nKeyPrefix}.grant_button`)}
       </a>

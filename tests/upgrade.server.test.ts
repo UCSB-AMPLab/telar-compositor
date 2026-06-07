@@ -2,17 +2,22 @@
  * Unit tests for upgrade.server.ts
  *
  * Covers: parseTelarVersion, compareVersions, isFrameworkPath,
- * updateTelarVersionInConfig, categorizeFrameworkPath, buildUpgradeSummary,
- * and computeUpgradeDiff (via mocked GitHub API).
+ * findMissingFrameworkFiles, buildYmlUsesNpmCi, updateTelarVersionInConfig,
+ * categorizeFrameworkPath, buildUpgradeSummary, computeUpgradeDiff, and
+ * healMissingFrameworkFiles (via mocked GitHub API).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
   parseTelarVersion,
   compareVersions,
   isFrameworkPath,
+  findMissingFrameworkFiles,
+  fetchFrameworkFilesAtVersion,
+  healMissingFrameworkFiles,
+  buildYmlUsesNpmCi,
   updateTelarVersionInConfig,
   categorizeFrameworkPath,
   buildUpgradeSummary,
@@ -225,6 +230,13 @@ describe("constants", () => {
 
   it("FRAMEWORK_FILES includes README.md (added v1.3.0 ingest)", () => {
     expect(FRAMEWORK_FILES).toContain("README.md");
+  });
+
+  it("FRAMEWORK_FILES includes dependency manifests, incl. package-lock.json for npm ci", () => {
+    expect(FRAMEWORK_FILES).toContain("package.json");
+    expect(FRAMEWORK_FILES).toContain("package-lock.json");
+    expect(FRAMEWORK_FILES).toContain("Gemfile.lock");
+    expect(FRAMEWORK_FILES).toContain("requirements.txt");
   });
 });
 
@@ -443,5 +455,341 @@ describe("computeUpgradeDiff", () => {
     const addedPaths = diff.additions.map((f) => f.path);
     expect(addedPaths).not.toContain("_includes/header.html");
     expect(addedPaths).not.toContain("scripts/csv_to_json.py");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findMissingFrameworkFiles
+// ---------------------------------------------------------------------------
+
+describe("findMissingFrameworkFiles", () => {
+  it("returns an empty array when every framework file is present", () => {
+    const present = [...FRAMEWORK_FILES, "telar-content/spreadsheets/objects.csv"];
+    expect(findMissingFrameworkFiles(present)).toEqual([]);
+  });
+
+  it("returns exactly the framework files absent from the tree", () => {
+    const present = FRAMEWORK_FILES.filter(
+      (p) => p !== "package-lock.json" && p !== "NOTICE",
+    );
+    const missing = findMissingFrameworkFiles([...present, "README-ish.md"]);
+    expect(missing.sort()).toEqual(["NOTICE", "package-lock.json"].sort());
+  });
+
+  it("returns all framework files for an empty tree", () => {
+    expect(findMissingFrameworkFiles([]).sort()).toEqual([...FRAMEWORK_FILES].sort());
+  });
+
+  it("does not treat a user file that merely contains a framework name as present", () => {
+    // "docs/package.json" must NOT satisfy "package.json"
+    const missing = findMissingFrameworkFiles(["docs/package.json"]);
+    expect(missing).toContain("package.json");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchFrameworkFilesAtVersion
+// ---------------------------------------------------------------------------
+
+describe("fetchFrameworkFilesAtVersion", () => {
+  const TOKEN = "tok";
+  const TAG = "v1.5.0";
+  // btoa is a global in this repo's Node test env — the existing computeUpgradeDiff
+  // tests in this same file use it unguarded and pass, so it is proven available.
+  const b64 = (s: string) => btoa(s);
+  // Direct `globalThis.fetch =` assignment is NOT undone by vi.restoreAllMocks()
+  // (that only restores vi spies). Save and restore it so mocks don't leak into
+  // other tests/files.
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("returns CommitFiles for paths the framework has at the tag", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/contents/package-lock.json")) {
+        return { ok: true, json: async () => ({ content: b64("LOCK"), encoding: "base64" }) };
+      }
+      if (url.includes("/contents/NOTICE")) {
+        return { ok: true, json: async () => ({ content: b64("NOTICE-TEXT"), encoding: "base64" }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const files = await fetchFrameworkFilesAtVersion(
+      TOKEN, ["package-lock.json", "NOTICE"], TAG,
+    );
+    expect(files).toEqual([
+      { path: "package-lock.json", content: "LOCK" },
+      { path: "NOTICE", content: "NOTICE-TEXT" },
+    ]);
+  });
+
+  it("drops paths the framework does not have at the tag (404 → null)", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/contents/package-lock.json")) {
+        return { ok: true, json: async () => ({ content: b64("LOCK"), encoding: "base64" }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const files = await fetchFrameworkFilesAtVersion(
+      TOKEN, ["package-lock.json", "Gemfile.lock"], TAG,
+    );
+    expect(files).toEqual([{ path: "package-lock.json", content: "LOCK" }]);
+  });
+
+  it("returns [] for empty input without calling fetch", async () => {
+    const spy = vi.fn();
+    globalThis.fetch = spy;
+    const files = await fetchFrameworkFilesAtVersion(TOKEN, [], TAG);
+    expect(files).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("drops a path whose fetch throws, keeping the others", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/contents/Gemfile.lock")) {
+        throw new Error("network down");
+      }
+      if (url.includes("/contents/package-lock.json")) {
+        return { ok: true, json: async () => ({ content: b64("LOCK"), encoding: "base64" }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const files = await fetchFrameworkFilesAtVersion(
+      TOKEN, ["Gemfile.lock", "package-lock.json"], TAG,
+    );
+    expect(files).toEqual([{ path: "package-lock.json", content: "LOCK" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildYmlUsesNpmCi
+// ---------------------------------------------------------------------------
+
+describe("buildYmlUsesNpmCi", () => {
+  it("returns true for a bare `npm ci` line", () => {
+    expect(buildYmlUsesNpmCi("npm ci")).toBe(true);
+  });
+
+  it("returns true for an indented `npm ci` step", () => {
+    expect(buildYmlUsesNpmCi("      - run: npm ci")).toBe(true);
+  });
+
+  it("returns true when `npm ci` appears among other build steps", () => {
+    const yml = [
+      "jobs:",
+      "  build:",
+      "    steps:",
+      "      - run: bundle install",
+      "      - run: npm ci",
+      "      - run: npm run build",
+    ].join("\n");
+    expect(buildYmlUsesNpmCi(yml)).toBe(true);
+  });
+
+  it("returns false for the `npm ci || npm install` fallback", () => {
+    expect(buildYmlUsesNpmCi("      - run: npm ci || npm install")).toBe(false);
+  });
+
+  it("returns false for `npm install`", () => {
+    expect(buildYmlUsesNpmCi("      - run: npm install")).toBe(false);
+  });
+
+  it("returns false when `npm ci` is only in a comment", () => {
+    expect(buildYmlUsesNpmCi("      # npm ci")).toBe(false);
+  });
+
+  it("returns false for empty content", () => {
+    expect(buildYmlUsesNpmCi("")).toBe(false);
+  });
+
+  it("does not match `npm cilantro` (word-boundary check)", () => {
+    expect(buildYmlUsesNpmCi("      - run: npm cilantro")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// healMissingFrameworkFiles
+// ---------------------------------------------------------------------------
+
+describe("healMissingFrameworkFiles", () => {
+  const TOKEN = "tok";
+  const OWNER = "owner";
+  const REPO = "repo";
+  const TAG = "v1.5.0";
+  const b64 = (s: string) => btoa(s);
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  // A user tree missing package-lock.json (all other framework files present).
+  const treeMissingLock = () => ({
+    ok: true,
+    json: async () => ({
+      truncated: false,
+      tree: FRAMEWORK_FILES
+        .filter((p) => p !== "package-lock.json")
+        .map((p) => ({ path: p, mode: "100644", type: "blob", sha: "x" })),
+    }),
+  });
+
+  // A user tree missing only NOTICE (lockfile present, build.yml present).
+  const treeMissingNotice = () => ({
+    ok: true,
+    json: async () => ({
+      truncated: false,
+      tree: FRAMEWORK_FILES
+        .filter((p) => p !== "NOTICE")
+        .map((p) => ({ path: p, mode: "100644", type: "blob", sha: "x" })),
+    }),
+  });
+
+  it("delivers package-lock.json when the user's build.yml still uses `npm ci`", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) return treeMissingLock();
+      // USER repo build.yml fetch (Contents API, no ?ref=) — uses npm ci.
+      if (url.includes("/contents/.github/workflows/build.yml")) {
+        return { ok: true, json: async () => ({ content: b64("      - run: npm ci"), encoding: "base64" }) };
+      }
+      // FRAMEWORK repo lockfile fetch (pinned tag via ?ref=).
+      if (url.includes("/contents/package-lock.json")) {
+        return { ok: true, json: async () => ({ content: b64("LOCK"), encoding: "base64" }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const healed = await healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG);
+    expect(healed).toEqual([{ path: "package-lock.json", content: "LOCK" }]);
+  });
+
+  it("drops package-lock.json when the user's build.yml uses `npm install` (no lockfile fetch)", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) return treeMissingLock();
+      if (url.includes("/contents/.github/workflows/build.yml")) {
+        return { ok: true, json: async () => ({ content: b64("      - run: npm install"), encoding: "base64" }) };
+      }
+      if (url.includes("/contents/package-lock.json")) {
+        throw new Error("must not fetch the lockfile when build.yml uses npm install");
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const healed = await healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG);
+    expect(healed).toEqual([]);
+    // tree + build.yml only — the lockfile content fetch never happens.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops package-lock.json when build.yml is absent (fail-open, no lockfile fetch)", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) return treeMissingLock();
+      // build.yml 404 → getFileContent returns null → can't confirm npm ci → drop.
+      if (url.includes("/contents/.github/workflows/build.yml")) {
+        return { ok: false, status: 404, json: async () => ({}) };
+      }
+      if (url.includes("/contents/package-lock.json")) {
+        throw new Error("must not fetch the lockfile when build.yml is unreadable");
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const healed = await healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG);
+    expect(healed).toEqual([]);
+  });
+
+  it("drops package-lock.json when the build.yml fetch throws (fail-open)", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) return treeMissingLock();
+      if (url.includes("/contents/.github/workflows/build.yml")) {
+        throw new Error("network blip reading build.yml");
+      }
+      if (url.includes("/contents/package-lock.json")) {
+        throw new Error("must not fetch the lockfile when build.yml read throws");
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const healed = await healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG);
+    expect(healed).toEqual([]);
+  });
+
+  it("delivers a non-lockfile missing file without ever fetching build.yml", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) return treeMissingNotice();
+      if (url.includes("/contents/.github/workflows/build.yml")) {
+        throw new Error("must not fetch build.yml when the lockfile is not among missing files");
+      }
+      if (url.includes("/contents/NOTICE")) {
+        return { ok: true, json: async () => ({ content: b64("NOTICE TEXT"), encoding: "base64" }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const healed = await healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG);
+    expect(healed).toEqual([{ path: "NOTICE", content: "NOTICE TEXT" }]);
+  });
+
+  it("returns [] when nothing is missing (no content fetches)", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) {
+        return {
+          ok: true,
+          json: async () => ({
+            truncated: false,
+            tree: FRAMEWORK_FILES.map((p) => ({ path: p, mode: "100644", type: "blob", sha: "x" })),
+          }),
+        };
+      }
+      throw new Error("should not fetch content when nothing is missing");
+    });
+
+    const healed = await healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG);
+    expect(healed).toEqual([]);
+    // Only the tree read — no content fetches when nothing is missing.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns [] (skips heal) when the repo tree is truncated", async () => {
+    // A truncated tree may omit framework files that ARE present; treating them
+    // as missing would re-commit them every publish. Must skip.
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) {
+        return {
+          ok: true,
+          json: async () => ({
+            truncated: true,
+            tree: FRAMEWORK_FILES
+              .filter((p) => p !== "package-lock.json")
+              .map((p) => ({ path: p, mode: "100644", type: "blob", sha: "x" })),
+          }),
+        };
+      }
+      throw new Error("should not fetch content when the tree is truncated");
+    });
+    expect(await healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG)).toEqual([]);
+    // Only the tree read happened — the guard returned before any content fetch.
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns [] (never throws) when the tree read fails", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/HEAD")) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    await expect(
+      healMissingFrameworkFiles(TOKEN, OWNER, REPO, TAG),
+    ).resolves.toEqual([]);
+  });
+
+  it("returns [] without any fetch when the tag is empty/falsy", async () => {
+    const spy = vi.fn();
+    globalThis.fetch = spy;
+    expect(await healMissingFrameworkFiles(TOKEN, OWNER, REPO, "")).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
   });
 });

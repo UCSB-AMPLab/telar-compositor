@@ -1,68 +1,68 @@
 // @vitest-environment jsdom
 /**
  * This file pins the `ConnectionPill` three-state status indicator — the
- * coloured dot in the header that surfaces whether the live-collab
- * websocket is connected, connecting, or offline.
+ * coloured dot in the header that surfaces whether the live-collab websocket
+ * is connected, connecting, or offline.
  *
- * Tests: dot colour classes, hover-expand label, tooltip, i18n copy.
+ * HEADER-05 relabel: the three connectionStatus keys are unchanged; the labels
+ * read Live / Reconnecting… / Working solo and the dots are chilca / amber-
+ * pulse / neutral-cream. Working solo must NOT read as an error (no red).
  *
- * @version v1.0.0-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { ConnectionPill } from "~/components/ui/ConnectionPill";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => {
       const map: Record<string, string> = {
-        "connection_status_connected": "Connected",
-        "connection_status_connecting": "Connecting…",
-        "connection_status_offline": "Offline",
-        "connection_status_tooltip": "Your edits are saved locally and will sync when you're back online.",
+        presence_live: "Live",
+        presence_reconnecting: "Reconnecting…",
+        presence_working_solo: "Working solo",
+        connection_status_tooltip:
+          "Your edits are saved locally and will sync when you're back online.",
       };
       return map[key] ?? key;
     },
   }),
 }));
 
-describe("ConnectionPill", () => {
-  it("status='connected' renders a green dot at rest", () => {
+describe("ConnectionPill (HEADER-05 relabel)", () => {
+  it("status='connected' reads 'Live' on a chilca (green) dot", () => {
     const { container } = render(<ConnectionPill status="connected" />);
-    const dot = container.querySelector(".bg-green-500");
-    expect(dot).not.toBeNull();
+    expect(container.querySelector(".bg-chilca")).not.toBeNull();
+    expect(screen.getByText("Live")).toBeTruthy();
   });
 
-  it("status='connecting' renders an amber animated dot at rest", () => {
+  it("status='connecting' reads 'Reconnecting…' on an amber animated dot", () => {
     const { container } = render(<ConnectionPill status="connecting" />);
     const dot = container.querySelector(".bg-amber-500");
     expect(dot).not.toBeNull();
     expect(dot?.className).toContain("animate-pulse");
+    expect(screen.getByText("Reconnecting…")).toBeTruthy();
   });
 
-  it("status='offline' renders a red dot at rest", () => {
+  it("status='offline' reads 'Working solo' on a neutral/cream dot (NOT red)", () => {
     const { container } = render(<ConnectionPill status="offline" />);
-    const dot = container.querySelector(".bg-red-500");
-    expect(dot).not.toBeNull();
+    expect(screen.getByText("Working solo")).toBeTruthy();
+    // Working solo must not read as an error — no red dot anywhere.
+    expect(container.querySelector(".bg-red-500")).toBeNull();
+    expect(container.querySelector(".bg-cream-dark")).not.toBeNull();
   });
 
-  it("label text is present in the DOM (visible on hover via CSS)", () => {
-    render(<ConnectionPill status="connected" />);
-    // The label is rendered but hidden at rest via CSS — it must be in the DOM
-    expect(screen.getByText("Connected")).toBeTruthy();
-  });
-
-  it("Spanish copy uses 'Conectado' — confirmed via i18n mock key", () => {
-    // The component uses the collaboration:connection_status_connected key
-    // which resolves to 'Conectado' in ES. Verified via the key in collaboration.json.
+  it("tooltip label renders at font-heading font-semibold", () => {
     const { container } = render(<ConnectionPill status="connected" />);
-    // Pill must reference the i18n key (covered by i18n.test.ts asserting the key exists)
-    // Here confirm the EN label renders correctly from the mock
-    expect(container.textContent).toContain("Connected");
+    const label = screen.getByText("Live");
+    expect(label.className).toContain("font-heading");
+    expect(label.className).toContain("font-semibold");
+    // sanity: it lives inside the role=status tooltip region
+    expect(container.querySelector("[role='status']")?.textContent).toContain("Live");
   });
 
-  it("offline tooltip includes the connection_status_tooltip string", () => {
+  it("offline tooltip keeps the reassuring sub-text", () => {
     const { container } = render(<ConnectionPill status="offline" />);
     const tooltip = container.querySelector("[role='status']");
     expect(tooltip?.textContent).toContain("Your edits are saved locally");

@@ -64,7 +64,7 @@ export function LinkPopover({ position, selectedText, onInsert, onCancel }: Link
         onChange={(e) => setUrl(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={t("link_popover.url_placeholder")}
-        className="w-full font-body text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:border-periwinkle mb-2"
+        className="w-full font-body text-sm border border-gray-200 rounded px-2 py-1.5 focus:border-anil mb-2"
       />
       <div className="flex justify-end gap-2">
         <button

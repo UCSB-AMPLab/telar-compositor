@@ -15,12 +15,12 @@
  * once the user edits it. That lets the user create a new page
  * without immediately committing to a URL.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { asc, eq, and } from "drizzle-orm";
 import { useTranslation } from "react-i18next";
-import { redirect, useFetcher } from "react-router";
+import { redirect, useFetcher, useOutletContext } from "react-router";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import * as Y from "yjs";
 import { decrypt } from "~/lib/crypto.server";
@@ -52,16 +52,17 @@ import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { SlugField } from "~/components/ui/SlugField";
 import { SortablePageTab } from "~/components/features/pages/SortablePageTab";
-import {
-  PagesEmptyState,
-  PagesRepoImportEmptyState,
-} from "~/components/features/pages/PagesEmptyState";
+import { PagesRepoImportEmptyState } from "~/components/features/pages/PagesEmptyState";
+import { DocsLink } from "~/components/ui/DocsLink";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useToast } from "~/hooks/use-toast";
 import { keyFor } from "~/lib/item-key";
 import { mergeNavItemsWithPages } from "~/lib/nav-merge";
 import { findYMapByIdOrTempId, getYText, reorderNavArray, sanitizeNavArray } from "~/lib/yjs-helpers";
+import { HomepageEditor } from "~/components/features/pages/HomepageEditor";
+import { PagesSidebar, HOME_ROW_KEY, type PagesSidebarRow } from "~/components/features/pages/PagesSidebar";
+import { loadHomepageEditorData } from "~/lib/homepage-editor-data.server";
 
 export const handle = { i18n: ["common", "pages", "editor", "structural"] };
 
@@ -107,12 +108,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     name: m.name || m.login,
   }));
 
+  // The pinned Home sidebar row mounts the shared HomepageEditor in the
+  // right pane. Source its data here (same shape as the _app.homepage loader)
+  // so the landing editor is "reused AS-IS in-place" without a separate route.
+  const landingData = await loadHomepageEditorData(db, activeProject);
+
   return {
     project: activeProject,
     pages,
     members,
     currentUserId: user.id,
     userRole,
+    landingData,
   };
 }
 
@@ -168,10 +175,24 @@ export async function action({ request, context }: Route.ActionArgs) {
       // the parsed page records. Called from the Pages tab when displayPages
       // is empty so the UI can offer per-row + "Import all" actions instead
       // of the plain empty-state.
+      //
+      // Fail open: this scan fires automatically on mount (the empty-state
+      // effect in the component). If the repo tree can't be fetched —
+      // getRepoTree throws on a non-2xx, e.g. an empty repo with no commits
+      // 404s on GET /git/trees/HEAD — an uncaught throw here is sanitised by
+      // React Router into a root-level "Unexpected Server Error" that
+      // white-screens the whole Pages tab. A best-effort scan must degrade to
+      // the plain empty state instead, so the user can still create pages by
+      // hand. Return an empty list on any failure.
       const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
       const [owner, repo] = activeProject.github_repo_full_name.split("/");
-      const pages = await scanRepoPages(token, owner, repo);
-      return { ok: true, intent: "scan-repo-pages", pages };
+      try {
+        const pages = await scanRepoPages(token, owner, repo);
+        return { ok: true, intent: "scan-repo-pages", pages };
+      } catch (err) {
+        console.error("scan-repo-pages failed; degrading to empty state:", err);
+        return { ok: true, intent: "scan-repo-pages", pages: [] };
+      }
     }
 
     case "import-pages": {
@@ -185,7 +206,24 @@ export async function action({ request, context }: Route.ActionArgs) {
       const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
       const [owner, repo] = activeProject.github_repo_full_name.split("/");
       const requestedSlugs = formData.getAll("slugs").map((s) => String(s));
-      const allPages = await scanRepoPages(token, owner, repo);
+      // Same fail-open guard as scan-repo-pages: getRepoTree throws on a
+      // non-2xx (e.g. an empty repo's tree 404s). This action is user-initiated
+      // and only reachable after a successful scan, so a throw here is a rare
+      // transient — but an uncaught one still white-screens the tab. Return a
+      // structured failure so the client can clear its spinners and toast.
+      let allPages: Awaited<ReturnType<typeof scanRepoPages>>;
+      try {
+        allPages = await scanRepoPages(token, owner, repo);
+      } catch (err) {
+        console.error("import-pages scan failed:", err);
+        return {
+          ok: false,
+          intent: "import-pages",
+          imported: 0,
+          pages: [],
+          already_present: [],
+        };
+      }
       const candidatePages = requestedSlugs.length > 0
         ? allPages.filter((p) => requestedSlugs.includes(p.slug))
         : allPages;
@@ -313,13 +351,19 @@ function computeContributors(
 export default function PagesPage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("pages");
   const { t: tStructural } = useTranslation("structural");
+  const { t: tCommon } = useTranslation("common");
   const {
     project,
     pages: loaderPages,
     members,
     currentUserId,
     userRole,
+    landingData,
   } = loaderData;
+
+  const isConvenor = userRole === "convenor";
+
+  const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
 
   const { ydoc, remoteCollaborators, isPublishing } = useCollaborationContext();
   const ops = useStructuralOps(currentUserId, userRole);
@@ -400,7 +444,15 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   useEffect(() => {
     if (importFetcher.state !== "idle") return;
     const data = importFetcher.data;
-    if (!data || !data.ok || data.intent !== "import-pages") return;
+    if (!data || data.intent !== "import-pages") return;
+    if (!data.ok) {
+      // The action's repo scan failed (e.g. the repo tree 404'd). Clear the
+      // per-row spinners so the import banner is retryable rather than stuck,
+      // and surface a generic error toast.
+      setImportingSlugs(new Set());
+      showToast({ message: tCommon("error"), type: "destructive" });
+      return;
+    }
     if (!ydoc || data.pages.length === 0) return;
     const pagesArray = ydoc.getArray<Y.Map<unknown>>("pages");
     // Skip pages already in Yjs (defensive: D1 already gates duplicates;
@@ -469,8 +521,8 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
       const navArray = config.get("navigation");
       if (navArray instanceof Y.Array) {
         // sanitizeNavArray filters out empty Y.Maps and entries with missing
-        // required fields (legacy corruption recovery — see commit f94282c
-        // regression notes in .planning/debug/pages-reorder-disappears.md).
+        // required fields (legacy corruption recovery — guards against a
+        // pages-reorder regression where entries could vanish).
         // When dropped > 0, the helper also rewrites navArray inside a
         // transact so the next snapshot persists the cleaned shape.
         const { items } = sanitizeNavArray(navArray, { mutate: true, ydoc });
@@ -503,24 +555,28 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   }, [ydoc]);
 
   // ------------------------------------------------------------------
-  // Selected page state
+  // Selected row state. The pinned Home row (HOME_ROW_KEY) is the default
+  // the right pane opens on the landing editor. /pages/index
+  // deep-links also focus Home (the redirect lands here). Selecting a content
+  // page swaps the pane to the standard page editor.
   // ------------------------------------------------------------------
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(HOME_ROW_KEY);
 
   useEffect(() => {
-    if (displayPages.length > 0 && selectedKey === null) {
-      setSelectedKey(keyFor(displayPages[0]));
-    }
+    // If the selected content page disappears (deleted locally or remotely),
+    // fall back to the pinned Home row rather than stranding an empty pane.
     if (
       selectedKey !== null &&
+      selectedKey !== HOME_ROW_KEY &&
       !displayPages.some((p) => keyFor(p) === selectedKey)
     ) {
-      setSelectedKey(displayPages.length > 0 ? keyFor(displayPages[0]) : null);
+      setSelectedKey(HOME_ROW_KEY);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayPages]);
 
-  const selectedPage = selectedKey
+  const isHomeSelected = selectedKey === HOME_ROW_KEY;
+  const selectedPage = !isHomeSelected && selectedKey
     ? displayPages.find((p) => keyFor(p) === selectedKey) ?? null
     : null;
 
@@ -774,6 +830,83 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
 
   const navSortableIds = effectiveNavItems.map((item, i) => navSortableId(item, i));
 
+  // ------------------------------------------------------------------
+  // Two-surface derivation from the single navigation_json array.
+  //
+  // Nav simulator view: the full menu MINUS untitled pages. Untitled pages
+  // can't be published, so they must not preview in the live menu.
+  // Built-ins always render here.
+  //
+  // "Untitled" is keyed off the resolved page's empty TITLE — the same test the
+  // sidebar uses (line ~829) — not off a missing slug. A freshly-added page
+  // carries a placeholder slug ("untitled"/"untitled-N") while its title is
+  // still blank, so a slug-only check let it leak into the simulator with a
+  // warning badge (UAT G1). A slug that resolves to no page is left as-is.
+  //
+  // Sidebar view: content (titled) page rows are sortable; untitled page rows
+  // are listed but excluded from the sortable axis so they are
+  // never reorder targets in the shared array.
+  // ------------------------------------------------------------------
+  const isUntitledPageItem = (item: NavItem): boolean => {
+    if (item.type !== "page") return false;
+    const page = item.slug
+      ? pageBySlug.get(item.slug)
+      : item._tempId
+        ? displayPages.find((p) => p._tempId === item._tempId)
+        : undefined;
+    if (!page) return !item.slug;
+    return !(page.title ?? "").trim();
+  };
+  const navSimItems = effectiveNavItems.filter((item) => !isUntitledPageItem(item));
+  const navSimSortableIds = navSimItems.map((item, i) => navSortableId(item, i));
+
+  // sidebarIdToFullIdx: each titled content page's sidebar sortable id →
+  // its index in the FULL effectiveNavItems array (== its index in the live
+  // navArray for persisted entries). Untitled pages get NO entry here, so a
+  // drag involving them resolves to null and is bailed.
+  const sidebarIdToFullIdx = new Map<string, number>();
+  const contentRows: PagesSidebarRow[] = [];
+  const untitledRows: PagesSidebarRow[] = [];
+
+  for (let fullIdx = 0; fullIdx < effectiveNavItems.length; fullIdx++) {
+    const item = effectiveNavItems[fullIdx];
+    if (item.type !== "page") continue;
+
+    // Resolve the underlying page (by slug for persisted entries, by _tempId
+    // for synthetic untitled entries) to derive the stable selection key.
+    const page = item.slug
+      ? pageBySlug.get(item.slug)
+      : item._tempId
+        ? displayPages.find((p) => p._tempId === item._tempId)
+        : undefined;
+    if (!page) continue;
+
+    const selectKey = keyFor(page);
+    const sortableId = navSortableId(item, fullIdx);
+    const isUntitled = !(page.title ?? "").trim();
+    const canDelete =
+      isConvenor && (useYjs ? (page._yMap ? ops!.canDelete(page._yMap) : true) : false);
+
+    if (isUntitled) {
+      untitledRows.push({
+        selectKey,
+        sortableId,
+        label: page.title?.trim() || t("untitled_needs_title"),
+        isUntitled: true,
+        canDelete,
+      });
+    } else {
+      sidebarIdToFullIdx.set(sortableId, fullIdx);
+      contentRows.push({
+        selectKey,
+        sortableId,
+        label: page.title.trim(),
+        isUntitled: false,
+        canDelete,
+      });
+    }
+  }
+
   // Builtin labels
   const builtinLabels: Record<string, string> = {
     home: t("nav_home"),
@@ -866,6 +999,9 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     const { active, over } = event;
     if (!over || active.id === over.id || !ydoc) return;
 
+    // The nav simulator renders `navSimItems` (untitled pages excluded), but
+    // indices must resolve against the FULL navigation array. Look the dragged
+    // and target sortable ids up in `navSortableIds` (full array order).
     const oldIndex = navSortableIds.indexOf(String(active.id));
     const newIndex = navSortableIds.indexOf(String(over.id));
     if (oldIndex < 0 || newIndex < 0) return;
@@ -877,32 +1013,49 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     // Merge-only entries (untitled pages with `_tempId` only, or temp-slug
     // pages whose nav entry hasn't been pushed yet) live in `effectiveNavItems`
     // past the end of `navArray`. Skip the persisted reorder for them rather
-    // than corrupt indices into `pagesArray` — the user just needs to type a
-    // title first, which pushes a real nav entry via the deferred-slug effect.
+    // than corrupt indices into `navArray`. Untitled pages are also excluded
+    // from the nav simulator now, so this guard mainly protects the
+    // brief window before a freshly-titled page's nav entry is pushed.
     if (oldIndex >= navArray.length || newIndex >= navArray.length) return;
 
+    // navigation_json is the SOLE ordering
+    // authority. Reorder ONLY the nav array — the redundant `pages`-array
+    // reorder (ops.reorderPages) was removed because the published menu order
+    // derives solely from navigation_json (publish.server.ts:64,190) and the
+    // `pages` array `order` field is editor-only, not the published authority.
     ydoc.transact(() => {
-      // Reorder via shared helper. The previous inline clone built a Y.Map and
-      // only populated it `if (source instanceof Y.Map)` — but nav entries are
-      // plain JSON objects (see workers/collaboration.ts seed and the local
-      // navArray.push sites in this file), so the branch never executed and an
-      // empty Y.Map was inserted, making the moved page render as a blank tab.
       reorderNavArray(navArray, oldIndex, newIndex);
     });
+  }
 
-    // If the moved item was a page, also reorder pages array to match
-    const movedNav = effectiveNavItems[oldIndex];
-    if (movedNav.type === "page" && movedNav.slug) {
-      const pageOldIdx = displayPages.findIndex((p) => p.slug === movedNav.slug);
-      // Find the target page index from the nav item at newIndex
-      const targetNav = effectiveNavItems[newIndex];
-      if (targetNav.type === "page" && targetNav.slug) {
-        const pageNewIdx = displayPages.findIndex((p) => p.slug === targetNav.slug);
-        if (pageOldIdx >= 0 && pageNewIdx >= 0 && pageOldIdx !== pageNewIdx) {
-          ops?.reorderPages(pageOldIdx, pageNewIdx);
-        }
-      }
-    }
+  // Sidebar reorder. The sidebar renders a filtered
+  // subset (titled content pages only), so its index space differs from the
+  // full nav array. `sidebarIdToFullIdx` translates each sortable id back to
+  // its full-array index; untitled rows have no entry and bail.
+  function handleSidebarDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !ydoc) return;
+
+    const oldFullIdx = sidebarIdToFullIdx.get(String(active.id));
+    const newFullIdx = sidebarIdToFullIdx.get(String(over.id));
+    if (oldFullIdx == null || newFullIdx == null) return; // untitled rows excluded
+
+    const config = ydoc.getMap("config");
+    const navArray = config.get("navigation");
+    if (!(navArray instanceof Y.Array)) return;
+    if (oldFullIdx >= navArray.length || newFullIdx >= navArray.length) return;
+
+    // Single move within the shared array — built-in slots are untouched
+    // because only the dragged page's entry moves. No ops.reorderPages call.
+    ydoc.transact(() => reorderNavArray(navArray, oldFullIdx, newFullIdx));
+  }
+
+  // Resolve a content/untitled sidebar row's selection key to its PageItem,
+  // then route to the existing delete-modal flow (preserves contributor
+  // attribution + canDelete gating).
+  function handleSidebarDelete(selectKey: string) {
+    const page = displayPages.find((p) => keyFor(p) === selectKey);
+    if (page) handleDeleteClick(page);
   }
 
   function handleCreatePage() {
@@ -933,35 +1086,15 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // Render
   // ------------------------------------------------------------------
 
-  if (displayPages.length === 0) {
-    // Three branches based on the repo scan.
-    //   1. Scan in flight or no result yet: existing PagesEmptyState (acts as
-    //      a visual loading placeholder; users do not see a flicker).
-    //   2. Scan returned but repo has no pages: existing PagesEmptyState.
-    //   3. Scan returned with pages: import-variant with explicit per-row
-    //      and "Import all" actions (no silent auto-import).
-    const scanData = repoScanFetcher.data;
-    const scannedPages = scanData?.ok && scanData.intent === "scan-repo-pages"
-      ? scanData.pages
-      : [];
-    const showImportVariant = scannedPages.length > 0;
-
-    return (
-      <div className="flex-1 overflow-y-auto">
-        {showImportVariant ? (
-          <PagesRepoImportEmptyState
-            pages={scannedPages.map((p) => ({ slug: p.slug, title: p.title }))}
-            onImportAll={handleImportAll}
-            onImportOne={handleImportOne}
-            isImporting={importFetcher.state !== "idle"}
-            importingSlugs={importingSlugs}
-          />
-        ) : (
-          <PagesEmptyState onCreateNew={handleCreatePage} />
-        )}
-      </div>
-    );
-  }
+  // Repo-import recovery banner: when there are no content pages yet but the
+  // connected repo has importable pages, offer to pull them in. Rendered ABOVE
+  // the two-column shell (rather than replacing the whole view) so the pinned
+  // Home row stays editable in-place.
+  const scanData = repoScanFetcher.data;
+  const scannedPages = scanData?.ok && scanData.intent === "scan-repo-pages"
+    ? scanData.pages
+    : [];
+  const showImportVariant = displayPages.length === 0 && scannedPages.length > 0;
 
   return (
     <div className={`flex flex-col ${publishLock}`}>
@@ -972,9 +1105,25 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
           <a href="https://telar.org/docs/site-features/custom-pages/" target="_blank" rel="noopener noreferrer" className="text-terracotta hover:text-terracotta/80 underline">{t("learn_more")}</a>.
         </p>
         <p className="font-body text-sm text-gray-500">{t("nav_bar_instructions")}</p>
+        {openDoc && <DocsLink docId="pages" onOpenDoc={openDoc} />}
       </div>
 
-      {/* Nav bar preview */}
+      {/* Repo-import recovery banner (only when no content pages exist yet) */}
+      {showImportVariant && (
+        <div className="mx-6 mb-2">
+          <PagesRepoImportEmptyState
+            pages={scannedPages.map((p) => ({ slug: p.slug, title: p.title }))}
+            onImportAll={handleImportAll}
+            onImportOne={handleImportOne}
+            isImporting={importFetcher.state !== "idle"}
+            importingSlugs={importingSlugs}
+          />
+        </div>
+      )}
+
+      {/* Nav bar preview — the navigation-menu simulator, kept above the
+          two-column block. Renders the FULL published menu (built-ins + titled
+          pages) MINUS untitled pages, which can't be published. */}
       <div className="mx-6 border border-gray-200 rounded-lg bg-white">
         <div className="flex items-center h-[44px] px-4">
           {/* Site title — left */}
@@ -988,8 +1137,8 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
             collisionDetection={closestCenter}
             onDragEnd={handleNavDragEnd}
           >
-            <SortableContext items={navSortableIds} strategy={horizontalListSortingStrategy}>
-              {effectiveNavItems.map((item, idx) => {
+            <SortableContext items={navSimSortableIds} strategy={horizontalListSortingStrategy}>
+              {navSimItems.map((item, idx) => {
                 const sid = navSortableId(item, idx);
                 if (item.type === "builtin") {
                   return (
@@ -1004,13 +1153,9 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
                   );
                 }
                 if (item.type === "page") {
-                  // Resolve by slug (persisted nav entries) or by _tempId
-                  // (synthetic merge entries for unsaved untitled pages).
-                  const page = item.slug
-                    ? pageBySlug.get(item.slug)
-                    : item._tempId
-                      ? displayPages.find((p) => p._tempId === item._tempId)
-                      : undefined;
+                  // Nav-sim entries are always titled pages now (untitled are
+                  // excluded above), resolved by slug.
+                  const page = item.slug ? pageBySlug.get(item.slug) : undefined;
                   const key = page ? keyFor(page) : sid;
                   return (
                     <SortablePageTab
@@ -1030,17 +1175,6 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
             </SortableContext>
           </DndContext>
 
-          {/* Add new page — pill button, before Share */}
-          <button
-            type="button"
-            onClick={handleCreatePage}
-            disabled={!useYjs}
-            className="ml-2 px-4 h-[28px] flex items-center gap-1 rounded-full bg-periwinkle hover:bg-periwinkle/80 text-charcoal font-heading font-semibold text-xs uppercase tracking-wider disabled:opacity-40 transition-colors shrink-0"
-            aria-label={t("new_page_button")}
-          >
-            {t("new_page_button")}
-          </button>
-
           {/* Share placeholder — matches Telar navbar share button */}
           <div className="ml-2 px-3 h-[28px] flex items-center gap-1.5 rounded-full border border-gray-200 text-gray-300">
             <Upload className="w-3.5 h-3.5" />
@@ -1049,68 +1183,87 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
         </div>
       </div>
 
-      {/* Editor panel — matches LayerPanel structure: label → input, label → editor.
-           Uses h- (not min-h-) so flex children get a definite height to fill.
-           260px ≈ header(56) + tabNav(44) + main padding(48) + instructions(36) + navBar(60) + gap(16). */}
-      <div className="flex flex-col h-[calc(100dvh-260px)] mx-6 mt-4 mb-6 bg-white rounded-lg shadow-sm overflow-hidden">
-        {!selectedPage ? (
-          <div className="flex items-center justify-center flex-1">
-            <p className="font-body text-sm text-gray-400">{t("empty_editor")}</p>
-          </div>
-        ) : (
-          <>
-            {/* PAGE TITLE section */}
-            <div className="px-6 pt-6 pb-4 shrink-0">
-              <label className="block font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                {t("title_label")}
-              </label>
-              <InlineTextField
-                initialValue={selectedPage.title}
-                yText={pageTitleYText}
-                placeholder={t("title_placeholder")}
-                className="w-full px-4 py-2 font-heading font-semibold text-lg border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-periwinkle/30"
-                fieldKey={`page-${selectedKey}-title`}
-                error={!(selectedPage.title ?? "").trim()}
-                errorMessage={t("name_required")}
-              />
-              {/* Slug — label + field appear once slug is generated */}
-              {selectedPage.slug ? (
-                <div className="mt-4">
-                  <label className="block font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                    {t("slug_label")}
-                  </label>
-                  <SlugField
-                    slug={selectedPage.slug}
-                    existingSlugs={existingSlugs}
-                    onSlugChange={handleSlugChange}
+      {/* Two-column shell — left editing sidebar + right editor pane.
+          Mirrors the glossary aside+main composition (_app.glossary.tsx:469-535). */}
+      <div className="flex h-[calc(100dvh-260px)] mx-6 mt-4 mb-6 bg-white rounded-lg shadow-sm overflow-hidden">
+        <PagesSidebar
+          contentRows={contentRows}
+          untitledRows={untitledRows}
+          selectedKey={selectedKey}
+          onSelect={setSelectedKey}
+          onDelete={handleSidebarDelete}
+          onAddPage={handleCreatePage}
+          onDragEnd={handleSidebarDragEnd}
+          sensors={sensors}
+          isConvenor={isConvenor}
+          canAdd={useYjs}
+        />
+
+        <main className="flex-1 flex flex-col overflow-hidden bg-cream">
+          {isHomeSelected ? (
+            // Pinned Home row: the shared landing editor, in-place.
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6">
+              <HomepageEditor data={landingData} />
+            </div>
+          ) : !selectedPage ? (
+            <div className="flex items-center justify-center flex-1">
+              <p className="font-body text-sm text-gray-400">{t("empty_editor")}</p>
+            </div>
+          ) : (
+            <>
+              {/* PAGE TITLE section */}
+              <div className="px-6 pt-6 pb-4 shrink-0">
+                <label className="block font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  {t("title_label")}
+                </label>
+                <InlineTextField
+                  initialValue={selectedPage.title}
+                  yText={pageTitleYText}
+                  placeholder={t("title_placeholder")}
+                  className="w-full px-4 py-2 font-heading font-semibold text-lg border border-gray-200 rounded-lg bg-surface hover:border-gray-300 focus:border-anil-deep"
+                  fieldKey={`page-${selectedKey}-title`}
+                  error={!(selectedPage.title ?? "").trim()}
+                  errorMessage={t("name_required")}
+                />
+                {/* Slug — label + field appear once slug is generated */}
+                {selectedPage.slug ? (
+                  <div className="mt-4">
+                    <label className="block font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                      {t("slug_label")}
+                    </label>
+                    <SlugField
+                      slug={selectedPage.slug}
+                      existingSlugs={existingSlugs}
+                      onSlugChange={handleSlugChange}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              {/* CONTENT section — fills remaining height */}
+              <div className="flex-1 min-h-0 flex flex-col px-6 pb-4">
+                <label className="block font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 shrink-0">
+                  {t("content_label")}
+                </label>
+                <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-gray-200 bg-surface">
+                  <MarkdownEditor
+                    key={`page-body-${selectedKey}`}
+                    initialValue={selectedPage.body ?? ""}
+                    fieldName="body"
+                    projectId={selectedPage.id}
+                    intent="autosave-page-body"
+                    actionUrl="/pages"
+                    yText={pageBodyYText}
+                    className="h-full flex flex-col"
+                    transparent
+                    alwaysShowToolbar
+                    enableGlossaryLinks
                   />
                 </div>
-              ) : null}
-            </div>
-
-            {/* CONTENT section — fills remaining height */}
-            <div className="flex-1 min-h-0 flex flex-col px-6 pb-4">
-              <label className="block font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 shrink-0">
-                {t("content_label")}
-              </label>
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <MarkdownEditor
-                  key={`page-body-${selectedKey}`}
-                  initialValue={selectedPage.body ?? ""}
-                  fieldName="body"
-                  projectId={selectedPage.id}
-                  intent="autosave-page-body"
-                  actionUrl="/pages"
-                  yText={pageBodyYText}
-                  className="h-full flex flex-col"
-                  transparent
-                  alwaysShowToolbar
-                  enableGlossaryLinks
-                />
               </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </main>
       </div>
 
       {/* Centralised delete confirmation */}

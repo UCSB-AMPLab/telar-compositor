@@ -30,5 +30,9 @@ export const namespaces = [
   "collaboration",
   "structural",
   "bug-report",
+  "popover",
+  "start",
+  "project_switcher",
+  "release-notes",
 ] as const;
 

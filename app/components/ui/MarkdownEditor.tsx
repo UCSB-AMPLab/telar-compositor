@@ -1,21 +1,34 @@
 /**
- * MarkdownEditor — CodeMirror 6 markdown editor with Obsidian-style live preview.
+ * This file is the compositor's shared markdown editing surface — a
+ * CodeMirror 6 editor with an Obsidian-style live preview, where syntax
+ * markers stay hidden except on the line the cursor sits on, so authors
+ * see formatted prose while still editing raw markdown.
  *
- * Replaces MilkdownField with a superset API. Features:
- * - Obsidian-style live preview: syntax markers hide on non-cursor lines
- * - Formatting toolbar (bold, italic, link, image, heading, lists, blockquote, undo, redo)
- * - Keyboard shortcuts: Cmd+B, Cmd+I, Cmd+K, Cmd+Z, Cmd+Shift+Z
- * - Rich paste: HTML from web pages converts to markdown via turndown
- * - Word count displayed when editor is focused (autosave mode)
- * - Debounced autosave via useFetcher (autosave mode, non-collaborative fallback)
- * - Save/Discard footer with dirty tracking (save-discard mode)
- * - Link popover: opens near cursor on Cmd+K or toolbar click; inserts markdown link
- * - Image dialog: URL tab and Objects tab for inserting markdown images
- * - Cmd/Ctrl+click on rendered links opens in new tab
- * - SSR guard: returns null during server-side render
- * - Collaborative mode: when yText is provided, yCollab replaces autosave; Y.UndoManager
- *   replaces CodeMirror history(); publish-lock via EditorState.readOnly compartment
- * - Placed in app/components/ui/ as a shared primitive for dashboard and story editor
+ * It lives in app/components/ui/ as a single primitive that every
+ * markdown field reuses: the dashboard landing fields, the story layer
+ * editor, glossary definitions, and pages. A formatting toolbar and the
+ * usual keyboard shortcuts (Cmd+B/I/K and undo/redo) drive the standard
+ * markdown insertions; pasting HTML from a web page is converted to
+ * markdown via turndown so authors can bring in formatted text cleanly.
+ *
+ * The component runs in two persistence modes that share one UI. In
+ * collaborative mode a Yjs `Y.Text` is passed in: yCollab binds it to
+ * CodeMirror for real-time multi-editor sync, the shared doc-level
+ * Y.UndoManager replaces CodeMirror's own history() so undo spans both
+ * text edits and structural operations on the same stack, and an
+ * EditorState.readOnly compartment locks the editor while a publish is
+ * in flight. With no `Y.Text` it falls back to a self-contained editor
+ * with built-in history() and debounced autosave through a React Router
+ * fetcher.
+ *
+ * When enabled on the link-bearing surfaces, `[[term]]` glossary chips
+ * are layered in via glossaryChipPlugin: resolved terms render as title
+ * pills, unresolved slugs get a quick-create affordance, and clicking
+ * either is routed back to the caller through onChipClick /
+ * onUnresolvedChipClick. A live preview guard returns null during
+ * server-side render since all of CodeMirror is browser-only.
+ *
+ * @version v1.3.0-beta
  */
 
 import { useRef, useEffect, useState, useCallback } from "react";
@@ -48,6 +61,11 @@ import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 
 import { livePreviewPlugin } from "~/components/ui/markdown-editor/livePreviewPlugin";
+import { glossaryChipPlugin } from "~/components/ui/markdown-editor/glossaryChipPlugin";
+import {
+  glossaryMapField,
+  setGlossaryMap,
+} from "~/components/ui/markdown-editor/glossaryResolution";
 import { richPasteExtension } from "~/components/ui/markdown-editor/richPaste";
 import {
   insertMarkdownWrap,
@@ -64,6 +82,7 @@ import { LinkPopover } from "~/components/ui/markdown-editor/LinkPopover";
 import { ImageInsertDialog } from "~/components/ui/markdown-editor/ImageInsertDialog";
 import { GlossaryLinkButton } from "~/components/ui/markdown-editor/GlossaryLinkButton";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { isPersistableLayerId } from "~/lib/yjs-helpers";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -105,6 +124,23 @@ interface MarkdownEditorProps {
    * Not available in config fields or metadata.
    */
   enableGlossaryLinks?: boolean;
+  /**
+   * Called when a resolved `[[term]]` chip is clicked.
+   * Receives the chip's `term_id`. Surface-specific behaviour is supplied by the caller:
+   * the glossary definition editor selects the term in place; story/page editors navigate
+   * to `/glossary?term=<termId>`. When omitted, a chip click is a no-op (cursor lands as
+   * normal). Only meaningful when `enableGlossaryLinks` is true.
+   */
+  onChipClick?: (termId: string) => void;
+  /**
+   * Called when an UNRESOLVED `[[term]]` token (a `cm-glossary-unresolved`
+   * range — a slug with no matching glossary term) is clicked. Receives
+   * the unresolved `term_id`. The glossary definition editor wires this to a
+   * one-transaction quick-create; other surfaces may leave it omitted (a click
+   * on an unresolved token is then a no-op). Only meaningful when
+   * `enableGlossaryLinks` is true.
+   */
+  onUnresolvedChipClick?: (termId: string) => void;
   /**
    * Override the form-field name used by the autosave fetcher (non-collaborative
    * fallback). Defaults to "projectId" to preserve all existing call sites.
@@ -160,6 +196,19 @@ function computeWordCount(text: string): number {
   return text.trim() === "" ? 0 : text.trim().split(/\s+/).length;
 }
 
+/**
+ * Extract the `term_id` (group 1, trimmed) from an unresolved `[[term]]` /
+ * `[[term|display]]` token's raw text content. Returns null when the text does
+ * not match the locked glossary link shape. Mirrors the `LINK_RE` used by the
+ * chip plugin so a clicked `cm-glossary-unresolved` range resolves to the same
+ * slug the quick-create op will use.
+ */
+function extractUnresolvedTermId(text: string | null): string | null {
+  if (!text) return null;
+  const m = /\[\[\s*([^|\]]+?)(?:\s*\|\s*([^|\]]+?))?\s*\]\]/.exec(text);
+  return m ? m[1].trim() : null;
+}
+
 // ---------------------------------------------------------------------------
 // MarkdownEditor
 // ---------------------------------------------------------------------------
@@ -183,6 +232,8 @@ export function MarkdownEditor({
   yText = null,
   alwaysShowToolbar = false,
   enableGlossaryLinks = false,
+  onChipClick,
+  onUnresolvedChipClick,
   formFieldName = "projectId",
   placeholder,
 }: MarkdownEditorProps) {
@@ -211,7 +262,20 @@ export function MarkdownEditor({
   // undoManager is the shared doc-level Y.UndoManager so that undo/redo spans text edits and
   // structural operations alike. In non-collaborative mode (no yText), CodeMirror's
   // built-in history() is used instead.
-  const { provider, isPublishing, undoManager } = useCollaborationContext();
+  const { ydoc, provider, isPublishing, undoManager } = useCollaborationContext();
+
+  // Keep the latest onChipClick in a ref so the (rarely-rebuilt) EditorView click handler
+  // always calls the current callback without re-running the EditorView lifecycle effect.
+  const onChipClickRef = useRef(onChipClick);
+  useEffect(() => {
+    onChipClickRef.current = onChipClick;
+  }, [onChipClick]);
+
+  // Same ref-stable treatment for the unresolved-token quick-create CTA.
+  const onUnresolvedChipClickRef = useRef(onUnresolvedChipClick);
+  useEffect(() => {
+    onUnresolvedChipClickRef.current = onUnresolvedChipClick;
+  }, [onUnresolvedChipClick]);
 
   // Notify parent when dirty state changes
   useEffect(() => {
@@ -300,6 +364,36 @@ export function MarkdownEditor({
   useEffect(() => {
     if (!mounted || !containerRef.current) return;
 
+    // Glossary chip resolution: build a term_id→title map from the glossary Y.Array and push
+    // it into the view via setGlossaryMap (view-only effect — never a doc edit, so the shared
+    // Y.UndoManager stack is untouched). Re-pushed on every glossary change via observeDeep.
+    // Returns a cleanup that unobserves. No-op when there is no ydoc (SSR / pre-connection).
+    function attachGlossaryResolution(view: EditorView): () => void {
+      if (!ydoc) return () => {};
+      const glossaryArray = ydoc.getArray<Y.Map<unknown>>("glossary");
+      const pushMap = () => {
+        const map = new Map<string, string>();
+        for (let i = 0; i < glossaryArray.length; i++) {
+          const m = glossaryArray.get(i);
+          const rawTitle = m.get("title");
+          const title =
+            rawTitle instanceof Y.Text
+              ? rawTitle.toString()
+              : typeof rawTitle === "string"
+                ? rawTitle
+                : "";
+          const termId = m.get("term_id");
+          if (typeof termId === "string" && termId.length > 0) {
+            map.set(termId, title);
+          }
+        }
+        view.dispatch({ effects: setGlossaryMap.of(map) });
+      };
+      glossaryArray.observeDeep(pushMap);
+      pushMap(); // initial resolution
+      return () => glossaryArray.unobserveDeep(pushMap);
+    }
+
     // Collaborative mode: build extensions with yCollab; remove history() and autosave.
     // The shared doc-level UndoManager from CollaborationContext is passed to yCollab so
     // that undo/redo for text edits in this editor is interleaved with structural ops on
@@ -340,6 +434,9 @@ export function MarkdownEditor({
             markdown(),
             EditorView.lineWrapping,
             livePreviewPlugin,
+            // Glossary `[[term]]` chips — only on the three link-bearing surfaces.
+            // glossaryMapField carries the term_id→title map dispatched from the Y.Array observer.
+            ...(enableGlossaryLinks ? [glossaryMapField, glossaryChipPlugin] : []),
             richPasteExtension,
             ...(placeholder ? [cmPlaceholder(placeholder)] : []),
             // Publish-lock compartment — reconfigured by isPublishing effect below
@@ -369,6 +466,29 @@ export function MarkdownEditor({
               },
               click(event) {
                 const target = event.target as HTMLElement;
+                // Glossary chip click — open the term entry. Cmd/Ctrl-click falls
+                // through so a future "open in new context" gesture stays available.
+                const chip = target.closest(".cm-glossary-chip") as HTMLElement | null;
+                if (chip && !event.metaKey && !event.ctrlKey) {
+                  const termId = chip.dataset.termId;
+                  if (termId && onChipClickRef.current) {
+                    event.preventDefault();
+                    onChipClickRef.current(termId);
+                    return true;
+                  }
+                }
+                // Unresolved `[[term]]` token click — quick-create the term.
+                const unresolved = target.closest(
+                  ".cm-glossary-unresolved",
+                ) as HTMLElement | null;
+                if (unresolved && !event.metaKey && !event.ctrlKey) {
+                  const termId = extractUnresolvedTermId(unresolved.textContent);
+                  if (termId && onUnresolvedChipClickRef.current) {
+                    event.preventDefault();
+                    onUnresolvedChipClickRef.current(termId);
+                    return true;
+                  }
+                }
                 if (target.tagName === "A" && (event.metaKey || event.ctrlKey)) {
                   return false;
                 }
@@ -385,7 +505,12 @@ export function MarkdownEditor({
       });
 
       viewRef.current = view;
+      // Push the initial glossary resolution map + subscribe for live updates.
+      const detachGlossary = enableGlossaryLinks
+        ? attachGlossaryResolution(view)
+        : undefined;
       return () => {
+        detachGlossary?.();
         view.destroy();
       };
     }
@@ -396,15 +521,28 @@ export function MarkdownEditor({
       if (mode === "autosave") {
         if (timerRef.current) clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => {
-          fetcher.submit(
-            {
-              intent,
-              field: fieldName,
-              value: doc,
-              [formFieldName]: String(projectId),
-            },
-            { method: "post", action: actionUrl }
-          );
+          // For layer autosave (formFieldName === "layerId"), a Yjs-only layer
+          // has projectId === 0 and would trip the action's 400 guard.
+          // Other call sites post a real project id — leave them unguarded.
+          if (
+            formFieldName === "layerId" &&
+            !isPersistableLayerId(projectId)
+          ) {
+            return;
+          }
+          fetcher
+            .submit(
+              {
+                intent,
+                field: fieldName,
+                value: doc,
+                [formFieldName]: String(projectId),
+              },
+              { method: "post", action: actionUrl }
+            )
+            .catch((err) => {
+              console.error("MarkdownEditor autosave failed", err);
+            });
         }, debounceMs);
       } else {
         // save-discard mode: track dirty state only, no autosave
@@ -446,6 +584,8 @@ export function MarkdownEditor({
           markdown(),
           EditorView.lineWrapping,
           livePreviewPlugin,
+          // Glossary `[[term]]` chips — mirror the collaborative branch, same gate.
+          ...(enableGlossaryLinks ? [glossaryMapField, glossaryChipPlugin] : []),
           richPasteExtension,
           ...(placeholder ? [cmPlaceholder(placeholder)] : []),
           EditorView.updateListener.of((update) => {
@@ -468,6 +608,28 @@ export function MarkdownEditor({
             },
             click(event) {
               const target = event.target as HTMLElement;
+              // Glossary chip click — open the term entry.
+              const chip = target.closest(".cm-glossary-chip") as HTMLElement | null;
+              if (chip && !event.metaKey && !event.ctrlKey) {
+                const termId = chip.dataset.termId;
+                if (termId && onChipClickRef.current) {
+                  event.preventDefault();
+                  onChipClickRef.current(termId);
+                  return true;
+                }
+              }
+              // Unresolved `[[term]]` token click — quick-create the term.
+              const unresolved = target.closest(
+                ".cm-glossary-unresolved",
+              ) as HTMLElement | null;
+              if (unresolved && !event.metaKey && !event.ctrlKey) {
+                const termId = extractUnresolvedTermId(unresolved.textContent);
+                if (termId && onUnresolvedChipClickRef.current) {
+                  event.preventDefault();
+                  onUnresolvedChipClickRef.current(termId);
+                  return true;
+                }
+              }
               if (target.tagName === "A" && (event.metaKey || event.ctrlKey)) {
                 // Cmd/Ctrl+click — let the <a> tag open naturally in a new tab
                 return false;
@@ -486,7 +648,13 @@ export function MarkdownEditor({
     });
 
     viewRef.current = view;
-    return () => view.destroy();
+    const detachGlossary = enableGlossaryLinks
+      ? attachGlossaryResolution(view)
+      : undefined;
+    return () => {
+      detachGlossary?.();
+      view.destroy();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, yText]);
 

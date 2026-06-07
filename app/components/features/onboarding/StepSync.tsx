@@ -115,7 +115,7 @@ export function StepSync({
                 value={sheetsUrl}
                 onChange={(e) => setSheetsUrl(e.target.value)}
                 placeholder={t("step_sync.sheets_url_placeholder")}
-                className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-periwinkle"
+                className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400"
               />
             </label>
           </div>
@@ -173,7 +173,7 @@ export function StepSync({
 function StateIcon({ state }: { state: ItemState }) {
   switch (state) {
     case "loading":
-      return <Loader2 className="w-5 h-5 text-periwinkle animate-spin flex-shrink-0" aria-hidden="true" />;
+      return <Loader2 className="w-5 h-5 text-anil animate-spin flex-shrink-0" aria-hidden="true" />;
     case "done":
       return <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" aria-hidden="true" />;
     case "error":

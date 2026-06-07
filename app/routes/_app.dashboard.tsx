@@ -18,12 +18,12 @@
  * `_app.homepage.tsx` — they were relocated and this route keeps
  * the project-management shell only.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { asc, count, desc, eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
 import { Trans, useTranslation } from "react-i18next";
-import { Link, redirect, useFetcher, useLoaderData, useNavigate, useRouteLoaderData, useSearchParams } from "react-router";
+import { Link, redirect, useFetcher, useLoaderData, useNavigate, useSearchParams } from "react-router";
 import React, { useState, useEffect } from "react";
 import type { Route } from "./+types/_app.dashboard";
 import { userContext } from "~/middleware/auth.server";
@@ -32,10 +32,12 @@ import { projects, stories, steps, layers, project_config, project_members, proj
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getFileContent, getRepoHead } from "~/lib/github.server";
-import { signInternalMarker } from "../../workers/auth";
 import { getUserProjects, requireOwner, requireProjectMember } from "~/lib/membership.server";
+import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
+import { recordActivity } from "~/lib/activity.server";
 import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
 import type { FullSyncChanges } from "~/lib/sync.server";
+import { bumpProjectHead } from "~/lib/github-status.server";
 import {
   scanRepoOrphanStoryIds,
   parseCompositorIgnored,
@@ -51,181 +53,18 @@ import {
 import { RoleBadge } from "~/components/features/dashboard/RoleBadge";
 import OrphanStoryBanner from "~/components/features/dashboard/OrphanStoryBanner";
 import { useVersionChangeToast } from "~/hooks/use-version-change-toast";
-import { RestrictionBanner } from "~/components/layout/RestrictionBanner";
 import { EmptyState } from "~/components/features/dashboard/EmptyState";
 import { Settings, Image, BookOpen, Sparkles, Upload } from "lucide-react";
 
 export const handle = { i18n: ["common", "dashboard", "team", "upgrade", "sync"] };
 
-export async function loader({ request, context }: Route.LoaderArgs) {
-  const user = context.get(userContext);
-  if (!user) throw new Response("Unauthorized", { status: 401 });
-
-  const env = context.cloudflare.env as Env;
-  const db = getDb(env.DB);
-
-  // Fetch all projects the user has access to (owned + shared)
-  const allProjects = await getUserProjects(db, user.id);
-
-  if (allProjects.length === 0) {
-    throw redirect("/onboarding");
-  }
-
-  // If any owned project has incomplete onboarding, redirect
-  const incompleteProject = allProjects.find(
-    (p) => p.userRole === "convenor" && !p.onboarding_completed
-  );
-  if (incompleteProject) {
-    throw redirect("/onboarding");
-  }
-
-  // Read activeProjectId from session
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  // Validate that the session project is in the accessible list; fall back to first
-  const activeProject =
-    allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-
-  const userRole = activeProject.userRole;
-
-  // Fetch project config
-  const configRows = await db
-    .select()
-    .from(project_config)
-    .where(eq(project_config.project_id, activeProject.id))
-    .limit(1);
-  const config = configRows[0] ?? null;
-
-  // Fetch unpublished count for status bar
-  const projectStories = await db
-    .select({ id: stories.id, updated_at: stories.updated_at })
-    .from(stories)
-    .where(eq(stories.project_id, activeProject.id));
-
-  let unpublishedCount = 0;
-  if (activeProject.last_published_at) {
-    unpublishedCount = projectStories.filter(
-      (s) => s.updated_at && s.updated_at > activeProject.last_published_at!
-    ).length;
-  }
-
-  // Fetch team members for the active project (joined with users table for profile data)
-  const memberRows = await db
-    .select({
-      userId: project_members.user_id,
-      role: project_members.role,
-      githubId: users.github_id,
-      username: users.github_login,
-      contributions: project_members.contributions,
-      presenceColor: project_members.presence_color,
-    })
-    .from(project_members)
-    .innerJoin(users, eq(project_members.user_id, users.id))
-    .where(eq(project_members.project_id, activeProject.id));
-
-  const members = memberRows.map((m) => ({
-    userId: m.userId,
-    githubId: m.githubId,
-    username: m.username,
-    role: m.role as "convenor" | "collaborator",
-    contributions: m.contributions ? JSON.parse(m.contributions) : null,
-    presenceColor: m.presenceColor ?? null,
-  }));
-
-  // Fetch pending invites (not yet used and not expired)
-  const now = new Date().toISOString();
-  const pendingInviteRows = await db
-    .select({
-      id: project_invites.id,
-      createdBy: project_invites.created_by,
-      expiresAt: project_invites.expires_at,
-    })
-    .from(project_invites)
-    .where(
-      and(
-        eq(project_invites.project_id, activeProject.id),
-        isNull(project_invites.used_by),
-        sql`${project_invites.expires_at} > ${now}`
-      )
-    );
-
-  const pendingInvites = pendingInviteRows.map((inv) => ({
-    id: inv.id,
-    createdBy: inv.createdBy,
-  }));
-
-  // Fetch owner login for shared projects display
-  const ownerIds = [...new Set(allProjects.map((p) => p.user_id))];
-  const ownerRows = await db
-    .select({ id: users.id, github_login: users.github_login })
-    .from(users)
-    .where(inArray(users.id, ownerIds));
-  const ownerLoginMap: Record<number, string> = {};
-  for (const row of ownerRows) {
-    ownerLoginMap[row.id] = row.github_login;
-  }
-
-  // Fetch member counts per project
-  const memberCountRows = await db
-    .select({ project_id: project_members.project_id, count: count() })
-    .from(project_members)
-    .where(inArray(project_members.project_id, allProjects.map((p) => p.id)))
-    .groupBy(project_members.project_id);
-  const memberCountMap: Record<number, number> = {};
-  for (const row of memberCountRows) {
-    memberCountMap[row.project_id] = row.count;
-  }
-
-  const allProjectsEnriched = allProjects.map((p) => ({
-    ...p,
-    ownerLogin: ownerLoginMap[p.user_id] ?? null,
-    memberCount: memberCountMap[p.id] ?? 1,
-  }));
-
-  // Detect orphan {story_id}.csv files on GitHub that are
-  // not referenced by project.csv and not user-ignored. Drives the
-  // orphan-stories banner. Skipped for Sheets-backed sites (no per-story CSV
-  // files in telar-content/spreadsheets/ to scan) and silently when the
-  // GitHub call fails — the banner is a recovery affordance, not a
-  // dashboard-blocking signal.
-  let orphanStoryIds: string[] = [];
-  if (!config?.google_sheets_enabled) {
-    try {
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
-      const projectStoryIds = new Set(
-        projectStories.length > 0
-          ? (
-              await db
-                .select({ story_id: stories.story_id })
-                .from(stories)
-                .where(eq(stories.project_id, activeProject.id))
-            ).map((r) => r.story_id)
-          : [],
-      );
-      orphanStoryIds = await scanRepoOrphanStoryIds(token, owner, repo, projectStoryIds);
-    } catch {
-      // Treat scan failure as "no orphans known" — keeps the dashboard
-      // responsive when GitHub is briefly unreachable; user will see the
-      // banner on the next successful load.
-      orphanStoryIds = [];
-    }
-  }
-
-  return {
-    hasProject: true as const,
-    project: activeProject,
-    allProjects: allProjectsEnriched,
-    userRole,
-    currentUserId: user.id,
-    members,
-    pendingInvites,
-    config,
-    unpublishedCount,
-    orphanStoryIds,
-  };
+export async function loader() {
+  // The dashboard is retired AS A DESTINATION. A stray nav to /dashboard
+  // (stale bookmark, old link) lands on /objects, the daily home. The `action`
+  // export below stays fully intact — /dashboard remains the shared global
+  // endpoint for invites, member management, autosave-config, switch-project,
+  // reorder, and the sync intents. Only the page is gone.
+  throw redirect("/objects");
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
@@ -255,6 +94,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       const orderJson = formData.get("order") as string;
       const projectId = Number(formData.get("projectId"));
       const order: number[] = JSON.parse(orderJson);
+
+      await requireProjectMember(db, projectId, user.id);
 
       // Security: verify all story IDs belong to an accessible project
       const projectStories = await db
@@ -299,7 +140,9 @@ export async function action({ request, context }: Route.ActionArgs) {
       session.set("activeProjectId", projectId);
       const cookie = await sessionStorage.commitSession(session);
 
-      return redirect("/dashboard", {
+      // Dashboard is no longer a destination — land the switched-into
+      // project on /objects, the daily home.
+      return redirect("/objects", {
         headers: { "Set-Cookie": cookie },
       });
     }
@@ -464,6 +307,29 @@ export async function action({ request, context }: Route.ActionArgs) {
           )
         );
 
+      // Best-effort DO eviction — close the removed collaborator's live
+      // WebSocket. D1 removal already succeeded; DO outage must not flip
+      // the user-visible outcome.
+      try {
+        const headers = await makeInternalMarkerHeaders(
+          activeProject.id,
+          env.SESSION_SECRET,
+          "notify-deleted",
+          targetUserId,
+        );
+        const stub = env.COLLABORATION.get(
+          env.COLLABORATION.idFromName(String(activeProject.id)),
+        );
+        await stub.fetch(
+          new Request(
+            `https://internal/notify-deleted?userId=${targetUserId}`,
+            { method: "POST", headers },
+          ),
+        );
+      } catch {
+        // DO outage does not flip the user-visible outcome — D1 removal already succeeded.
+      }
+
       return { ok: true, intent: "remove-member" };
     }
 
@@ -500,10 +366,8 @@ export async function action({ request, context }: Route.ActionArgs) {
         if (!hasChanges) {
           const currentHead = await getRepoHead(token, owner, repo);
           if (currentHead) {
-            await db
-              .update(projects)
-              .set({ head_sha: currentHead, updated_at: new Date().toISOString() })
-              .where(eq(projects.id, activeProject.id));
+            // Invalidates GitHub status cache so the next poll recomputes
+            await bumpProjectHead(db, activeProject.id, currentHead);
           }
         }
 
@@ -550,6 +414,17 @@ export async function action({ request, context }: Route.ActionArgs) {
           repo,
           db,
         );
+
+        // Activity feed: one site-level row per sync.
+        // requireOwner already gated this case; actor is the server-resolved
+        // user.id. Fails open — never breaks the sync it rides alongside.
+        await recordActivity(db, {
+          projectId: activeProject.id,
+          actorUserId: user.id,
+          verb: "synced",
+          entityType: "site",
+        });
+
         return { ok: true, intent: "apply-full-sync", newHeadSha: result.newHeadSha };
       } catch (err) {
         return {
@@ -580,6 +455,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             head_sha: currentHead,
             last_synced_at: now,
             updated_at: now,
+            gh_checked_at: null,
           })
           .where(eq(projects.id, activeProject.id));
         return { ok: true, intent: "accept-divergence" };
@@ -612,7 +488,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       if (!activeProject) {
         return { ok: false, intent: "restore-orphan-drafts", error: "no_project" };
       }
-      await requireProjectMember(db, activeProject.id, user.id);
+      await requireOwner(db, activeProject.id, user.id);
 
       try {
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
@@ -700,17 +576,16 @@ export async function action({ request, context }: Route.ActionArgs) {
         // parser — the action owns parsing as the canonical site.
         const doId = env.COLLABORATION.idFromName(String(activeProject.id));
         const doStub = env.COLLABORATION.get(doId);
-        const { sigHex, timestamp } = await signInternalMarker(
+        const internalHeaders = await makeInternalMarkerHeaders(
           activeProject.id,
           env.SESSION_SECRET,
+          "restore-orphans",
         );
         const restoreRes = await doStub.fetch(
           new Request("https://internal/restore-orphans", {
             method: "POST",
             headers: {
-              "X-Internal-Auth": sigHex,
-              "X-Internal-Timestamp": String(timestamp),
-              "X-Internal-Project": String(activeProject.id),
+              ...internalHeaders,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ stories: doStories }),
@@ -749,7 +624,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       if (!activeProject) {
         return { ok: false, intent: "ignore-orphans", error: "no_project" };
       }
-      await requireProjectMember(db, activeProject.id, user.id);
+      await requireOwner(db, activeProject.id, user.id);
 
       try {
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
@@ -837,195 +712,15 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 }
 
-export default function DashboardPage({ loaderData }: Route.ComponentProps) {
-  const { t, i18n } = useTranslation("dashboard");
-  const { t: tTeam } = useTranslation("team");
-  const docsUrl = i18n.language === "es" ? "https://telar.org/guia" : "https://telar.org/docs";
-  const fetcher = useFetcher();
-
-  // Surface external version drift as a toast. The
-  // compute-full-sync-diff submission happens inside SyncConfirmModal via
-  // useFetcher({ key: SYNC_DIFF_FETCHER_KEY }); we subscribe to the same
-  // fetcher here so the toast fires once at the dashboard level and stays
-  // visible after the modal closes. The hook calls showToast with "info"
-  // for direction="ahead" (externalUpgradeToast — D1 was silently healed
-  // by applyFullSyncChanges) and "warning" for
-  // direction="behind" (externalDowngradeToast — user must verify per
-  // When there is no versionChange the hook is a no-op.
-  const syncDiffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
-  const syncDiffData = syncDiffFetcher.data as
-    | { ok?: boolean; diff?: { config?: { versionChange?: unknown } } }
-    | undefined;
-  useVersionChangeToast(syncDiffData as Parameters<typeof useVersionChangeToast>[0]);
-
-  // Get headDiverged from parent app layout loader
-  const appLoaderData = useRouteLoaderData("routes/_app") as { headDiverged?: boolean } | undefined;
-  const headDiverged = appLoaderData?.headDiverged ?? false;
-
-  const [syncModalOpen, setSyncModalOpen] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  // Auto-open SyncConfirmModal when ?sync=1 is in URL. The SyncBanner in
-  // _app.tsx links here; the publish-page stale_head validation blocker
-  // routes here via the same deep-link.
-  useEffect(() => {
-    if (searchParams.get("sync") === "1") {
-      setSyncModalOpen(true);
-      setSearchParams({}, { replace: true });
-    }
-  }, [searchParams, setSearchParams]);
-
-  if (!loaderData.hasProject) {
-    return <EmptyState />;
-  }
-
-  const {
-    project,
-    allProjects,
-    userRole,
-    currentUserId,
-    members,
-    pendingInvites,
-    config,
-    unpublishedCount,
-    orphanStoryIds,
-  } = loaderData;
-
-  function handleSwitchProject(projectId: number) {
-    fetcher.submit(
-      {
-        intent: "switch-project",
-        projectId: String(projectId),
-      },
-      { method: "post" }
-    );
-  }
-
-  return (
-    <div className="max-w-6xl mx-auto space-y-6">
-
-      {/* H1 */}
-      <h1 className="font-heading font-bold text-2xl text-charcoal">
-        {t("page_title")}
-      </h1>
-
-      {/* Orphan-stories banner — self-hides when no orphans. */}
-      <OrphanStoryBanner orphanStoryIds={orphanStoryIds ?? []} />
-
-      {/* Project status bar — uses enriched allProjects with role/owner info */}
-      <ProjectStatusBar
-        repoName={project.github_repo_full_name}
-        lastPublished={project.last_published_at ?? null}
-        lastSynced={project.last_synced_at ?? null}
-        unpublishedCount={unpublishedCount ?? 0}
-        headDiverged={headDiverged}
-        allProjects={allProjects}
-        activeProjectId={project.id}
-        onSwitchProject={handleSwitchProject}
-        onSyncClick={() => setSyncModalOpen(true)}
-      />
-
-      {/* Sync confirmation modal */}
-      <SyncConfirmModal
-        open={syncModalOpen}
-        unpublishedCount={unpublishedCount ?? 0}
-        onClose={() => setSyncModalOpen(false)}
-      />
-
-      {/* Collaborator sync restriction banner */}
-      {userRole === "collaborator" && (
-        <RestrictionBanner message={tTeam("restriction_sync")} />
-      )}
-
-      {/* Repo explanation */}
-      <p className="font-body text-sm text-gray-500">
-        {t("repo_explanation")}
-      </p>
-
-      {/* Explanatory paragraphs */}
-      <div className="space-y-3">
-        <p className="font-body text-sm text-charcoal leading-relaxed">
-          <Trans
-            i18nKey="intro_paragraph_1"
-            ns="dashboard"
-            components={{
-              strong: <strong />,
-              iiifLink: (
-                <a
-                  href="https://iiif.io"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                />
-              ),
-            }}
-          />
-        </p>
-        <p className="font-body text-sm text-charcoal leading-relaxed">
-          <Trans
-            i18nKey="intro_paragraph_2"
-            ns="dashboard"
-            components={{
-              telarLink: (
-                <a
-                  href="https://telar.org"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                />
-              ),
-              docsLink: (
-                <a
-                  href={docsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                />
-              ),
-            }}
-          />
-        </p>
-      </div>
-
-      {/* Workflow steps */}
-      <div>
-        <h2 className="font-heading font-semibold text-base text-charcoal mb-3">
-          {t("workflow.title")}
-        </h2>
-        <div className="grid grid-cols-2 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr] items-stretch gap-3">
-          {([
-            { n: 1, icon: Settings, to: "/config" },
-            { n: 2, icon: Image, to: "/objects" },
-            { n: 3, icon: BookOpen, to: "/stories" },
-            { n: 4, icon: Sparkles, to: "/homepage" },
-            { n: 5, icon: Upload, to: "/publish" },
-          ] as const).map(({ n, icon: Icon, to }, i) => (
-            <React.Fragment key={n}>
-              <Link
-                to={to}
-                className="group bg-periwinkle rounded-lg p-4 hover:bg-periwinkle/80 hover:shadow-md transition-all flex flex-col items-center text-center"
-              >
-                <Icon className="w-5 h-5 text-charcoal/60 mb-2" />
-                <p className="font-heading font-semibold text-sm text-charcoal">
-                  {t(`workflow.step${n}_title`)}
-                </p>
-                <p className="font-body text-xs text-charcoal/70 mt-1">
-                  {t(`workflow.step${n}_desc`)}
-                </p>
-              </Link>
-              {i < 4 && (
-                <span className="hidden lg:flex items-center text-charcoal text-lg font-bold select-none" aria-hidden="true">→</span>
-              )}
-            </React.Fragment>
-          ))}
-        </div>
-      </div>
-
-      {/* Save/publish paragraph */}
-      <p className="font-body text-sm text-gray-600 leading-relaxed">
-        {t("save_publish")}
-      </p>
-
-    </div>
-  );
+/**
+ * DashboardPage — UNREACHABLE component.
+ *
+ * The loader above unconditionally redirects /dashboard → /objects, so this
+ * component never renders. It is retained as the route's default export (a
+ * React Router route module must export a component) but its former
+ * project-management JSX was removed when the dashboard was retired as a
+ * destination. The `action` export remains the live shared endpoint.
+ */
+export default function DashboardPage() {
+  return null;
 }

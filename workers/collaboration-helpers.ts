@@ -1,8 +1,21 @@
 /**
- * collaboration-helpers.ts — pure helper functions for the Durable Object.
+ * This file holds the pure helper functions behind the collaboration
+ * Durable Object — the logic that turns raw Yjs document changes into the
+ * derived data the DO persists to D1: human-readable field paths, per-user
+ * contribution tallies, and coarse activity-log rows.
  *
- * Extracted into a separate module so they can be unit-tested without the
- * cloudflare:workers runtime dependency.
+ * They live apart from the DO class itself because the DO depends on the
+ * `cloudflare:workers` runtime, which cannot be loaded in a plain test
+ * harness. Keeping these functions runtime-free means they can be unit-tested
+ * directly, and it lets both the DO and the request-side server services share
+ * the same definitions (for example the activity-log retention cap) without
+ * either one importing the other's runtime.
+ *
+ * The central idea is the field-path string — a colon-joined address such as
+ * `stories:9:title` or `stories:9:steps:3:question_md` — derived by walking a
+ * changed Yjs shared type up its parent chain to the document root. Those
+ * paths are what let the DO attribute edits to entities and users without
+ * threading bespoke metadata through every Yjs mutation.
  */
 
 import * as Y from "yjs";
@@ -198,4 +211,97 @@ export function makeAfterTransactionHandler(
       }
     });
   };
+}
+
+/**
+ * A coarse activity row derived from a snapshot window. One row per (actor,
+ * entity) touched this window — not per field. Persisted by the snapshot block
+ * as a raw INSERT into activity_log.
+ */
+export interface SnapshotActivityRow {
+  projectId: number;
+  actorUserId: number;
+  verb: "edited" | "added";
+  entityType: "story" | "object" | "term" | "page" | "config";
+  entityId: string;
+}
+
+/**
+ * Map a Y.doc root collection name (the first field-path segment) to the
+ * activity_log entity_type. Returns null for unknown collections (no row).
+ */
+const COLLECTION_TO_ENTITY_TYPE: Record<string, SnapshotActivityRow["entityType"]> = {
+  stories: "story",
+  objects: "object",
+  glossary: "term",
+  pages: "page",
+  config: "config",
+};
+
+/**
+ * A v4 UUID (with dashes) — the shape of a client-generated `_temp_id`. When an
+ * entity's id segment looks like this, the entity was freshly created this
+ * session (its D1 `_id` is still null), so the verb is 'added'. Existing
+ * entities carry a numeric D1 id and read as 'edited'.
+ */
+const TEMP_ID_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * buildActivityRows — pure derivation of coarse activity rows from a snapshot
+ * window's per-user field-path Sets.
+ *
+ * For each active user, group their field-paths by entity prefix
+ * (`collection:id` — the first two segments of paths like `stories:9:title` or
+ * `pages:about:body`) into one row per (user, entity). The collection name maps
+ * to an activity_log entity_type; the verb is 'added' when the id segment is a
+ * fresh client UUID (`_temp_id`, i.e. the entity has no D1 id yet) and 'edited'
+ * otherwise. Users with no field edits produce no rows.
+ *
+ * The actor is the server-resolved userId (the key of userFieldSets) — never a
+ * client-supplied value (spoofing mitigation).
+ *
+ * @param activeUserIds The userIds to emit for (the snapshot's active set)
+ * @param userFieldSets The Map<userId, Set<field-path>> accumulated this window
+ * @param projectId     The DO's resolved project id
+ */
+/**
+ * Per-project activity_log retention cap. Single source of truth shared
+ * by BOTH activity emit paths so the cap can never drift between them:
+ *   - the request-side `recordActivity` (publish/sync) in activity.server.ts,
+ *     which re-exports this constant, and
+ *   - the Durable Object snapshot loop (editor edits — the high-volume path),
+ *     which prunes inline after each batch of inserts.
+ * Kept here, in the pure (cloudflare-runtime-free) helper module, because it is
+ * the only module both the DO and the server service can import.
+ */
+export const ACTIVITY_RETENTION_CAP = 200;
+
+export function buildActivityRows(
+  activeUserIds: number[],
+  userFieldSets: Map<number, Set<string>>,
+  projectId: number
+): SnapshotActivityRow[] {
+  const rows: SnapshotActivityRow[] = [];
+
+  for (const userId of activeUserIds) {
+    const fieldSet = userFieldSets.get(userId);
+    if (!fieldSet || fieldSet.size === 0) continue;
+
+    // Group field-paths by entity prefix → one row per (user, entity).
+    const entities = new Map<string, { type: string; id: string }>();
+    for (const path of fieldSet) {
+      const segments = path.split(":");
+      const [type, id] = segments;
+      if (type && id) entities.set(`${type}:${id}`, { type, id });
+    }
+
+    for (const { type, id } of entities.values()) {
+      const entityType = COLLECTION_TO_ENTITY_TYPE[type];
+      if (!entityType) continue; // unknown collection — skip
+      const verb: SnapshotActivityRow["verb"] = TEMP_ID_UUID.test(id) ? "added" : "edited";
+      rows.push({ projectId, actorUserId: userId, verb, entityType, entityId: id });
+    }
+  }
+
+  return rows;
 }

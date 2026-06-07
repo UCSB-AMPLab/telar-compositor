@@ -1,8 +1,14 @@
 /**
- * StoriesEmptyState — empty state for the Stories list view.
+ * The placeholder shown when a project has no stories yet — the first
+ * thing an author sees on the Stories list before they have created
+ * anything.
  *
- * Shows a BookOpen icon in a periwinkle circle, a heading, a description,
- * and a "+ New Story" button that calls the onCreateNew callback.
+ * Rather than leave the list blank, this gives the author somewhere to
+ * start: an explanatory heading and description framing what a story is,
+ * plus a single call-to-action button. The actual creation is owned by
+ * the parent (via the onCreateNew callback) so this component stays a
+ * pure presentational invitation with no knowledge of how a story comes
+ * into being.
  */
 
 import { BookOpen } from "lucide-react";
@@ -17,7 +23,7 @@ export function StoriesEmptyState({ onCreateNew }: StoriesEmptyStateProps) {
 
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
-      <div className="w-14 h-14 rounded-full bg-periwinkle flex items-center justify-center mb-4">
+      <div className="w-14 h-14 rounded-full bg-anil flex items-center justify-center mb-4">
         <BookOpen className="w-6 h-6 text-charcoal" />
       </div>
       <h2 className="font-heading font-semibold text-lg text-charcoal mb-2">
@@ -29,7 +35,7 @@ export function StoriesEmptyState({ onCreateNew }: StoriesEmptyStateProps) {
       <button
         type="button"
         onClick={onCreateNew}
-        className="inline-flex items-center justify-center bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 transition-colors"
+        className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 transition-colors"
       >
         {t("new_story_button")}
       </button>

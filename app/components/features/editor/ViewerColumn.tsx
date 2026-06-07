@@ -16,17 +16,18 @@
  *
  * Also accepts a `children` slot for the layer panel overlay.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Image, Camera, RotateCcw, ZoomIn, ZoomOut, Home, Clock, Play } from "lucide-react";
+import { Image, Camera, RotateCcw, ZoomIn, ZoomOut, Home, Clock, Play, Check, Undo2 } from "lucide-react";
 import { IiifViewer } from "~/components/features/objects/IiifViewer";
 import { VideoEmbed } from "~/components/features/editor/VideoEmbed";
 import { AudioPlayer } from "~/components/features/editor/AudioPlayer";
 import { ClipTimeline } from "~/components/features/editor/ClipTimeline";
 import { ObjectPickerDialog } from "~/components/features/editor/ObjectPickerDialog";
+import { DocsLink } from "~/components/ui/DocsLink";
 import { captureViewportState, normalisedToViewport, viewportToNormalised } from "~/lib/viewer-utils";
 import { detectMediaType, extractVideoId, extractVimeoHash, secondsToMmss } from "~/lib/media-type";
 import type { VideoPlayerControls } from "~/components/features/editor/VideoEmbed";
@@ -73,8 +74,19 @@ interface ViewerColumnProps {
   onToggleLoop?: (value: string) => void;
   /** GitHub repo full name (e.g. "owner/repo") for constructing raw audio URLs */
   repoFullName?: string;
+  /**
+   * Capture-position Undo signal. `null` hides the toast; a number is a
+   * per-capture nonce — the route bumps it on every capture (and nulls it on
+   * step switch), so a repeated capture re-shows the pill and resets its 5s
+   * timer.
+   */
+  captureUndoNonce?: number | null;
+  /** Revert the just-captured step to its pre-capture baseline. */
+  onUndoCapture?: () => void;
   /** Slot for layer panel overlay */
   children?: ReactNode;
+  /** Callback to open the in-product docs drawer — threaded from the _app shell via outlet context. */
+  onOpenDoc?: (id: string) => void;
 }
 
 interface LiveCoords {
@@ -98,7 +110,10 @@ export function ViewerColumn({
   onCaptureClip,
   onToggleLoop,
   repoFullName,
+  captureUndoNonce = null,
+  onUndoCapture,
   children,
+  onOpenDoc,
 }: ViewerColumnProps) {
   const { t } = useTranslation("editor");
 
@@ -109,6 +124,32 @@ export function ViewerColumn({
   const [liveCoords, setLiveCoords] = useState<LiveCoords | null>(null);
   const [captured, setCaptured] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Hold the "Captured" flash timer in a ref so a rapid re-capture
+  // (replace-on-recapture) clears the prior timer before starting a new one —
+  // otherwise overlapping 1500ms timers leak and an older timer fires
+  // setCaptured(false) mid-flash of the newer capture. Cleared on unmount.
+  const capturedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (capturedTimerRef.current) clearTimeout(capturedTimerRef.current);
+    };
+  }, []);
+
+  // The capture-position Undo pill. The route drives visibility via
+  // `captureUndoNonce` (bumped per capture, nulled on step switch). We show the
+  // pill while a nonce is present and auto-dismiss it after 5s; a repeated
+  // capture bumps the nonce, which restarts the timer (replace-on-recapture).
+  const [captureToastShown, setCaptureToastShown] = useState(false);
+  useEffect(() => {
+    if (captureUndoNonce === null) {
+      setCaptureToastShown(false);
+      return;
+    }
+    setCaptureToastShown(true);
+    const timer = setTimeout(() => setCaptureToastShown(false), 5000);
+    return () => clearTimeout(timer);
+  }, [captureUndoNonce]);
 
   // Ref for reading current time from embedded video player
   const getCurrentTimeRef = useRef<(() => Promise<number>) | null>(null);
@@ -187,6 +228,31 @@ export function ViewerColumn({
     }
   }, [step?.id, step?.x, step?.y, step?.zoom]);
 
+  // Track the viewer instance + animation handler currently registered so a new
+  // viewer (new object) detaches the prior registration, and so the unmount
+  // cleanup can detach the live one. Registration happens inside
+  // handleViewerReady (below) where the viewer is known — NOT in an effect
+  // keyed on viewerRef.current, which never re-runs because mutating a ref does
+  // not trigger a render and React captures the dep value at render time.
+  const animHandlerRef = useRef<{
+    viewer: OpenSeadragon.Viewer;
+    handler: () => void;
+  } | null>(null);
+
+  const detachAnimationHandler = useCallback(() => {
+    const prev = animHandlerRef.current;
+    if (prev) {
+      prev.viewer.removeHandler("animation", prev.handler);
+      prev.viewer.removeHandler("animation-finish", prev.handler);
+      animHandlerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    // Detach on unmount.
+    return () => detachAnimationHandler();
+  }, [detachAnimationHandler]);
+
   const handleViewerReady = useCallback(
     (viewer: OpenSeadragon.Viewer, getCurrentPage: () => number) => {
       viewerRef.current = viewer;
@@ -216,37 +282,28 @@ export function ViewerColumn({
         const norm = viewportToNormalised(homeBounds, homeZoom, center.x, center.y, vp.getZoom());
         setLiveCoords(norm);
       });
+
+      // Register live-coordinate tracking handlers on THIS viewer. Detach any
+      // handlers from a previous viewer first so we never leak across object
+      // swaps. Previously this lived in a useEffect keyed on viewerRef.current,
+      // which never re-ran when the ref was assigned — so the handlers were
+      // never registered and the bottom-bar coordinates stopped updating on
+      // pan/zoom (working only by render-timing coincidence).
+      detachAnimationHandler();
+      const handler = () => {
+        const vp = viewer.viewport;
+        const center = vp.getCenter();
+        const homeBounds = vp.getHomeBounds();
+        const homeZoom = vp.getHomeZoom();
+        const norm = viewportToNormalised(homeBounds, homeZoom, center.x, center.y, vp.getZoom());
+        setLiveCoords(norm);
+      };
+      viewer.addHandler("animation", handler);
+      viewer.addHandler("animation-finish", handler);
+      animHandlerRef.current = { viewer, handler };
     },
-    []
+    [detachAnimationHandler]
   );
-
-  // Register animation handler for live coordinate tracking.
-  // Re-registers whenever the viewer instance changes.
-  useEffect(() => {
-    const v = viewerRef.current;
-    if (!v) return;
-
-    function handler() {
-      if (!v) return;
-      const vp = v.viewport;
-      const center = vp.getCenter();
-      const homeBounds = vp.getHomeBounds();
-      const homeZoom = vp.getHomeZoom();
-      const norm = viewportToNormalised(homeBounds, homeZoom, center.x, center.y, vp.getZoom());
-      setLiveCoords(norm);
-    }
-
-    v.addHandler("animation", handler);
-    // Also handle the end of animation (to catch the final position)
-    v.addHandler("animation-finish", handler);
-
-    return () => {
-      v.removeHandler("animation", handler);
-      v.removeHandler("animation-finish", handler);
-    };
-  // Re-register when viewer instance changes (new step with different object)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewerRef.current]);
 
   function handleCapture() {
     const v = viewerRef.current;
@@ -262,9 +319,12 @@ export function ViewerColumn({
 
     onCapturePosition(pos);
 
-    // Brief "Captured" feedback
+    // Brief "Captured" feedback. Clear any prior flash timer first so a rapid
+    // re-capture doesn't leak overlapping timers (the older one would fire
+    // setCaptured(false) mid-flash of this newer capture).
+    if (capturedTimerRef.current) clearTimeout(capturedTimerRef.current);
     setCaptured(true);
-    setTimeout(() => setCaptured(false), 1500);
+    capturedTimerRef.current = setTimeout(() => setCaptured(false), 1500);
   }
 
   function handleResetPosition() {
@@ -465,7 +525,7 @@ export function ViewerColumn({
       {!isStepZero && (mediaType === "iiif" || mediaType === "text-only") && (
         <div className="absolute bottom-3 left-3 right-3 z-10 flex items-center justify-between bg-black/60 rounded font-mono text-xs">
           {/* (a) Coordinates — left */}
-          <div className="px-3 py-2 text-[#DAB95C] shrink-0">
+          <div className="px-3 py-2 text-qolle-pale shrink-0">
             {liveCoords ? (
               <>
                 <span>x {formatCoord(liveCoords.x)}</span>
@@ -483,7 +543,7 @@ export function ViewerColumn({
           <button
             type="button"
             onClick={handleCapture}
-            className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 bg-[#DAB95C] text-charcoal hover:bg-yellow-300 rounded-full font-heading font-semibold text-xs uppercase tracking-wider transition-colors"
+            className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 bg-qolle text-charcoal hover:bg-qolle-deep rounded-full font-heading font-semibold text-xs uppercase tracking-wider transition-colors"
           >
             <Camera className="w-3.5 h-3.5" />
             {captured ? t("viewer.captured") : t("viewer.capture_position")}
@@ -504,7 +564,7 @@ export function ViewerColumn({
 
       {/* Step 0 — IIIF: just coordinates, no capture/reset */}
       {isStepZero && (mediaType === "iiif" || mediaType === "text-only") && (
-        <div className="absolute bottom-3 left-3 right-3 z-10 bg-black/60 rounded px-3 py-2 font-mono text-xs text-[#DAB95C]">
+        <div className="absolute bottom-3 left-3 right-3 z-10 bg-black/60 rounded px-3 py-2 font-mono text-xs text-qolle-pale">
           {liveCoords ? (
             <>
               <span>x {formatCoord(liveCoords.x)}</span>
@@ -546,7 +606,7 @@ export function ViewerColumn({
                 <button
                   type="button"
                   onClick={handlePreviewClip}
-                  className="flex items-center gap-1 px-2 py-1 bg-periwinkle hover:bg-periwinkle/80 text-charcoal rounded text-[10px] font-heading uppercase tracking-wider transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 bg-anil hover:bg-anil/80 text-charcoal rounded text-[10px] font-heading uppercase tracking-wider transition-colors"
                 >
                   <Play className="w-3 h-3" />
                   Preview clip
@@ -554,7 +614,7 @@ export function ViewerColumn({
               )}
             </div>
             {/* Centre — clip times */}
-            <div className="w-1/3 text-center text-[#DAB95C] shrink-0">
+            <div className="w-1/3 text-center text-qolle-pale shrink-0">
               {clipStartSeconds !== null || clipEndSeconds !== null ? (
                 <>
                   <span>clip {secondsToMmss(clipStartSeconds ?? 0)}</span>
@@ -567,8 +627,15 @@ export function ViewerColumn({
                 <span className="opacity-70">{t("media.no_clip_set")}</span>
               )}
             </div>
-            {/* Right — loop toggle */}
+            {/* Right — loop toggle + docs link */}
             <div className="w-1/3 flex items-center justify-end gap-1.5">
+              {onOpenDoc && (
+                <DocsLink
+                  docId="video"
+                  onOpenDoc={onOpenDoc}
+                  className="!text-cream/60 hover:!text-cream"
+                />
+              )}
               <span className="font-heading text-xs text-cream/70 uppercase tracking-wider">
                 {t("media.loop")}
               </span>
@@ -579,6 +646,33 @@ export function ViewerColumn({
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Capture-position Undo pill — charcoal pill above the viewer, below the
+          top object/step bar, above the layer panel (z-30). 5s auto-dismiss;
+          Undo reverts the just-captured step in one transaction. */}
+      {captureToastShown && (
+        <div
+          role="status"
+          className="absolute top-16 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-charcoal text-cream rounded-full px-4 py-2 font-heading text-xs shadow-lg"
+        >
+          <Check className="w-3.5 h-3.5 shrink-0" />
+          <span>{t("capture_toast.captured")}</span>
+          <span className="text-cream/40" aria-hidden="true">
+            ·
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              onUndoCapture?.();
+              setCaptureToastShown(false);
+            }}
+            className="flex items-center gap-1 font-semibold hover:text-cream/80 transition-colors"
+          >
+            <Undo2 className="w-3.5 h-3.5 shrink-0" />
+            {t("capture_toast.undo")}
+          </button>
         </div>
       )}
 

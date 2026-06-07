@@ -45,7 +45,7 @@
   "github_access_heading": "Acceso a GitHub",
   "github_install_type_user": "Cuenta personal",
   "github_install_type_org": "Organización",
-  "github_manage_link": "Gestionar en GitHub →",
+  "github_manage_link": "Gestionar en GitHub",
   "github_manage_aria": "Gestionar la instalación de {{login}} en GitHub",
   "github_empty_heading": "Telar Compositor no está instalado en ninguna cuenta.",
   "github_empty_subtext": "Instala la app de GitHub para conectar un sitio.",

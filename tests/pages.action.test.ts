@@ -23,7 +23,7 @@
  *   - `import-pages` returns `imported: N` reflecting only newly inserted
  *     rows.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -192,6 +192,34 @@ describe("_app.pages action: scan-repo-pages intent", () => {
       pages: [],
     });
   });
+
+  // Regression: this scan fires automatically on mount whenever the Pages tab
+  // has no pages yet (_app.pages.tsx mount effect). If the connected repo's
+  // tree can't be fetched — e.g. an empty repo with no commits returns 404 on
+  // GET /git/trees/HEAD, so getRepoTree throws "GitHub API error fetching
+  // tree: 404" — the action must NOT propagate the throw. An uncaught action
+  // error is sanitised by React Router into a root-level "Unexpected Server
+  // Error", white-screening the whole Pages tab. A best-effort scan must fail
+  // open: degrade to the plain empty state (no import banner) so the user can
+  // still create pages by hand.
+  it("fails open (empty list) when the repo tree can't be fetched", async () => {
+    scanRepoPagesMock.mockRejectedValue(
+      new Error("GitHub API error fetching tree: 404"),
+    );
+
+    const { context } = buildContext();
+    const result = await action({
+      request: buildRequest("scan-repo-pages"),
+      context,
+      params: {},
+    } as unknown as Parameters<typeof action>[0]);
+
+    expect(result).toEqual({
+      ok: true,
+      intent: "scan-repo-pages",
+      pages: [],
+    });
+  });
 });
 
 describe("_app.pages action: import-pages intent", () => {
@@ -246,6 +274,33 @@ describe("_app.pages action: import-pages intent", () => {
         { slug: "about", title: "About", body: "About body.", order: 0 },
         { slug: "credits", title: "Credits", body: "Credits body.", order: 2 },
       ],
+      already_present: [],
+    });
+  });
+
+  // Regression: import-pages re-scans the repo (same getRepoTree path as
+  // scan-repo-pages). It's user-initiated and only reachable after a
+  // successful scan, but a transient repo-tree fetch error must still not
+  // propagate uncaught (which white-screens the tab). It returns ok:false so
+  // the client clears its spinners and toasts, and writes nothing to D1.
+  it("fails open (ok:false, no inserts) when the repo tree can't be fetched", async () => {
+    scanRepoPagesMock.mockRejectedValue(
+      new Error("GitHub API error fetching tree: 404"),
+    );
+
+    const { context } = buildContext();
+    const result = await action({
+      request: buildRequest("import-pages"),
+      context,
+      params: {},
+    } as unknown as Parameters<typeof action>[0]);
+
+    expect(insertCalls).toHaveLength(0);
+    expect(result).toEqual({
+      ok: false,
+      intent: "import-pages",
+      imported: 0,
+      pages: [],
       already_present: [],
     });
   });

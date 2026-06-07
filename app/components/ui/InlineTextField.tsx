@@ -18,7 +18,7 @@
  * Shows an authorship indicator ("Last edit: {name}") on hover
  * when no live presence is active on the field.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useState } from "react";
@@ -109,8 +109,8 @@ export function InlineTextField({
   };
 
   const borderClass = bordered
-    ? "rounded-md border border-gray-200 px-3 py-2 bg-white hover:border-gray-300 focus:border-periwinkle focus:ring-1 focus:ring-periwinkle"
-    : "border-b border-transparent hover:border-gray-200 focus:border-periwinkle";
+    ? "rounded-md border border-gray-200 px-3 py-2 bg-white hover:border-gray-300 focus:border-anil"
+    : "border-b border-transparent hover:border-gray-200 focus:border-anil";
 
   // Red border + a11y when the field is in an error state.
   const errorBorderClass = error ? "border-red-400" : "";
@@ -131,7 +131,7 @@ export function InlineTextField({
         disabled={isPublishing}
         aria-disabled={isPublishing || undefined}
         aria-invalid={error || undefined}
-        className={`w-full bg-transparent focus:outline-none transition-colors ${borderClass} ${errorBorderClass} ${isPublishing ? "opacity-50 cursor-not-allowed" : ""} ${inputClassName} ${className}`}
+        className={`w-full bg-transparent transition-colors ${borderClass} ${errorBorderClass} ${isPublishing ? "text-fg-disabled cursor-not-allowed" : ""} ${inputClassName} ${className}`}
         style={
           firstColor
             ? { outline: `2px solid ${firstColor}`, outlineOffset: "-1px", borderRadius: "4px" }

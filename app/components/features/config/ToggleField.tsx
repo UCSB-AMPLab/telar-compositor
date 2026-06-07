@@ -32,8 +32,8 @@ export function ToggleField({ label, name, checked: initialChecked, help, onChan
             setChecked(next);
             onChange?.(name, next);
           }}
-          className={`relative w-10 h-6 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-periwinkle focus:ring-offset-1 ${
-            checked ? "bg-periwinkle" : "bg-gray-200"
+          className={`relative w-10 h-6 rounded-full transition-colors ${
+            checked ? "bg-anil" : "bg-gray-200"
           }`}
         >
           <span
