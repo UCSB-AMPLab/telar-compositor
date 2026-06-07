@@ -143,7 +143,7 @@ export function AddIiifDialog({
               onChange={(e) => setUrl(e.target.value)}
               placeholder={t("add_iiif_url_placeholder")}
               disabled={isFetching}
-              className="flex-1 font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle disabled:bg-gray-50 disabled:text-gray-400"
+              className="flex-1 font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal disabled:bg-gray-50 disabled:text-gray-400"
             />
             <button
               type="button"
@@ -151,7 +151,7 @@ export function AddIiifDialog({
                 if (url.trim()) onFetchUrl(url.trim());
               }}
               disabled={isFetching || !url.trim()}
-              className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-periwinkle hover:bg-periwinkle-hover text-charcoal rounded-full px-4 py-2 transition-colors uppercase tracking-wider disabled:opacity-50 whitespace-nowrap"
+              className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-anil hover:bg-anil-hover text-charcoal rounded-full px-4 py-2 transition-colors uppercase tracking-wider disabled:bg-disabled disabled:text-fg-disabled whitespace-nowrap"
             >
               {isFetching ? (
                 <>
@@ -198,7 +198,7 @@ export function AddIiifDialog({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 required
-                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle"
+                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal"
               />
               {!title.trim() && (
                 <p className="font-body text-xs text-red-500 mt-0.5">
@@ -226,7 +226,7 @@ export function AddIiifDialog({
                 type="text"
                 value={creator}
                 onChange={(e) => setCreator(e.target.value)}
-                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle"
+                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal"
               />
             </div>
 
@@ -239,7 +239,7 @@ export function AddIiifDialog({
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
-                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle resize-none"
+                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal resize-none"
               />
             </div>
 
@@ -252,7 +252,7 @@ export function AddIiifDialog({
                 type="text"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
-                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle"
+                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal"
               />
             </div>
 
@@ -265,7 +265,7 @@ export function AddIiifDialog({
                 type="text"
                 value={credit}
                 onChange={(e) => setCredit(e.target.value)}
-                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle"
+                className="w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal"
               />
             </div>
 
@@ -294,7 +294,7 @@ export function AddIiifDialog({
           type="button"
           onClick={onClose}
           disabled={isAdding}
-          className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:opacity-50"
+          className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:text-fg-disabled"
         >
           {t("add_iiif_cancel")}
         </button>
@@ -303,7 +303,7 @@ export function AddIiifDialog({
             type="button"
             onClick={handleConfirm}
             disabled={!title.trim() || isAdding}
-            className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-periwinkle hover:bg-periwinkle-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:opacity-50"
+            className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-anil hover:bg-anil-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:bg-disabled disabled:text-fg-disabled"
           >
             {isAdding && (
               <div className="w-4 h-4 border-2 border-charcoal border-t-transparent rounded-full animate-spin" />

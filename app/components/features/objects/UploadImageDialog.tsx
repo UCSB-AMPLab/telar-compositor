@@ -338,7 +338,7 @@ export function UploadImageDialog({
   const idCollision = objectId.trim() && allExistingIds.includes(objectId.trim());
 
   const inputClass =
-    "w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle disabled:bg-gray-50 disabled:text-gray-400";
+    "w-full font-body text-sm border border-gray-200 rounded-lg px-3 py-2 text-charcoal disabled:bg-gray-50 disabled:text-gray-400";
 
   // Header title based on step
   function getHeaderTitle() {
@@ -362,7 +362,7 @@ export function UploadImageDialog({
             onClick={step === 2 ? handleBack : handleBackFromSummary}
             aria-label={t("upload_back_aria")}
             disabled={isUploading}
-            className="text-charcoal hover:text-gray-500 transition-colors disabled:opacity-50 flex-shrink-0"
+            className="text-charcoal hover:text-gray-500 transition-colors disabled:text-fg-disabled flex-shrink-0"
           >
             <ChevronLeft size={16} />
           </button>
@@ -384,12 +384,12 @@ export function UploadImageDialog({
               onDrop={handleDrop}
               className={`min-h-[96px] flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed cursor-pointer transition-colors select-none ${
                 isDragOver
-                  ? "bg-lavender/20 border-periwinkle"
+                  ? "bg-anil/20 border-anil"
                   : "bg-cream border-gray-200"
               }`}
             >
               {isDragOver ? (
-                <p className="font-body text-sm text-periwinkle font-medium">
+                <p className="font-body text-sm text-anil font-medium">
                   {t("upload_drop_active")}
                 </p>
               ) : (
@@ -462,7 +462,7 @@ export function UploadImageDialog({
                 value={objectId}
                 onChange={(e) => setObjectId(e.target.value)}
                 disabled={isUploading}
-                className="w-full font-mono text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-periwinkle disabled:text-gray-400"
+                className="w-full font-mono text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 disabled:text-gray-400"
               />
               <p className="font-body text-xs text-gray-400 mt-0.5">
                 {t("upload_object_id_help")}
@@ -637,7 +637,7 @@ export function UploadImageDialog({
             type="button"
             onClick={onClose}
             disabled={isUploading}
-            className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:opacity-50"
+            className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:text-fg-disabled"
           >
             {t("upload_close")}
           </button>
@@ -648,7 +648,7 @@ export function UploadImageDialog({
               type="button"
               onClick={handleConfirm}
               disabled={!title.trim() || isUploading}
-              className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-periwinkle hover:bg-periwinkle-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:opacity-50"
+              className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-anil hover:bg-anil-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:bg-disabled disabled:text-fg-disabled"
             >
               {isUploading && (
                 <div className="w-4 h-4 border-2 border-charcoal border-t-transparent rounded-full animate-spin" />
@@ -663,9 +663,9 @@ export function UploadImageDialog({
               type="button"
               onClick={handleAddToBatch}
               disabled={!title.trim() || isUploading}
-              className={`font-heading font-semibold text-sm rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:opacity-50 ${
+              className={`font-heading font-semibold text-sm rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:text-fg-disabled ${
                 pendingFiles.length > 1
-                  ? "bg-periwinkle hover:bg-periwinkle-hover text-charcoal"
+                  ? "bg-anil hover:bg-anil-hover text-charcoal disabled:bg-disabled"
                   : "text-charcoal border border-charcoal hover:bg-gray-50"
               }`}
             >
@@ -685,7 +685,7 @@ export function UploadImageDialog({
                   type="button"
                   onClick={() => setStep(1)}
                   disabled={isUploading}
-                  className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:opacity-50"
+                  className="font-heading font-semibold text-sm text-charcoal border border-charcoal rounded-full px-5 py-1.5 hover:bg-gray-50 transition-colors uppercase tracking-wider disabled:text-fg-disabled"
                 >
                   {t("upload_add_more")}
                 </button>
@@ -694,7 +694,7 @@ export function UploadImageDialog({
                 type="button"
                 onClick={handleCommitAll}
                 disabled={isUploading}
-                className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-periwinkle hover:bg-periwinkle-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:opacity-50"
+                className="inline-flex items-center gap-2 font-heading font-semibold text-sm bg-anil hover:bg-anil-hover text-charcoal rounded-full px-5 py-1.5 transition-colors uppercase tracking-wider disabled:bg-disabled disabled:text-fg-disabled"
               >
                 {isUploading && (
                   <div className="w-4 h-4 border-2 border-charcoal border-t-transparent rounded-full animate-spin" />

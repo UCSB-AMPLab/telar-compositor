@@ -140,8 +140,8 @@ describe("ObjectPickerDialog", () => {
       />
     );
 
-    // The highlighted button should have the periwinkle border class
-    const highlighted = container.querySelector(".border-periwinkle");
+    // The highlighted button should have the anil border class
+    const highlighted = container.querySelector(".border-anil");
     expect(highlighted).not.toBeNull();
     expect(highlighted?.textContent).toContain("Gold Chest");
   });

@@ -8,7 +8,7 @@
  *   - update-object action: alt_text persistence
  *   - commit-objects action: server-side URL recheck
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -104,7 +104,7 @@ describe("generateUniqueObjectSlug", () => {
 });
 
 // ---------------------------------------------------------------------------
-// update-object action: alt_text persistence (A11Y-01)
+// update-object action: alt_text persistence
 // ---------------------------------------------------------------------------
 
 /**
@@ -131,7 +131,7 @@ function simulateUpdateObjectAltText(formDataValues: Record<string, string | und
   return { setCalls, alt_text };
 }
 
-describe("update-object action: alt_text persistence (A11Y-01)", () => {
+describe("update-object action: alt_text persistence", () => {
   it("persists alt_text when a non-empty string is submitted", () => {
     const { setCalls, alt_text } = simulateUpdateObjectAltText({
       alt_text: "A red bird on a branch",
@@ -167,6 +167,44 @@ describe("update-object action: alt_text persistence (A11Y-01)", () => {
 
     expect(alt_text).toBe("A painting of a mountain");
     expect(setCalls[0]).toMatchObject({ alt_text: "A painting of a mountain" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// upload-object action: alt_text falls back to title
+// ---------------------------------------------------------------------------
+
+/**
+ * Simulates the upload path's alt_text resolution in
+ * app/routes/_app.objects.tsx, which mirrors the production expression:
+ *   alt_text: metadata.altText.trim() || metadata.title.trim()
+ * Unlike the update-object path (which falls back to null), the UPLOAD path
+ * falls back to the entered TITLE when alt text is empty/blank — so an
+ * uploaded image always carries non-empty alt text.
+ */
+function resolveUploadAltText(altText: string, title: string): string {
+  return altText.trim() || title.trim();
+}
+
+describe("upload-object action: alt_text falls back to title", () => {
+  it("uses the entered alt text when it is non-empty", () => {
+    expect(resolveUploadAltText("A red bird on a branch", "Bird study")).toBe(
+      "A red bird on a branch",
+    );
+  });
+
+  it("trims the entered alt text", () => {
+    expect(resolveUploadAltText("  A mountain  ", "Mountain study")).toBe(
+      "A mountain",
+    );
+  });
+
+  it("falls back to the title when alt text is empty", () => {
+    expect(resolveUploadAltText("", "Mapa de Bogotá")).toBe("Mapa de Bogotá");
+  });
+
+  it("falls back to the (trimmed) title when alt text is whitespace-only", () => {
+    expect(resolveUploadAltText("   ", "  Mapa de Bogotá  ")).toBe("Mapa de Bogotá");
   });
 });
 
@@ -435,11 +473,11 @@ describe("commit-objects action: server-side URL recheck", () => {
 // commit-objects action: contract guards
 // ---------------------------------------------------------------------------
 //
-// These tests assert the *route file* itself satisfies the locked decisions:
+// These tests assert the *route file* itself satisfies the contract:
 //   1. verifySiteUrl runs inside `case "commit-objects"`.
 //   2. client-passed fixUrl / pagesUrl are NOT read from formData
 //                  inside `case "commit-objects"`.
-//   PATTERNS.md correction: verifySiteUrl is imported from
+//   verifySiteUrl is imported from
 //                  ~/lib/commit.server, NOT ~/lib/sync.server.
 //   Single fetch: getFileContent("_config.yml") is called at most once
 //                 inside `case "commit-objects"`.
@@ -506,6 +544,17 @@ describe("commit-objects action: route-file contract guards", () => {
     // and submits the pre-commit-check intent.
     expect(src).toMatch(
       /sheetsFetcher\.submit\(\s*\{\s*intent:\s*["']pre-commit-check["']/,
+    );
+  });
+
+  // Pin the upload-path alt_text→title fallback against regression.
+  // The route builds each uploaded object's alt_text from the entered alt text
+  // OR (when blank) the title. Removing the `|| metadata.title.trim()` fallback
+  // would re-open the earlier carry-over where uploads shipped empty alt text.
+  it("builds uploaded alt_text with a title fallback", () => {
+    const src = readObjectsRoute();
+    expect(src).toMatch(
+      /alt_text:\s*metadata\.altText\.trim\(\)\s*\|\|\s*metadata\.title\.trim\(\)/,
     );
   });
 });

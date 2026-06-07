@@ -13,31 +13,15 @@
  * with thumbnails, sort/filter controls, featured-star toggles, a
  * slide-in edit panel, and a build progress banner.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { and, asc, count, eq, inArray } from "drizzle-orm";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { redirect, useFetcher } from "react-router";
+import { Link, redirect, useFetcher, useOutletContext, useSearchParams } from "react-router";
 import * as Y from "yjs";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import type { DragEndEvent } from "@dnd-kit/core";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  useSortable,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Trash2 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { Route } from "./+types/_app.objects";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
@@ -46,15 +30,17 @@ import { createSessionStorage } from "~/lib/session.server";
 import { resolveActiveProject } from "~/lib/membership.server";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
-import { findYMapById } from "~/lib/yjs-helpers";
+import { findYMapById, findYMapByIdOrTempId } from "~/lib/yjs-helpers";
 import { useToast } from "~/hooks/use-toast";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
+import { DocsLink } from "~/components/ui/DocsLink";
 import { fetchAndParseManifest } from "~/lib/iiif.server";
 import { deriveStatus } from "~/lib/iiif-types";
 import type { IiifFetchResult } from "~/lib/iiif-types";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoTree, getFileContent } from "~/lib/github.server";
 import { computeSyncDiff, applySyncChanges } from "~/lib/sync.server";
+import { bumpProjectHead } from "~/lib/github-status.server";
 import { generateUniqueObjectSlug, slugify } from "~/lib/slugify";
 import {
   commitFilesToRepo,
@@ -74,13 +60,16 @@ import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import { ObjectRow } from "~/components/features/objects/ObjectRow";
 import { ObjectsEmptyState } from "~/components/features/objects/ObjectsEmptyState";
 import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
-import { AddIiifDialog } from "~/components/features/objects/AddIiifDialog";
+import { AddObjectDialog } from "~/components/features/objects/AddObjectDialog";
 import { CommitAndBuildModal } from "~/components/features/objects/CommitAndBuildModal";
-import { UploadImageDialog } from "~/components/features/objects/UploadImageDialog";
 import type { ObjectRowObject } from "~/components/features/objects/ObjectRow";
 import type { SyncDiff, SyncChanges, PendingObject } from "~/lib/sync.server";
-import type { AddIiifConfirmPayload } from "~/components/features/objects/AddIiifDialog";
+import type {
+  AddObjectIiifPayload,
+  AddObjectExternalPayload,
+} from "~/components/features/objects/AddObjectDialog";
 import type { UploadImageConfirmPayload } from "~/components/features/objects/UploadImageDialog";
+import { matchesObjectFilter } from "~/lib/objects-filter";
 import { commitMultipleBinaryFilesWithCsv, arrayBufferToBase64, validateUploadFile } from "~/lib/upload.server";
 import type { SyncApplyPayload } from "~/components/features/objects/SyncDiffDialog";
 
@@ -103,17 +92,22 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
   if (!resolved) {
-    return redirect("/dashboard");
+    // No active project — send to onboarding (which creates one). Must NOT
+    // bounce to /dashboard: that route now redirects to /objects, which would
+    // loop back here for a zero-project user.
+    return redirect("/onboarding");
   }
   const { project: activeProject, userRole } = resolved;
 
-  // Fetch all objects ordered by `order` ASC — pre-existing rows default
-  // to 0, which still sorts consistently before newly-ordered items.
+  // Fetch all objects ordered by title ASC — matches the published Telar
+  // objects index (objects-index.html sorts by title), so the manager list
+  // and the live site agree. Objects are not reorderable; there is no order
+  // field to sort by.
   const projectObjects = await db
     .select()
     .from(objects)
     .where(eq(objects.project_id, activeProject.id))
-    .orderBy(asc(objects.order));
+    .orderBy(asc(objects.title));
 
   // Team members for the delete confirmation contributor warning.
   const memberRows = await db
@@ -277,10 +271,15 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "toggle-featured": {
       const objectDbId = Number(formData.get("objectDbId"));
       const currentValue = formData.get("currentValue") === "true";
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) return { ok: false, intent: "toggle-featured", error: "no_project" };
       await db
         .update(objects)
         .set({ featured: !currentValue, updated_at: new Date().toISOString() })
-        .where(eq(objects.id, objectDbId));
+        .where(and(eq(objects.id, objectDbId), eq(objects.project_id, resolved.project.id)));
       return { ok: true, intent: "toggle-featured" };
     }
 
@@ -291,6 +290,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       if (!title) {
         return { ok: false, error: "title_required" };
       }
+
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) return { ok: false, intent: "update-object", error: "no_project" };
 
       const now = new Date().toISOString();
       await db
@@ -312,7 +317,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           featured: formData.get("featured") === "true",
           updated_at: now,
         })
-        .where(eq(objects.id, objectDbId));
+        .where(and(eq(objects.id, objectDbId), eq(objects.project_id, resolved.project.id)));
 
       return { ok: true, intent: "update-object" };
     }
@@ -615,10 +620,8 @@ export async function action({ request, context }: Route.ActionArgs) {
           commitMessage: `Add ${commitLabel} via Telar Compositor`,
         });
 
-        // 10. Update project head_sha
-        await db.update(projects)
-          .set({ head_sha: uploadCommitResult.newHeadSha, updated_at: new Date().toISOString() })
-          .where(eq(projects.id, uploadActiveProject.id));
+        // 10. Update project head_sha (also invalidates GitHub status cache)
+        await bumpProjectHead(db, uploadActiveProject.id, uploadCommitResult.newHeadSha);
 
         // 11. Dispatch IIIF-only workflow and capture run ID for direct polling
         let dispatchRunId: number | null = null;
@@ -818,11 +821,8 @@ export async function action({ request, context }: Route.ActionArgs) {
           true, // skipCi — suppress full build
         );
 
-        // Update projects.head_sha
-        await db
-          .update(projects)
-          .set({ head_sha: result.newHeadSha, updated_at: new Date().toISOString() })
-          .where(eq(projects.id, activeProject.id));
+        // Update projects.head_sha (also invalidates GitHub status cache)
+        await bumpProjectHead(db, activeProject.id, result.newHeadSha);
 
         // If sheets were disabled, update project_config
         if (disableSheets) {
@@ -1016,14 +1016,16 @@ export async function action({ request, context }: Route.ActionArgs) {
         missing_from_repo: false,
         origin: (p as any).origin ?? "compositor",
         alt_text: (p as any).alt_text ?? null,
+        dimensions: (p as any).dimensions ?? null,
+        extra_columns: (p as any).extra_columns ?? null,
       }));
 
-      // D1 batch limit: 100 bindings per INSERT, 18 columns → max 5 rows.
+      // D1 batch limit: 100 bindings per INSERT, 20 columns → max 5 rows (100 bound params, D1's inclusive limit).
       // Collect inserted rows so the client can mirror them into the Yjs
       // Y.Array with canonical D1 ids (self-hosted objects appear in
       // the shared doc only after the repo build succeeds and D1 INSERT
       // completes; the snapshot writes them as UPDATEs on the next cycle).
-      const maxRows = Math.floor(100 / 18);
+      const maxRows = Math.floor(100 / 20);
       type InsertedRow = { id: number; object_id: string };
       const inserted: InsertedRow[] = [];
       for (let i = 0; i < rows.length; i += maxRows) {
@@ -1051,124 +1053,12 @@ export async function action({ request, context }: Route.ActionArgs) {
 // Sort / filter helpers
 // ---------------------------------------------------------------------------
 
-type SortBy = "title" | "status";
-type FilterStatus = "all" | "ready" | "needs_attention";
-
-const STATUS_PRIORITY: Record<ReturnType<typeof deriveStatus>, number> = {
-  missing_from_repo: 0,
-  no_metadata: 1,
-  image_missing: 2,
-  ready: 3,
-};
-
-function sortObjects(
-  objs: ObjectRowObject[],
-  sortBy: SortBy
-): ObjectRowObject[] {
-  if (sortBy === "title") {
-    return [...objs].sort((a, b) =>
-      (a.title ?? a.object_id).localeCompare(b.title ?? b.object_id)
-    );
-  }
-  // sort by status priority (ascending — problem cases first)
-  return [...objs].sort((a, b) => {
-    const sa = deriveStatus(a);
-    const sb = deriveStatus(b);
-    return STATUS_PRIORITY[sa] - STATUS_PRIORITY[sb];
-  });
-}
-
-function filterObjects(
-  objs: ObjectRowObject[],
-  filterStatus: FilterStatus
-): ObjectRowObject[] {
-  if (filterStatus === "all") return objs;
-  if (filterStatus === "ready") {
-    return objs.filter((o) => deriveStatus(o) === "ready");
-  }
-  // needs_attention: everything that isn't ready
-  return objs.filter((o) => deriveStatus(o) !== "ready");
-}
-
-// ---------------------------------------------------------------------------
-// SortableObjectRow — dnd-kit sortable wrapper around ObjectRow for the Yjs
-// collaborative mode. Adds a grip handle for reorder, a delete button
-// (visible-but-disabled when canDelete is false), and a
-// validation-state badge for pending / invalid IIIF manifests.
-// ---------------------------------------------------------------------------
-
-interface SortableObjectRowProps {
-  sortableId: string | number;
-  object: ObjectRowObject;
-  canDelete: boolean;
-  deleteTooltip: string;
-  onDelete: () => void;
-  onToggleFeatured: (o: ObjectRowObject) => void;
-  siteBaseUrl: string | null;
-  validationState: "pending" | "valid" | "error" | null;
-  validationLabels: { pending: string; error: string };
-}
-
-function SortableObjectRow({
-  sortableId,
-  object,
-  canDelete,
-  deleteTooltip,
-  onDelete,
-  onToggleFeatured,
-  siteBaseUrl,
-  validationState,
-  validationLabels,
-}: SortableObjectRowProps) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
-    useSortable({ id: sortableId });
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      className="flex items-stretch border-b border-gray-100 last:border-b-0"
-    >
-      {/* Object row body (flex-1 so ObjectRow lays out naturally) */}
-      <div className="flex-1 min-w-0">
-        <ObjectRow
-          object={object}
-          onToggleFeatured={onToggleFeatured}
-          siteBaseUrl={siteBaseUrl}
-        />
-        {validationState === "pending" && (
-          <p className="font-body text-xs text-gray-500 px-4 pb-2 -mt-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-gray-300 animate-pulse mr-2" />
-            {validationLabels.pending}
-          </p>
-        )}
-        {validationState === "error" && (
-          <p className="font-body text-xs text-red-600 px-4 pb-2 -mt-1">
-            {validationLabels.error}
-          </p>
-        )}
-      </div>
-
-      {/* Delete button (visible-but-disabled when not deletable) */}
-      <div className="shrink-0 px-2 flex items-center">
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={!canDelete}
-          title={!canDelete ? deleteTooltip : undefined}
-          aria-label="Delete object"
-          className="text-terracotta hover:text-terracotta/80 disabled:text-gray-300 disabled:cursor-not-allowed transition-colors"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
+// sortObjects — default title-ascending ordering for the non-Yjs fallback
+// branch. The sort/status selects were dropped, so the only remaining
+// ordering is the default title sort; Yjs mode preserves Y.Array order.
+function sortObjects(objs: ObjectRowObject[]): ObjectRowObject[] {
+  return [...objs].sort((a, b) =>
+    (a.title ?? a.object_id).localeCompare(b.title ?? b.object_id)
   );
 }
 
@@ -1242,6 +1132,8 @@ interface YjsObjectRow extends ObjectRowObject {
   _validationError?: string | null;
   /** origin: "iiif" (added via Yjs) vs "repo" (self-hosted upload). */
   _origin?: string | null;
+  /** Creator string (read from the Y.Map) — used only by the ?q= filter. */
+  _creator?: string | null;
 }
 
 interface ObjectsMember {
@@ -1270,6 +1162,8 @@ function yMapToObjectRow(yMap: Y.Map<unknown>, yIndex: number): YjsObjectRow {
     id,
     object_id: (yMap.get("object_id") as string) ?? "",
     title: readScalarFromYMap(yMap, "title"),
+    year: readScalarFromYMap(yMap, "year"),
+    _creator: readScalarFromYMap(yMap, "creator"),
     featured: Boolean(yMap.get("featured") ?? false),
     source_url: (yMap.get("source_url") as string | null) ?? null,
     thumbnail: (yMap.get("thumbnail") as string | null) ?? null,
@@ -1290,30 +1184,50 @@ function yMapToObjectRow(yMap: Y.Map<unknown>, yIndex: number): YjsObjectRow {
 // ---------------------------------------------------------------------------
 
 export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
+  const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
   const { t } = useTranslation("objects");
   const { t: tStructural } = useTranslation("structural");
+  const { t: tCommon } = useTranslation("common");
   const {
     project,
     objects: loaderObjects,
+    objectStepCounts,
     siteBaseUrl,
     members,
     currentUserId,
     userRole,
   } = loaderData;
 
-  const { ydoc, remoteCollaborators } = useCollaborationContext();
+  const { ydoc } = useCollaborationContext();
   const ops = useStructuralOps(currentUserId, userRole);
   const { showToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [sortBy, setSortBy] = useState<SortBy>("title");
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
+  // Page-head substring filter — URL state under ?q=. Mirrors
+  // the glossary route's inline ?q= pattern.
+  const query = searchParams.get("q") ?? "";
+  const setQuery = useCallback(
+    (next: string) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (next.trim() === "") params.delete("q");
+          else params.set("q", next);
+          return params;
+        },
+        { replace: true, preventScrollReset: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   // Sync dialog state
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   const [syncDiffData, setSyncDiffData] = useState<SyncDiff | null>(null);
 
-  // Add IIIF dialog state
-  const [addIiifOpen, setAddIiifOpen] = useState(false);
+  // Unified Add Object dialog state (replaces the chooser + AddIiif + Upload
+  // trio). The IIIF tab still drives the iiif-preview fetch.
+  const [addObjectOpen, setAddObjectOpen] = useState(false);
   const [iiifFetchResult, setIiifFetchResult] = useState<IiifFetchResult | null>(null);
 
   // Commit modal state
@@ -1325,11 +1239,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   const [dispatchRunId, setDispatchRunId] = useState<number | null>(null);
   const [dispatchHtmlUrl, setDispatchHtmlUrl] = useState<string | null>(null);
 
-  // Add objects chooser modal
-  const [addObjectsOpen, setAddObjectsOpen] = useState(false);
-
-  // Upload dialog state
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  // Upload state (the Upload tab lives inside the unified AddObjectDialog now)
   const [uploadError, setUploadError] = useState<string | null>(null);
   // Guard: tracks whether a new upload has been submitted in the current dialog session
   const [uploadSubmitted, setUploadSubmitted] = useState(false);
@@ -1373,6 +1283,29 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     sheetsFetcher.submit({ intent: "pre-commit-check" }, { method: "post" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
+
+  // One-time denied toast on direct-nav. The routes/_app loader guard
+  // redirects a collaborator who opens /publish or /upgrade to
+  // /objects?denied=publish|upgrade. Surface a single info toast explaining why,
+  // then strip the param so it never re-fires on re-render or refresh. Keyed on
+  // the denied value (mirrors use-version-change-toast's fire-once pattern).
+  const denied = searchParams.get("denied");
+  useEffect(() => {
+    if (denied !== "publish" && denied !== "upgrade") return;
+    showToast({
+      type: "info",
+      message: tCommon(denied === "upgrade" ? "role.denied_upgrade" : "role.denied_publish"),
+    });
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("denied");
+        return next;
+      },
+      { replace: true, preventScrollReset: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [denied]);
 
   // Update state from pre-commit check result
   useEffect(() => {
@@ -1419,8 +1352,8 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
 
   useEffect(() => {
     if (!uploadSubmitted) return;
-    if (uploadFetcherData?.ok && uploadFetcherData.intent === "upload-image" && uploadDialogOpen) {
-      setUploadDialogOpen(false);
+    if (uploadFetcherData?.ok && uploadFetcherData.intent === "upload-image" && addObjectOpen) {
+      setAddObjectOpen(false);
       setUploadError(null);
       setUploadSubmitted(false);
       // Pass pending objects to CommitAndBuildModal — it will call insert-pending-objects
@@ -1444,7 +1377,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       };
       setUploadError(errorMap[uploadFetcherData.error] || t("upload_error_generic"));
     }
-  }, [uploadFetcherData, uploadDialogOpen, t]);
+  }, [uploadFetcherData, addObjectOpen, t]);
 
   function handleToggleFeatured(object: ObjectRowObject) {
     // Y.Doc is the source of truth for object metadata in collaborative mode;
@@ -1475,9 +1408,9 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     syncFetcher.submit({ intent: "compute-sync-diff" }, { method: "post" });
   }
 
-  function handleAddIiifClick() {
+  function handleAddObjectClick() {
     setIiifFetchResult(null);
-    setAddIiifOpen(true);
+    setAddObjectOpen(true);
   }
 
   function handleSyncApply(payload: SyncApplyPayload) {
@@ -1492,30 +1425,31 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     iiifFetcher.submit({ intent: "fetch-iiif-preview", url }, { method: "post" });
   }
 
-  function handleIiifConfirm(payload: AddIiifConfirmPayload) {
+  function handleIiifConfirm(payload: AddObjectIiifPayload) {
     // IIIF objects flow through the Y.Array with a "pending" validation
-    // state. The DO snapshot (plan 27-03) skips pending objects, so they do
+    // state. The DO snapshot skips pending objects, so they do
     // not reach D1 until this client-side fetch marks them valid.
     if (!ops || !ydoc) {
       // No active ydoc — silently drop; reconnect will let the user retry.
       // eslint-disable-next-line no-console
       console.warn("[objects] IIIF add requested without active ydoc; ignored");
-      setAddIiifOpen(false);
+      setAddObjectOpen(false);
       setIiifFetchResult(null);
       return;
     }
 
     const objectId = payload.object_id || slugify(payload.title);
-    ops.addIiifObject(objectId, payload.title, payload.manifestUrl);
+    const tempId = ops.addIiifObject(objectId, payload.title, payload.manifestUrl);
 
-    // Seed additional fields on the just-pushed Y.Map (addIiifObject writes
+    // Seed additional fields on the just-added Y.Map (addIiifObject writes
     // the minimum set — fill in creator/description/source/credit/thumbnail
     // from the dialog payload so the DO snapshot can INSERT a complete row
-    // once validation succeeds).
+    // once validation succeeds). Locate it by its stable _temp_id, NOT by
+    // array position: this is a collaborative doc, so a remote push can land
+    // between the op and this read, and array.get(length - 1) would then
+    // point at the wrong object (seeding/validating the wrong row).
     const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
-    const justAdded = objectsArray.get(objectsArray.length - 1) as
-      | Y.Map<unknown>
-      | undefined;
+    const justAdded = findYMapByIdOrTempId(objectsArray, null, tempId);
     if (justAdded) {
       ydoc.transact(() => {
         const creatorText = justAdded.get("creator");
@@ -1530,6 +1464,12 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         if (altText instanceof Y.Text && payload.title) {
           altText.insert(0, payload.title);
         }
+        // Year seed — the IIIF tab now carries a year field,
+        // which flows through here into the year Y.Text.
+        const yearText = justAdded.get("year");
+        if (yearText instanceof Y.Text && payload.year) {
+          yearText.insert(0, payload.year);
+        }
         if (payload.thumbnail) justAdded.set("thumbnail", payload.thumbnail);
         if (payload.source) justAdded.set("source", payload.source);
         if (payload.credit) justAdded.set("credit", payload.credit);
@@ -1541,8 +1481,55 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       validateManifestOnYMap(justAdded, payload.manifestUrl);
     }
 
-    setAddIiifOpen(false);
+    setAddObjectOpen(false);
     setIiifFetchResult(null);
+  }
+
+  function handleExternalConfirm(payload: AddObjectExternalPayload) {
+    // External-media objects are born non-pending (origin "compositor") so the
+    // DO snapshot INSERTs them immediately. They have no IIIF
+    // manifest, so validateManifestOnYMap is intentionally NOT called here.
+    // image_available stays false and thumbnail "" (no poster), as already
+    // set by the op.
+    if (!ops || !ydoc) {
+      // No active ydoc — silently drop; reconnect will let the user retry.
+      // eslint-disable-next-line no-console
+      console.warn("[objects] external add requested without active ydoc; ignored");
+      setAddObjectOpen(false);
+      return;
+    }
+
+    const objectId = payload.object_id || slugify(payload.title);
+    const tempId = ops.addExternalMediaObject(objectId, payload.title, payload.sourceUrl);
+
+    // Seed the metadata Y.Texts on the just-added Y.Map, mirroring
+    // handleIiifConfirm (creator / description / alt_text / year). No manifest
+    // validation — external media has no manifest to fetch. Locate by stable
+    // _temp_id, not array position (see handleIiifConfirm for the race).
+    const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+    const justAdded = findYMapByIdOrTempId(objectsArray, null, tempId);
+    if (justAdded) {
+      ydoc.transact(() => {
+        const creatorText = justAdded.get("creator");
+        if (creatorText instanceof Y.Text && payload.creator) {
+          creatorText.insert(0, payload.creator);
+        }
+        const descriptionText = justAdded.get("description");
+        if (descriptionText instanceof Y.Text && payload.description) {
+          descriptionText.insert(0, payload.description);
+        }
+        const altText = justAdded.get("alt_text");
+        if (altText instanceof Y.Text && payload.title) {
+          altText.insert(0, payload.title);
+        }
+        const yearText = justAdded.get("year");
+        if (yearText instanceof Y.Text && payload.year) {
+          yearText.insert(0, payload.year);
+        }
+      });
+    }
+
+    setAddObjectOpen(false);
   }
 
   function handleUploadConfirm(payloads: UploadImageConfirmPayload[]) {
@@ -1769,7 +1756,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         objMap.set("featured", p.featured);
         objMap.set("image_available", p.image_available);
         objMap.set("_validation_state", "valid");
-        objMap.set("order", objectsArray.length);
         objMap.set("origin", "repo");
         objMap.set("missing_from_repo", false);
         objMap.set("thumbnail", p.thumbnail ?? "");
@@ -1790,28 +1776,10 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     lastInsertedPendingRef.current = null;
   }
 
-  // --------------------------------------------------------------------
-  // dnd-kit sensors (reorder)
-  // --------------------------------------------------------------------
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-
+  // Stable React key for each row (Y.Array order is the canonical order;
+  // drag-to-reorder was removed, so no sortable id is needed).
   const keyFor = (o: YjsObjectRow): string | number =>
     o.id > 0 ? o.id : o._tempId ?? `idx-${o._yIndex ?? 0}`;
-
-  function handleDragEnd(event: DragEndEvent) {
-    if (!useYjs) return;
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const list = yjsObjects ?? [];
-    const keys = list.map((o) => keyFor(o));
-    const oldIndex = keys.findIndex((k) => k === active.id);
-    const newIndex = keys.findIndex((k) => k === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
-    ops!.reorderObjects(oldIndex, newIndex);
-  }
 
   // --------------------------------------------------------------------
   // Remote-delete toast — fires when an object disappears from the
@@ -1829,93 +1797,108 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     });
     prevTitlesRef.current = curr;
     if (deleted.length === 0) return;
-    const deleterName = remoteCollaborators[0]?.user.name ?? "";
     for (const title of deleted) {
-      const message = deleterName
-        ? tStructural("toast_item_deleted", { label: title, name: deleterName })
-        : tStructural("toast_item_deleted_generic", { label: title });
+      // Stay generic: a Y.Array delete carries no actor, and awareness only
+      // tells us who is connected — not who deleted. Naming a collaborator
+      // here would misattribute the action. No undo affordance: a
+      // remote delete has no local undo path, so a button would be a no-op —
+      // omit it rather than show dead UI.
       showToast({
-        message,
+        message: tStructural("toast_item_deleted_generic", { label: title }),
         type: "destructive",
-        ...(userRole === "convenor"
-          ? { action: { label: tStructural("toast_item_deleted_undo"), onClick: () => {} } }
-          : {}),
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [yjsObjects, useYjs, userRole]);
+  }, [yjsObjects, useYjs]);
 
   // --------------------------------------------------------------------
-  // Apply sort + filter. Yjs mode preserves Y.Array order for the default
-  // ("title") sort — Y.Array position IS the canonical order. Switching to
-  // "status" sort falls through to the deriveStatus-based ordering.
+  // Default order + substring filter. The sort and status
+  // selects were dropped; the default order is Y.Array order in Yjs
+  // mode (Y.Array position IS the canonical order) and title order in the
+  // non-Yjs fallback. The page-head ?q= filter then narrows the list via
+  // matchesObjectFilter (substring on title/creator/year/object_id).
   // --------------------------------------------------------------------
   const sourceList: YjsObjectRow[] = useYjs
     ? (yjsObjects ?? [])
-    : (loaderObjects as YjsObjectRow[]);
-  const processedObjects: YjsObjectRow[] = useYjs
-    ? (filterObjects(
-        sortBy === "status"
-          ? (sortObjects(sourceList, "status") as YjsObjectRow[])
-          : sourceList,
-        filterStatus
-      ) as YjsObjectRow[])
-    : (filterObjects(
-        sortObjects(sourceList, sortBy),
-        filterStatus
-      ) as YjsObjectRow[]);
+    : (sortObjects(loaderObjects as YjsObjectRow[]) as YjsObjectRow[]);
+  const processedObjects: YjsObjectRow[] = useMemo(
+    () =>
+      sourceList.filter((o) =>
+        matchesObjectFilter(
+          {
+            title: o.title,
+            // Non-Yjs loader rows carry `creator` directly; Yjs rows expose it
+            // as `_creator` (read from the Y.Map in yMapToObjectRow).
+            creator:
+              o._creator ??
+              (o as { creator?: string | null }).creator ??
+              null,
+            year: o.year ?? null,
+            object_id: o.object_id,
+          },
+          query,
+        ),
+      ),
+    [sourceList, query],
+  );
 
   const hasObjects = sourceList.length > 0;
-  const sortableIds: (string | number)[] = processedObjects.map((o) => keyFor(o));
   const isConvenor = userRole === "convenor";
+
+  // Display-only external-IIIF thumbnails, keyed by object_id. The Y.Doc is
+  // seeded from D1 without the thumbnail column (workers/collaboration.ts), so
+  // external IIIF rows have no Yjs thumbnail; the loader resolves the URL from
+  // the manifest and returns it here. Nothing is persisted or hosted — the value
+  // is a URL pointing at the external IIIF server, used purely as a render fallback.
+  const fallbackThumbnails = new Map(
+    (loaderObjects as ObjectRowObject[])
+      .filter((o) => o.thumbnail)
+      .map((o) => [o.object_id, o.thumbnail as string]),
+  );
 
   return (
     <div className="max-w-5xl mx-auto">
       {/* Page header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <h1 className="font-heading font-bold text-2xl text-charcoal">
-          {t("title")}
-        </h1>
+        <div className="flex items-center gap-4">
+          <h1 className="font-heading font-bold text-2xl text-charcoal">
+            {t("title")}
+          </h1>
+          {openDoc && <DocsLink docId="objects" onOpenDoc={openDoc} />}
+        </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Sort */}
-          <label className="sr-only" htmlFor="sort-select">
-            {t("sort_label")}
-          </label>
-          <select
-            id="sort-select"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortBy)}
-            className="font-body text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle"
-          >
-            <option value="title">{t("sort_title_az")}</option>
-            <option value="status">{t("sort_status_first")}</option>
-          </select>
+          {/* Substring filter — ?q= state */}
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("filter_placeholder")}
+            aria-label={t("filter_placeholder")}
+            className="w-56 font-body text-sm text-charcoal bg-surface border border-gray-200 rounded-md px-3 py-1.5"
+          />
 
-          {/* Filter */}
-          <label className="sr-only" htmlFor="filter-select">
-            {t("filter_label")}
-          </label>
-          <select
-            id="filter-select"
-            value={filterStatus}
-            onChange={(e) =>
-              setFilterStatus(e.target.value as FilterStatus)
-            }
-            className="font-body text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-charcoal focus:outline-none focus:ring-2 focus:ring-periwinkle"
-          >
-            <option value="all">{t("filter_all")}</option>
-            <option value="ready">{t("filter_ready")}</option>
-            <option value="needs_attention">{t("filter_needs_attention")}</option>
-          </select>
+          {/* Sync from GitHub — convenor-only ghost button.
+              Repo writes require convenor; collaborators see only filter + Add. */}
+          {isConvenor && (
+            <button
+              type="button"
+              onClick={handleSyncClick}
+              disabled={isComputing}
+              className="inline-flex items-center gap-1.5 border border-gray-200 text-charcoal hover:bg-cream font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-4 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className="w-4 h-4" />
+              {t("sync_from_github")}
+            </button>
+          )}
 
-          {/* Add objects */}
+          {/* Single +Add object — opens the unified AddObjectDialog */}
           <button
             type="button"
-            onClick={() => setAddObjectsOpen(true)}
-            className="inline-flex items-center justify-center bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-4 py-1.5 transition-colors"
+            onClick={handleAddObjectClick}
+            className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-4 py-1.5 transition-colors"
           >
-            {t("add_objects_button")}
+            {t("add_object_button")}
           </button>
 
         </div>
@@ -1924,64 +1907,73 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       {/* Main content area — shifts left when side panel is open on lg+ */}
       <div>
         {!hasObjects ? (
-          <ObjectsEmptyState
-            onSync={handleSyncClick}
-            onAddIiif={handleAddIiifClick}
-          />
+          <>
+            <ObjectsEmptyState
+              onSync={handleSyncClick}
+              onAddIiif={handleAddObjectClick}
+            />
+            {/* Safety net: a low-key hint pointing a user who skipped
+                onboarding back to Site settings (/config) to finish setup.
+                The empty_body copy names Site settings inline; the trailing
+                link provides the navigable target to /config. */}
+            <p className="font-body text-xs text-fg-muted text-center max-w-sm mx-auto -mt-12 mb-12">
+              {tCommon("objects.empty_body")}{" "}
+              <Link
+                to="/config"
+                className="font-semibold text-anil-ink hover:underline whitespace-nowrap"
+              >
+                {tCommon("nav.config")} →
+              </Link>
+            </p>
+          </>
         ) : (
           <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-            {/* Column header */}
-            <div className="grid grid-cols-[48px_1fr_auto_auto_auto_auto] gap-3 items-center px-4 py-2 bg-gray-50 border-b border-gray-100">
-              <span className="col-span-2 font-heading text-xs uppercase tracking-wider text-gray-400">
-                {t("header_title")}
-              </span>
-              <span className="font-heading text-xs uppercase tracking-wider text-gray-400 hidden md:block">
-                {t("header_type")}
-              </span>
-              <span className="font-heading text-xs uppercase tracking-wider text-gray-400">
-                {t("header_status")}
-              </span>
-              <span className="font-heading text-xs uppercase tracking-wider text-gray-400">
-                {t("header_featured")}
-              </span>
-              <span className="font-heading text-xs uppercase tracking-wider text-gray-400">
-                {t("header_actions")}
-              </span>
-            </div>
-
             {processedObjects.length === 0 ? (
               <p className="font-body text-sm text-gray-500 text-center py-8">
-                {filterStatus !== "all" ? t("filter_all") : ""}
+                {query.trim() !== "" ? t("filter_no_matches") : ""}
               </p>
-            ) : useYjs ? (
-              processedObjects.map((object) => (
-                <SortableObjectRow
-                  key={String(keyFor(object))}
-                  sortableId={keyFor(object)}
-                  object={object}
-                  canDelete={
-                    object._yMap ? ops!.canDelete(object._yMap) : isConvenor
-                  }
-                  deleteTooltip={tStructural("tooltip_cannot_delete")}
-                  onDelete={() => handleDeleteRequest(object)}
-                  onToggleFeatured={handleToggleFeatured}
-                  siteBaseUrl={siteBaseUrl}
-                  validationState={object._validationState ?? null}
-                  validationLabels={{
-                    pending: tStructural("validation_pending"),
-                    error: tStructural("validation_error"),
-                  }}
-                />
-              ))
             ) : (
-              processedObjects.map((object) => (
-                <ObjectRow
-                  key={object.id}
-                  object={object}
-                  onToggleFeatured={handleToggleFeatured}
-                  siteBaseUrl={siteBaseUrl}
-                />
-              ))
+              // Single ObjectRow render (drag-to-reorder removed, both
+              // branches collapsed). Yjs-only props (delete affordance, the
+              // validation badge) render conditionally via the useYjs flag.
+              processedObjects.map((object) => {
+                const validationState = useYjs
+                  ? object._validationState ?? null
+                  : null;
+                return (
+                  <div key={String(keyFor(object))}>
+                    <ObjectRow
+                      object={object}
+                      onToggleFeatured={handleToggleFeatured}
+                      siteBaseUrl={siteBaseUrl}
+                      fallbackThumbnail={
+                        fallbackThumbnails.get(object.object_id) ?? null
+                      }
+                      usedInSteps={objectStepCounts[object.object_id] ?? 0}
+                      {...(useYjs
+                        ? {
+                            onDelete: () => handleDeleteRequest(object),
+                            canDelete: object._yMap
+                              ? ops!.canDelete(object._yMap)
+                              : isConvenor,
+                            deleteTooltip: tStructural("tooltip_cannot_delete"),
+                          }
+                        : {})}
+                    />
+                    {validationState === "pending" && (
+                      <p className="font-body text-xs text-gray-500 px-4 pb-2 -mt-1">
+                        <span className="inline-block w-2 h-2 rounded-full bg-gray-300 animate-pulse mr-2" />
+                        {tStructural("validation_pending")}
+                      </p>
+                    )}
+                    {validationState === "error" && (
+                      <p className="font-body text-xs text-red-600 px-4 pb-2 -mt-1">
+                        {tStructural("validation_error")}
+                      </p>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         )}
@@ -1993,7 +1985,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         onClose={() => {
           setSyncDialogOpen(false);
           setSyncDiffData(null);
-          setAddObjectsOpen(true);
         }}
         diffData={syncDiffData}
         onApply={handleSyncApply}
@@ -2001,95 +1992,26 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         isApplying={isApplying}
       />
 
-      {/* Add objects chooser */}
-      {addObjectsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-md mx-4 p-6">
-            <h3 className="font-heading font-semibold text-lg text-charcoal mb-4">
-              {t("add_objects_title")}
-            </h3>
-            <div className="flex flex-col gap-3">
-              {/* Sync and upload are convenor-only — they require repo
-                  writes (commit + CSV + tile workflow dispatch). Collaborators
-                  can still add external IIIF manifests below. */}
-              {isConvenor && (
-                <button
-                  type="button"
-                  onClick={() => { setAddObjectsOpen(false); handleSyncClick(); }}
-                  disabled={isComputing}
-                  className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-periwinkle hover:bg-lavender/10 transition-colors group"
-                >
-                  <p className="font-heading font-semibold text-sm text-charcoal group-hover:text-terracotta">
-                    {t("add_objects_sync")}
-                  </p>
-                  <p className="font-body text-xs text-gray-500 mt-0.5">
-                    {t("add_objects_sync_desc")}
-                  </p>
-                </button>
-              )}
-              {isConvenor && (
-                <button
-                  type="button"
-                  onClick={() => { setAddObjectsOpen(false); setUploadDialogOpen(true); setUploadError(null); }}
-                  className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-periwinkle hover:bg-lavender/10 transition-colors group"
-                >
-                  <p className="font-heading font-semibold text-sm text-charcoal group-hover:text-terracotta">
-                    {t("add_objects_upload")}
-                  </p>
-                  <p className="font-body text-xs text-gray-500 mt-0.5">
-                    {t("add_objects_upload_desc")}
-                  </p>
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => { setAddObjectsOpen(false); handleAddIiifClick(); }}
-                className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:border-periwinkle hover:bg-lavender/10 transition-colors group"
-              >
-                <p className="font-heading font-semibold text-sm text-charcoal group-hover:text-terracotta">
-                  {t("add_objects_iiif")}
-                </p>
-                <p className="font-body text-xs text-gray-500 mt-0.5">
-                  {t("add_objects_iiif_desc")}
-                </p>
-              </button>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setAddObjectsOpen(false)}
-                className="font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-5 py-2 hover:bg-cream transition-colors"
-              >
-                {t("add_objects_close")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add IIIF dialog */}
-      <AddIiifDialog
-        open={addIiifOpen}
+      {/* Unified Add Object dialog (IIIF / Upload / External) */}
+      <AddObjectDialog
+        open={addObjectOpen}
         onClose={() => {
-          setAddIiifOpen(false);
+          setAddObjectOpen(false);
           setIiifFetchResult(null);
-          setAddObjectsOpen(true);
+          setUploadError(null);
         }}
+        projectId={project.id}
+        isConvenor={isConvenor}
         fetchResult={dialogFetchResult}
         onFetchUrl={handleIiifFetch}
-        onConfirm={handleIiifConfirm}
+        onIiifConfirm={handleIiifConfirm}
         isFetching={isFetchingIiif}
-        isAdding={isAddingIiif}
-      />
-
-      {/* Upload Image dialog */}
-      <UploadImageDialog
-        open={uploadDialogOpen}
-        onClose={() => { setUploadDialogOpen(false); setUploadError(null); setAddObjectsOpen(true); }}
-        onConfirm={handleUploadConfirm}
+        onUploadConfirm={handleUploadConfirm}
         isUploading={isUploading}
         uploadError={uploadError}
         existingObjectIds={(loaderObjects as Array<{ object_id: string }>).map((o) => o.object_id)}
+        onExternalConfirm={handleExternalConfirm}
+        isAdding={isAddingIiif}
       />
 
       {/* Commit and build modal */}

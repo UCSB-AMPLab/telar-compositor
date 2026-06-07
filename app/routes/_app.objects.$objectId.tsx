@@ -4,6 +4,8 @@
  * Layout: two-column — viewer (left ~60%) + scrollable metadata form (right ~40%).
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
+ *
+ * @version v1.3.0-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -32,6 +34,7 @@ import { CommitAndBuildModal } from "~/components/features/objects/CommitAndBuil
 import { decrypt } from "~/lib/crypto.server";
 import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server";
 import { commitFilesToRepo, StaleHeadError, dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
+import { bumpProjectHead } from "~/lib/github-status.server";
 import type { WorkflowRun } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
 import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
@@ -175,13 +178,19 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         return { ok: false, error: "title_required" };
       }
 
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) return { ok: false, error: "no_project" };
+
       await db
         .update(objects)
         .set({
           [field]: value,
           updated_at: new Date().toISOString(),
         })
-        .where(eq(objects.id, entityId));
+        .where(and(eq(objects.id, entityId), eq(objects.project_id, resolved.project.id)));
 
       return { ok: true, intent: "autosave-object-field" };
     }
@@ -190,13 +199,19 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       const entityId = Number(formData.get("entityId"));
       const featured = formData.get("value") === "true";
 
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) return { ok: false, error: "no_project" };
+
       await db
         .update(objects)
         .set({
           featured,
           updated_at: new Date().toISOString(),
         })
-        .where(eq(objects.id, entityId));
+        .where(and(eq(objects.id, entityId), eq(objects.project_id, resolved.project.id)));
 
       return { ok: true, intent: "autosave-object-featured" };
     }
@@ -209,6 +224,12 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       if (!title) {
         return { ok: false, error: "title_required" };
       }
+
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) return { ok: false, error: "no_project" };
 
       await db
         .update(objects)
@@ -229,7 +250,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           featured: formData.get("featured") === "true",
           updated_at: new Date().toISOString(),
         })
-        .where(eq(objects.id, objectDbId));
+        .where(and(eq(objects.id, objectDbId), eq(objects.project_id, resolved.project.id)));
 
       return { ok: true, intent: "update-object" };
     }
@@ -247,19 +268,19 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
       if (!targetObject) throw redirect("/objects");
 
+      // Resolve the caller's active project — also verifies membership
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) throw redirect("/objects");
+
+      // Guard: only delete objects that belong to the caller's active project
+      if (targetObject.project_id !== resolved.project.id) throw redirect("/objects");
+
       if (fromRepo) {
         // Delete from repo: remove image folder + update objects.csv + commit
-        const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-        const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-        const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-        const allProjects = await db
-          .select()
-          .from(projects)
-          .where(eq(projects.user_id, user.id));
-
-        const activeProject =
-          allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+        const activeProject = resolved.project;
 
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const [owner, repo] = activeProject.github_repo_full_name.split("/");
@@ -308,11 +329,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
             deletions.length > 0 ? deletions : undefined,     // deletions
           );
 
-          // Update head_sha
-          await db
-            .update(projects)
-            .set({ head_sha: result.newHeadSha, updated_at: new Date().toISOString() })
-            .where(eq(projects.id, activeProject.id));
+          // Update head_sha (also invalidates GitHub status cache)
+          await bumpProjectHead(db, activeProject.id, result.newHeadSha);
         } catch (err) {
           if (err instanceof StaleHeadError) {
             return { ok: false, error: "stale_head" };
@@ -321,8 +339,8 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         }
       }
 
-      // Delete from D1
-      await db.delete(objects).where(eq(objects.id, objectDbId));
+      // Delete from D1 — scoped to the verified project
+      await db.delete(objects).where(and(eq(objects.id, objectDbId), eq(objects.project_id, resolved.project.id)));
       throw redirect("/objects");
     }
 
@@ -550,7 +568,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
               audioUrl={`${siteBase}/telar-content/objects/${object.source_url}`}
             />
           ) : (
-            <div className="w-full rounded-lg bg-periwinkle p-6 flex flex-col items-center justify-center gap-2 text-charcoal/50">
+            <div className="w-full rounded-lg bg-anil p-6 flex flex-col items-center justify-center gap-2 text-charcoal/50">
               <Music className="w-10 h-10" />
               <p className="font-body text-sm">{t("type_audio")}</p>
             </div>
@@ -828,7 +846,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                     <button
                       type="submit"
                       disabled={isDeleting}
-                      className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-red-300 text-red-700 rounded-full px-6 py-2.5 hover:bg-red-50 transition-colors disabled:opacity-50"
+                      className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-red-300 text-red-700 rounded-full px-6 py-2.5 hover:bg-red-50 transition-colors disabled:text-fg-disabled"
                     >
                       {t("delete_remove_compositor")}
                     </button>
@@ -842,7 +860,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                       <button
                         type="submit"
                         disabled={isDeleting}
-                        className="w-full font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors disabled:opacity-50"
+                        className="w-full font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors disabled:bg-disabled disabled:text-fg-disabled"
                       >
                         {t("delete_remove_repo")}
                       </button>
@@ -852,7 +870,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                     type="button"
                     onClick={() => setShowDeleteConfirm(false)}
                     disabled={isDeleting}
-                    className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-6 py-2.5 hover:bg-cream transition-colors disabled:opacity-50"
+                    className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-6 py-2.5 hover:bg-cream transition-colors disabled:text-fg-disabled"
                   >
                     {t("delete_cancel")}
                   </button>

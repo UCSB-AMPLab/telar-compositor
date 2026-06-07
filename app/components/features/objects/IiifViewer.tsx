@@ -154,6 +154,16 @@ export function IiifViewer({
         showNavigationControl: false,
         gestureSettingsMouse: { scrollToZoom: true },
         prefixUrl: "",
+        // Force the Canvas2D drawer. OSD 6 defaults to WebGL, whose texImage2D()
+        // throws SecurityError on cross-origin IIIF tiles loaded without
+        // crossOrigin (the common case — tiles come from arbitrary external IIIF
+        // servers). That made every tile fail ("Error creating texture in WebGL"),
+        // OSD silently fell back to Canvas2D, and the failed-WebGL→canvas
+        // transition left the viewer blank until an interaction forced a redraw.
+        // Canvas2D renders cross-origin tiles regardless of CORS and is the drawer
+        // OSD was already falling back to, so this is deterministic with no visual
+        // change. (We never read pixels back, so canvas tainting is irrelevant.)
+        drawer: "canvas",
       });
 
       if (onViewerReady) {
@@ -198,7 +208,7 @@ export function IiifViewer({
       >
         {checking ? (
           <>
-            <div className="w-6 h-6 border-2 border-periwinkle border-t-transparent rounded-full animate-spin mb-3" />
+            <div className="w-6 h-6 border-2 border-anil border-t-transparent rounded-full animate-spin mb-3" />
             <p className="font-body text-sm text-gray-400">
               {t("viewer_checking_tiles")}
             </p>
@@ -245,11 +255,14 @@ export function IiifViewer({
   // Viewer container with controls
   return (
     <div className={`relative overflow-hidden ${className}`}>
+      {/* Telar weave pattern behind the image + drop-shadow on the image —
+          see .iiif-viewer-surface in app/styles/app.css (ported from the
+          framework's IIIF plates: 20px-tiled weave, shadow tracks the image). */}
       <div
         ref={containerRef}
         role="img"
         aria-label={alt ?? "IIIF image viewer"}
-        className="w-full h-full bg-gray-900"
+        className="iiif-viewer-surface w-full h-full"
       />
 
       {/* Zoom controls — top left (hidden when parent provides its own overlays) */}
