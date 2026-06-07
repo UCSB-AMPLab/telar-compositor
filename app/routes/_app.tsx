@@ -1,52 +1,61 @@
 /**
  * This file is the authenticated application layout — every signed-in
  * page renders inside its shell. Applies auth middleware (all child
- * routes are protected) and renders Header + TabNav + UpgradeBanner
- * (when outdated) + SyncBanner (when HEAD diverged) + content area +
- * Footer.
+ * routes are protected) and renders Header + TabNav + content area +
+ * Footer. The Site Status pill (mounted in the Header) is the single
+ * surface for sync-divergence and upgrade signals — the old SyncBanner
+ * and UpgradeBanner ribbons were retired.
  *
- * On every authenticated page load, the loader:
- *   1. Checks whether the active project's stored `head_sha` matches
- *      the repo's current HEAD. If not, sets `headDiverged: true` so
- *      the SyncBanner can warn.
- *   2. Checks the site's `telar_version` against the latest release.
- *      If outdated, sets `needsUpgrade: true` and redirects gated
- *      routes (/publish, /objects) to /upgrade.
+ * On every authenticated page load, the loader reads GitHub-derived
+ * status from D1 cache columns (`gh_repo_available`, `gh_remote_head_sha`,
+ * `gh_diverged`, `gh_diverged_against_sha`, `gh_checked_at`) — it does
+ * NOT call GitHub on the navigation request path. Those columns are
+ * refreshed out-of-band by the Site Status pill polling
+ * `/api/site-status?payload=gh-status` (see `github-status.server.ts`).
  *
- * Both checks fail open — if the GitHub API call fails, the user is
- * not blocked.
+ * One exception: the convenor upgrade gate may fetch the global latest
+ * Telar tag synchronously when the in-isolate cache is cold AND the
+ * current path is gated (`/publish`, `/objects`). On a cold cache +
+ * non-gated route the fetch is skipped and `needsUpgrade` stays `false`
+ * (provisional) until the pill's poll warms the cache. The gate is
+ * fail-closed: a below-minimum convenor on a gated route cannot slip
+ * through on a cold isolate.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
-import { useEffect, useRef, useState } from "react";
-import { redirect, Outlet, Link, useLocation, useNavigation } from "react-router";
-import { eq } from "drizzle-orm";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { redirect, Outlet, useFetcher, useLocation, useNavigation, useSearchParams } from "react-router";
+import { eq, and, gt, inArray, sql } from "drizzle-orm";
 import type { Route } from "./+types/_app";
 import { authMiddleware, userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, project_config, project_members, users } from "~/db/schema";
-import { getUserRole, getPresenceColor } from "~/lib/membership.server";
+import { projects, project_config, project_members, users, stories, objects, project_pages, glossary_terms } from "~/db/schema";
+import { getUserRole, getPresenceColor, getUserProjects, resolveActiveProject } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
-import { getRepoHead } from "~/lib/github.server";
-import { computeFullSyncDiff, hasDivergentChanges } from "~/lib/sync.server";
-import { checkTelarVersion } from "~/lib/upgrade.server";
+import { deriveHeadDiverged, getCachedLatestTagIfWarm, getCachedLatestTag } from "~/lib/github-status.server";
+import { compareTelarVersion } from "~/lib/upgrade.server";
+import { shouldShowReleaseNote } from "~/lib/release-notes";
 import { Header } from "~/components/layout/Header";
 import { CollaborationProvider, useCollaborationContext, useSetAwarenessLocation } from "~/hooks/use-collaboration";
 import { ToastProvider } from "~/hooks/use-toast";
 import { PublishFreezeModal } from "~/components/ui/PublishFreezeModal";
 import { UpgradeFreezeModal } from "~/components/ui/UpgradeFreezeModal";
 import { CollaborationSidebar } from "~/components/features/collaboration/CollaborationSidebar";
+import { UndoFeedback } from "~/components/features/collaboration/UndoFeedback";
+import { BugReportPanel } from "~/components/features/bug-report/BugReportPanel";
+import { WhatsNewModal } from "~/components/features/release/WhatsNewModal";
 import { TabNav } from "~/components/layout/TabNav";
+import { DocsDrawer } from "~/components/features/start/DocsDrawer";
+import { isDocId, type DocId } from "~/lib/docs-content";
 import { Footer } from "~/components/layout/Footer";
-import { SyncBanner } from "~/components/layout/SyncBanner";
 import { ReloadOnUpgradeComplete } from "~/components/layout/ReloadOnUpgradeComplete";
 import { useTranslation } from "react-i18next";
-import { ArrowUpCircle, Loader2 } from "lucide-react";
+import { AlertTriangle, Bug, Loader2, Users } from "lucide-react";
 
 export const middleware = [authMiddleware];
-export const handle = { i18n: ["common", "upgrade", "collaboration", "bug-report", "account"] };
+export const handle = { i18n: ["common", "upgrade", "collaboration", "bug-report", "account", "release-notes"] };
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);
@@ -64,6 +73,28 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   let userRole: "convenor" | "collaborator" | null = null;
   let presenceColor: string | null = null;
   let pagesUrl: string | null = null;
+  let repoUnavailable = false;
+  let repoFullName: string | null = null;
+  // Full project set for the header project switcher.
+  // Enriched with ownerLogin exactly as _app.dashboard.tsx does so the switcher
+  // can show "owner/repo" for shared projects. Returned on BOTH loader paths.
+  let allProjects: Array<{
+    id: number;
+    github_repo_full_name: string;
+    userRole: "convenor" | "collaborator";
+    ownerLogin?: string;
+    collaboratorCount: number;
+  }> = [];
+  // Full-spectrum count of entities changed since the last publish — drives the
+  // Site Status pill's `unpublished` caption number. It MIRRORS ChangeSummary's
+  // spectrum (all five content types: stories + objects + glossary + pages +
+  // settings), NOT the dashboard's stories-only counter. It is
+  // computed CHEAPLY via per-table COUNT(updated_at > last_published_at) — it
+  // deliberately does NOT run buildEntityHashes / computeChangeSummary (too
+  // heavy for every navigation); the exact manifest is fetched lazily on popover
+  // open. Caption (cheap count) and manifest (lazy ChangeSummary) therefore
+  // agree on the same spectrum without the per-navigation cost.
+  let unpublishedCount = 0;
   let sidebarMembers: Array<{
     userId: number;
     githubId: number;
@@ -72,9 +103,76 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     contributions: { fields_edited: number; sessions: number; stories_edited: string[]; objects_edited: string[]; last_active: string | null } | null;
   }> = [];
   let sidebarSeats = { used: 0, limit: 5 };
+  // "You've been added to a project" one-time welcome: true when the active
+  // project's membership for THIS user is a collaborator with welcomed_at null.
+  let needsWelcome = false;
+  let welcomeProject = "";
+  let welcomeConvenor = "";
 
   try {
     const db = getDb(env.DB);
+
+    // Collaborator route-guard (defence-in-depth UX). This is a SEPARATE check
+    // from GATED_PATHS below, and it runs FIRST so
+    // a collaborator who direct-navs to a convenor-only destination is bounced
+    // to /objects with a ?denied= reason the toast can read. It does NOT replace
+    // the server-side action gates on /publish and /upgrade — those stay intact.
+    {
+      const sessionStorageForGuard = createSessionStorage(env.SESSION_SECRET);
+      const sessionForGuard = await sessionStorageForGuard.getSession(
+        request.headers.get("Cookie"),
+      );
+      const guardActiveId = sessionForGuard.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, guardActiveId);
+      if (resolved) {
+        const guardRole = await getUserRole(db, resolved.project.id, user.id);
+        const guardUrl = new URL(request.url);
+        if (
+          guardRole === "collaborator" &&
+          (guardUrl.pathname.startsWith("/publish") ||
+            guardUrl.pathname.startsWith("/upgrade"))
+        ) {
+          const denied = guardUrl.pathname.startsWith("/upgrade") ? "upgrade" : "publish";
+          throw redirect(`/objects?denied=${denied}`);
+        }
+      }
+    }
+
+    // Fetch the user's full project set ONCE. Reused below for the
+    // no-session fallback and enriched with ownerLogin for the header switcher.
+    const userProjects = await getUserProjects(db, user.id);
+    if (userProjects.length > 0) {
+      const ownerIds = [...new Set(userProjects.map((p) => p.user_id))];
+      const ownerRows = await db
+        .select({ id: users.id, github_login: users.github_login })
+        .from(users)
+        .where(inArray(users.id, ownerIds));
+      const ownerLoginMap: Record<number, string> = {};
+      for (const row of ownerRows) {
+        ownerLoginMap[row.id] = row.github_login;
+      }
+      allProjects = userProjects.map((p) => ({
+        id: p.id,
+        github_repo_full_name: p.github_repo_full_name,
+        userRole: p.userRole,
+        ownerLogin: ownerLoginMap[p.user_id] ?? undefined,
+        collaboratorCount: 0,
+      }));
+
+      // Attach a per-project collaboratorCount (members minus the owner) using
+      // ONE grouped COUNT query over the user's project IDs — cheap and indexed.
+      const projectIds = allProjects.map((p) => p.id);
+      const memberCountRows = await db
+        .select({ project_id: project_members.project_id, n: sql<number>`count(*)` })
+        .from(project_members)
+        .where(inArray(project_members.project_id, projectIds))
+        .groupBy(project_members.project_id);
+      const countByProject = new Map(memberCountRows.map((r) => [r.project_id, Number(r.n)]));
+      allProjects = allProjects.map((p) => ({
+        ...p,
+        collaboratorCount: Math.max(0, (countByProject.get(p.id) ?? 1) - 1),
+      }));
+    }
 
     // Get the active project from session (same pattern as _app.objects.tsx)
     const sessionStorage = createSessionStorage(env.SESSION_SECRET);
@@ -96,13 +194,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
     }
 
-    // Fall back to the user's first accessible project if session has none
+    // Fall back to the user's first accessible project if session has none.
+    // Reuses the already-fetched userProjects (no second query).
     if (activeProjectId === null) {
-      const { getUserProjects } = await import("~/lib/membership.server");
-      const allProjects = await getUserProjects(db, user.id);
-      if (allProjects.length > 0) {
-        activeProjectId = allProjects[0].id;
-        userRole = allProjects[0].userRole;
+      if (userProjects.length > 0) {
+        activeProjectId = userProjects[0].id;
+        userRole = userProjects[0].userRole;
         presenceColor = await getPresenceColor(db, activeProjectId, user.id);
       }
     }
@@ -115,6 +212,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           role: project_members.role,
           githubId: users.github_id,
           username: users.github_login,
+          name: users.github_name,
+          welcomedAt: project_members.welcomed_at,
           contributions: project_members.contributions,
         })
         .from(project_members)
@@ -129,6 +228,55 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         contributions: m.contributions ? JSON.parse(m.contributions) : null,
       }));
       sidebarSeats = { used: memberRows.length, limit: 5 };
+
+      // One-time "you've been added" welcome: a collaborator whose membership
+      // hasn't been acknowledged yet (welcomed_at null). Convenor name + repo
+      // name feed the landing modal; ack stamps welcomed_at via /api/welcome-ack.
+      const myRow = memberRows.find((m) => m.userId === user.id);
+      if (userRole === "collaborator" && myRow && !myRow.welcomedAt) {
+        const convenorRow = memberRows.find((m) => m.role === "convenor");
+        needsWelcome = true;
+        welcomeConvenor = convenorRow?.name || convenorRow?.username || "";
+        welcomeProject =
+          allProjects.find((p) => p.id === activeProjectId)?.github_repo_full_name ?? "";
+      }
+
+      // Cheap full-spectrum unpublished count. Counts entities
+      // across ALL five content types whose updated_at is newer than the
+      // project's last_published_at — the same spectrum computeChangeSummary
+      // covers, without the cost of buildEntityHashes. Before the first publish
+      // (last_published_at == null) there is no baseline, so the count is 0
+      // (nothing has been "un-published" yet — same posture as the dashboard).
+      const pubRows = await db
+        .select({ last_published_at: projects.last_published_at })
+        .from(projects)
+        .where(eq(projects.id, activeProjectId))
+        .limit(1);
+      const lastPublishedAt = pubRows[0]?.last_published_at ?? null;
+
+      if (lastPublishedAt) {
+        const pid = activeProjectId;
+        const n = (rows: Array<{ n: number }>) => Number(rows[0]?.n ?? 0);
+        // One COUNT(*) per content type — cheap, mirrors the ChangeSummary
+        // spectrum. Site settings: the project_config row counts as one changed
+        // entity if touched since the last publish (mirrors ChangeSummary's
+        // "Site settings" section being non-empty).
+        const [storyRows, objectRows, pageRows, glossaryRows, settingsRows] = await Promise.all([
+          db.select({ n: sql<number>`count(*)` }).from(stories)
+            .where(and(eq(stories.project_id, pid), gt(stories.updated_at, lastPublishedAt))),
+          db.select({ n: sql<number>`count(*)` }).from(objects)
+            .where(and(eq(objects.project_id, pid), gt(objects.updated_at, lastPublishedAt))),
+          db.select({ n: sql<number>`count(*)` }).from(project_pages)
+            .where(and(eq(project_pages.project_id, pid), gt(project_pages.updated_at, lastPublishedAt))),
+          db.select({ n: sql<number>`count(*)` }).from(glossary_terms)
+            .where(and(eq(glossary_terms.project_id, pid), gt(glossary_terms.updated_at, lastPublishedAt))),
+          db.select({ n: sql<number>`count(*)` }).from(project_config)
+            .where(and(eq(project_config.project_id, pid), gt(project_config.updated_at, lastPublishedAt))),
+        ]);
+
+        unpublishedCount =
+          n(storyRows) + n(objectRows) + n(pageRows) + n(glossaryRows) + n(settingsRows);
+      }
     }
 
     if (activeProjectId === null) {
@@ -148,7 +296,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         userRole: null,
         presenceColor: null,
         pagesUrl: null,
+        unpublishedCount: 0,
+        allProjects,
         environment: env.ENVIRONMENT,
+        needsWelcome: false,
+        needsReleaseNote: false,
+        welcomeProject: "",
+        welcomeConvenor: "",
+        repoUnavailable: false,
+        repoFullName: null,
+        activeProjectShared: false,
       };
     }
 
@@ -160,6 +317,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           head_sha: projects.head_sha,
           github_repo_full_name: projects.github_repo_full_name,
           github_pages_url: projects.github_pages_url,
+          gh_repo_available: projects.gh_repo_available,
+          gh_remote_head_sha: projects.gh_remote_head_sha,
+          gh_diverged: projects.gh_diverged,
+          gh_diverged_against_sha: projects.gh_diverged_against_sha,
+          gh_checked_at: projects.gh_checked_at,
         })
         .from(projects)
         .where(eq(projects.id, activeProjectId));
@@ -168,96 +330,48 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       pagesUrl = project?.github_pages_url ?? null;
 
       if (project && project.github_repo_full_name) {
-        // Decrypt the user's access token
-        const token = await decrypt(
-          user.encrypted_access_token,
-          env.ENCRYPTION_KEY,
-        );
-
-        const [owner, repo] = project.github_repo_full_name.split("/");
-
-        // Fetch current repo HEAD. Used by the sync-diff check below, and
-        // also backfilled to projects.head_sha when missing (older imports
-        // didn't write it).
-        const repoHead = await getRepoHead(token, owner, repo);
-
-        if (!project.head_sha && repoHead !== null) {
-          // Backfill on first load — silently. Treat current HEAD as the
-          // baseline; no diff banner.
-          await db
-            .update(projects)
-            .set({ head_sha: repoHead, updated_at: new Date().toISOString() })
-            .where(eq(projects.id, project.id));
-        }
-
-        const shasDiffer = project.head_sha !== null && repoHead !== null && repoHead !== project.head_sha;
-
-        if (shasDiffer) {
-          // SHAs differ — check whether compositor-relevant content actually changed.
-          // If not, silently update head_sha and skip the banner.
-          try {
-            const diff = await computeFullSyncDiff(
-              project.id, token, owner, repo, db, null,
-            );
-            if (hasDivergentChanges(diff)) {
-              headDiverged = true;
-            } else {
-              // No meaningful changes — update head_sha silently
-              await db
-                .update(projects)
-                .set({ head_sha: repoHead, updated_at: new Date().toISOString() })
-                .where(eq(projects.id, project.id));
-            }
-          } catch {
-            // If diff fails, show the banner to be safe
-            headDiverged = true;
+        repoFullName = project.github_repo_full_name;
+        // pagesUrl derive + lazy heal — pure D1, stays synchronous (feeds TabNav).
+        const configRows = await db.select({
+          telar_version: project_config.telar_version,
+          url: project_config.url,
+          baseurl: project_config.baseurl,
+        }).from(project_config).where(eq(project_config.project_id, activeProjectId));
+        const siteVersion = configRows[0]?.telar_version ?? null;
+        const configUrl = configRows[0]?.url ?? null;
+        const configBaseurl = configRows[0]?.baseurl ?? "";
+        if (configUrl) {
+          const derived = `${configUrl.replace(/\/+$/, "")}${configBaseurl}`.replace(/\/+$/, "");
+          pagesUrl = derived;
+          if (project.github_pages_url !== derived) {
+            await db.update(projects).set({ github_pages_url: derived, updated_at: new Date().toISOString() })
+              .where(eq(projects.id, project.id));
           }
         }
 
-        // Version check — gated routes redirect to /upgrade if outdated.
-        // Also derives pagesUrl from project_config.url+baseurl and lazy-heals
-        // projects.github_pages_url (schema column was historically left unset).
-        try {
-          const configRows = await db
-            .select({
-              telar_version: project_config.telar_version,
-              url: project_config.url,
-              baseurl: project_config.baseurl,
-            })
-            .from(project_config)
-            .where(eq(project_config.project_id, activeProjectId));
-          const siteVersion = configRows[0]?.telar_version ?? null;
+        // GitHub-derived status: read from the D1 cache — never call GitHub on the request path.
+        repoUnavailable = project.gh_repo_available === 0;
+        headDiverged = deriveHeadDiverged(project, project.head_sha);
 
-          const configUrl = configRows[0]?.url ?? null;
-          const configBaseurl = configRows[0]?.baseurl ?? "";
-          if (configUrl) {
-            const derived = `${configUrl.replace(/\/+$/, "")}${configBaseurl}`.replace(/\/+$/, "");
-            pagesUrl = derived;
-            if (project.github_pages_url !== derived) {
-              await db
-                .update(projects)
-                .set({ github_pages_url: derived, updated_at: new Date().toISOString() })
-                .where(eq(projects.id, project.id));
-            }
-          }
-
-          if (siteVersion) {
-            const versionCheck = await checkTelarVersion(token, siteVersion);
-            needsUpgrade = versionCheck.needsUpgrade;
-            latestTelarTag = versionCheck.latestTag;
-            isBelowMinimum = versionCheck.isBelowMinimum;
-          }
-        } catch {
-          // Fail open — don't block the user
-          needsUpgrade = false;
-        }
-
-        // Redirect gated routes to /upgrade
+        // Upgrade: derive from the global tag cache vs telar_version.
+        // Warm cache → no fetch. Cold cache → fetch ONLY on gated routes (fail-closed).
         const url = new URL(request.url);
-        // /onboarding is intentionally not gated: it is a top-level route, not under _app,
-        // so this loader never runs for it. Onboarding must complete before upgrade is meaningful.
         const GATED_PATHS = ["/publish", "/objects"];
-        if (needsUpgrade && userRole === "convenor" && GATED_PATHS.some((p) => url.pathname.startsWith(p))) {
+        const onGated = GATED_PATHS.some((p) => url.pathname.startsWith(p));
+        let tag = getCachedLatestTagIfWarm(Date.now());
+        if (tag === undefined && onGated) {
+          const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+          tag = await getCachedLatestTag(token, Date.now()); // one allowed fetch: gated route, cold cache
+        }
+        // cold cache + non-gated route: skip — leave needsUpgrade=false provisional until the pill poll warms the cache
+        if (tag !== undefined) {
+          const cmp = compareTelarVersion(siteVersion, tag ?? null);
+          needsUpgrade = cmp.needsUpgrade;
+          isBelowMinimum = cmp.isBelowMinimum;
+          latestTelarTag = tag ?? null;
+        }
+
+        if (needsUpgrade && userRole === "convenor" && onGated) {
           throw redirect(`/upgrade?from=${encodeURIComponent(url.pathname)}`);
         }
       }
@@ -268,6 +382,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Fail open — don't block the user on GitHub API errors
     headDiverged = false;
   }
+
+  // Once-per-release "What's new" modal. Welcome modal wins this load (a
+  // newly-added collaborator sees the welcome first; the release note shows
+  // next login). user.last_seen_release comes from the authenticated user row.
+  const needsReleaseNote = shouldShowReleaseNote(user.last_seen_release, needsWelcome);
 
   return {
     user: {
@@ -284,10 +403,18 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     userRole,
     presenceColor,
     pagesUrl,
+    unpublishedCount,
+    allProjects,
     environment: env.ENVIRONMENT,
-    collabGated: Boolean(env.COLLAB_GATE),
     sidebarMembers,
     sidebarSeats,
+    needsWelcome,
+    needsReleaseNote,
+    welcomeProject,
+    welcomeConvenor,
+    repoUnavailable,
+    repoFullName,
+    activeProjectShared: sidebarSeats.used > 1,
   };
 }
 
@@ -329,32 +456,9 @@ function CollaborationOverlay({ userRole }: { userRole: "convenor" | "collaborat
   );
 }
 
-function UpgradeBanner() {
-  const { t } = useTranslation("upgrade");
-  const location = useLocation();
-  const isOnUpgradePage = location.pathname === "/upgrade";
-
-  if (isOnUpgradePage) return null;
-
-  return (
-    <div className="bg-terracotta/10 border-b border-terracotta/20 px-6 py-3 flex items-center gap-3">
-      <ArrowUpCircle className="w-4 h-4 text-terracotta shrink-0" aria-hidden="true" />
-      <p className="font-body text-sm text-terracotta flex-1">
-        {t("subtitle")}
-      </p>
-      <Link
-        to="/upgrade"
-        className="font-heading font-semibold text-sm text-terracotta underline underline-offset-2 hover:opacity-80 shrink-0"
-      >
-        {t("goToUpgrade")}
-      </Link>
-    </div>
-  );
-}
-
 /**
  * NavigationOverlay — shows a centered "Checking for updates…" modal when a
- * slow navigation is in flight (threshold 200 ms so snappy transitions don't
+ * slow navigation is in flight (threshold 1000 ms so snappy transitions don't
  * flash).
  *
  * The loader for /upgrade fans out several GitHub API calls and can take a
@@ -373,7 +477,7 @@ function NavigationOverlay() {
       setVisible(false);
       return;
     }
-    const timer = setTimeout(() => setVisible(true), 200);
+    const timer = setTimeout(() => setVisible(true), 1000);
     return () => clearTimeout(timer);
   }, [navigation.state, navigation.location?.pathname]);
 
@@ -384,7 +488,7 @@ function NavigationOverlay() {
   const label = isUpgrade ? t("checkingForUpdates") : tCommon("loading");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50 backdrop-blur-sm pointer-events-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50 pointer-events-none">
       <div className="bg-cream px-5 py-4 rounded-xl shadow-lg flex items-center gap-3">
         <Loader2 className="w-5 h-5 text-terracotta animate-spin shrink-0" aria-hidden="true" />
         <p className="font-body text-sm text-charcoal">{label}</p>
@@ -409,48 +513,60 @@ function LocationAwarenessSync() {
 }
 
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
-  const { user, headDiverged, needsUpgrade, activeProjectId, userRole, presenceColor, pagesUrl, environment, collabGated, sidebarMembers, sidebarSeats } = loaderData;
+  const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarSeats, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor } = loaderData;
+  const { t: tCollab } = useTranslation("collaboration");
+  const welcomeFetcher = useFetcher();
+  const releaseFetcher = useFetcher();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [collabUnlocked, setCollabUnlocked] = useState(false);
-  const [gatePromptOpen, setGatePromptOpen] = useState(false);
-  const [gateError, setGateError] = useState(false);
+  const [betaAck, setBetaAck] = useState(false);
+  const [betaPromptOpen, setBetaPromptOpen] = useState(false);
+  const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(needsWelcome);
+  const [releaseNoteOpen, setReleaseNoteOpen] = useState(needsReleaseNote);
   const usersIconRef = useRef<HTMLButtonElement | null>(null);
-  const gateInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Check sessionStorage for prior unlock
+  // Docs drawer — shell-level so any tab can open docs in place.
+  // openDoc is exposed via Outlet context and passed to TabNav; the ?doc=
+  // query param is consumed here (stripped after opening so refresh won't reopen).
+  const [openDocId, setOpenDocId] = useState<DocId | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openDoc = useCallback((id: string) => {
+    if (isDocId(id)) setOpenDocId(id);
+  }, []);
   useEffect(() => {
-    if (!collabGated) return;
-    if (typeof window !== "undefined" && sessionStorage.getItem("collab_unlocked") === "1") {
-      setCollabUnlocked(true);
+    const param = searchParams.get("doc");
+    if (param && isDocId(param)) {
+      setOpenDocId(param);
+      const next = new URLSearchParams(searchParams);
+      next.delete("doc");
+      setSearchParams(next, { replace: true });
     }
-  }, [collabGated]);
+  }, [searchParams, setSearchParams]);
+
+  // Open beta: a one-time-per-session notice that collaboration is still in
+  // testing (replaces the old closed-beta password gate). Remembered in
+  // sessionStorage so it shows once, not on every sidebar open.
+  useEffect(() => {
+    if (typeof window !== "undefined" && sessionStorage.getItem("collab_beta_ack") === "1") {
+      setBetaAck(true);
+    }
+  }, []);
 
   function handleSidebarToggle() {
-    if (collabGated && !collabUnlocked) {
-      setGatePromptOpen(true);
-      setGateError(false);
-      setTimeout(() => gateInputRef.current?.focus(), 50);
+    // First open of the session shows the beta notice; acknowledging it opens
+    // the sidebar. Thereafter the toggle is direct.
+    if (!betaAck) {
+      setBetaPromptOpen(true);
       return;
     }
     setSidebarOpen((v) => !v);
   }
 
-  async function handleGateSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const input = gateInputRef.current;
-    if (!input) return;
-    const formData = new FormData();
-    formData.set("password", input.value.trim());
-    const res = await fetch("/api/collab-gate", { method: "POST", body: formData });
-    const data = (await res.json()) as { ok: boolean };
-    if (data.ok) {
-      sessionStorage.setItem("collab_unlocked", "1");
-      setCollabUnlocked(true);
-      setGatePromptOpen(false);
-      setSidebarOpen(true);
-    } else {
-      setGateError(true);
-    }
+  function acknowledgeBeta() {
+    if (typeof window !== "undefined") sessionStorage.setItem("collab_beta_ack", "1");
+    setBetaAck(true);
+    setBetaPromptOpen(false);
+    setSidebarOpen(true);
   }
 
   return (
@@ -463,6 +579,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
       <ToastProvider>
         <NavigationOverlay />
         <LocationAwarenessSync />
+        <UndoFeedback />
         <div className="min-h-screen flex flex-col bg-cream">
           <Header
             user={user}
@@ -473,11 +590,9 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
             usersIconRef={usersIconRef}
             hasProject={activeProjectId !== null}
           />
-          <TabNav pagesUrl={pagesUrl ?? null} />
-          {needsUpgrade && userRole === "convenor" && <UpgradeBanner />}
-          {headDiverged && userRole === "convenor" && <SyncBanner />}
+          <TabNav pagesUrl={pagesUrl ?? null} onOpenDoc={openDoc} />
           <main className="flex-1 p-6">
-            <Outlet />
+            <Outlet context={{ openCollaborationSidebar: handleSidebarToggle, openDoc }} />
           </main>
           <Footer />
         </div>
@@ -489,35 +604,133 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           seats={sidebarSeats ?? { used: 0, limit: 5 }}
           triggerRef={usersIconRef}
         />
+        <DocsDrawer
+          open={openDocId !== null}
+          docId={openDocId}
+          onClose={() => setOpenDocId(null)}
+          onOpenDoc={openDoc}
+        />
         <CollaborationOverlay userRole={userRole} />
-        {/* Collaboration gate prompt */}
-        {gatePromptOpen && (
+        {/* Open-beta collaboration notice — shown once per session before the
+            sidebar opens (replaces the closed-beta password gate). */}
+        {betaPromptOpen && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/60 backdrop-blur-sm"
-            onClick={() => setGatePromptOpen(false)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50"
+            onClick={() => setBetaPromptOpen(false)}
           >
-            <form
-              onSubmit={handleGateSubmit}
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="collab-beta-title"
               onClick={(e) => e.stopPropagation()}
-              className="bg-cream rounded-xl p-6 shadow-lg w-80 flex flex-col gap-4"
+              className="bg-cream rounded-xl p-6 shadow-lg w-[360px] max-w-[90vw] flex flex-col gap-3"
             >
-              <h2 className="font-heading text-lg text-charcoal">Collaboration is in beta</h2>
-              <p className="font-body text-sm text-charcoal/70">Enter the access password to enable team features.</p>
-              <input
-                ref={gateInputRef}
-                type="password"
-                autoComplete="off"
-                className={`border rounded-lg px-3 py-2 font-body text-sm ${gateError ? "border-red-400" : "border-charcoal/20"}`}
-                placeholder="Password"
-              />
-              {gateError && <p className="text-red-500 text-xs font-body">Incorrect password</p>}
-              <div className="flex gap-2 justify-end">
-                <button type="button" onClick={() => setGatePromptOpen(false)} className="px-3 py-1.5 rounded-lg text-sm font-body text-charcoal/60 hover:bg-charcoal/5">Cancel</button>
-                <button type="submit" className="px-4 py-1.5 rounded-lg text-sm font-heading font-semibold bg-charcoal text-white hover:bg-charcoal/90">Unlock</button>
+              <div className="flex h-11 w-11 items-center justify-center rounded-pill bg-caracol-pale text-caracol">
+                <Users className="h-5 w-5" aria-hidden="true" />
               </div>
-            </form>
+              <span className="inline-flex w-fit items-center gap-1.5 rounded-pill bg-qolle-pale px-2.5 py-1 font-heading text-[10px] font-bold uppercase tracking-wider text-qolle-deep">
+                <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                {tCollab("beta_tag")}
+              </span>
+              <h2 id="collab-beta-title" className="font-heading text-lg font-semibold text-charcoal">
+                {userRole === "convenor" ? tCollab("beta_title") : tCollab("beta_title_collaborator")}
+              </h2>
+              <p className="font-body text-sm leading-relaxed text-charcoal/70">
+                {tCollab("beta_body")}
+              </p>
+              <div className="mt-1 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBetaPromptOpen(false);
+                    setBugReportOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-heading text-sm font-semibold text-anil-ink hover:bg-anil-pale transition-colors"
+                >
+                  <Bug className="h-3.5 w-3.5" aria-hidden="true" />
+                  {tCollab("beta_report")}
+                </button>
+                <button
+                  type="button"
+                  onClick={acknowledgeBeta}
+                  className="rounded-lg bg-terracotta px-4 py-1.5 font-heading text-sm font-semibold text-cream hover:bg-terracotta-deep transition-colors"
+                >
+                  {tCollab("beta_ack")}
+                </button>
+              </div>
+            </div>
           </div>
         )}
+
+        {/* "You've been added to a project" — one-time landing welcome for a
+            newly-added collaborator. "Got it" stamps welcomed_at server-side
+            (via /api/welcome-ack) so it shows only once. */}
+        {welcomeOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50"
+            onClick={() => setWelcomeOpen(false)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="collab-welcome-title"
+              onClick={(e) => e.stopPropagation()}
+              className="bg-cream rounded-xl p-6 shadow-lg w-[360px] max-w-[90vw] flex flex-col gap-3"
+            >
+              <div className="flex h-11 w-11 items-center justify-center rounded-pill bg-caracol-pale text-caracol">
+                <Users className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <h2 id="collab-welcome-title" className="font-heading text-lg font-semibold text-charcoal">
+                {tCollab("welcome_added_title", { project: welcomeProject })}
+              </h2>
+              <p className="font-body text-sm leading-relaxed text-charcoal/70">
+                {tCollab("welcome_added_body", { convenor: welcomeConvenor })}
+              </p>
+              <div className="mt-1 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWelcomeOpen(false);
+                    setBugReportOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-heading text-sm font-semibold text-anil-ink hover:bg-anil-pale transition-colors"
+                >
+                  <Bug className="h-3.5 w-3.5" aria-hidden="true" />
+                  {tCollab("beta_report")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    welcomeFetcher.submit({}, { method: "post", action: "/api/welcome-ack" });
+                    setWelcomeOpen(false);
+                  }}
+                  className="rounded-lg bg-terracotta px-4 py-1.5 font-heading text-sm font-semibold text-cream hover:bg-terracotta-deep transition-colors"
+                >
+                  {tCollab("beta_ack")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Once-per-release "What's new" announcement. Dismiss stamps
+            last_seen_release via /api/release-ack so it shows only once. */}
+        <WhatsNewModal
+          open={releaseNoteOpen}
+          onDismiss={() => {
+            releaseFetcher.submit({}, { method: "post", action: "/api/release-ack" });
+            setReleaseNoteOpen(false);
+          }}
+        />
+
+        {/* Bug-report panel openable from the beta notice. The header mounts
+            its own instance; only one is ever open at a time. */}
+        <BugReportPanel
+          open={bugReportOpen}
+          onClose={() => setBugReportOpen(false)}
+          mode="default"
+          userLogin={user.github_login}
+        />
       </ToastProvider>
     </CollaborationProvider>
   );
