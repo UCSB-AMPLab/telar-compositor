@@ -33,7 +33,7 @@ export function RemoveCollaboratorModal({
   const { t } = useTranslation("team");
   const cancelRef = useRef<HTMLButtonElement | null>(null);
 
-  // Focus Cancel on open (safer default — phase 27 pattern)
+  // Focus Cancel on open (safer default)
   useEffect(() => {
     if (open) {
       const raf = requestAnimationFrame(() => cancelRef.current?.focus());

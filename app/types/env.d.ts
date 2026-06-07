@@ -27,7 +27,7 @@ declare interface Env {
   /** Runtime environment identifier */
   ENVIRONMENT: string;
 
-  /** GitHub App URL slug (e.g. "telar-compositor" or "telar-compositor-dev") */
+  /** GitHub App URL slug (e.g. "telar-compositor") */
   GITHUB_APP_SLUG: string;
 
   /** Durable Object namespace for per-project collaborative editing */

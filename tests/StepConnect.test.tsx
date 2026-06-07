@@ -102,7 +102,7 @@ function makeBaseProps(overrides: Partial<{
     onSelect: vi.fn(),
     githubPlan: overrides.githubPlan,
     hasInstallations: true,
-    githubAppSlug: "telar-compositor-dev",
+    githubAppSlug: "telar-compositor",
   } as Parameters<typeof StepConnect>[0];
 }
 
