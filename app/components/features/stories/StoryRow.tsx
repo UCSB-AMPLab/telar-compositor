@@ -1,9 +1,21 @@
 /**
- * StoryRow — a single row in the Stories list view.
+ * One row in the Stories list — the at-a-glance summary of a single
+ * story together with the controls an author reaches for most often.
  *
- * Shows story number, title, subtitle, byline, step count badge,
- * last-edited timestamp, draft/private Switch toggles, Edit link,
- * and trash icon. Reduced opacity when story is in draft.
+ * The row carries the story's identity (number, title, subtitle,
+ * byline), a sense of scale (step count) and recency (a client-rendered
+ * relative timestamp), and inline toggles for the two states authors
+ * flip without leaving the list: draft and private. Editing and
+ * deletion are surfaced here too, but the heavy lifting lives elsewhere
+ * — Edit is just a link into the story editor, and the destructive
+ * delete is gated behind a confirmation dialog.
+ *
+ * This component is deliberately reusable across two contexts. It is the
+ * normal interactive row, but when `isDragOverlay` is set it strips its
+ * interactions to render as a lightweight ghost for drag-and-drop
+ * reordering, and `skipInternalConfirm` lets a parent that owns its own
+ * confirmation flow bypass the built-in dialog. Draft stories are dimmed
+ * so the published/draft distinction reads instantly down the list.
  */
 
 import { useState } from "react";
@@ -143,7 +155,7 @@ export function StoryRow({
         <Link
           to={`/stories/${story.story_id}`}
           onPointerDown={(e) => e.stopPropagation()}
-          className="shrink-0 inline-flex items-center justify-center bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-xs uppercase tracking-wider rounded-full px-3 py-1 transition-colors"
+          className="shrink-0 inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-xs uppercase tracking-wider rounded-full px-3 py-1 transition-colors"
         >
           {t("story_row.edit")}
         </Link>

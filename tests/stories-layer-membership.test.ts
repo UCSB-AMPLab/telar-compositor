@@ -1,18 +1,26 @@
 /**
- * Tests for the story-editor `save-layer` and `autosave-layer` actions —
- * Auth-bypass fix.
+ * Tests for the story-editor `save-layer`, `autosave-layer`,
+ * `capture-position`, and `change-object` actions — IDOR guard.
  *
  * Covers the IDOR guard added by `requireProjectMember`: a signed-in user
- * who forges a `layerId` for a layer in a project they are NOT a member of
- * must receive 403, and `db.update(layers)` must not run. Happy paths
- * verify legitimate same-project edits still succeed for both intents.
+ * who forges a `layerId` (layer intents) or `stepId` (step intents) for an
+ * entity in a project they are NOT a member of must receive 403, and the
+ * corresponding `db.update` must not run. Happy paths verify legitimate
+ * same-project edits still succeed.
  *
  * Mocking strategy mirrors `tests/homepage-autosave-landing.test.ts`: stub
  * the entire dependency graph at module boundaries and invoke `action`
  * directly. The D1 layer is mocked as a chainable Drizzle builder so we
- * can assert on whether `update` ran. The layer-project resolver chain
- * (select → from → innerJoin → innerJoin → where → limit) is mocked
- * separately so tests can return `[{ projectId }]`, `[]`, or never call it.
+ * can assert on whether `update` ran.
+ *
+ * Two resolver chains exist:
+ *   - layer-project (save-layer / autosave-layer):
+ *     select → from(layers) → innerJoin(steps) → innerJoin(stories) → where → limit
+ *   - step-project (capture-position / change-object):
+ *     select → from(steps) → innerJoin(stories) → where → limit
+ * The shared `selectMock` exposes a `.limit()` at BOTH the one-join and
+ * two-join depths, both delegating to `entityProjectLimitMock`, so a test can
+ * set the resolved projectId (or [] for not-found) for either intent family.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -29,20 +37,27 @@ const updateMock = vi.fn(() => ({
   })),
 }));
 
-// db.select for the layer-project resolver join.
-// The resolver chain is: db.select({...}).from(layers).innerJoin(steps, ...)
-//   .innerJoin(stories, ...).where(eq(layers.id, layerId)).limit(1)
-// We expose the terminal `.limit()` as a mock so tests can return
-// [{ projectId }] (happy path) or [] (unknown layerId).
-const layerProjectLimitMock = vi.fn(async () => [{ projectId: 42 }]);
+// db.select for the entity-project resolver joins. Two chain depths share one
+// terminal mock:
+//   layer: from → innerJoin(steps) → innerJoin(stories) → where → limit
+//   step:  from → innerJoin(stories) → where → limit
+// The first innerJoin returns an object exposing BOTH `innerJoin` (layer path)
+// AND `where` (step path), each terminating in `entityProjectLimitMock`. Tests
+// set its resolution to [{ projectId }] (happy path) or [] (unknown id).
+const entityProjectLimitMock = vi.fn(async () => [{ projectId: 42 }]);
+// Back-compat alias for existing layer assertions.
+const layerProjectLimitMock = entityProjectLimitMock;
+
+const whereWithLimit = () => ({ limit: entityProjectLimitMock });
 
 const selectMock = vi.fn(() => ({
   from: vi.fn(() => ({
     innerJoin: vi.fn(() => ({
+      // step-project path terminates here (one innerJoin)
+      where: vi.fn(whereWithLimit),
+      // layer-project path needs a second innerJoin
       innerJoin: vi.fn(() => ({
-        where: vi.fn(() => ({
-          limit: layerProjectLimitMock,
-        })),
+        where: vi.fn(whereWithLimit),
       })),
     })),
   })),
@@ -289,6 +304,149 @@ describe("stories action: save-layer / autosave-layer (IDOR guard)", () => {
 
     // Lookup did run, but membership check and mutation must not have.
     expect(layerProjectLimitMock).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// capture-position / change-object IDOR guard
+// ---------------------------------------------------------------------------
+
+describe("stories action: capture-position / change-object (IDOR guard)", () => {
+  it("returns 403 on capture-position when user is not a member of the step's project", async () => {
+    vi.mocked(requireProjectMember).mockRejectedValueOnce(
+      new Response("Forbidden", { status: 403 }),
+    );
+
+    const result = action({
+      request: buildRequest({
+        intent: "capture-position",
+        stepId: "55",
+        x: "0.5",
+        y: "0.5",
+        zoom: "1",
+        page: "1",
+      }),
+      context: buildContext(),
+      params: { storyId: "test-story" },
+    } as never);
+
+    await expect(result).rejects.toBeInstanceOf(Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
+    expect(err.status).toBe(403);
+
+    // Critical: the step mutation must not have run.
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 on change-object when user is not a member of the step's project", async () => {
+    vi.mocked(requireProjectMember).mockRejectedValueOnce(
+      new Response("Forbidden", { status: 403 }),
+    );
+
+    const result = action({
+      request: buildRequest({
+        intent: "change-object",
+        stepId: "55",
+        objectId: "obj-hacked",
+      }),
+      context: buildContext(),
+      params: { storyId: "test-story" },
+    } as never);
+
+    await expect(result).rejects.toBeInstanceOf(Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
+    expect(err.status).toBe(403);
+
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("succeeds for capture-position when the user is a project member", async () => {
+    vi.mocked(requireProjectMember).mockResolvedValueOnce(undefined);
+
+    const result = (await action({
+      request: buildRequest({
+        intent: "capture-position",
+        stepId: "55",
+        x: "0.2",
+        y: "0.8",
+        zoom: "2.5",
+        page: "3",
+      }),
+      context: buildContext(),
+      params: { storyId: "test-story" },
+    } as never)) as { ok: boolean; intent: string };
+
+    expect(result.ok).toBe(true);
+    expect(result.intent).toBe("capture-position");
+
+    // Two updates expected: steps row + touchStory()'s stories row.
+    expect(updateMock).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(requireProjectMember)).toHaveBeenCalledWith(dbMock, 42, 7);
+  });
+
+  it("succeeds for change-object when the user is a project member", async () => {
+    vi.mocked(requireProjectMember).mockResolvedValueOnce(undefined);
+
+    const result = (await action({
+      request: buildRequest({
+        intent: "change-object",
+        stepId: "55",
+        objectId: "obj-legit",
+      }),
+      context: buildContext(),
+      params: { storyId: "test-story" },
+    } as never)) as { ok: boolean; intent: string };
+
+    expect(result.ok).toBe(true);
+    expect(result.intent).toBe("change-object");
+
+    expect(updateMock).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(requireProjectMember)).toHaveBeenCalledWith(dbMock, 42, 7);
+  });
+
+  it("returns 400 on capture-position when stepId is missing (NaN)", async () => {
+    const result = action({
+      request: buildRequest({
+        intent: "capture-position",
+        // stepId omitted → Number(null) → 0 → fails Number.isFinite > 0 check
+        x: "0.5",
+        y: "0.5",
+        zoom: "1",
+        page: "1",
+      }),
+      context: buildContext(),
+      params: { storyId: "test-story" },
+    } as never);
+
+    await expect(result).rejects.toBeInstanceOf(Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
+    expect(err.status).toBe(400);
+
+    expect(entityProjectLimitMock).not.toHaveBeenCalled();
+    expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 on change-object when stepId does not match any step", async () => {
+    entityProjectLimitMock.mockImplementationOnce(async () => []);
+
+    const result = action({
+      request: buildRequest({
+        intent: "change-object",
+        stepId: "999999",
+        objectId: "obj",
+      }),
+      context: buildContext(),
+      params: { storyId: "test-story" },
+    } as never);
+
+    await expect(result).rejects.toBeInstanceOf(Response);
+    const err = (await result.catch((e: unknown) => e)) as Response;
+    expect(err.status).toBe(404);
+
+    expect(entityProjectLimitMock).toHaveBeenCalledTimes(1);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
   });

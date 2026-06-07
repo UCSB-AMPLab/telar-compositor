@@ -26,9 +26,10 @@ vi.mock("react-i18next", () => ({
 // ---------------------------------------------------------------------------
 // Mock react-router useFetcher
 // ---------------------------------------------------------------------------
+const { submitMock } = vi.hoisted(() => ({ submitMock: vi.fn() }));
 vi.mock("react-router", () => ({
   useFetcher: () => ({
-    submit: vi.fn(),
+    submit: submitMock,
     data: null,
     state: "idle",
   }),
@@ -202,6 +203,44 @@ describe("LayerPanel: layer 2 creation button", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Breadcrumb + button-label field
+//
+// The panel shows a breadcrumb (`Story / Step N / Layer M`) at the top and a
+// button-label field that edits the CURRENT layer's button_label Y.Text via
+// the panel's writeYText. The field was originally a tinted "pinned strip"
+// above the Title; a later UX pass moved it BELOW the Title and styled it like
+// the other labelled fields (no tinted box). Under the identity t() mock, the
+// breadcrumb keys surface as raw keys (`breadcrumb.step`, `breadcrumb.layer`)
+// and the field label as `layer.button_label_strip_label`.
+// ---------------------------------------------------------------------------
+
+describe("LayerPanel: breadcrumb + button-label field", () => {
+  it("renders a breadcrumb 'Story / Step N / Layer M' at the top of the panel", () => {
+    render(<LayerPanel {...defaultProps} stepNumber={3} />);
+    // Identity t() mock surfaces the interpolated keys as raw keys.
+    expect(screen.getByText("breadcrumb.step")).toBeDefined();
+    expect(screen.getByText("breadcrumb.layer")).toBeDefined();
+  });
+
+  it("renders the button-label field label", () => {
+    render(<LayerPanel {...defaultProps} />);
+    expect(screen.getAllByText("layer.button_label_strip_label").length).toBeGreaterThan(0);
+  });
+
+  it("renders the button label as a plain field (no tinted strip box)", () => {
+    render(<LayerPanel {...defaultProps} layer={{ ...baseLayer, layer_number: 1 }} />);
+    expect(document.querySelector(".bg-anil-pale")).toBeNull();
+    expect(document.querySelector(".bg-terracotta-pale")).toBeNull();
+  });
+
+  it("seeds the button-label input with the layer's current button_label", () => {
+    render(<LayerPanel {...defaultProps} layer={{ ...baseLayer, button_label: "Learn more" }} />);
+    const strip = screen.getByRole("textbox", { name: /button_label_strip_label/i });
+    expect((strip as HTMLInputElement).value).toBe("Learn more");
+  });
+});
+
 describe("LayerPanel: delete confirmation", () => {
   it("shows delete confirmation dialog when delete button clicked", () => {
     render(<LayerPanel {...defaultProps} canDelete={true} />);
@@ -223,5 +262,52 @@ describe("LayerPanel: delete confirmation", () => {
     fireEvent.click(screen.getByRole("button", { name: /layer.delete_title/i }));
     fireEvent.click(screen.getByText("layer.delete_cancel"));
     expect(onDelete).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Non-persistable id guard
+//
+// A Yjs-only layer (not yet snapshotted to D1) carries `_id = null`, which the
+// loader coerces to `0`. With no collaboration provider, useCollaborationContext
+// returns the default `{ ydoc: null }`, so writeYText returns false and the code
+// reaches the D1 fallback — exactly the bug's runtime path. The guard must skip
+// the fallback for id 0 (it could never persist) but STILL fire for a real id.
+// ---------------------------------------------------------------------------
+
+describe("LayerPanel: non-persistable id guard", () => {
+  it("does NOT fire the D1 autosave fallback for a layer with id 0", () => {
+    vi.useFakeTimers();
+    render(
+      <LayerPanel
+        {...defaultProps}
+        layer={{ ...baseLayer, id: 0 }}
+      />
+    );
+    const input = screen.getByRole("textbox", { name: /panel_title/i });
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    vi.advanceTimersByTime(1600); // past the 1500ms debounce
+    expect(submitMock).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("DOES fire the D1 autosave fallback for a real (positive) layer id", () => {
+    submitMock.mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    render(
+      <LayerPanel
+        {...defaultProps}
+        layer={{ ...baseLayer, id: 5 }}
+      />
+    );
+    const input = screen.getByRole("textbox", { name: /panel_title/i });
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    vi.advanceTimersByTime(1600);
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock).toHaveBeenCalledWith(
+      expect.objectContaining({ layerId: "5", field: "title" }),
+      expect.objectContaining({ method: "post" })
+    );
+    vi.useRealTimers();
   });
 });

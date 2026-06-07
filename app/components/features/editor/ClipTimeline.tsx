@@ -5,7 +5,7 @@
  * highlighted draggable region for clip start/end. Handles can be dragged
  * to adjust the clip range. A playback indicator shows current position.
  *
- * Periwinkle background, gold highlight for the clip region, terracotta
+ * Anil background, qolle highlight for the clip region, terracotta
  * for the playback indicator.
  */
 
@@ -124,7 +124,7 @@ export function ClipTimeline({
       {/* Timeline bar */}
       <div
         ref={barRef}
-        className="relative w-full h-8 bg-periwinkle rounded-md cursor-crosshair select-none touch-none"
+        className="relative w-full h-8 bg-anil rounded-md cursor-crosshair select-none touch-none"
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
@@ -132,7 +132,7 @@ export function ClipTimeline({
         {/* Clip region highlight */}
         <div
           className={`absolute top-0 h-full rounded-sm cursor-grab active:cursor-grabbing ${
-            saved ? "bg-[#DAB95C]/30" : "bg-charcoal/10"
+            saved ? "bg-qolle/30" : "bg-charcoal/10"
           }`}
           style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
           onPointerDown={(e) => handlePointerDown(e, "region")}
@@ -141,7 +141,7 @@ export function ClipTimeline({
         {/* Start handle */}
         <div
           className={`absolute top-0 h-full w-1.5 cursor-col-resize rounded-l-sm ${
-            saved ? "bg-[#DAB95C]" : "bg-charcoal/40"
+            saved ? "bg-qolle" : "bg-charcoal/40"
           }`}
           style={{ left: `${startPct}%` }}
           onPointerDown={(e) => handlePointerDown(e, "start")}
@@ -150,7 +150,7 @@ export function ClipTimeline({
         {/* End handle */}
         <div
           className={`absolute top-0 h-full w-1.5 cursor-col-resize rounded-r-sm ${
-            saved ? "bg-[#DAB95C]" : "bg-charcoal/40"
+            saved ? "bg-qolle" : "bg-charcoal/40"
           }`}
           style={{ left: `calc(${endPct}% - 6px)` }}
           onPointerDown={(e) => handlePointerDown(e, "end")}
@@ -165,11 +165,11 @@ export function ClipTimeline({
 
       {/* Time labels below */}
       <div className="flex items-center justify-between mt-1">
-        <span className={`font-mono text-xs ${saved ? "text-[#DAB95C]" : "text-charcoal/50"}`}>
+        <span className={`font-mono text-xs ${saved ? "text-qolle-deep" : "text-charcoal/50"}`}>
           {formatTime(localStart)}
         </span>
         {showSaved && (
-          <span className="font-mono text-xs text-[#DAB95C]">
+          <span className="font-mono text-xs text-qolle-deep">
             ✓ Clip saved
           </span>
         )}
@@ -178,7 +178,7 @@ export function ClipTimeline({
             {formatTime(localEnd - localStart)} clip
           </span>
         )}
-        <span className={`font-mono text-xs ${saved ? "text-[#DAB95C]" : "text-charcoal/50"}`}>
+        <span className={`font-mono text-xs ${saved ? "text-qolle-deep" : "text-charcoal/50"}`}>
           {formatTime(localEnd)}
         </span>
       </div>

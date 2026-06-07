@@ -2,23 +2,23 @@
  * This file renders the dnd-kit sortable wrapper for a step in the
  * Story Editor sidebar — one row per step, draggable to reorder.
  *
- * Follows the same pattern as `SortableStoryRow`: a `GripVertical`
- * drag handle using `setActivatorNodeRef` so only the handle
- * initiates drag. Shows a `Trash2` delete button on hover. Both are
- * hidden by default and revealed via the group-hover CSS pattern.
+ * The row renders the step QUESTION as its title, a step-kind glyph —
+ * `Image` in a chilca-pale square for media, a `§` text glyph in a
+ * cream-dark square for a section break (glyphs only; there is no
+ * change-kind menu) — and a `GripVertical` drag handle that lives in a
+ * fixed ~14px left gutter at 50% opacity, rising to 100% on hover. Drag
+ * stays handle-only via `setActivatorNodeRef`. A `Trash2` delete button
+ * is revealed on hover via the group-hover CSS pattern.
  *
- * Optionally displays a media-type badge (Image/Video/Music/FileText
- * icon) when `objectsByType` is provided and the step has an
- * `object_id`.
- *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Trash2, ImageIcon, Video, Music, FileText, Heading } from "lucide-react";
+import { GripVertical, Trash2, ImageIcon, Video, Music, FileText, Layers } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { MediaType } from "~/lib/media-type";
+import type { SidebarLayerSummary } from "~/components/features/editor/StepSidebar";
 
 interface SortableStepItemProps {
   step: { id: number; step_number: number; kind?: "media" | "section"; question: string | null; object_id?: string | null };
@@ -38,6 +38,12 @@ interface SortableStepItemProps {
   rowClassName?: string;
   /** Optional inline style applied to the row wrapper (presence highlight). */
   rowStyle?: React.CSSProperties;
+  /** This step's layers, rendered as nested navigable L1/L2 sub-rows. */
+  layers?: SidebarLayerSummary[];
+  /** Navigate to a layer of this step (selects the step + opens the layer). */
+  onOpenLayer?: (layerNumber: number) => void;
+  /** Layer number currently open for this step (drives the sub-row highlight). */
+  activeLayerNumber?: number | null;
 }
 
 function MediaTypeBadge({ mediaType }: { mediaType: MediaType }) {
@@ -82,6 +88,9 @@ export function SortableStepItem({
   deleteTooltip,
   rowClassName,
   rowStyle,
+  layers,
+  onOpenLayer,
+  activeLayerNumber,
 }: SortableStepItemProps) {
   const { t } = useTranslation("editor");
   const {
@@ -105,47 +114,64 @@ export function SortableStepItem({
   const mediaType =
     !isSection && step.object_id && objectsByType ? objectsByType[step.object_id] : undefined;
 
+  const sortedLayers = layers
+    ? [...layers].sort((a, b) => a.layer_number - b.layer_number)
+    : [];
+  const showSubRows = !isSection && sortedLayers.length > 0;
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...attributes}
-      className={`group flex items-center gap-1 px-2 py-2 cursor-pointer border-b border-gray-700 transition-colors ${
-        isActive ? "bg-lavender/20" : "hover:bg-gray-700"
-      } ${rowClassName ?? ""}`}
+      className={`border-b border-gray-700 ${rowClassName ?? ""}`}
+    >
+    <div
+      className={`group flex items-center gap-1 px-2 py-2 cursor-pointer transition-colors ${
+        isActive ? "bg-anil/20" : "hover:bg-gray-700"
+      }`}
       onClick={onClick}
     >
-      {/* Drag handle — visible on hover */}
+      {/* Drag handle — fixed ~14px gutter, always present.
+          50% opacity at rest, full on row hover; drag stays handle-only. */}
       <div
         ref={setActivatorNodeRef}
         {...listeners}
-        className="opacity-0 group-hover:opacity-100 cursor-grab shrink-0 touch-none"
+        className="w-3.5 shrink-0 flex justify-center cursor-grab touch-none text-fg-subtle/50 group-hover:text-fg-subtle transition-colors"
         onClick={(e) => e.stopPropagation()}
       >
-        <GripVertical className="w-3.5 h-3.5 text-gray-500" />
+        <GripVertical className="w-3.5 h-3.5" />
       </div>
 
-      {/* Step label */}
+      {/* Step-kind glyph — glyphs only, no change-kind menu */}
+      <div
+        className={`w-5 h-5 shrink-0 rounded flex items-center justify-center ${
+          isSection ? "bg-cream-dark" : "bg-chilca-pale"
+        }`}
+        aria-hidden="true"
+      >
+        {isSection ? (
+          <span className="font-heading font-semibold text-sm text-charcoal leading-none">
+            §
+          </span>
+        ) : (
+          <ImageIcon className="w-3 h-3 text-charcoal" />
+        )}
+      </div>
+
+      {/* Step title — the QUESTION text is the title */}
       <div className="flex-1 min-w-0">
         {isSection ? (
-          <div className="flex items-center gap-1.5">
-            <Heading className="w-3.5 h-3.5 text-cream/70 shrink-0" aria-hidden="true" />
-            <div className="font-heading font-semibold text-sm text-cream truncate">
-              {step.question || t("step.section_no_heading_yet")}
-            </div>
+          <div className="font-heading font-semibold text-sm text-cream truncate">
+            {step.question || t("step.section_no_heading_yet")}
           </div>
         ) : (
-          <>
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-heading font-semibold text-cream">
-                {t("step.step_label", { number: displayNumber })}
-              </span>
-              {mediaType && <MediaTypeBadge mediaType={mediaType} />}
-            </div>
-            <div className="text-sm font-body text-gray-400 truncate">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <div className="font-heading font-semibold text-sm text-cream truncate">
               {step.question || t("step.no_question_yet")}
             </div>
-          </>
+            {mediaType && <MediaTypeBadge mediaType={mediaType} />}
+          </div>
         )}
       </div>
 
@@ -168,6 +194,51 @@ export function SortableStepItem({
       >
         <Trash2 className="w-3.5 h-3.5" />
       </button>
+    </div>
+
+      {/* Nested L1/L2 layer sub-rows — navigation only, no delete.
+          Indented under the step body with a connecting border-l. */}
+      {showSubRows && (
+        <div className="pl-7 pr-2 pb-1">
+          {sortedLayers.map((layer, idx) => {
+            const isLayer1 = layer.layer_number === 1;
+            const subActive =
+              isActive && activeLayerNumber === layer.layer_number;
+            return (
+              // layer_number can collide — layerFromYMap defaults a missing
+              // layer_number to 1, so a malformed/legacy Y.Map could yield two
+              // layers both numbered 1, dropping a row and logging a React
+              // key-collision warning. SidebarLayerSummary carries no stable
+              // id, so fall back to combining the number with the array index
+              // for a unique key.
+              <button
+                key={`${layer.layer_number}-${idx}`}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenLayer?.(layer.layer_number);
+                }}
+                className={`group/sub w-full flex items-center gap-1.5 pl-2 py-1 border-l border-gray-600 text-left transition-colors ${
+                  subActive ? "bg-anil/20" : "hover:bg-gray-700"
+                }`}
+              >
+                <span className="font-mono text-[10px] text-cream/60 shrink-0">
+                  {isLayer1 ? t("layer.marker_l1") : t("layer.marker_l2")}
+                </span>
+                <Layers
+                  className={`w-3 h-3 shrink-0 ${
+                    isLayer1 ? "text-anil-pale" : "text-terracotta-pale"
+                  }`}
+                  aria-hidden="true"
+                />
+                <span className="font-body text-xs text-gray-400 truncate">
+                  {layer.button_label || t("layer.button_label")}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

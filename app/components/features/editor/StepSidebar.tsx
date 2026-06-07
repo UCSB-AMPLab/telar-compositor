@@ -12,7 +12,7 @@
  * When `objectsByType` is provided, `SortableStepItem` shows a
  * media-type badge (Video/Music/Text icon) for non-image steps.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useTranslation } from "react-i18next";
@@ -51,6 +51,16 @@ interface SidebarStep {
   _yMap?: unknown;
 }
 
+/**
+ * Plain per-layer summary rendered as a nested navigation sub-row beneath
+ * its parent step. Computed in the route from the observed Yjs data (or the
+ * D1 fallback) and passed down — the row never reads `_yMap`.
+ */
+export interface SidebarLayerSummary {
+  layer_number: number;
+  button_label: string | null;
+}
+
 interface StepSidebarProps {
   steps: SidebarStep[];
   storyTitle: string | null;
@@ -71,6 +81,16 @@ interface StepSidebarProps {
   highlightColorByKey?: Record<string, string>;
   /** Per-step fade-out flag — keyed by sortableId. */
   fadingKeys?: Set<string>;
+  /**
+   * Per-step layer summaries for the nested L1/L2 sub-rows, keyed by the
+   * step's stable key (`id` when > 0, else `_tempId`). Computed in the route;
+   * the row renders plain data, never reading `_yMap`.
+   */
+  layersByStep?: Record<string, SidebarLayerSummary[]>;
+  /** Navigate to a layer: select its step (1-based index) and open the layer. */
+  onOpenLayer?: (stepIndex: number, layerNumber: number) => void;
+  /** Which layer is currently open (for the active step) — drives sub-row highlight. */
+  openLayerNumber?: number | null;
 }
 
 export function StepSidebar({
@@ -87,6 +107,9 @@ export function StepSidebar({
   deleteTooltip,
   highlightColorByKey,
   fadingKeys,
+  layersByStep,
+  onOpenLayer,
+  openLayerNumber,
 }: StepSidebarProps) {
   const { t } = useTranslation("editor");
   const sensors = useSensors(
@@ -115,7 +138,7 @@ export function StepSidebar({
         type="button"
         onClick={() => onStepSelect(0)}
         className={`w-full text-left pl-7 pr-3 py-3 border-b border-gray-700 transition-colors ${
-          activeStepIndex === 0 ? "bg-lavender/20" : "hover:bg-gray-700"
+          activeStepIndex === 0 ? "bg-anil/20" : "hover:bg-gray-700"
         }`}
       >
         <p className="font-heading font-semibold text-sm text-cream uppercase tracking-wider">
@@ -144,18 +167,28 @@ export function StepSidebar({
               const highlightColor = highlightColorByKey?.[key];
               const isFading = fadingKeys?.has(key) ?? false;
               const canDelete = canDeleteStep ? canDeleteStep(step) : true;
+              const stepIndex = idx + 1;
+              const rowActive = activeStepIndex === stepIndex;
+              const layers = layersByStep?.[key];
               return (
                 <SortableStepItem
                   key={key}
                   sortableId={keyFor(step)}
                   step={step}
-                  displayNumber={idx + 1}
-                  isActive={activeStepIndex === idx + 1}
-                  onClick={() => onStepSelect(idx + 1)}
+                  displayNumber={stepIndex}
+                  isActive={rowActive}
+                  onClick={() => onStepSelect(stepIndex)}
                   onDelete={() => onDeleteStep(step)}
                   objectsByType={objectsByType}
                   canDelete={canDelete}
                   deleteTooltip={deleteTooltip}
+                  layers={layers}
+                  onOpenLayer={
+                    onOpenLayer
+                      ? (layerNumber: number) => onOpenLayer(stepIndex, layerNumber)
+                      : undefined
+                  }
+                  activeLayerNumber={rowActive ? openLayerNumber ?? null : null}
                   rowClassName={
                     [
                       highlightColor ? "structural-highlight" : "",
@@ -183,7 +216,7 @@ export function StepSidebar({
           <button
             type="button"
             onClick={onAddStep}
-            className="w-full px-4 py-2 font-heading font-semibold text-sm text-charcoal bg-[#DAB95C] hover:bg-yellow-300 rounded-full transition-colors uppercase tracking-wider"
+            className="w-full px-4 py-2 font-heading font-semibold text-sm text-charcoal bg-qolle hover:bg-qolle-deep rounded-full transition-colors uppercase tracking-wider"
           >
             {t("step.add_step")}
           </button>

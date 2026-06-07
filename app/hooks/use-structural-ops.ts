@@ -18,7 +18,7 @@
  * anything; collaborators can delete only items they created
  * themselves.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useMemo } from "react";
@@ -26,6 +26,7 @@ import * as Y from "yjs";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { findYMapIndex } from "~/lib/yjs-helpers";
 import { normaliseSlug, makeUniqueSlug, slugifyTermId } from "~/lib/slug";
+import { makeUniqueTermId } from "~/lib/glossary-slug";
 
 export type StructuralRole = "convenor" | "collaborator";
 
@@ -70,12 +71,31 @@ export interface StructuralOps {
   reorderPages: (oldIndex: number, newIndex: number) => void;
 
   // Objects (IIIF only; self-hosted uploads stay as a route action).
-  addIiifObject: (objectId: string, title: string, sourceUrl: string) => void;
+  addIiifObject: (objectId: string, title: string, sourceUrl: string) => string;
+  /**
+   * Create an external-media object (YouTube/Vimeo/Drive/audio). Mirrors
+   * `addIiifObject` but the Y.Map is born NON-pending (`_validation_state:
+   * "valid"`) because external media has no IIIF manifest to validate — a
+   * `"pending"` state would make the Durable Object skip the row on D1 INSERT
+   * (`collaboration.ts:1506`) and the object would never persist. `origin` is
+   * `"compositor"` (NOT `"external"`) — the exact sentinel the sync
+   * missing-from-repo guard skips (`sync.server.ts:295,500`). External media
+   * has no poster subsystem: `thumbnail` stays empty and
+   * `image_available` stays false.
+   */
+  addExternalMediaObject: (objectId: string, title: string, sourceUrl: string) => string;
   deleteObject: (id: number | null, tempId: string | null) => void;
-  reorderObjects: (oldIndex: number, newIndex: number) => void;
 
   // Glossary.
   addGlossaryTerm: (title: string) => void;
+  /**
+   * Quick-create a glossary term with a caller-supplied `term_id`.
+   * The candidate term_id is normalised + deduped via `makeUniqueTermId`
+   * against the existing set so the new slug stays unique. Definition starts
+   * empty. Used by the unresolved-chip CTA so authoring an `[[foo]]` link that
+   * has no term yet resolves it in one transaction without leaving the route.
+   */
+  addGlossaryTermWithId: (termId: string, title: string) => void;
   deleteGlossaryTerm: (id: number | null, tempId: string | null) => void;
 }
 
@@ -354,13 +374,24 @@ export function useStructuralOps(
       title,
       sourceUrl
     ) => {
+      const tempId = crypto.randomUUID();
       ydoc.transact(() => {
         const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+        // Dedupe object_id against the live set. There is no UNIQUE
+        // constraint on objects.object_id, so two un-deduped adds would
+        // both persist, collapse in objects.csv, and make step→object
+        // lookups ambiguous on the published site. Mirrors addGlossaryTerm.
+        const existing = new Set<string>();
+        for (let i = 0; i < objectsArray.length; i++) {
+          const oid = objectsArray.get(i).get("object_id");
+          if (typeof oid === "string") existing.add(oid);
+        }
+        const { slug: uniqueObjectId } = makeUniqueSlug(objectId, existing);
         const objMap = new Y.Map<unknown>();
         objMap.set("_id", null);
-        objMap.set("_temp_id", crypto.randomUUID());
+        objMap.set("_temp_id", tempId);
         objMap.set("created_by", currentUserId);
-        objMap.set("object_id", objectId);
+        objMap.set("object_id", uniqueObjectId);
         objMap.set("title", new Y.Text(title));
         objMap.set("creator", new Y.Text(""));
         objMap.set("description", new Y.Text(""));
@@ -371,12 +402,61 @@ export function useStructuralOps(
         objMap.set("featured", false);
         objMap.set("image_available", false);
         objMap.set("_validation_state", "pending");
-        objMap.set("order", objectsArray.length);
         objMap.set("origin", "iiif");
         objMap.set("missing_from_repo", false);
         objMap.set("thumbnail", "");
         objectsArray.push([objMap]);
       });
+      // Return the stable handle so the caller can locate this exact object
+      // (by _temp_id) without a race-prone array.get(length - 1) read.
+      return tempId;
+    };
+
+    const addExternalMediaObject: StructuralOps["addExternalMediaObject"] = (
+      objectId,
+      title,
+      sourceUrl
+    ) => {
+      const tempId = crypto.randomUUID();
+      ydoc.transact(() => {
+        const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+        // Dedupe object_id against the live set (no UNIQUE constraint on
+        // objects.object_id; two un-deduped adds would collide). Mirrors
+        // addGlossaryTerm and the IIIF path.
+        const existing = new Set<string>();
+        for (let i = 0; i < objectsArray.length; i++) {
+          const oid = objectsArray.get(i).get("object_id");
+          if (typeof oid === "string") existing.add(oid);
+        }
+        const { slug: uniqueObjectId } = makeUniqueSlug(objectId, existing);
+        const objMap = new Y.Map<unknown>();
+        objMap.set("_id", null);
+        objMap.set("_temp_id", tempId);
+        objMap.set("created_by", currentUserId);
+        objMap.set("object_id", uniqueObjectId);
+        objMap.set("title", new Y.Text(title));
+        objMap.set("creator", new Y.Text(""));
+        objMap.set("description", new Y.Text(""));
+        objMap.set("alt_text", new Y.Text(""));
+        objMap.set("source_url", sourceUrl);
+        objMap.set("period", new Y.Text(""));
+        objMap.set("year", new Y.Text(""));
+        objMap.set("featured", false);
+        // No poster subsystem for external media — image stays unavailable.
+        objMap.set("image_available", false);
+        // NON-pending: external media has no manifest to validate, so the DO
+        // snapshot must INSERT it (the upload mirror op already uses "valid").
+        objMap.set("_validation_state", "valid");
+        // "compositor" is the verified missing-from-repo sentinel (NOT "external").
+        objMap.set("origin", "compositor");
+        objMap.set("missing_from_repo", false);
+        // Empty thumbnail — no poster fetch/upload/gate for external media.
+        objMap.set("thumbnail", "");
+        objectsArray.push([objMap]);
+      });
+      // Return the stable handle so the caller can locate this exact object
+      // (by _temp_id) without a race-prone array.get(length - 1) read.
+      return tempId;
     };
 
     const deleteObject: StructuralOps["deleteObject"] = (id, tempId) => {
@@ -387,24 +467,51 @@ export function useStructuralOps(
       });
     };
 
-    const reorderObjects: StructuralOps["reorderObjects"] = (oldIndex, newIndex) => {
-      ydoc.transact(() => {
-        const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
-        reorderInPlace(objectsArray, oldIndex, newIndex);
-      });
-    };
-
     // ---- Glossary ----
 
     const addGlossaryTerm: StructuralOps["addGlossaryTerm"] = (title) => {
       ydoc.transact(() => {
         const glossaryArray = ydoc.getArray<Y.Map<unknown>>("glossary");
+        // Collect existing term_ids so the auto-slug is deduped. Without
+        // this, two "New term" clicks both produce e.g. `untitled-term`, which
+        // breaks [[term]] resolution and the eventual UNIQUE constraint on the
+        // D1 snapshot. Mirrors addGlossaryTermWithId.
+        const existing: string[] = [];
+        for (let i = 0; i < glossaryArray.length; i++) {
+          const id = glossaryArray.get(i).get("term_id");
+          if (typeof id === "string") existing.push(id);
+        }
+        const uniqueId = makeUniqueTermId(slugifyTermId(title), existing);
         const termMap = new Y.Map<unknown>();
         termMap.set("_id", null);
         termMap.set("_temp_id", crypto.randomUUID());
         termMap.set("created_by", currentUserId);
         termMap.set("title", new Y.Text(title));
-        termMap.set("term_id", slugifyTermId(title));  // auto-slugify
+        termMap.set("term_id", uniqueId);
+        termMap.set("definition", new Y.Text(""));
+        glossaryArray.push([termMap]);
+      });
+    };
+
+    const addGlossaryTermWithId: StructuralOps["addGlossaryTermWithId"] = (
+      termId,
+      title,
+    ) => {
+      ydoc.transact(() => {
+        const glossaryArray = ydoc.getArray<Y.Map<unknown>>("glossary");
+        // Collect existing term_ids so the candidate is deduped.
+        const existing: string[] = [];
+        for (let i = 0; i < glossaryArray.length; i++) {
+          const id = glossaryArray.get(i).get("term_id");
+          if (typeof id === "string") existing.push(id);
+        }
+        const uniqueId = makeUniqueTermId(termId, existing);
+        const termMap = new Y.Map<unknown>();
+        termMap.set("_id", null);
+        termMap.set("_temp_id", crypto.randomUUID());
+        termMap.set("created_by", currentUserId);
+        termMap.set("title", new Y.Text(title));
+        termMap.set("term_id", uniqueId);
         termMap.set("definition", new Y.Text(""));
         glossaryArray.push([termMap]);
       });
@@ -433,9 +540,10 @@ export function useStructuralOps(
       deletePage,
       reorderPages,
       addIiifObject,
+      addExternalMediaObject,
       deleteObject,
-      reorderObjects,
       addGlossaryTerm,
+      addGlossaryTermWithId,
       deleteGlossaryTerm,
     };
   }, [ydoc, currentUserId, role]);

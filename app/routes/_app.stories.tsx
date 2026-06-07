@@ -17,12 +17,12 @@
  * from the Y.Array so remote collaborators' changes appear in real
  * time; it falls back to loader data during SSR or pre-connection.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
-import { asc, count, eq, gt } from "drizzle-orm";
+import { and, asc, count, eq, gt } from "drizzle-orm";
 import { useTranslation } from "react-i18next";
-import { redirect, useFetcher, useNavigate } from "react-router";
+import { redirect, useFetcher, useNavigate, useOutletContext } from "react-router";
 import { useState, useEffect, useRef, useMemo } from "react";
 import * as Y from "yjs";
 import {
@@ -54,6 +54,7 @@ import { SortableStoryRow } from "~/components/features/stories/SortableStoryRow
 import { NewStoryForm } from "~/components/features/stories/NewStoryForm";
 import { StoriesEmptyState } from "~/components/features/stories/StoriesEmptyState";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
+import { DocsLink } from "~/components/ui/DocsLink";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useToast } from "~/hooks/use-toast";
@@ -149,20 +150,30 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "toggle-draft": {
       const storyDbId = Number(formData.get("storyDbId"));
       const currentValue = formData.get("currentValue") === "true";
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) return { ok: false, intent: "toggle-draft", error: "no_project" };
       await db
         .update(stories)
         .set({ draft: !currentValue, updated_at: new Date().toISOString() })
-        .where(eq(stories.id, storyDbId));
+        .where(and(eq(stories.id, storyDbId), eq(stories.project_id, resolved.project.id)));
       return { ok: true, intent: "toggle-draft" };
     }
 
     case "toggle-private": {
       const storyDbId = Number(formData.get("storyDbId"));
       const currentValue = formData.get("currentValue") === "true";
+      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
+      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
+      const sessionActiveId = session.get("activeProjectId") as number | undefined;
+      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolved) return { ok: false, intent: "toggle-private", error: "no_project" };
       await db
         .update(stories)
         .set({ private: !currentValue, updated_at: new Date().toISOString() })
-        .where(eq(stories.id, storyDbId));
+        .where(and(eq(stories.id, storyDbId), eq(stories.project_id, resolved.project.id)));
       return { ok: true, intent: "toggle-private" };
     }
 
@@ -193,6 +204,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         const { sigHex, timestamp } = await signInternalMarker(
           activeProject.id,
           env.SESSION_SECRET,
+          "snapshot",
         );
         const snapshotReq = new Request(`https://internal/snapshot`, {
           method: "POST",
@@ -265,7 +277,7 @@ function readScalar(yMap: Y.Map<unknown>, key: string): string | null {
 
 /**
  * Convert a Y.Map for a story into a StoryItem suitable for the UI.
- * Handles the _id: null / _temp_id sentinel from plan 27-01.
+ * Handles the _id: null / _temp_id sentinel for newly-created stories.
  */
 function yMapToStoryItem(yMap: Y.Map<unknown>, yIndex: number): StoryItem {
   const id = (yMap.get("_id") as number | null) ?? 0;
@@ -323,6 +335,7 @@ function computeContributors(
 }
 
 export default function StoriesPage({ loaderData }: Route.ComponentProps) {
+  const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
   const { t } = useTranslation("stories");
   const { t: tStructural } = useTranslation("structural");
   const fetcher = useFetcher();
@@ -480,7 +493,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     seenKeysRef.current = next;
     if (newly.length === 0) return;
 
-    // Pick a colour from the first remote collaborator present, fallback to lavender.
+    // Pick a colour from the first remote collaborator present, fallback to anil.
     const colour =
       remoteCollaborators[0]?.user.color ?? "rgba(198, 208, 248, 0.9)";
     setHighlightedKeys((prev) => {
@@ -536,7 +549,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
               action: {
                 label: tStructural("toast_item_deleted_undo"),
                 onClick: () => {
-                  // The shared UndoManager (plan 27-04) covers Y.Array deletes.
+                  // The shared UndoManager covers Y.Array deletes.
                   // Pop the top undo stack item — this re-inserts the Y.Map.
                   // We cannot call undo() here without the context ref; the
                   // TabNav Undo button is the authoritative path.
@@ -695,13 +708,16 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     <div className="max-w-4xl mx-auto">
       {/* Page header */}
       <div className="flex items-center justify-between mb-2">
-        <h1 className="font-heading font-bold text-2xl text-charcoal">
-          {t("title")}
-        </h1>
+        <div className="flex items-center gap-4">
+          <h1 className="font-heading font-bold text-2xl text-charcoal">
+            {t("title")}
+          </h1>
+          {openDoc && <DocsLink docId="stories" onOpenDoc={openDoc} />}
+        </div>
         <button
           type="button"
           onClick={() => setShowNewCard(true)}
-          className="inline-flex items-center justify-center bg-periwinkle hover:bg-periwinkle-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 transition-colors"
+          className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 transition-colors"
         >
           {t("new_story_button")}
         </button>
