@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   getCachedLatestTag: vi.fn(),
   // upgrade.server
   compareTelarVersion: vi.fn(),
+  // github-app.server
+  getInstallationInfo: vi.fn(),
   // publish.server
   computeChangeSummary: vi.fn(),
   buildEntityHashes: vi.fn(),
@@ -61,6 +63,9 @@ vi.mock("~/lib/github-status.server", () => ({
 }));
 vi.mock("~/lib/upgrade.server", () => ({
   compareTelarVersion: mocks.compareTelarVersion,
+}));
+vi.mock("~/lib/github-app.server", () => ({
+  getInstallationInfo: mocks.getInstallationInfo,
 }));
 // The route also imports github.server (GITHUB_API constant only) and
 // publish/sync servers (for other payload cases). Stub them so imports
@@ -121,6 +126,9 @@ const CONFIG_ROW = { telar_version: "1.3.0" };
  * The db mock receives a `selectImpl` fn that returns the row arrays for each
  * `.select().from().where().limit()` call in order.
  */
+// Records payloads passed to db.update(...).set(...). Reset per test.
+let recordedUpdates: Record<string, unknown>[] = [];
+
 function makeContext(selectQueue: unknown[][], user = FAKE_USER) {
   let callIdx = 0;
   const db = {
@@ -150,6 +158,15 @@ function makeContext(selectQueue: unknown[][], user = FAKE_USER) {
       });
       return { from: fromFn };
     }),
+    // Records .update(...).set(payload).where(...) — the route's only real
+    // update here is the workflows-permission cache write (claimRefresh and
+    // refreshGithubStatus are mocked away).
+    update: vi.fn(() => ({
+      set: vi.fn((payload: Record<string, unknown>) => {
+        recordedUpdates.push(payload);
+        return { where: vi.fn(async () => []) };
+      }),
+    })),
   };
 
   mocks.getDbMock.mockReturnValue(dbFull);
@@ -207,6 +224,7 @@ const EMPTY_SUMMARY = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  recordedUpdates = [];
   mocks.resolveActiveProjectMock.mockResolvedValue({ project: ACTIVE_PROJECT });
   mocks.getUserRoleMock.mockResolvedValue("owner");
   mocks.decryptMock.mockResolvedValue("decrypted-token");
@@ -220,6 +238,9 @@ beforeEach(() => {
   // prepend 5 `[]` entries before their gh-status-specific rows.
   mocks.buildEntityHashes.mockResolvedValue({});
   mocks.computeChangeSummary.mockReturnValue(EMPTY_SUMMARY);
+  // Default: installation holds workflows:write (no modal). Tests that exercise
+  // the accept-gap override this.
+  mocks.getInstallationInfo.mockResolvedValue({ workflowsWrite: true, targetType: "User" });
 });
 
 // ---------------------------------------------------------------------------
@@ -251,6 +272,45 @@ describe("api.site-status — gh-status payload", () => {
         expect.anything(),
         expect.any(Number),
       );
+    });
+
+    it("flags the workflows-permission cache as missing when the install lacks the grant (org-aware)", async () => {
+      mocks.isStale.mockReturnValue(true);
+      mocks.claimRefresh.mockResolvedValue(true);
+      mocks.getInstallationInfo.mockResolvedValue({ workflowsWrite: false, targetType: "Organization" });
+
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never);
+
+      expect(mocks.getInstallationInfo).toHaveBeenCalledOnce();
+      expect(recordedUpdates).toContainEqual({
+        gh_workflows_write_missing: 1,
+        gh_install_target_type: "Organization",
+      });
+    });
+
+    it("clears the workflows-permission flag when the install holds the grant", async () => {
+      mocks.isStale.mockReturnValue(true);
+      mocks.claimRefresh.mockResolvedValue(true);
+      mocks.getInstallationInfo.mockResolvedValue({ workflowsWrite: true, targetType: "User" });
+
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never);
+
+      expect(recordedUpdates).toContainEqual({
+        gh_workflows_write_missing: 0,
+        gh_install_target_type: "User",
+      });
+    });
+
+    it("does NOT check installation permissions when the claim is lost (no duplicate work)", async () => {
+      mocks.isStale.mockReturnValue(true);
+      mocks.claimRefresh.mockResolvedValue(false);
+
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never);
+
+      expect(mocks.getInstallationInfo).not.toHaveBeenCalled();
     });
 
     it("returns DerivedGithubStatus shape derived from re-read row", async () => {

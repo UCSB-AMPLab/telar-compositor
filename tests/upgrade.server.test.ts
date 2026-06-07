@@ -20,6 +20,7 @@ import {
   buildYmlUsesNpmCi,
   updateTelarVersionInConfig,
   categorizeFrameworkPath,
+  partitionWorkflowFiles,
   buildUpgradeSummary,
   computeUpgradeDiff,
   MIN_SUPPORTED_VERSION,
@@ -267,6 +268,77 @@ describe("categorizeFrameworkPath", () => {
 
   it("Test 40: _data/languages/en.yml categorizes as 'dataFiles'", () => {
     expect(categorizeFrameworkPath("_data/languages/en.yml")).toBe("dataFiles");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// partitionWorkflowFiles
+// ---------------------------------------------------------------------------
+
+describe("partitionWorkflowFiles", () => {
+  it("splits .github/workflows/ additions from everything else", () => {
+    const additions: CommitFile[] = [
+      { path: "_layouts/default.html", content: "a" },
+      { path: ".github/workflows/build.yml", content: "b" },
+      { path: "telar-content/spreadsheets/objects.csv", content: "c" },
+      { path: ".github/workflows/telar-tests.yml", content: "d" },
+    ];
+    const result = partitionWorkflowFiles(additions, []);
+    expect(result.workflowAdditions.map((a) => a.path)).toEqual([
+      ".github/workflows/build.yml",
+      ".github/workflows/telar-tests.yml",
+    ]);
+    expect(result.contentAdditions.map((a) => a.path)).toEqual([
+      "_layouts/default.html",
+      "telar-content/spreadsheets/objects.csv",
+    ]);
+  });
+
+  it("splits workflow deletions from content deletions", () => {
+    const deletions = [
+      "_includes/old.html",
+      ".github/workflows/legacy.yml",
+      "assets/old.css",
+    ];
+    const result = partitionWorkflowFiles([], deletions);
+    expect(result.workflowDeletions).toEqual([".github/workflows/legacy.yml"]);
+    expect(result.contentDeletions).toEqual([
+      "_includes/old.html",
+      "assets/old.css",
+    ]);
+  });
+
+  it("reports hasWorkflows false when nothing touches .github/workflows/", () => {
+    const result = partitionWorkflowFiles(
+      [{ path: "_config.yml", content: "x" }],
+      ["index.md"],
+    );
+    expect(result.hasWorkflows).toBe(false);
+    expect(result.workflowAdditions).toEqual([]);
+    expect(result.workflowDeletions).toEqual([]);
+  });
+
+  it("reports hasWorkflows true when a workflow file is added OR deleted", () => {
+    expect(
+      partitionWorkflowFiles([{ path: ".github/workflows/build.yml", content: "x" }], [])
+        .hasWorkflows,
+    ).toBe(true);
+    expect(
+      partitionWorkflowFiles([], [".github/workflows/build.yml"]).hasWorkflows,
+    ).toBe(true);
+  });
+
+  it("does NOT treat _config.yml or other .github/ files as workflows", () => {
+    const additions: CommitFile[] = [
+      { path: "_config.yml", content: "x" },
+      { path: ".github/dependabot.yml", content: "y" },
+    ];
+    const result = partitionWorkflowFiles(additions, []);
+    expect(result.hasWorkflows).toBe(false);
+    expect(result.contentAdditions.map((a) => a.path)).toEqual([
+      "_config.yml",
+      ".github/dependabot.yml",
+    ]);
   });
 });
 

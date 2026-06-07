@@ -14,6 +14,7 @@
   "field_steps_why": "Sin estos, la mayoría de los errores se quedan sin resolver.",
   "attach_disclosure_label": "Lo que vamos a adjuntar",
   "attach_item_url": "URL de la página",
+  "attach_item_repository": "Repositorio",
   "attach_item_version": "Versión",
   "attach_item_browser": "Navegador",
   "attach_item_viewport": "Tamaño de la ventana",

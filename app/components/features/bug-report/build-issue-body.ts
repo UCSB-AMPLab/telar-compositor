@@ -15,7 +15,7 @@
  * mutate it. Tests assert byte-equivalence of
  * `JSON.stringify(payload)` before/after the call.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 export type CapturedError = {
@@ -28,6 +28,10 @@ export type CapturedError = {
 
 export type Payload = {
   url: string;
+  /** Active project's GitHub repo, "owner/name" — identifies which site/install
+   *  a report came from (absent when the reporter has no active project, e.g.
+   *  some post-crash contexts). */
+  repoFullName?: string;
   buildSha: string;
   environment: string;
   browser: string;
@@ -45,6 +49,10 @@ export type FormInput = {
 
 const FOOTER =
   "<sub>Submitted via the in-app bug reporter. Items the reporter removed before sending are not included.</sub>";
+
+/** Maintainer GitHub login, @-mentioned in every report so it notifies them
+ *  even when filed by someone without permission to be set as an assignee. */
+const MAINTAINER = "juancobo";
 
 export function buildIssueBody(
   form: FormInput,
@@ -76,6 +84,12 @@ export function buildIssueBody(
   // payload; build a filtered view).
   const envRows: Array<[string, string]> = [];
   if (!removed.has("url")) envRows.push(["URL", `\`${payload.url}\``]);
+  if (payload.repoFullName && !removed.has("repository")) {
+    envRows.push([
+      "Repository",
+      `[${payload.repoFullName}](https://github.com/${payload.repoFullName})`,
+    ]);
+  }
   if (!removed.has("buildSha")) {
     envRows.push([
       "App version",
@@ -105,6 +119,9 @@ export function buildIssueBody(
     errLines.push("```");
     sections.push(errLines.join("\n"));
   }
+
+  // Notify the maintainer so reports don't sit unseen.
+  sections.push(`_cc @${MAINTAINER}_`);
 
   // Footer.
   sections.push(FOOTER);

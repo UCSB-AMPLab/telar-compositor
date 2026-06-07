@@ -193,3 +193,62 @@ export async function getInstallationToken(
   const data = (await res.json()) as { token: string };
   return data.token;
 }
+
+export interface InstallationInfo {
+  /** True when this installation has granted the App's `workflows: write`
+   *  permission. GitHub does not auto-propagate newly-declared permissions to
+   *  existing installs — each owner must approve — so this can be false even
+   *  when the App declares workflows:write. */
+  workflowsWrite: boolean;
+  /** Account type the App is installed on; null when GitHub returns an
+   *  unexpected value. Drives the org-scoped vs user reauth URL. */
+  targetType: "User" | "Organization" | null;
+}
+
+/**
+ * Reads an installation's GRANTED permissions + account type via the App JWT
+ * (GET /app/installations/{id}). The permissions reflect what the installation
+ * has actually accepted — not merely what the App requests — so it reveals the
+ * workflows-write accept-gap. Throws on a non-ok response; callers fail open.
+ */
+export async function getInstallationInfo(
+  appId: string,
+  privateKeyPem: string,
+  installationId: number,
+): Promise<InstallationInfo> {
+  const jwt = await signJwt(appId, privateKeyPem);
+
+  const res = await fetch(
+    `https://api.github.com/app/installations/${installationId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "telar-compositor",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    },
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `Failed to get installation ${installationId}: ${res.status} ${body}`,
+    );
+  }
+
+  const data = (await res.json()) as {
+    permissions?: Record<string, string>;
+    target_type?: string;
+  };
+
+  return {
+    workflowsWrite: data.permissions?.workflows === "write",
+    targetType:
+      data.target_type === "Organization"
+        ? "Organization"
+        : data.target_type === "User"
+          ? "User"
+          : null,
+  };
+}

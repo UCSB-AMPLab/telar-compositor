@@ -59,6 +59,7 @@ import {
   categorizeFrameworkPath,
   loadManifestChain,
   collectFilesReferencedByChain,
+  partitionWorkflowFiles,
 } from "~/lib/upgrade.server";
 import type { UpgradeDiff, TelarRelease, UpgradeSummary } from "~/lib/upgrade.server";
 import { applyManifestChain } from "~/lib/manifest-runner.server";
@@ -515,28 +516,129 @@ export async function action({ request, context }: Route.ActionArgs) {
         prepared.installationId,
       );
 
-      const result = await commitFilesToRepo(
-        installToken,
-        owner,
-        repo,
-        "main",
+      // Split the upgrade so a .github/workflows/ rejection can't zero the
+      // rest. GitHub rejects an ENTIRE commit that touches a workflow file
+      // when the install lacks workflows:write (the v1.5.0 accept-gap), so a
+      // single atomic commit of all ~141 files would lose the 138 content
+      // files too. We therefore land the content first (plain contents:write),
+      // then commit the workflow files together with the version-bumped
+      // _config.yml. Holding the version bump in this second commit means that
+      // if it is rejected, the site's recorded version stays behind, the
+      // upgrade re-prompt re-fires, and the next attempt's diff narrows to just
+      // the workflow files. The compositor keeps delivering workflows via the
+      // App token — this only stops one rejection from discarding everything.
+      const partition = partitionWorkflowFiles(
         prepared.additions,
-        prepared.commitMessage,
-        prepared.commitBody,
         prepared.deletions,
-        undefined, // skipCi
-        prepared.expectedHeadOid,
       );
 
-      const newHeadSha = result.newHeadSha;
+      let newHeadSha: string;
+      let versionLanded: boolean;
+
+      if (!partition.hasWorkflows) {
+        // No workflow files — a single atomic commit is sufficient and keeps
+        // the version bump and content together (unchanged behaviour).
+        const result = await commitFilesToRepo(
+          installToken,
+          owner,
+          repo,
+          "main",
+          prepared.additions,
+          prepared.commitMessage,
+          prepared.commitBody,
+          prepared.deletions,
+          undefined, // skipCi
+          prepared.expectedHeadOid,
+        );
+        newHeadSha = result.newHeadSha;
+        versionLanded = true;
+      } else {
+        // Hold _config.yml back with the workflow files so the version bump
+        // only lands when the workflows do.
+        const configEntry = partition.contentAdditions.find(
+          (a) => a.path === "_config.yml",
+        );
+        const contentAdditions = partition.contentAdditions.filter(
+          (a) => a.path !== "_config.yml",
+        );
+
+        // Commit 1 — content. Skip CI: the build should run on the complete
+        // state (commit 2), and if commit 2 is rejected we deliberately do not
+        // deploy a half-upgraded site. Skipped entirely if there is nothing
+        // but workflows + _config.yml to land.
+        let contentHeadSha = prepared.expectedHeadOid;
+        if (contentAdditions.length > 0 || partition.contentDeletions.length > 0) {
+          const contentResult = await commitFilesToRepo(
+            installToken,
+            owner,
+            repo,
+            "main",
+            contentAdditions,
+            prepared.commitMessage,
+            prepared.commitBody,
+            partition.contentDeletions,
+            true, // skipCi — build runs on the final (workflow) commit
+            prepared.expectedHeadOid,
+          );
+          contentHeadSha = contentResult.newHeadSha;
+        }
+
+        // Commit 2 — workflow files + the held version-bumped _config.yml.
+        // Chained onto commit 1's new head. If this is rejected for missing
+        // workflows:write, the content above stays committed.
+        const workflowAdditions = [
+          ...partition.workflowAdditions,
+          ...(configEntry ? [configEntry] : []),
+        ];
+        try {
+          const workflowResult = await commitFilesToRepo(
+            installToken,
+            owner,
+            repo,
+            "main",
+            workflowAdditions,
+            `Update Telar workflows for ${prepared.newVersion}`,
+            prepared.commitBody,
+            partition.workflowDeletions,
+            undefined, // skipCi — this commit triggers the build
+            contentHeadSha,
+          );
+          newHeadSha = workflowResult.newHeadSha;
+          versionLanded = true;
+        } catch (workflowErr) {
+          if (workflowErr instanceof StaleHeadError) throw workflowErr;
+          const wfMsg =
+            workflowErr instanceof Error ? workflowErr.message : String(workflowErr);
+          console.error("[runUpgradeCommit] workflow commit failed:", wfMsg);
+          if (!wfMsg.includes("Resource not accessible by integration")) {
+            throw workflowErr;
+          }
+          // Workflow permission missing: content already landed, version held.
+          // Record the content head so D1 doesn't go stale, then surface the
+          // permission error so the banner + modal prompt the owner to approve.
+          try {
+            await bumpProjectHead(db, activeProject.id, contentHeadSha);
+          } catch (d1Err) {
+            console.error("D1 head bump after partial upgrade failed:", d1Err);
+          }
+          return {
+            ok: false,
+            error: "insufficient_permissions",
+            reauthUrl: `https://github.com/settings/installations/${prepared.installationId}`,
+          };
+        }
+      }
+
       const now = new Date().toISOString();
 
       // Commit already landed; D1 failure must not report upgrade_failed.
       try {
-        await db
-          .update(project_config)
-          .set({ telar_version: prepared.toVersion, updated_at: now })
-          .where(eq(project_config.project_id, activeProject.id));
+        if (versionLanded) {
+          await db
+            .update(project_config)
+            .set({ telar_version: prepared.toVersion, updated_at: now })
+            .where(eq(project_config.project_id, activeProject.id));
+        }
         await bumpProjectHead(db, activeProject.id, newHeadSha);
       } catch (d1Err) {
         console.error("D1 update after upgrade commit failed:", d1Err);
@@ -564,6 +666,13 @@ export async function action({ request, context }: Route.ActionArgs) {
         return { ok: false, error: "stale_head" };
       }
       const message = err instanceof Error ? err.message : "Unknown error";
+      // Always log the raw GitHub error first. The insufficient_permissions
+      // branch below used to return WITHOUT logging, so production permission
+      // failures were invisible — we could never see the verbatim GraphQL
+      // message (e.g. distinguish "Resource not accessible by integration" from
+      // a workflow-specific guard message). Log unconditionally so the cause is
+      // always recoverable from worker logs.
+      console.error("[runUpgradeCommit] commit failed:", message);
       // GitHub returns "Resource not accessible by integration" when the App
       // lacks a permission required for the commit (e.g. workflows: write).
       // Surface a targeted error with a per-install re-auth URL so the client

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { CURRENT_RELEASE, shouldShowReleaseNote } from "~/lib/release-notes";
+import {
+  CURRENT_RELEASE,
+  shouldShowReleaseNote,
+  shouldShowWorkflowsModal,
+} from "~/lib/release-notes";
 
 describe("release-notes", () => {
   it("exposes the current release id, i18n key, and a contributors array", () => {
@@ -19,5 +23,23 @@ describe("release-notes", () => {
 
   it("never shows while the added-to-project welcome modal is pending", () => {
     expect(shouldShowReleaseNote(null, true)).toBe(false);
+  });
+});
+
+describe("shouldShowWorkflowsModal (login-modal priority)", () => {
+  it("shows when approval is needed and no higher-priority modal is pending", () => {
+    expect(shouldShowWorkflowsModal(true, false, false)).toBe(true);
+  });
+
+  it("defers while the welcome modal is pending", () => {
+    expect(shouldShowWorkflowsModal(true, true, false)).toBe(false);
+  });
+
+  it("defers while the 'what's new' release modal is pending", () => {
+    expect(shouldShowWorkflowsModal(true, false, true)).toBe(false);
+  });
+
+  it("never shows when approval isn't needed", () => {
+    expect(shouldShowWorkflowsModal(false, false, false)).toBe(false);
   });
 });

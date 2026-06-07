@@ -34,9 +34,9 @@ import { projects, project_config, project_members, users, stories, objects, pro
 import { getUserRole, getPresenceColor, getUserProjects, resolveActiveProject } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
-import { deriveHeadDiverged, getCachedLatestTagIfWarm, getCachedLatestTag } from "~/lib/github-status.server";
+import { deriveHeadDiverged, getCachedLatestTagIfWarm, getCachedLatestTag, deriveWorkflowsApproval, type WorkflowsApproval } from "~/lib/github-status.server";
 import { compareTelarVersion } from "~/lib/upgrade.server";
-import { shouldShowReleaseNote } from "~/lib/release-notes";
+import { shouldShowReleaseNote, shouldShowWorkflowsModal } from "~/lib/release-notes";
 import { Header } from "~/components/layout/Header";
 import { CollaborationProvider, useCollaborationContext, useSetAwarenessLocation } from "~/hooks/use-collaboration";
 import { ToastProvider } from "~/hooks/use-toast";
@@ -46,6 +46,7 @@ import { CollaborationSidebar } from "~/components/features/collaboration/Collab
 import { UndoFeedback } from "~/components/features/collaboration/UndoFeedback";
 import { BugReportPanel } from "~/components/features/bug-report/BugReportPanel";
 import { WhatsNewModal } from "~/components/features/release/WhatsNewModal";
+import { WorkflowsPermissionModal } from "~/components/features/upgrade/WorkflowsPermissionModal";
 import { TabNav } from "~/components/layout/TabNav";
 import { DocsDrawer } from "~/components/features/start/DocsDrawer";
 import { isDocId, type DocId } from "~/lib/docs-content";
@@ -75,6 +76,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   let pagesUrl: string | null = null;
   let repoUnavailable = false;
   let repoFullName: string | null = null;
+  let workflowsApproval: WorkflowsApproval = { needed: false, url: null };
   // Full project set for the header project switcher.
   // Enriched with ownerLogin exactly as _app.dashboard.tsx does so the switcher
   // can show "owner/repo" for shared projects. Returned on BOTH loader paths.
@@ -305,6 +307,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         welcomeConvenor: "",
         repoUnavailable: false,
         repoFullName: null,
+        needsWorkflowsApproval: false,
+        workflowsApprovalUrl: null,
         activeProjectShared: false,
       };
     }
@@ -322,6 +326,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           gh_diverged: projects.gh_diverged,
           gh_diverged_against_sha: projects.gh_diverged_against_sha,
           gh_checked_at: projects.gh_checked_at,
+          installation_id: projects.installation_id,
+          gh_workflows_write_missing: projects.gh_workflows_write_missing,
+          gh_install_target_type: projects.gh_install_target_type,
         })
         .from(projects)
         .where(eq(projects.id, activeProjectId));
@@ -352,6 +359,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         // GitHub-derived status: read from the D1 cache — never call GitHub on the request path.
         repoUnavailable = project.gh_repo_available === 0;
         headDiverged = deriveHeadDiverged(project, project.head_sha);
+
+        // Workflows-permission approval prompt — pure read off the cache the
+        // gh-status poll fills. Convenor-only; cold cache → no prompt.
+        workflowsApproval = deriveWorkflowsApproval({
+          workflowsWriteMissing: project.gh_workflows_write_missing,
+          targetType: project.gh_install_target_type,
+          installationId: project.installation_id,
+          repoFullName: project.github_repo_full_name,
+          role: userRole,
+        });
 
         // Upgrade: derive from the global tag cache vs telar_version.
         // Warm cache → no fetch. Cold cache → fetch ONLY on gated routes (fail-closed).
@@ -414,6 +431,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     welcomeConvenor,
     repoUnavailable,
     repoFullName,
+    needsWorkflowsApproval: workflowsApproval.needed,
+    workflowsApprovalUrl: workflowsApproval.url,
     activeProjectShared: sidebarSeats.used > 1,
   };
 }
@@ -513,7 +532,7 @@ function LocationAwarenessSync() {
 }
 
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
-  const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarSeats, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor } = loaderData;
+  const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarSeats, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor, needsWorkflowsApproval, workflowsApprovalUrl } = loaderData;
   const { t: tCollab } = useTranslation("collaboration");
   const welcomeFetcher = useFetcher();
   const releaseFetcher = useFetcher();
@@ -523,7 +542,23 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   const [bugReportOpen, setBugReportOpen] = useState(false);
   const [welcomeOpen, setWelcomeOpen] = useState(needsWelcome);
   const [releaseNoteOpen, setReleaseNoteOpen] = useState(needsReleaseNote);
+  const [workflowsModalOpen, setWorkflowsModalOpen] = useState(
+    shouldShowWorkflowsModal(needsWorkflowsApproval, needsWelcome, needsReleaseNote),
+  );
   const usersIconRef = useRef<HTMLButtonElement | null>(null);
+
+  // Workflows-permission prompt — show once per session (don't nag on every
+  // navigation). Dismissal remembered in sessionStorage; it reappears next
+  // login until the gh-status poll sees the grant and clears needsWorkflowsApproval.
+  useEffect(() => {
+    if (typeof window !== "undefined" && sessionStorage.getItem("workflows_perm_ack") === "1") {
+      setWorkflowsModalOpen(false);
+    }
+  }, []);
+  const dismissWorkflowsModal = useCallback(() => {
+    setWorkflowsModalOpen(false);
+    if (typeof window !== "undefined") sessionStorage.setItem("workflows_perm_ack", "1");
+  }, []);
 
   // Docs drawer — shell-level so any tab can open docs in place.
   // openDoc is exposed via Outlet context and passed to TabNav; the ?doc=
@@ -722,6 +757,16 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
             setReleaseNoteOpen(false);
           }}
         />
+
+        {/* Convenor whose install hasn't accepted workflows:write — prompt to
+            approve before they hit a failed upgrade. Dismissible per session. */}
+        {workflowsApprovalUrl && (
+          <WorkflowsPermissionModal
+            open={workflowsModalOpen}
+            onDismiss={dismissWorkflowsModal}
+            approvalUrl={workflowsApprovalUrl}
+          />
+        )}
 
         {/* Bug-report panel openable from the beta notice. The header mounts
             its own instance; only one is ever open at a time. */}

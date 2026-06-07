@@ -13,7 +13,7 @@
  *    and a captured boundary error is rendered pinned + unremovable
  *    in the AttachmentList.
  *
- * @version v1.2.0-beta
+ * @version v1.3.0-beta
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -37,6 +37,10 @@ interface BugReportPanelProps {
    * string suppresses the line entirely so the post-crash flow doesn't show
    * a dangling "@". */
   userLogin: string;
+  /** Active project's GitHub repo ("owner/name"), captured in the report so we
+   * know which site/install it came from. Omitted when there's no active
+   * project (e.g. some post-crash contexts). */
+  repoFullName?: string;
   /** When set (post-crash mode), the captured boundary error rendered pinned
    * + unremovable. */
   pinnedError?: CapturedError | null;
@@ -48,7 +52,7 @@ interface BugReportPanelProps {
  * buildPayload — snapshot the runtime context for inclusion in the issue body.
  * Called once at panel-open time.
  */
-export function buildPayload(): Payload {
+export function buildPayload(repoFullName?: string): Payload {
   const env =
     typeof document !== "undefined"
       ? (document.documentElement.dataset.env ?? "dev")
@@ -59,6 +63,7 @@ export function buildPayload(): Payload {
       typeof window !== "undefined"
         ? window.location.pathname + window.location.search
         : "",
+    ...(repoFullName ? { repoFullName } : {}),
     buildSha: __BUILD_SHA__,
     environment: env,
     browser: parseUa(ua),
@@ -105,6 +110,7 @@ export function BugReportPanel({
   onClose,
   mode,
   userLogin,
+  repoFullName,
   pinnedError,
   triggerRef,
 }: BugReportPanelProps) {
@@ -118,8 +124,8 @@ export function BugReportPanel({
   const panelRef = useRef<HTMLDivElement>(null);
 
   const payload = useMemo<Payload | null>(
-    () => (open ? buildPayload() : null),
-    [open],
+    () => (open ? buildPayload(repoFullName) : null),
+    [open, repoFullName],
   );
 
   // Escape closes.
@@ -218,6 +224,13 @@ export function BugReportPanel({
       label: t("attach_item_url"),
       value: payload.url,
     });
+    if (payload.repoFullName) {
+      items.push({
+        key: "repository",
+        label: t("attach_item_repository"),
+        value: payload.repoFullName,
+      });
+    }
     items.push({
       key: "buildSha",
       label: t("attach_item_version"),
