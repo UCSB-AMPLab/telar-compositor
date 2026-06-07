@@ -404,6 +404,62 @@ export function updateTelarVersionInConfig(
   return result.join("\n");
 }
 
+/** Prefix identifying GitHub Actions workflow files. Committing these requires
+ *  the App's `workflows: write` permission — which GitHub does not auto-grant
+ *  to existing installations when newly declared, so a sizeable fraction of
+ *  installs lack it (the v1.5.0 accept-gap). The upgrade commit is split so a
+ *  rejection here can't zero the rest of the upgrade. */
+export const WORKFLOW_PATH_PREFIX = ".github/workflows/";
+
+/** True only for files under .github/workflows/ — NOT other .github/ files
+ *  (e.g. dependabot.yml), which commit fine with plain contents:write. */
+export function isWorkflowPath(path: string): boolean {
+  return path.startsWith(WORKFLOW_PATH_PREFIX);
+}
+
+export interface WorkflowPartition {
+  /** Additions that commit with plain contents:write (no workflows scope). */
+  contentAdditions: CommitFile[];
+  /** Additions under .github/workflows/ — need workflows:write. */
+  workflowAdditions: CommitFile[];
+  /** Deletions outside .github/workflows/. */
+  contentDeletions: string[];
+  /** Deletions under .github/workflows/ — need workflows:write. */
+  workflowDeletions: string[];
+  /** True when any addition or deletion touches .github/workflows/. */
+  hasWorkflows: boolean;
+}
+
+/**
+ * Splits an upgrade's file changes into a workflow group (paths under
+ * .github/workflows/, which need the App's workflows:write scope) and a content
+ * group (everything else, committable with plain contents:write). The upgrade
+ * action commits the content group first so a workflow-permission rejection
+ * can't zero the whole upgrade; preserves input order within each group.
+ */
+export function partitionWorkflowFiles(
+  additions: CommitFile[],
+  deletions: string[],
+): WorkflowPartition {
+  const contentAdditions: CommitFile[] = [];
+  const workflowAdditions: CommitFile[] = [];
+  for (const add of additions) {
+    (isWorkflowPath(add.path) ? workflowAdditions : contentAdditions).push(add);
+  }
+  const contentDeletions: string[] = [];
+  const workflowDeletions: string[] = [];
+  for (const del of deletions) {
+    (isWorkflowPath(del) ? workflowDeletions : contentDeletions).push(del);
+  }
+  return {
+    contentAdditions,
+    workflowAdditions,
+    contentDeletions,
+    workflowDeletions,
+    hasWorkflows: workflowAdditions.length > 0 || workflowDeletions.length > 0,
+  };
+}
+
 /**
  * Maps a framework file path to a summary category for display grouping.
  */

@@ -51,6 +51,7 @@ import {
   type DerivedGithubStatus,
 } from "~/lib/github-status.server";
 import { compareTelarVersion } from "~/lib/upgrade.server";
+import { getInstallationInfo } from "~/lib/github-app.server";
 import {
   computeChangeSummary,
   buildEntityHashes,
@@ -278,6 +279,29 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           const claimed = await claimRefresh(db, proj.id, now);
           if (claimed) {
             await refreshGithubStatus(proj, token, db, now);
+            // Same claim window: refresh the workflows-permission cache that
+            // drives the "approve updated permissions" login modal. App-JWT
+            // call, off the per-navigation hot path. Fail-open — a failure
+            // leaves the prior cache (cold reads as no-modal).
+            try {
+              const info = await getInstallationInfo(
+                env.GITHUB_APP_ID,
+                env.GITHUB_PRIVATE_KEY,
+                proj.installation_id,
+              );
+              await db
+                .update(projects)
+                .set({
+                  gh_workflows_write_missing: info.workflowsWrite ? 0 : 1,
+                  gh_install_target_type: info.targetType,
+                })
+                .where(eq(projects.id, proj.id));
+            } catch (permErr) {
+              console.warn(
+                "[gh-status] workflows-permission check failed",
+                permErr,
+              );
+            }
           }
           // Re-read ONLY when a refresh may have written — the fresh-cache path
           // already has the right row.

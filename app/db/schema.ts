@@ -47,6 +47,12 @@ export const projects = sqliteTable("projects", {
   gh_diverged: integer("gh_diverged"),                   // null=cold, 1=diverged, 0=in-sync
   gh_diverged_against_sha: text("gh_diverged_against_sha"), // local head_sha the verdict applies to
   gh_checked_at: text("gh_checked_at"),                  // ISO; null=cold cache
+  // Workflows-permission cache (migration 0034) — whether this installation has
+  // accepted the App's `workflows: write` grant. null=unknown/cold, 1=missing,
+  // 0=present. Refreshed alongside gh-status. Drives the "approve updated
+  // permissions" login modal so affected convenors aren't trapped at upgrade.
+  gh_workflows_write_missing: integer("gh_workflows_write_missing"),
+  gh_install_target_type: text("gh_install_target_type"), // "User" | "Organization" | null (cold) — org-aware reauth URL
 });
 
 export const project_config = sqliteTable("project_config", {

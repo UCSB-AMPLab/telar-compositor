@@ -125,6 +125,31 @@ describe("BugReportPanel", () => {
     openSpy.mockRestore();
   });
 
+  it("includes the repository in the submitted issue body when repoFullName is provided", () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockImplementation(() => null as Window | null);
+    render(
+      <BugReportPanel
+        open={true}
+        onClose={vi.fn()}
+        mode="default"
+        userLogin="testuser"
+        repoFullName="olympia-m/my-site"
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("field_what_happened_label"), {
+      target: { value: "ten characters at least here" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /submit_button/ }));
+    const [url] = openSpy.mock.calls[0];
+    const body = new URL(url as string).searchParams.get("body") ?? "";
+    expect(body).toContain(
+      "[olympia-m/my-site](https://github.com/olympia-m/my-site)",
+    );
+    openSpy.mockRestore();
+  });
+
   it("Escape key closes the panel", () => {
     const onClose = vi.fn();
     render(

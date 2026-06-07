@@ -57,6 +57,39 @@ export function deriveHeadDiverged(cache: CachedGithubStatus, localHeadSha: stri
   );
 }
 
+export interface WorkflowsApproval {
+  /** True when the active user should see the "approve updated permissions"
+   *  prompt: their installation lacks workflows:write AND they're the convenor
+   *  (only the install owner can approve a GitHub App's pending permission). */
+  needed: boolean;
+  /** Installation settings page where the pending permission is approved, or
+   *  null when no prompt is needed. Org installs use the org-scoped path. */
+  url: string | null;
+}
+
+/**
+ * Derive whether to surface the workflows-permission approval prompt, from the
+ * cached gh_workflows_write_missing flag + install target type. Convenor-only:
+ * collaborators cannot approve the convenor's installation. Fail-open: a cold
+ * (null) cache yields needed=false, so a user is never nagged on stale data.
+ */
+export function deriveWorkflowsApproval(args: {
+  workflowsWriteMissing: number | null;
+  targetType: string | null;
+  installationId: number;
+  repoFullName: string | null;
+  role: "convenor" | "collaborator" | null;
+}): WorkflowsApproval {
+  const needed = args.workflowsWriteMissing === 1 && args.role === "convenor";
+  if (!needed) return { needed: false, url: null };
+  const owner = args.repoFullName?.split("/")[0] ?? "";
+  const url =
+    args.targetType === "Organization" && owner
+      ? `https://github.com/organizations/${owner}/settings/installations/${args.installationId}`
+      : `https://github.com/settings/installations/${args.installationId}`;
+  return { needed: true, url };
+}
+
 // In-isolate global latest-tag cache (the Telar release tag is identical for
 // every project). Module-level state persists per warm isolate.
 let _tagCache: { tag: string | null; fetchedAt: number } | null = null;

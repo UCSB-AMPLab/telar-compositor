@@ -38,6 +38,8 @@ interface AppLoaderData {
     collaboratorCount?: number;
   }>;
   activeProjectId?: number | null;
+  /** Active project's GitHub repo ("owner/name"), threaded into bug reports. */
+  repoFullName?: string | null;
   /** True when the active project has at least one collaborator (members > 1).
    * The Convenor/Collaborator role distinction has no meaning on a solo project,
    * so the role chip is hidden until someone else joins. */
@@ -302,6 +304,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
         onClose={() => setBugReportOpen(false)}
         mode="default"
         userLogin={user.github_login}
+        repoFullName={app?.repoFullName ?? undefined}
         triggerRef={reportTriggerRef}
       />
     </header>

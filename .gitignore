@@ -2,6 +2,7 @@ node_modules/
 build/
 .wrangler/
 .dev.vars
+.dev.vars.*
 *.local
 
 # Local tooling build output

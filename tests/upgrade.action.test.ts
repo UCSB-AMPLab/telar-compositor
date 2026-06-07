@@ -159,7 +159,7 @@ import {
   loadManifestChain,
 } from "~/lib/upgrade.server";
 import { getRepoHead, getRepoTree, getFileContent } from "~/lib/github.server";
-import { commitFilesToRepo } from "~/lib/commit.server";
+import { commitFilesToRepo, StaleHeadError } from "~/lib/commit.server";
 import { requireOwner } from "~/lib/membership.server";
 import { project_config as projectConfigTable, projects as projectsTable } from "~/db/schema";
 project_config = projectConfigTable;
@@ -310,6 +310,30 @@ function emptyDiff() {
       other: 0,
       deletions: 0,
       total: 0,
+    },
+  };
+}
+
+// A diff that includes a .github/workflows/ file plus a content file, so the
+// upgrade action exercises the split-commit path.
+function diffWithWorkflow() {
+  return {
+    additions: [
+      { path: ".github/workflows/build.yml", content: "name: build" },
+      { path: "_layouts/default.html", content: "<html></html>" },
+    ],
+    deletions: [],
+    configPatch: { version: "1.2.0", releaseDate: "2026-03-01" },
+    summary: {
+      layouts: 1,
+      includes: 0,
+      stylesheets: 0,
+      scripts: 0,
+      workflows: 1,
+      dataFiles: 0,
+      other: 0,
+      deletions: 0,
+      total: 2,
     },
   };
 }
@@ -583,5 +607,110 @@ describe("upgrade action: manifest pipeline", () => {
     expect(configSetCalls[0].telar_version).toBe("1.2.0");
     expect(projectsSetCalls).toHaveLength(1);
     expect(projectsSetCalls[0].head_sha).toBe("new-head-sha");
+  });
+});
+
+describe("upgrade action: split commit (workflows held separately)", () => {
+  beforeEach(() => {
+    vi.mocked(fetchLatestRelease).mockResolvedValue(latestRelease("v1.2.0"));
+    vi.mocked(loadManifestChain).mockResolvedValue(FULL_CHAIN);
+  });
+
+  it("splits into two commits: content first (skip ci, no _config.yml), workflows + _config.yml second", async () => {
+    vi.mocked(computeUpgradeDiff).mockResolvedValue(diffWithWorkflow());
+    vi.mocked(commitFilesToRepo)
+      .mockResolvedValueOnce({ newHeadSha: "content-sha" })
+      .mockResolvedValueOnce({ newHeadSha: "workflow-sha" });
+
+    const res = (await action({
+      request: buildRequest("upgrade"),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; newHeadSha?: string };
+
+    expect(res.ok).toBe(true);
+    expect(commitFilesToRepo).toHaveBeenCalledTimes(2);
+
+    // Commit 1 — content. Positional args:
+    // token, owner, repo, branch, additions, msg, body, deletions, skipCi, expectedHeadOid
+    const c1 = vi.mocked(commitFilesToRepo).mock.calls[0];
+    const c1Paths = (c1[4] as Array<{ path: string }>).map((a) => a.path);
+    expect(c1Paths).toContain("_layouts/default.html");
+    expect(c1Paths).not.toContain(".github/workflows/build.yml");
+    expect(c1Paths).not.toContain("_config.yml");
+    expect(c1[8]).toBe(true); // skip ci on the intermediate content commit
+    expect(c1[9]).toBe("head-oid-abc123"); // original expectedHeadOid
+
+    // Commit 2 — workflows + the held _config.yml version bump.
+    const c2 = vi.mocked(commitFilesToRepo).mock.calls[1];
+    const c2Paths = (c2[4] as Array<{ path: string }>).map((a) => a.path);
+    expect(c2Paths).toContain(".github/workflows/build.yml");
+    expect(c2Paths).toContain("_config.yml");
+    expect(c2[8]).toBeFalsy(); // final commit triggers the build
+    expect(c2[9]).toBe("content-sha"); // chained onto commit 1's new head
+
+    // Full success → version stamped, head bumped to the final commit.
+    expect(configSetCalls).toHaveLength(1);
+    expect(configSetCalls[0].telar_version).toBe("1.2.0");
+    expect(projectsSetCalls).toHaveLength(1);
+    expect(projectsSetCalls[0].head_sha).toBe("workflow-sha");
+    expect(res.newHeadSha).toBe("workflow-sha");
+  });
+
+  it("keeps the content commit but holds the version bump when the workflow commit is rejected", async () => {
+    vi.mocked(computeUpgradeDiff).mockResolvedValue(diffWithWorkflow());
+    vi.mocked(commitFilesToRepo)
+      .mockResolvedValueOnce({ newHeadSha: "content-sha" })
+      .mockRejectedValueOnce(
+        new Error("Resource not accessible by integration"),
+      );
+
+    const res = (await action({
+      request: buildRequest("upgrade"),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; error?: string; reauthUrl?: string };
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("insufficient_permissions");
+    expect(res.reauthUrl).toContain("/settings/installations/42");
+    expect(commitFilesToRepo).toHaveBeenCalledTimes(2);
+
+    // Version is HELD — not stamped — so the re-prompt fires again.
+    expect(configSetCalls).toHaveLength(0);
+    // The content commit DID land — record its head so D1 doesn't go stale.
+    expect(projectsSetCalls).toHaveLength(1);
+    expect(projectsSetCalls[0].head_sha).toBe("content-sha");
+  });
+
+  it("does not attempt the workflow commit when the content commit fails", async () => {
+    vi.mocked(computeUpgradeDiff).mockResolvedValue(diffWithWorkflow());
+    vi.mocked(commitFilesToRepo).mockRejectedValueOnce(
+      new StaleHeadError("Expected HEAD to be at a different commit"),
+    );
+
+    const res = (await action({
+      request: buildRequest("upgrade"),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; error?: string };
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("stale_head");
+    expect(commitFilesToRepo).toHaveBeenCalledTimes(1);
+    expect(configSetCalls).toHaveLength(0);
+    expect(projectsSetCalls).toHaveLength(0);
+  });
+
+  it("uses a single atomic commit when the upgrade touches no workflow files", async () => {
+    vi.mocked(computeUpgradeDiff).mockResolvedValue(emptyDiff());
+
+    await action({
+      request: buildRequest("upgrade"),
+      context: buildContext(),
+      params: {},
+    } as never);
+
+    expect(commitFilesToRepo).toHaveBeenCalledTimes(1);
   });
 });

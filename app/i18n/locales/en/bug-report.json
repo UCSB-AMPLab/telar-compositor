@@ -14,6 +14,7 @@
   "field_steps_why": "Without these, most bugs sit unfixed.",
   "attach_disclosure_label": "What we'll attach",
   "attach_item_url": "Page URL",
+  "attach_item_repository": "Repository",
   "attach_item_version": "App version",
   "attach_item_browser": "Browser",
   "attach_item_viewport": "Viewport",

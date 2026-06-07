@@ -38,3 +38,19 @@ export function shouldShowReleaseNote(
   if (needsWelcome) return false;
   return lastSeenRelease !== CURRENT_RELEASE.id;
 }
+
+/**
+ * Whether to show the workflows-permission login modal. It defers to the two
+ * higher-priority login modals (the added-to-project welcome and the
+ * once-per-release "what's new" note) so only one login modal ever shows at a
+ * time. The ordering across logins is welcome → release note → workflows; the
+ * workflows modal reappears each session until the permission is approved, so
+ * deferring it by a login costs nothing.
+ */
+export function shouldShowWorkflowsModal(
+  needsWorkflowsApproval: boolean,
+  needsWelcome: boolean,
+  needsReleaseNote: boolean,
+): boolean {
+  return needsWorkflowsApproval && !needsWelcome && !needsReleaseNote;
+}

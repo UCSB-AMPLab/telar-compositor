@@ -35,6 +35,7 @@ import {
   claimRefresh,
   bumpProjectHead,
   refreshGithubStatus,
+  deriveWorkflowsApproval,
 } from "~/lib/github-status.server";
 
 // ---------------------------------------------------------------------------
@@ -289,5 +290,41 @@ describe("refreshGithubStatus", () => {
 
     expect(mocks.computeFullSyncDiffMock).not.toHaveBeenCalled();
     expect(db.sets).toHaveLength(0);
+  });
+});
+
+describe("deriveWorkflowsApproval", () => {
+  const base = {
+    workflowsWriteMissing: 1 as number | null,
+    targetType: "User" as string | null,
+    installationId: 124561975,
+    repoFullName: "olympia-m/my-site",
+    role: "convenor" as "convenor" | "collaborator" | null,
+  };
+
+  it("flags approval needed for a convenor on a user install, linking the bare installation page", () => {
+    const r = deriveWorkflowsApproval(base);
+    expect(r.needed).toBe(true);
+    expect(r.url).toBe("https://github.com/settings/installations/124561975");
+  });
+
+  it("uses the org-scoped URL for an organization install", () => {
+    const r = deriveWorkflowsApproval({ ...base, targetType: "Organization", repoFullName: "Group-9-UCSB/site" });
+    expect(r.needed).toBe(true);
+    expect(r.url).toBe("https://github.com/organizations/Group-9-UCSB/settings/installations/124561975");
+  });
+
+  it("does NOT flag for a collaborator (only the install owner can approve)", () => {
+    const r = deriveWorkflowsApproval({ ...base, role: "collaborator" });
+    expect(r.needed).toBe(false);
+    expect(r.url).toBeNull();
+  });
+
+  it("does NOT flag when workflows is present (0)", () => {
+    expect(deriveWorkflowsApproval({ ...base, workflowsWriteMissing: 0 }).needed).toBe(false);
+  });
+
+  it("does NOT flag when the cache is cold (null) — fail-open", () => {
+    expect(deriveWorkflowsApproval({ ...base, workflowsWriteMissing: null }).needed).toBe(false);
   });
 });

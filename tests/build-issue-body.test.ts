@@ -111,6 +111,33 @@ describe("buildIssueBody", () => {
     expect(empty).not.toContain("### Recent errors");
   });
 
+  it("mentions the maintainer so they are notified, in both modes", () => {
+    const dflt = buildIssueBody(form, payload, new Set(), "default");
+    const crash = buildIssueBody(form, payload, new Set(), "post-crash");
+    expect(dflt).toContain("@juancobo");
+    expect(crash).toContain("@juancobo");
+  });
+
+  it("renders a Repository row linking to the GitHub repo when repoFullName is present", () => {
+    const repoPayload = { ...payload, repoFullName: "olympia-m/my-site" };
+    const out = buildIssueBody(form, repoPayload, new Set(), "default");
+    expect(out).toContain(
+      "| Repository | [olympia-m/my-site](https://github.com/olympia-m/my-site) |",
+    );
+  });
+
+  it("omits the Repository row when repoFullName is absent", () => {
+    const out = buildIssueBody(form, payload, new Set(), "default");
+    expect(out).not.toContain("| Repository |");
+  });
+
+  it("skips the Repository row when 'repository' is in `removed`", () => {
+    const repoPayload = { ...payload, repoFullName: "olympia-m/my-site" };
+    const out = buildIssueBody(form, repoPayload, new Set(["repository"]), "default");
+    expect(out).not.toContain("github.com/olympia-m/my-site");
+    expect(out).toContain("| App version |");
+  });
+
   it("ends with the literal '<sub>Submitted via the in-app bug reporter…</sub>' footer in both modes", () => {
     const dflt = buildIssueBody(form, payload, new Set(), "default");
     const crash = buildIssueBody(form, payload, new Set(), "post-crash");

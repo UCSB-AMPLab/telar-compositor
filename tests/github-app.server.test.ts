@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { getInstallationToken } from "~/lib/github-app.server";
+import { getInstallationToken, getInstallationInfo } from "~/lib/github-app.server";
 
 // These tests exercise the GitHub App JWT signing path end-to-end through the
 // only public surface (getInstallationToken). We generate a throwaway RSA key,
@@ -137,5 +137,63 @@ describe("getInstallationToken — key format handling", () => {
     await expect(
       getInstallationToken(APP_ID, bogus, INSTALLATION_ID),
     ).rejects.toThrow(/GITHUB_PRIVATE_KEY could not be imported/);
+  });
+});
+
+describe("getInstallationInfo", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reports workflowsWrite=true and the target_type when the install holds workflows:write", async () => {
+    const { pkcs8 } = genKey();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          permissions: { workflows: "write", contents: "write", pages: "write" },
+          target_type: "User",
+        }),
+        text: async () => "",
+      } as unknown as Response)),
+    );
+    const info = await getInstallationInfo(APP_ID, pkcs8, INSTALLATION_ID);
+    expect(info.workflowsWrite).toBe(true);
+    expect(info.targetType).toBe("User");
+  });
+
+  it("reports workflowsWrite=false when the workflows permission is absent (the accept-gap)", async () => {
+    const { pkcs8 } = genKey();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          permissions: { contents: "write", pages: "write", administration: "write" },
+          target_type: "Organization",
+        }),
+        text: async () => "",
+      } as unknown as Response)),
+    );
+    const info = await getInstallationInfo(APP_ID, pkcs8, INSTALLATION_ID);
+    expect(info.workflowsWrite).toBe(false);
+    expect(info.targetType).toBe("Organization");
+  });
+
+  it("throws on a non-ok response so the caller can fail open", async () => {
+    const { pkcs8 } = genKey();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+        text: async () => "Not Found",
+      } as unknown as Response)),
+    );
+    await expect(
+      getInstallationInfo(APP_ID, pkcs8, INSTALLATION_ID),
+    ).rejects.toThrow();
   });
 });
