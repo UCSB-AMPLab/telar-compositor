@@ -127,7 +127,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("search_terms_placeholder")}
-          className="border border-gray-200 rounded-md px-3 py-1.5 text-sm w-full mb-2 font-body text-charcoal focus:outline-none focus:ring-1 focus:ring-periwinkle"
+          className="border border-gray-200 rounded-md px-3 py-1.5 text-sm w-full mb-2 font-body text-charcoal"
           autoFocus
         />
 
@@ -145,7 +145,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
                 onClick={() => setSelectedTermId(term.term_id)}
                 className={`w-full text-left px-3 py-2 border-b border-gray-50 last:border-0 transition-colors ${
                   selectedTermId === term.term_id
-                    ? "bg-periwinkle/20"
+                    ? "bg-anil/20"
                     : "hover:bg-cream-dark/50"
                 }`}
               >
@@ -162,7 +162,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
             type="checkbox"
             checked={useCustomText}
             onChange={(e) => setUseCustomText(e.target.checked)}
-            className="rounded border-gray-300 text-periwinkle focus:ring-periwinkle"
+            className="rounded border-gray-300 text-anil"
           />
           <span className="font-body text-sm text-charcoal">{t("custom_text_toggle")}</span>
         </label>
@@ -173,7 +173,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
             value={customText}
             onChange={(e) => setCustomText(e.target.value)}
             placeholder={t("custom_display_placeholder")}
-            className="border border-gray-200 rounded-md px-3 py-1.5 text-sm w-full mb-3 font-body text-charcoal focus:outline-none focus:ring-1 focus:ring-periwinkle"
+            className="border border-gray-200 rounded-md px-3 py-1.5 text-sm w-full mb-3 font-body text-charcoal"
           />
         )}
 
@@ -202,7 +202,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
             type="button"
             onClick={handleInsert}
             disabled={!selectedTermId}
-            className="font-heading font-semibold text-sm uppercase tracking-wider text-charcoal bg-periwinkle hover:bg-periwinkle-hover rounded-full px-4 py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="font-heading font-semibold text-sm uppercase tracking-wider text-charcoal bg-anil hover:bg-anil-hover rounded-full px-4 py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {t("insert_link_button")}
           </button>
