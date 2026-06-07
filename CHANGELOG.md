@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.3.1-beta (2026-06-07)
+
+A patch release hardening the framework-upgrade flow for sites whose GitHub App installation hasn't yet approved the "workflows" permission, plus two bug-report improvements. Upgrading adds one backwards-compatible D1 migration; no new environment variables or bindings.
+
+### Upgrade reliability
+
+- **A rejected workflows permission can no longer leave a site half-upgraded** — When an upgrade modifies a site's GitHub Actions workflow files but the GitHub App installation hasn't been granted the workflows permission, the commit used to fail after the version had already been bumped. The upgrade now lands the content changes first and holds the version bump (and the workflow files) for a second commit, so a rejected workflows write leaves the content upgrade intact and the version unchanged — and the next upgrade re-fires cleanly.
+- **"Review permissions on GitHub" link no longer 404s** — The link shown when an upgrade hits a missing permission pointed at a page that doesn't exist on GitHub. It now opens the installation's settings page, where the pending permission can be approved.
+- **Sign-in prompt to approve the workflows permission** — Convenors whose installation predates the workflows permission now see a one-time notice at sign-in explaining they need to approve it before upgrading, shown after the welcome and "What's new" prompts.
+
+### Bug reports
+
+- **Reports capture the project they came from** — A filed bug report now includes the active project's repository, so issues arrive with the context needed to reproduce them.
+- **The maintainer is notified** — Filed issues now mention the maintainer so they are notified directly.
+
+### Data layer
+
+- D1 migration 0034 adds two nullable columns to `projects` (`gh_workflows_write_missing`, `gh_install_target_type`) that cache each installation's workflows-permission state, so the sign-in prompt costs no extra GitHub call per navigation. Additive and backwards-compatible — existing rows read as unknown and fail open (no prompt) until the next GitHub-status poll fills them.
+
 ## v1.3.0-beta (2026-06-06)
 
 The largest compositor release since v1.0.0-beta: a top-to-bottom redesign of the workspace, real-time collaboration moving into open beta, and a wave of stability and user-reported bug fixes. Upgrading runs eight D1 migrations — one of them, dropping a vestigial column, is forwards-only. No new environment variables or bindings.
