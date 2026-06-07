@@ -573,7 +573,13 @@ export async function action({ request, context }: Route.ActionArgs) {
         return {
           ok: false,
           error: "insufficient_permissions",
-          reauthUrl: `https://github.com/settings/installations/${prepared.installationId}/permissions`,
+          // Link to the installation settings page, where GitHub surfaces any
+          // pending permission-acceptance prompt. The bare installation URL is
+          // correct for user-account installs; the `/permissions` sub-path that
+          // used to be appended here does not exist on GitHub and 404'd. (Org
+          // installs live at /organizations/<org>/settings/installations/<id> —
+          // not yet handled; needs target_type, which this path doesn't carry.)
+          reauthUrl: `https://github.com/settings/installations/${prepared.installationId}`,
         };
       }
       console.error("[runUpgradeCommit] unhandled error:", err);
