@@ -4,7 +4,7 @@ build/
 .dev.vars
 *.local
 
-# Graphify local build output (committed graph lives in .planning/graphs/)
+# Local tooling build output
 graphify-out/
 
 # React Router generated types
