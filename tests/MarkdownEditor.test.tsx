@@ -6,7 +6,7 @@
  * Note: EditorView requires real DOM layout (getBoundingClientRect etc.) which
  * jsdom does not provide, so full mount tests are limited to non-layout concerns.
  *
- * @version v1.0.0-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -104,5 +104,40 @@ describe("Autosave action routing", () => {
     const pagesPath = path.resolve(__dirname, "../app/routes/_app.pages.tsx");
     const content = fs.readFileSync(pagesPath, "utf8");
     expect(content).toMatch('actionUrl="/pages"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #11/#14 layer autosave guard
+//
+// The MarkdownEditor autosave fetcher cannot be exercised by mounting —
+// CodeMirror needs real layout, which jsdom lacks (see the header note above).
+// So we cover the guard via the shared-helper unit test (yjs-helpers.test.ts)
+// plus a source-presence assertion here that the guard call is wired, matching
+// this file's existing source-read idiom.
+// ---------------------------------------------------------------------------
+
+describe("#11/#14 layer autosave guard", () => {
+  it("MarkdownEditor guards the layerId autosave against non-persistable ids", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const editorPath = path.resolve(
+      __dirname,
+      "../app/components/ui/MarkdownEditor.tsx"
+    );
+    const content = fs.readFileSync(editorPath, "utf8");
+    expect(content).toMatch("isPersistableLayerId(projectId)");
+    expect(content).toMatch('formFieldName === "layerId"');
+  });
+
+  it("MarkdownEditor attaches a catch to the autosave submit", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const editorPath = path.resolve(
+      __dirname,
+      "../app/components/ui/MarkdownEditor.tsx"
+    );
+    const content = fs.readFileSync(editorPath, "utf8");
+    expect(content).toMatch(".catch(");
   });
 });
