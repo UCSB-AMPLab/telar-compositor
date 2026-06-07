@@ -5,6 +5,7 @@ import {
   getRepoTree,
   getFileContent,
   decodeGitHubContent,
+  checkRepoAvailability,
 } from "~/lib/github.server";
 
 const TOKEN = "test-token-abc";
@@ -196,6 +197,41 @@ describe("getFileContent", () => {
     const headers = call[1].headers as Record<string, string>;
     expect(headers["Authorization"]).toBe(`Bearer ${TOKEN}`);
     expect(headers["X-GitHub-Api-Version"]).toBe("2022-11-28");
+  });
+});
+
+describe("checkRepoAvailability", () => {
+  it("returns 'available' on HTTP 200", async () => {
+    globalThis.fetch = makeFetch({ full_name: "owner/repo" }, 200);
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toBe("available");
+  });
+
+  it("returns 'unavailable' on HTTP 404 (deleted or inaccessible-private)", async () => {
+    globalThis.fetch = makeFetch({ message: "Not Found" }, 404);
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toBe("unavailable");
+  });
+
+  it("returns 'unavailable' on HTTP 403 (access removed)", async () => {
+    globalThis.fetch = makeFetch({ message: "Forbidden" }, 403);
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toBe("unavailable");
+  });
+
+  it("returns 'error' on HTTP 500 (transient — caller fails open)", async () => {
+    globalThis.fetch = makeFetch({ message: "Server Error" }, 500);
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toBe("error");
+  });
+
+  it("returns 'error' when fetch itself rejects (network)", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network down"));
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toBe("error");
+  });
+
+  it("calls GET /repos/{owner}/{repo} with the Bearer token", async () => {
+    globalThis.fetch = makeFetch({}, 200);
+    await checkRepoAvailability(TOKEN, "owner", "repo");
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[0]).toBe("https://api.github.com/repos/owner/repo");
+    expect((call[1].headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${TOKEN}`);
   });
 });
 
