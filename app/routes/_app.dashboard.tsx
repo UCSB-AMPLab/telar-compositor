@@ -18,7 +18,7 @@
  * `_app.homepage.tsx` — they were relocated and this route keeps
  * the project-management shell only.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { asc, count, desc, eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
@@ -415,14 +415,21 @@ export async function action({ request, context }: Route.ActionArgs) {
           db,
         );
 
-        // Activity feed: one site-level row per sync.
-        // requireOwner already gated this case; actor is the server-resolved
-        // user.id. Fails open — never breaks the sync it rides alongside.
+        // Activity feed: one site-level row per sync, labelled with the site
+        // title (project_config.title — not on the projects row). requireOwner
+        // already gated this case; actor is the server-resolved user.id. Fails
+        // open — never breaks the sync it rides alongside.
+        const [cfgTitle] = await db
+          .select({ title: project_config.title })
+          .from(project_config)
+          .where(eq(project_config.project_id, activeProject.id))
+          .limit(1);
         await recordActivity(db, {
           projectId: activeProject.id,
           actorUserId: user.id,
           verb: "synced",
           entityType: "site",
+          entityLabel: cfgTitle?.title ?? null,
         });
 
         return { ok: true, intent: "apply-full-sync", newHeadSha: result.newHeadSha };

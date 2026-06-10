@@ -5,18 +5,18 @@
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { eq, and } from "drizzle-orm";
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useFetcher, redirect } from "react-router";
+import { Link, useFetcher, redirect, useRouteError, isRouteErrorResponse } from "react-router";
 import { ArrowLeft, Trash2, Video, Music } from "lucide-react";
 import type { Route } from "./+types/_app.objects.$objectId";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { objects, project_config, projects, steps, stories } from "~/db/schema";
+import { objects, project_config, steps, stories } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { resolveActiveProject } from "~/lib/membership.server";
 import { deriveStatus } from "~/lib/iiif-types";
@@ -24,6 +24,7 @@ import { Switch } from "~/components/ui/Switch";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { findYMapById, getYText } from "~/lib/yjs-helpers";
 import * as Y from "yjs";
 import { IiifViewer } from "~/components/features/objects/IiifViewer";
@@ -32,6 +33,7 @@ import { VideoEmbed } from "~/components/features/editor/VideoEmbed";
 import { AudioPlayer } from "~/components/features/editor/AudioPlayer";
 import { CommitAndBuildModal } from "~/components/features/objects/CommitAndBuildModal";
 import { decrypt } from "~/lib/crypto.server";
+import { recordError } from "~/lib/error-capture";
 import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server";
 import { commitFilesToRepo, StaleHeadError, dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
 import { bumpProjectHead } from "~/lib/github-status.server";
@@ -60,7 +62,7 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
 
   const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
   if (!resolved) throw redirect("/onboarding");
-  const { project: activeProject } = resolved;
+  const { project: activeProject, userRole } = resolved;
 
   // Fetch the object
   const [object] = await db
@@ -142,6 +144,8 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
     isExternal,
     usedInStories,
     siteBase,
+    userRole,
+    currentUserId: user.id,
   };
 }
 
@@ -279,50 +283,67 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       if (targetObject.project_id !== resolved.project.id) throw redirect("/objects");
 
       if (fromRepo) {
-        // Delete from repo: remove image folder + update objects.csv + commit
+        // Delete from repo: remove image folder + update objects.csv + commit.
+        // The whole region runs inside try/catch — decrypt, the CSV fetch and
+        // the D1 listing can throw, and an uncaught throw here became an
+        // opaque 500 instead of the structured delete_failed.
         const activeProject = resolved.project;
 
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-        const [owner, repo] = activeProject.github_repo_full_name.split("/");
-
-        // Find files to delete in the object's folder
-        const objectFolderPath = `telar-content/objects/${targetObject.object_id}`;
-        const deletions: string[] = [];
-
         try {
-          const { tree } = await getRepoTree(token, owner, repo);
-          for (const item of tree) {
-            if (item.path?.startsWith(objectFolderPath + "/") && item.type === "blob") {
-              deletions.push(item.path);
+          const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+          const [owner, repo] = activeProject.github_repo_full_name.split("/");
+
+          // Find files to delete in the object's folder
+          const objectFolderPath = `telar-content/objects/${targetObject.object_id}`;
+          const deletions: string[] = [];
+
+          try {
+            const { tree } = await getRepoTree(token, owner, repo);
+            for (const item of tree) {
+              if (item.path?.startsWith(objectFolderPath + "/") && item.type === "blob") {
+                deletions.push(item.path);
+              }
             }
+          } catch {
+            // If tree fetch fails, we'll just update the CSV without deleting files
           }
-        } catch {
-          // If tree fetch fails, we'll just update the CSV without deleting files
-        }
 
-        // Build updated objects.csv without this object
-        const remainingObjects = await db
-          .select()
-          .from(objects)
-          .where(and(
-            eq(objects.project_id, activeProject.id),
-            eq(objects.missing_from_repo, false),
-          ))
-          .orderBy(asc(objects.object_id));
+          // Build updated objects.csv without this object
+          const remainingObjects = await db
+            .select()
+            .from(objects)
+            .where(and(
+              eq(objects.project_id, activeProject.id),
+              eq(objects.missing_from_repo, false),
+            ))
+            .orderBy(asc(objects.object_id));
 
-        const filteredObjects = remainingObjects.filter(
-          (o) => o.id !== objectDbId
-        );
+          const filteredObjects = remainingObjects.filter(
+            (o) => o.id !== objectDbId
+          );
 
-        const existingCsv = await getFileContent(
-          token, owner, repo, "telar-content/spreadsheets/objects.csv"
-        );
-        const updatedCsv = serializeObjectsCsv(filteredObjects.map(dbObjectToCsvRow), existingCsv ?? undefined);
+          const existingCsv = await getFileContent(
+            token, owner, repo, "telar-content/spreadsheets/objects.csv"
+          );
+          const updatedCsv = serializeObjectsCsv(filteredObjects.map(dbObjectToCsvRow), existingCsv ?? undefined);
 
-        // Commit: updated CSV + deletions
-        try {
+          // Repo WRITE on the App installation token (contents:write
+          // independent of the user's own GitHub access); user token is the
+          // local-dev fallback — matching the upload/commit flows.
+          let commitToken = token;
+          try {
+            commitToken = await getInstallationToken(
+              env.GITHUB_APP_ID,
+              env.GITHUB_PRIVATE_KEY,
+              activeProject.installation_id,
+            );
+          } catch {
+            // Installation token unavailable (local dev) — fall back to user token
+          }
+
+          // Commit: updated CSV + deletions
           const result = await commitFilesToRepo(
-            token, owner, repo, "main",
+            commitToken, owner, repo, "main",
             [{ path: "telar-content/spreadsheets/objects.csv", content: updatedCsv }],
             `Remove ${targetObject.object_id} via Telar Compositor`,
             undefined,                                         // messageBody
@@ -354,22 +375,18 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       const sessionPoll = await sessionStoragePoll.getSession(request.headers.get("Cookie"));
       const sessionActiveIdPoll = sessionPoll.get("activeProjectId") as number | undefined;
 
-      const allProjectsPoll = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjectsPoll.length === 0) {
+      // Membership-aware (member-level: polling is read-only build status) —
+      // no first-owned-project fallback.
+      const resolvedPoll = await resolveActiveProject(db, user.id, sessionActiveIdPoll);
+      if (!resolvedPoll) {
         return { ok: false, intent: "poll-build", error: "no_project" };
       }
-
-      const activeProjectPoll =
-        allProjectsPoll.find((p) => p.id === Number(sessionActiveIdPoll)) ?? allProjectsPoll[0];
-
-      const tokenPoll = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [ownerPoll, repoPoll] = activeProjectPoll.github_repo_full_name.split("/");
+      const activeProjectPoll = resolvedPoll.project;
 
       try {
+        const tokenPoll = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [ownerPoll, repoPoll] = activeProjectPoll.github_repo_full_name.split("/");
+
         const runId = Number(runIdParam);
         const runRes = await fetch(
           `https://api.github.com/repos/${ownerPoll}/${repoPoll}/actions/runs/${runId}`,
@@ -401,22 +418,19 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       const session3 = await sessionStorage3.getSession(request.headers.get("Cookie"));
       const sessionActiveId3 = session3.get("activeProjectId") as number | undefined;
 
-      const allProjects3 = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects3.length === 0) {
+      // Membership-aware (member-level: the Generate-tiles button renders for
+      // any project member; dispatching a rebuild is non-destructive) — no
+      // first-owned-project fallback.
+      const resolved3 = await resolveActiveProject(db, user.id, sessionActiveId3);
+      if (!resolved3) {
         return { ok: false, intent: "dispatch-iiif", error: "no_project" };
       }
-
-      const activeProject3 =
-        allProjects3.find((p) => p.id === Number(sessionActiveId3)) ?? allProjects3[0];
-
-      const token3 = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner3, repo3] = activeProject3.github_repo_full_name.split("/");
+      const activeProject3 = resolved3.project;
 
       try {
+        const token3 = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner3, repo3] = activeProject3.github_repo_full_name.split("/");
+
         let dispatchToken = token3;
         try {
           dispatchToken = await getInstallationToken(
@@ -437,10 +451,13 @@ export async function action({ request, params, context }: Route.ActionArgs) {
           htmlUrl: dispatch.htmlUrl || null,
         };
       } catch (err) {
+        // Standardised error code — the raw err.message was previously
+        // returned AS the code, which no client map could handle.
         return {
           ok: false,
           intent: "dispatch-iiif",
-          error: err instanceof Error ? err.message : "dispatch_failed",
+          error: "dispatch_failed",
+          message: err instanceof Error ? err.message : "Unknown error",
         };
       }
     }
@@ -455,9 +472,13 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 // ---------------------------------------------------------------------------
 
 export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
-  const { object, manifestUrl, infoJsonUrl, isExternal, usedInStories, siteBase } =
+  const { object, manifestUrl, infoJsonUrl, isExternal, usedInStories, siteBase, userRole, currentUserId } =
     loaderData;
   const { t } = useTranslation("objects");
+  // Structural ops let the delete also remove the object's Y.Map — the primary
+  // delete signal. Without it the route action deletes the D1 row while the
+  // Y.Map survives, and the next snapshot re-INSERTs (resurrects) the object.
+  const ops = useStructuralOps(currentUserId, userRole);
   const deleteFetcher = useFetcher();
   const dispatchFetcher = useFetcher();
   const featuredFetcher = useFetcher();
@@ -840,7 +861,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 </p>
                 <div className="flex flex-col gap-2">
                   {/* Remove from compositor only */}
-                  <deleteFetcher.Form method="post">
+                  <deleteFetcher.Form
+                    method="post"
+                    onSubmit={() => ops?.deleteObject(object.id, null)}
+                  >
                     <input type="hidden" name="intent" value="delete-object" />
                     <input type="hidden" name="objectDbId" value={object.id} />
                     <button
@@ -853,7 +877,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                   </deleteFetcher.Form>
                   {/* Delete from repo — only for self-hosted objects */}
                   {!isExternal && (
-                    <deleteFetcher.Form method="post">
+                    <deleteFetcher.Form
+                      method="post"
+                      onSubmit={() => ops?.deleteObject(object.id, null)}
+                    >
                       <input type="hidden" name="intent" value="delete-object" />
                       <input type="hidden" name="objectDbId" value={object.id} />
                       <input type="hidden" name="fromRepo" value="true" />
@@ -978,3 +1005,52 @@ function StatusBadge({
   );
 }
 
+
+/**
+ * ErrorBoundary — mirrors the story editor's boundary (_app.stories.$storyId.tsx).
+ * Without it, a 404 from the loader (an object present in the Y.Array list but
+ * not yet snapshotted to D1, or a stranded object) bubbles to the root boundary
+ * and renders the whole-app crash screen — and floods the crash buffer for what
+ * is normal not-yet-snapshotted navigation. Here we catch it in-shell:
+ *   - 404 is the expected transient "not snapshotted yet" state — recoverable,
+ *     not reported (reporting would flood the buffer with normal navigation).
+ *   - Any non-404 is a real failure — reported via the same recordError the root
+ *     boundary uses (browser-only via useEffect), rendered as a generic card.
+ */
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const { t } = useTranslation("objects");
+  const is404 = isRouteErrorResponse(error) && error.status === 404;
+
+  useEffect(() => {
+    if (!is404) recordError(error, "boundary");
+  }, [error, is404]);
+
+  return (
+    <div className="min-h-[60vh] flex items-center justify-center p-6">
+      <div className="max-w-md w-full bg-white rounded-lg shadow-md p-6 text-center">
+        <h1 className="font-heading text-xl font-semibold text-charcoal">
+          {is404 ? t("error.not_available_title") : t("error.generic_title")}
+        </h1>
+        <p className="font-body text-sm text-gray-600 mt-3">
+          {is404 ? t("error.not_available_body") : t("error.generic_body")}
+        </p>
+        <div className="flex gap-3 justify-center mt-6">
+          <Link
+            to="/objects"
+            className="font-heading text-sm uppercase tracking-wider px-4 py-2 rounded text-charcoal bg-gray-100 hover:bg-gray-200 transition-colors"
+          >
+            {t("error.back_to_objects")}
+          </Link>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="font-heading text-sm uppercase tracking-wider px-4 py-2 rounded text-white bg-terracotta hover:bg-terracotta/90 transition-colors"
+          >
+            {t("error.retry")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

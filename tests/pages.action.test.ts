@@ -23,7 +23,7 @@
  *   - `import-pages` returns `imported: N` reflecting only newly inserted
  *     rows.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -42,9 +42,16 @@ function makeDbMock() {
       })),
     })),
     insert: vi.fn((table: unknown) => ({
-      values: vi.fn(async (values: unknown) => {
+      // Drizzle's insert builder is both awaitable AND chainable with
+      // `.returning()`; model both so `await …values()` and `…values().returning()`
+      // work.
+      values: vi.fn((values: unknown) => {
         insertCalls.push({ table, values });
-        return undefined;
+        const builder = Promise.resolve(undefined) as Promise<undefined> & {
+          returning: () => Promise<Array<{ id: number }>>;
+        };
+        builder.returning = async () => [{ id: insertCalls.length }];
+        return builder;
       }),
     })),
     update: vi.fn(() => ({
@@ -248,6 +255,7 @@ describe("_app.pages action: import-pages intent", () => {
         { slug: "team", title: "Team", body: "Team body.", order: 1 },
       ],
       already_present: [],
+      insertedIdBySlug: { about: expect.any(Number), team: expect.any(Number) },
     });
   });
 
@@ -275,6 +283,7 @@ describe("_app.pages action: import-pages intent", () => {
         { slug: "credits", title: "Credits", body: "Credits body.", order: 2 },
       ],
       already_present: [],
+      insertedIdBySlug: { about: expect.any(Number), credits: expect.any(Number) },
     });
   });
 

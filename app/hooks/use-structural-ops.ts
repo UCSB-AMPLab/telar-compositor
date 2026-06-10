@@ -18,7 +18,7 @@
  * anything; collaborators can delete only items they created
  * themselves.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { useMemo } from "react";
@@ -27,6 +27,7 @@ import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { findYMapIndex } from "~/lib/yjs-helpers";
 import { normaliseSlug, makeUniqueSlug, slugifyTermId } from "~/lib/slug";
 import { makeUniqueTermId } from "~/lib/glossary-slug";
+import { makeObjectYMap } from "~/lib/object-ymap";
 
 export type StructuralRole = "convenor" | "collaborator";
 
@@ -141,7 +142,7 @@ function cloneYMap(source: Y.Map<unknown>): Y.Map<unknown> {
  *
  * Must be called inside a ydoc.transact() block.
  */
-function reorderInPlace(
+export function reorderInPlace(
   yArray: Y.Array<Y.Map<unknown>>,
   oldIndex: number,
   newIndex: number
@@ -387,24 +388,18 @@ export function useStructuralOps(
           if (typeof oid === "string") existing.add(oid);
         }
         const { slug: uniqueObjectId } = makeUniqueSlug(objectId, existing);
-        const objMap = new Y.Map<unknown>();
-        objMap.set("_id", null);
-        objMap.set("_temp_id", tempId);
-        objMap.set("created_by", currentUserId);
-        objMap.set("object_id", uniqueObjectId);
-        objMap.set("title", new Y.Text(title));
-        objMap.set("creator", new Y.Text(""));
-        objMap.set("description", new Y.Text(""));
-        objMap.set("alt_text", new Y.Text(""));
-        objMap.set("source_url", sourceUrl);
-        objMap.set("period", new Y.Text(""));
-        objMap.set("year", new Y.Text(""));
-        objMap.set("featured", false);
-        objMap.set("image_available", false);
-        objMap.set("_validation_state", "pending");
-        objMap.set("origin", "iiif");
-        objMap.set("missing_from_repo", false);
-        objMap.set("thumbnail", "");
+        // Factory sets EVERY snapshot-bound key (object_type/subjects/source/
+        // credit/dimensions/extra_columns included) — an absent key would be
+        // erased in D1 by the next snapshot and unbindable in the editors.
+        const objMap = makeObjectYMap({
+          tempId,
+          createdBy: currentUserId,
+          objectId: uniqueObjectId,
+          title,
+          sourceUrl,
+          validationState: "pending",
+          origin: "iiif",
+        });
         objectsArray.push([objMap]);
       });
       // Return the stable handle so the caller can locate this exact object
@@ -429,29 +424,21 @@ export function useStructuralOps(
           if (typeof oid === "string") existing.add(oid);
         }
         const { slug: uniqueObjectId } = makeUniqueSlug(objectId, existing);
-        const objMap = new Y.Map<unknown>();
-        objMap.set("_id", null);
-        objMap.set("_temp_id", tempId);
-        objMap.set("created_by", currentUserId);
-        objMap.set("object_id", uniqueObjectId);
-        objMap.set("title", new Y.Text(title));
-        objMap.set("creator", new Y.Text(""));
-        objMap.set("description", new Y.Text(""));
-        objMap.set("alt_text", new Y.Text(""));
-        objMap.set("source_url", sourceUrl);
-        objMap.set("period", new Y.Text(""));
-        objMap.set("year", new Y.Text(""));
-        objMap.set("featured", false);
-        // No poster subsystem for external media — image stays unavailable.
-        objMap.set("image_available", false);
-        // NON-pending: external media has no manifest to validate, so the DO
-        // snapshot must INSERT it (the upload mirror op already uses "valid").
-        objMap.set("_validation_state", "valid");
-        // "compositor" is the verified missing-from-repo sentinel (NOT "external").
-        objMap.set("origin", "compositor");
-        objMap.set("missing_from_repo", false);
-        // Empty thumbnail — no poster fetch/upload/gate for external media.
-        objMap.set("thumbnail", "");
+        // Factory sets EVERY snapshot-bound key. Notes preserved from the
+        // hand-rolled version: image stays unavailable (no poster subsystem for
+        // external media); NON-pending so the DO snapshot INSERTs it (no
+        // manifest to validate); origin "compositor" is the verified
+        // missing-from-repo sentinel (NOT "external"); empty thumbnail (no
+        // poster fetch/upload/gate).
+        const objMap = makeObjectYMap({
+          tempId,
+          createdBy: currentUserId,
+          objectId: uniqueObjectId,
+          title,
+          sourceUrl,
+          validationState: "valid",
+          origin: "compositor",
+        });
         objectsArray.push([objMap]);
       });
       // Return the stable handle so the caller can locate this exact object

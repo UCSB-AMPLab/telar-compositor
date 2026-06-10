@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.3.2-beta (2026-06-09)
+
+A reliability release focused on image uploads and object data. Object
+metadata now saves dependably, a failed upload surfaces a clear reason and can
+be retried without creating duplicates, and several collaborative-editing edge
+cases that could make objects briefly disappear now self-heal. No new D1
+migrations, environment variables, or bindings.
+
+### New features
+
+- **Stories-section intro** — The homepage editor now has an optional intro
+  paragraph for the stories section, shown above your stories when set.
+
+### Reliability and bug fixes
+
+- **Object credit, source, type, and subjects now save reliably** — These
+  fields round-trip through the collaboration snapshot and back-fill on load
+  for existing projects, fixing cases where an edited credit line could revert.
+- **Image upload is more dependable** — A failed registration after the image
+  was committed no longer leaves the upload stuck or the object stranded;
+  retrying is safe and never creates duplicates.
+- **Clearer upload errors** — When an upload can't proceed, the message now
+  explains why (for example, an invalid object ID) instead of a generic
+  "check your connection."
+- **Object IDs are tidied automatically** — Spaces or capital letters in an
+  object ID no longer block the upload.
+- **Objects no longer briefly disappear** — Self-healing reconciles objects,
+  stories, and steps that could vanish after certain collaborative edits.
+- **Site-config repair stays applied** — Repairing a site's configuration
+  during onboarding now coordinates with live collaboration so the fix isn't
+  overwritten.
+
+### Under the hood
+
+- **Workers observability enabled** — Server-side errors are now captured with
+  stack traces, so issues can be diagnosed from logs.
+- Image and object commits now use the GitHub App installation token, removing
+  a class of permission failures.
+
 ## v1.3.1-beta (2026-06-07)
 
 A patch release hardening the framework-upgrade flow for sites whose GitHub App installation hasn't yet approved the "workflows" permission, plus two bug-report improvements. Upgrading adds one backwards-compatible D1 migration; no new environment variables or bindings.

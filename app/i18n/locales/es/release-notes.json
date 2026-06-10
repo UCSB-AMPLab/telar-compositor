@@ -1,19 +1,17 @@
 {
-  "v1_3_0_beta": {
-    "title": "Qué hay de nuevo en el compositor",
+  "v1_3_2_beta": {
+    "title": "Qué mejoró en el compositor",
     "features_label": "Novedades",
     "features": [
-      "Colaboración en tiempo real: puedes editar el mismo sitio con tu equipo",
-      "Espacio de trabajo rediseñado, con una guía para empezar",
-      "Navegación más rápida y un seguimiento más claro del proceso de publicación",
-      "Deshacer más seguro: solo afecta tus propios cambios recientes"
+      "Ahora puedes agregar un párrafo de introducción opcional a la sección de historias"
     ],
     "fixes_label": "Correcciones",
     "fixes": [
-      "Ya se puede desactivar el contenido de ejemplo",
-      "Editar una historia recién creada ya no da error",
-      "Renombrar el botón de una capa ya no falla",
-      "Borrar la descripción del sitio ya no daña la página"
+      "Los datos del objeto, como el crédito, la fuente y el tipo, ahora se guardan bien",
+      "Subir imágenes es más confiable: si una subida falla, puedes volver a intentarla sin que se creen objetos repetidos",
+      "Cuando una imagen no se puede subir, el mensaje ahora explica qué pasó, en lugar de un mensaje genérico como \"verifica tu conexión\"",
+      "Los objetos se comportan mejor: el ID que escribes se ajusta automáticamente (los espacios y las mayúsculas ya no son problema) y los objetos ya no desaparecen por un momento al editar en equipo",
+      "Actualizar Telar ya no se queda atascado cuando falta aprobar un permiso en GitHub"
     ],
     "thanks_label": "Gracias a",
     "thanks_suffix": "por reportar errores y problemas.",

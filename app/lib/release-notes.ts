@@ -6,23 +6,16 @@
  * maintainer — never invented). Client-safe: no server imports, so both the
  * `_app` loader and the modal component import it.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 export const CURRENT_RELEASE = {
-  id: "1.3.0-beta",
-  i18nKey: "v1_3_0_beta",
+  id: "1.3.2-beta",
+  i18nKey: "v1_3_2_beta",
   contributors: [
-    "catabiesman",
-    "nathanhandling-ucsb",
-    "jordansuleman",
-    "Percylikezalmendz",
-    "angelinarivoli",
-    "hafw1t",
-    "briannaguatt-barrera",
-    "kftruitt-sudo",
-    "jesurosasd-alt",
+    "meganleverett",
     "sophiaamaral05",
     "olympia-m",
+    "kftruitt-sudo",
   ] as string[],
 };
 

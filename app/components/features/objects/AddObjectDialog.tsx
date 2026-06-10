@@ -806,7 +806,10 @@ function UploadTabBody({
     if (!selectedFile || !title.trim() || !previewUrl) return;
     const payload: UploadImageConfirmPayload = {
       file: selectedFile,
-      objectId: objectId.trim(),
+      // Normalise the user-typed id — "Mission Bell #2" must become
+      // "mission-bell-2" BEFORE it reaches the server, which rejects
+      // non-slug ids (issue #25's deterministic generic error).
+      objectId: slugify(objectId, 0),
       title: title.trim(),
       creator: creator.trim(),
       description: description.trim(),
@@ -844,7 +847,8 @@ function UploadTabBody({
     if (!selectedFile || !title.trim() || isUploading) return;
     const payload: UploadImageConfirmPayload = {
       file: selectedFile,
-      objectId: objectId.trim(),
+      // Same normalisation as handleAddToBatch — see comment there.
+      objectId: slugify(objectId, 0),
       title: title.trim(),
       creator: creator.trim(),
       description: description.trim(),
@@ -863,7 +867,10 @@ function UploadTabBody({
   }
 
   const allExistingIds = [...existingObjectIds, ...stagedImages.map((s) => s.payload.objectId)];
-  const idCollision = objectId.trim() && allExistingIds.includes(objectId.trim());
+  // Compare the NORMALISED id — payloads carry slugified ids, so a raw
+  // comparison would miss collisions like "Vessel Front" vs "vessel-front".
+  const normalisedObjectId = slugify(objectId, 0);
+  const idCollision = normalisedObjectId !== "" && allExistingIds.includes(normalisedObjectId);
 
   return (
     <div className="space-y-4">

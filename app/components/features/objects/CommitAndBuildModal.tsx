@@ -52,7 +52,17 @@ interface PendingObject {
   image_available: boolean;
 }
 
-type ModalStep = "confirm" | "committing" | "building" | "inserting" | "success" | "failed";
+type ModalStep =
+  | "confirm"
+  | "committing"
+  | "building"
+  | "inserting"
+  | "success"
+  | "failed"
+  // D1 registration failed AFTER the repo commit succeeded. Distinct from
+  // "failed": the user's images are safely in the repo, so the right offer is
+  // a (server-side idempotent) retry — never "discard".
+  | "insert_failed";
 
 interface Props {
   open: boolean;
@@ -75,7 +85,14 @@ interface Props {
 }
 
 type CommitData =
-  | { ok: true; intent: "commit-objects"; newHeadSha: string }
+  | {
+      ok: true;
+      intent: "commit-objects";
+      newHeadSha: string;
+      dispatchRunId?: number | null;
+      /** Commit landed but no workflow run started — skip build tracking. */
+      dispatchFailed?: boolean;
+    }
   | { ok: false; intent: "commit-objects"; error: string; message?: string }
   | null
   | undefined;
@@ -205,12 +222,29 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   useEffect(() => {
     if (!commitData) return;
     if (commitData.ok && commitData.intent === "commit-objects") {
+      if (commitData.dispatchFailed) {
+        // The commit landed but no workflow run started — polling by SHA
+        // would spin forever on a run that doesn't exist. Register the
+        // objects directly; tiles regenerate on the next full build.
+        setBuildSkipped(true);
+        if (pendingObjects.length > 0) {
+          setStep("inserting");
+          insertFetcher.submit(
+            { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
+            { method: "post" }
+          );
+        } else {
+          setStep("success");
+        }
+        return;
+      }
       setCommitSha(commitData.newHeadSha);
       setStep("building");
     } else if (!commitData.ok && commitData.intent === "commit-objects") {
       setCommitError(commitData.error);
       setStep("failed");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commitData]);
 
   // Process poll results
@@ -248,10 +282,12 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollData]);
 
-  // Process insert result
+  // Process insert result. The failure branch matters (telar-compositor#24):
+  // without it a failed D1 registration froze the modal on "inserting" forever
+  // while the images sat committed in the repo with no D1 rows.
   useEffect(() => {
     const data = insertFetcher.data as
-      | { ok: boolean; intent: string; inserted?: Array<{ id: number; object_id: string }> }
+      | { ok: boolean; intent: string; inserted?: Array<{ id: number; object_id: string }>; error?: string }
       | null
       | undefined;
     if (data?.ok && data.intent === "insert-pending-objects") {
@@ -259,9 +295,22 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
         onInserted(data.inserted);
       }
       setStep("success");
+    } else if (data && !data.ok && data.intent === "insert-pending-objects") {
+      setStep("insert_failed");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insertFetcher.data]);
+
+  // Retry the D1 registration. Safe to repeat: the server action is
+  // idempotent (already-registered object_ids are skipped and echoed back
+  // with their canonical ids).
+  function handleInsertRetry() {
+    setStep("inserting");
+    insertFetcher.submit(
+      { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
+      { method: "post" }
+    );
+  }
 
   // When skipCommit and dispatch failed (step jumps directly to inserting on open),
   // trigger D1 insert immediately so pending objects are persisted even without a build.
@@ -515,13 +564,44 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
           </div>
         )}
 
+        {/* --- Insert-failed step (repo commit OK, D1 registration failed) --- */}
+        {step === "insert_failed" && (
+          <div className="p-6">
+            <div className="flex flex-col items-center gap-3 py-4 mb-4">
+              <XCircle className="w-12 h-12 text-red-500" />
+              <h3 className="font-heading font-semibold text-lg text-charcoal">
+                {t("commitModal.insertFailedHeading")}
+              </h3>
+              <p className="font-body text-sm text-gray-500 text-center">
+                {t("commitModal.insertFailedBody")}
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="font-heading font-semibold text-sm uppercase tracking-wider text-charcoal hover:text-gray-500 px-4 py-2.5 transition-colors"
+              >
+                {t("commitModal.close")}
+              </button>
+              <Button variant="primary" type="button" onClick={handleInsertRetry}>
+                {t("commitModal.insertRetry")}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* --- Failed step --- */}
         {step === "failed" && (
           <div className="p-6">
             <div className="flex flex-col items-center gap-3 py-4 mb-4">
               <XCircle className="w-12 h-12 text-red-500" />
               <h3 className="font-heading font-semibold text-lg text-charcoal">
-                {commitError === "stale_head" ? t("staleHeadError") : t("buildFailed")}
+                {commitError === "stale_head"
+                  ? t("staleHeadError")
+                  : commitError === "commit_failed"
+                    ? t("commitFailed")
+                    : t("buildFailed")}
               </h3>
             </div>
 

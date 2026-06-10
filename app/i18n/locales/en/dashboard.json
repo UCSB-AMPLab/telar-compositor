@@ -30,6 +30,8 @@
     "welcome_explanation": "The introductory content visitors see when they arrive at your site. This comes from your site's index page.",
     "stories_heading": "Stories",
     "stories_explanation": "Your story collection as it appears on the landing page. Drag to reorder — this controls the display order on your published site.",
+    "stories_intro_placeholder": "Add an optional intro for the stories section",
+    "stories_intro_hint": "Optional — shown above your stories if you add it.",
     "stories_manage": "Manage",
     "objects_heading": "Objects",
     "objects_explanation": "Featured objects from your collection, displayed on the landing page.",
@@ -84,7 +86,7 @@
     "body": "Delete '{{title}}'? This will remove the story and its {{count}} steps from the compositor. Your published site won't change until you publish again.",
     "confirm": "Delete"
   },
-  "connect_new_repo": "Add or remove a repo",
+  "connect_new_repo": "Add or create a repo",
   "soft_limit": {
     "stories": "You have {{count}} stories. Performance may be affected with more than 10.",
     "projects": "You have {{count}} projects. The limit is 5 connected repositories."

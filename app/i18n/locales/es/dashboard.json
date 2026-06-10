@@ -30,6 +30,8 @@
     "welcome_explanation": "El contenido introductorio que ven los visitantes al llegar a tu sitio. Proviene de la página de inicio de tu sitio.",
     "stories_heading": "Historias",
     "stories_explanation": "Tu colección de historias tal como aparece en la página de inicio. Arrastra para reordenar — esto controla el orden de visualización en tu sitio publicado.",
+    "stories_intro_placeholder": "Agrega una introducción opcional para la sección de historias",
+    "stories_intro_hint": "Opcional: aparece sobre las historias si la agregas.",
     "stories_manage": "Gestionar",
     "objects_heading": "Objetos",
     "objects_explanation": "Objetos destacados de tu colección, mostrados en la página de inicio.",
@@ -84,7 +86,7 @@
     "body": "¿Eliminar '{{title}}'? Esto eliminará la historia y sus {{count}} pasos del compositor. Tu sitio publicado no cambiará hasta que publiques de nuevo.",
     "confirm": "Eliminar"
   },
-  "connect_new_repo": "Agregar o quitar un repositorio",
+  "connect_new_repo": "Agregar o crear un repositorio",
   "soft_limit": {
     "stories": "Tienes {{count}} historias. El rendimiento puede verse afectado con más de 10.",
     "projects": "Tienes {{count}} proyectos. El límite es de 5 repositorios conectados."

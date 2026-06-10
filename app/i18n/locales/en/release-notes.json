@@ -1,19 +1,17 @@
 {
-  "v1_3_0_beta": {
-    "title": "New in the compositor",
+  "v1_3_2_beta": {
+    "title": "What's improved",
     "features_label": "New features",
     "features": [
-      "Real-time collaboration — work on a site together with your team",
-      "Redesigned workspace with a guided first run",
-      "Faster navigation and a clearer publish progress tracker",
-      "Safer undo that only affects your own recent edits"
+      "An optional intro paragraph for your stories section"
     ],
     "fixes_label": "Fixes",
     "fixes": [
-      "Turning off demo content now works",
-      "Editing a brand-new story no longer errors",
-      "Renaming a layer button no longer fails",
-      "Deleting the site description no longer breaks the page"
+      "Object details like credit, source, and type now save reliably",
+      "Uploading images is more dependable — a failed upload can be retried safely, with no duplicates",
+      "Clearer messages when an image can't be uploaded, instead of a generic \"check your connection\"",
+      "Object handling is steadier — typed IDs are tidied automatically, and objects no longer briefly disappear after collaborative edits",
+      "Framework upgrades no longer stall when a GitHub permission is still pending"
     ],
     "thanks_label": "Thanks to",
     "thanks_suffix": "for reporting bugs and issues.",

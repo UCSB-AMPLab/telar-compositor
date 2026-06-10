@@ -1,4 +1,12 @@
 {
+  "error": {
+    "not_available_title": "This object isn't available yet",
+    "not_available_body": "It may still be saving. Give it a moment, then try again.",
+    "generic_title": "Something went wrong",
+    "generic_body": "This object couldn't be opened. Go back to your objects and try again.",
+    "back_to_objects": "Back to objects",
+    "retry": "Try again"
+  },
   "title": "Objects",
   "hint": "Manage the images your stories reference. Add metadata, verify IIIF tiles, and import external sources.",
   "sync_button": "Sync from repo",
@@ -150,7 +158,7 @@
 
   "committingToRepo": "Committing to repository...",
   "staleHeadError": "The repository has changed since your last sync. Please re-sync before saving.",
-  "commitFailed": "Build failed. Check GitHub Actions for details.",
+  "commitFailed": "Saving to GitHub failed. Your changes were not committed — try again.",
   "sheetsWarning": "Google Sheets is currently enabled for this site. Saving will disable it so the build uses your compositor data instead.",
   "sheetsReversible": "You can switch back to Google Sheets at any time by setting enabled: true under google_sheets in your site's _config.yml.",
   "buildQueued": "Build queued — waiting for GitHub Actions...",
@@ -171,6 +179,10 @@
   "commitModal.done": "Done",
   "commitModal.insertingObjects": "Registering objects...",
   "commitModal.discardChanges": "Discard added objects",
+  "commitModal.insertFailedHeading": "Images saved, but registration failed",
+  "commitModal.insertFailedBody": "Your images are safely committed to your site's repository, but registering them in the compositor failed. Retrying is safe — nothing will be duplicated.",
+  "commitModal.insertRetry": "Retry registration",
+  "commitModal.close": "Close",
 
   "upload_button": "Upload Image",
   "upload_title": "Upload Images",
@@ -191,6 +203,11 @@
   "upload_error_generic": "Upload failed. Check your connection and try again.",
   "upload_error_stale": "The repo has changed. Sync and try again.",
   "upload_error_payload": "File too large for GitHub. Try a smaller image.",
+  "upload_error_missing_data": "Something went wrong preparing the upload. Close the dialog and try again.",
+  "upload_error_invalid_id": "The object ID can only contain lowercase letters, numbers, and hyphens.",
+  "upload_error_no_project": "No active project found. Reload the page and try again.",
+  "upload_error_forbidden": "Only the project convenor can upload images.",
+  "sync_error_toast": "Sync failed. Check your repository on GitHub and try again.",
   "upload_dismiss_confirm": "You have unsaved changes. Are you sure you want to close?",
   "upload_id_collision_hint": "This ID already exists — the server will generate a unique one.",
   "upload_batch_header": "Staged images",
