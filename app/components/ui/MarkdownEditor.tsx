@@ -28,7 +28,7 @@
  * onUnresolvedChipClick. A live preview guard returns null during
  * server-side render since all of CodeMirror is browser-only.
  *
- * @version v1.3.0-beta
+ * @version v1.3.4-beta
  */
 
 import { useRef, useEffect, useState, useCallback } from "react";
@@ -64,7 +64,7 @@ import { livePreviewPlugin } from "~/components/ui/markdown-editor/livePreviewPl
 import { glossaryChipPlugin } from "~/components/ui/markdown-editor/glossaryChipPlugin";
 import {
   glossaryMapField,
-  setGlossaryMap,
+  installGlossaryResolution,
 } from "~/components/ui/markdown-editor/glossaryResolution";
 import { richPasteExtension } from "~/components/ui/markdown-editor/richPaste";
 import {
@@ -364,34 +364,16 @@ export function MarkdownEditor({
   useEffect(() => {
     if (!mounted || !containerRef.current) return;
 
-    // Glossary chip resolution: build a term_id→title map from the glossary Y.Array and push
-    // it into the view via setGlossaryMap (view-only effect — never a doc edit, so the shared
-    // Y.UndoManager stack is untouched). Re-pushed on every glossary change via observeDeep.
-    // Returns a cleanup that unobserves. No-op when there is no ydoc (SSR / pre-connection).
+    // Glossary chip resolution: keep a term_id→title map in the view so the chip
+    // plugin can resolve [[term]] tokens. installGlossaryResolution observes the
+    // glossary Y.Array and pushes the map via setGlossaryMap (view-only — never a
+    // doc edit). Its dispatch is DEFERRED out of the update cycle: editing a
+    // glossary definition mutates the same array it observes, so a synchronous
+    // dispatch there would crash yCollab's sync mid-update and drop typed text
+    // (telar-compositor#26). No-op when there is no ydoc (SSR / pre-connection).
     function attachGlossaryResolution(view: EditorView): () => void {
       if (!ydoc) return () => {};
-      const glossaryArray = ydoc.getArray<Y.Map<unknown>>("glossary");
-      const pushMap = () => {
-        const map = new Map<string, string>();
-        for (let i = 0; i < glossaryArray.length; i++) {
-          const m = glossaryArray.get(i);
-          const rawTitle = m.get("title");
-          const title =
-            rawTitle instanceof Y.Text
-              ? rawTitle.toString()
-              : typeof rawTitle === "string"
-                ? rawTitle
-                : "";
-          const termId = m.get("term_id");
-          if (typeof termId === "string" && termId.length > 0) {
-            map.set(termId, title);
-          }
-        }
-        view.dispatch({ effects: setGlossaryMap.of(map) });
-      };
-      glossaryArray.observeDeep(pushMap);
-      pushMap(); // initial resolution
-      return () => glossaryArray.unobserveDeep(pushMap);
+      return installGlossaryResolution(view, ydoc);
     }
 
     // Collaborative mode: build extensions with yCollab; remove history() and autosave.
