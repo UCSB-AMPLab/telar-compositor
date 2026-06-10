@@ -26,6 +26,11 @@
   "assets": {
     "run_worker_first": ["/ws/"]
   },
+  // Workers Logs — persisted invocation logs and uncaught exception stacks in
+  // the Cloudflare dashboard, so production errors can be diagnosed from logs.
+  "observability": {
+    "enabled": true
+  },
   "vars": {
     "ENVIRONMENT": "production",
     "GITHUB_APP_SLUG": "telar-compositor"
