@@ -22,7 +22,7 @@
  * quick-create) are role-gated in the UI; the server-side gates remain
  * the real boundary.
  *
- * @version v1.3.0-beta
+ * @version v1.3.3-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -116,7 +116,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 // Types
 // ---------------------------------------------------------------------------
 
-interface TermItem {
+export interface TermItem {
   _id: number | null;
   _temp_id: string | null;
   title: string;
@@ -125,9 +125,22 @@ interface TermItem {
   yMap: Y.Map<unknown>;
 }
 
-/** Stable key for React and selection tracking. */
-function termKey(t: TermItem): string {
-  return t._id !== null ? `id:${t._id}` : `tmp:${t._temp_id ?? ""}`;
+/**
+ * Stable key for React and selection tracking.
+ *
+ * Prefer `_temp_id` whenever it exists: a term created in this session keeps its
+ * `_temp_id` for the lifetime of the doc, but its `_id` flips from null to a real
+ * number the moment the snapshot first persists it (collaboration.ts backfill).
+ * Keying on `_id` would change the term's identity mid-edit, so `selectedKey`
+ * (captured before the backfill) would stop matching, `selectedTerm` would resolve
+ * to null, and the open definition editor would unmount — discarding everything
+ * typed after the backfill and leaving only the first character or two in the
+ * Y.Text (telar-compositor#26). `_temp_id` is immutable across that backfill, so it
+ * keeps the selection — and the editor — stable. Terms loaded from D1 carry no
+ * `_temp_id` and key stably on `id:`.
+ */
+export function termKey(t: TermItem): string {
+  return t._temp_id ? `tmp:${t._temp_id}` : `id:${t._id}`;
 }
 
 // ---------------------------------------------------------------------------
