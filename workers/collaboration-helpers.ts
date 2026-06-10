@@ -16,6 +16,8 @@
  * changed Yjs shared type up its parent chain to the document root. Those
  * paths are what let the DO attribute edits to entities and users without
  * threading bespoke metadata through every Yjs mutation.
+ *
+ * @version v1.3.0-beta
  */
 
 import * as Y from "yjs";
@@ -51,6 +53,16 @@ export function resolveFieldPaths(
 
     const prefixSegments: string[] = [];
     let current: Y.AbstractType<unknown> = sharedType;
+
+    // Is the changed type itself a value stored under a map key (e.g. a `title`
+    // Y.Text or a `steps` Y.Array living under a story map)? If so, the field
+    // name is its own parentSub, and the walk below will unshift it into the
+    // prefix. A character-level edit to a Y.Text registers as a null-keyed
+    // change on the Y.Text type (not a keyed change on the parent map), so the
+    // field name never arrives via `changedKeys` — we recover it from here.
+    const ownParentSub = (sharedType as unknown as {
+      _item?: { parentSub?: string | null };
+    })._item?.parentSub;
 
     while (true) {
       const item = (current as unknown as {
@@ -102,10 +114,22 @@ export function resolveFieldPaths(
     if (prefixSegments.length === 0) return [];
 
     const results: string[] = [];
+    let appendedKey = false;
     for (const key of changedKeys) {
       if (key !== null && key !== undefined) {
         results.push([...prefixSegments, key].join(":"));
+        appendedKey = true;
       }
+    }
+    // Null-keyed content change on a field value (a Y.Text / Y.Array stored
+    // under a map key — the dominant editor edit). No string key arrived via
+    // `changedKeys`, but the prefix already ends with the field name (the
+    // type's own parentSub), so emit the prefix itself as the field path.
+    // Guarded on `ownParentSub` being a string so root-collection structural
+    // changes (e.g. a push onto the "stories" array, parentSub-less) don't
+    // emit a bare, id-less `stories` path.
+    if (!appendedKey && typeof ownParentSub === "string") {
+      results.push(prefixSegments.join(":"));
     }
     return results;
   } catch {
@@ -304,4 +328,66 @@ export function buildActivityRows(
   }
 
   return rows;
+}
+
+/**
+ * Return the string value of a Y.Text or plain string/number/null. Prevents
+ * "[object Object]" in D1 rows. Shared by the DO and the activity resolver.
+ */
+export function yTextToString(val: unknown): string {
+  if (val instanceof Y.Text) return val.toString();
+  return String(val ?? "");
+}
+
+/**
+ * Map an activity entity type to its Y.Doc collection + human-slug field.
+ * (config is handled specially — it is a single root map, not an array.)
+ */
+const ENTITY_RESOLUTION: Record<string, { collection: string; slug: string }> = {
+  story: { collection: "stories", slug: "story_id" },
+  object: { collection: "objects", slug: "object_id" },
+  term: { collection: "glossary", slug: "term_id" },
+  page: { collection: "pages", slug: "slug" },
+};
+
+/**
+ * resolveActivityEntity — turn a field-path id (the numeric D1 `_id` for an
+ * existing entity, or the client `_temp_id` UUID for a freshly-added one) into
+ * the entity's human slug + title, read from the live Y.Doc at snapshot time.
+ *
+ * Pure (Y.Doc in, plain object out) so it unit-tests without the Durable Object
+ * runtime. Returns:
+ *   - story/object/term/page → { entityId: <slug>, entityLabel: <title|null> }
+ *     matched by `_id` OR `_temp_id` (the latter is retained after backfill, so
+ *     a same-session "added" row still resolves). Slug is bound as a plain
+ *     string; title via yTextToString (it is a Y.Text).
+ *   - config → { entityId: null, entityLabel: <site title|null> } (site-level).
+ *   - unresolved (entity since deleted) → { entityId: <fieldPathId>, entityLabel: null }.
+ */
+export function resolveActivityEntity(
+  ydoc: Y.Doc,
+  entityType: string,
+  fieldPathId: string,
+): { entityId: string | null; entityLabel: string | null } {
+  if (entityType === "config") {
+    const title = yTextToString(ydoc.getMap<unknown>("config").get("title"));
+    return { entityId: null, entityLabel: title || null };
+  }
+  const map = ENTITY_RESOLUTION[entityType];
+  if (!map) return { entityId: fieldPathId, entityLabel: null };
+  const arr = ydoc.getArray<Y.Map<unknown>>(map.collection);
+  for (let i = 0; i < arr.length; i++) {
+    const m = arr.get(i);
+    const idVal = m.get("_id");
+    const tempId = m.get("_temp_id");
+    if (
+      (idVal !== null && idVal !== undefined && String(idVal) === fieldPathId) ||
+      (tempId !== null && tempId !== undefined && String(tempId) === fieldPathId)
+    ) {
+      const slug = String(m.get(map.slug) ?? "") || fieldPathId; // plain string
+      const label = yTextToString(m.get("title")) || null; // Y.Text
+      return { entityId: slug, entityLabel: label };
+    }
+  }
+  return { entityId: fieldPathId, entityLabel: null };
 }

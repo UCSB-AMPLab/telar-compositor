@@ -33,7 +33,7 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import { DurableObject } from "cloudflare:workers";
-import { makeAfterTransactionHandler, buildContributionUpdate, buildActivityRows, ACTIVITY_RETENTION_CAP } from "./collaboration-helpers";
+import { makeAfterTransactionHandler, buildContributionUpdate, buildActivityRows, ACTIVITY_RETENTION_CAP, yTextToString, resolveActivityEntity } from "./collaboration-helpers";
 import {
   parseSessionCookie,
   getUserIdFromToken as getUserIdFromTokenShared,
@@ -126,6 +126,13 @@ interface ObjectRow {
   source_url: string | null;
   period: string | null;
   year: string | null;
+  object_type: string | null;
+  subjects: string | null;
+  source: string | null;
+  credit: string | null;
+  thumbnail: string | null;
+  dimensions: string | null;
+  extra_columns: string | null;
   featured: number;
   image_available: number;
   created_by: number | null;
@@ -168,6 +175,7 @@ interface ConfigRow {
   browse_and_search: number | null;
   show_link_on_homepage: number | null;
   show_sample_on_homepage: number | null;
+  collection_mode: number | null;
   featured_count: number | null;
   story_key: string | null;
   navigation_json: string | null;
@@ -185,14 +193,8 @@ interface LandingRow {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Return the string value of a Y.Text or plain string/number/null.
- * Prevents "[object Object]" in D1 rows.
- */
-function yTextToString(val: unknown): string {
-  if (val instanceof Y.Text) return val.toString();
-  return String(val ?? "");
-}
+// yTextToString lives in collaboration-helpers.ts (shared with the activity
+// resolver) and is imported above.
 
 // ---------------------------------------------------------------------------
 // Durable Object class
@@ -734,6 +736,13 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
       // Schedule the 30-second alarm if not already set
       this.scheduleSnapshot();
+
+      // Emit activity rows NOW, while this instance is warm and the edit's
+      // actor is attributable. The snapshot alarm above is only a backstop —
+      // hibernation usually evicts this instance before it fires, so the
+      // snapshot would otherwise run cold with an empty userFieldSets and lose
+      // the edit. Best-effort and non-throwing (see flushActivityRows).
+      await this.flushActivityRows();
     } else if (msgType === messageAwareness) {
       // Awareness protocol message — apply to server awareness and relay to all others
       const update = decoding.readVarUint8Array(decoder);
@@ -876,12 +885,74 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     if (row?.yjs_state) {
       // Warm restart — restore from binary blob (fastest path)
       Y.applyUpdate(this.ydoc, new Uint8Array(row.yjs_state));
+      // Old blobs were serialized before object_type/subjects/source/credit (and
+      // config.collection_mode) round-tripped through the snapshot, so their
+      // Y.Maps lack those keys. getYText() returns null for a missing key, so
+      // the editor's edits to those fields go nowhere (telar-compositor#23), and
+      // the snapshot would otherwise clobber D1 with empty/default values. Seed
+      // the missing keys from D1 here so existing projects self-heal on load.
+      await this.backfillBlobGaps();
     } else {
-      // Cold start — build from D1 rows
+      // Cold start — build from D1 rows (already includes every field)
       await this.buildFromD1Rows();
     }
 
     this.docLoaded = true;
+  }
+
+  /**
+   * Seed Y.Doc keys that pre-date their addition to the snapshot round-trip onto
+   * a blob-restored doc, reading current values from D1. Idempotent and
+   * non-destructive: only fills a key when it is absent, never overwriting a
+   * value already in the live doc (which may hold an unsaved edit). Runs under a
+   * null-origin transaction so it is not attributed to any user (no activity /
+   * contribution). Without this, an established project (which always restores
+   * from the blob, not buildFromD1Rows) would never gain the new keys.
+   */
+  private async backfillBlobGaps(): Promise<void> {
+    if (!this.projectId) return;
+
+    // Objects: the four editable Y.Text fields + the three import passthroughs.
+    const objectsArray = this.ydoc.getArray<Y.Map<unknown>>("objects");
+    let objectRows: { results: ObjectRow[] } = { results: [] };
+    if (objectsArray.length > 0) {
+      objectRows = await this.env.DB
+        .prepare(
+          "SELECT id, object_type, subjects, source, credit, thumbnail, dimensions, " +
+          "extra_columns FROM objects WHERE project_id = ?",
+        )
+        .bind(this.projectId)
+        .all<ObjectRow>();
+    }
+    const objectById = new Map(objectRows.results.map((r) => [r.id, r]));
+
+    // Config: collection_mode is the one toggle missing from older blobs.
+    const configRow = await this.env.DB
+      .prepare("SELECT collection_mode FROM project_config WHERE project_id = ? LIMIT 1")
+      .bind(this.projectId)
+      .first<{ collection_mode: number | null }>();
+
+    this.ydoc.transact(() => {
+      for (let i = 0; i < objectsArray.length; i++) {
+        const o = objectsArray.get(i);
+        const id = o.get("_id") as number | null;
+        const r = id !== null && id !== undefined ? objectById.get(id) : undefined;
+        // Editable Y.Text fields — create only when absent so a live edit wins.
+        if (!(o.get("object_type") instanceof Y.Text)) o.set("object_type", new Y.Text(r?.object_type ?? ""));
+        if (!(o.get("subjects") instanceof Y.Text)) o.set("subjects", new Y.Text(r?.subjects ?? ""));
+        if (!(o.get("source") instanceof Y.Text)) o.set("source", new Y.Text(r?.source ?? ""));
+        if (!(o.get("credit") instanceof Y.Text)) o.set("credit", new Y.Text(r?.credit ?? ""));
+        // Passthrough values.
+        if (o.get("thumbnail") === undefined) o.set("thumbnail", r?.thumbnail ?? "");
+        if (o.get("dimensions") === undefined) o.set("dimensions", r?.dimensions ?? "");
+        if (o.get("extra_columns") === undefined) o.set("extra_columns", r?.extra_columns ?? "");
+      }
+
+      const config = this.ydoc.getMap<unknown>("config");
+      if (config.get("collection_mode") === undefined) {
+        config.set("collection_mode", configRow?.collection_mode === 1);
+      }
+    }, null);
   }
 
   /**
@@ -926,7 +997,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         this.env.DB
           .prepare(
             "SELECT id, object_id, title, creator, description, alt_text, source_url, " +
-            "period, year, featured, image_available, created_by FROM objects WHERE project_id = ? ORDER BY id ASC",
+            "period, year, object_type, subjects, source, credit, thumbnail, dimensions, " +
+            "extra_columns, featured, image_available, created_by FROM objects WHERE project_id = ? ORDER BY id ASC",
           )
           .bind(this.projectId)
           .all<ObjectRow>(),
@@ -990,6 +1062,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         config.set("browse_and_search", configRow.browse_and_search !== 0);
         config.set("show_link_on_homepage", configRow.show_link_on_homepage !== 0);
         config.set("show_sample_on_homepage", configRow.show_sample_on_homepage === 1);
+        config.set("collection_mode", configRow.collection_mode === 1);
         config.set("featured_count", configRow.featured_count ?? 4);
         config.set("story_key", configRow.story_key ?? "");
       }
@@ -1094,6 +1167,18 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         objMap.set("source_url", obj.source_url ?? "");
         objMap.set("period", new Y.Text(obj.period ?? ""));
         objMap.set("year", new Y.Text(obj.year ?? ""));
+        // object_type/subjects/source/credit are edited as Y.Text on the detail
+        // page; they MUST be loaded here or getYText() returns null and edits go
+        // nowhere (telar-compositor#23). thumbnail/dimensions/extra_columns are
+        // repo-import passthrough — carried as plain values so the snapshot
+        // INSERT/UPDATE round-trips them instead of resetting them.
+        objMap.set("object_type", new Y.Text(obj.object_type ?? ""));
+        objMap.set("subjects", new Y.Text(obj.subjects ?? ""));
+        objMap.set("source", new Y.Text(obj.source ?? ""));
+        objMap.set("credit", new Y.Text(obj.credit ?? ""));
+        objMap.set("thumbnail", obj.thumbnail ?? "");
+        objMap.set("dimensions", obj.dimensions ?? "");
+        objMap.set("extra_columns", obj.extra_columns ?? "");
         objMap.set("featured", obj.featured === 1);
         objMap.set("image_available", obj.image_available === 1);
         objMap.set("created_by", obj.created_by ?? null);
@@ -1149,28 +1234,49 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     const yArray = this.ydoc.getArray<Y.Map<unknown>>(arrayName);
     if (yArray.length === 0) return;
 
-    const seenIds = new Set<number>();
-    const seenKeys = new Set<string>();
-    const indicesToDelete: number[] = [];
+    // First pass: choose the keeper index per human key. Prefer the entry that
+    // already carries a non-null _id (the persisted copy) over an _id=null
+    // duplicate — otherwise dedup could drop the live row and keep the null one,
+    // re-keying the entity and orphan-deleting its D1 row (FK breakage).
+    const keeperByKey = new Map<string, number>();
+    for (let i = 0; i < yArray.length; i++) {
+      const yMap = yArray.get(i);
+      const key = String(yMap.get(entityKey) ?? "");
+      if (!key) continue; // empty keys: new items not yet keyed — never key-deduped
+      const id = yMap.get("_id") as number | null;
+      const thisHasId = id !== null && id !== undefined;
+      const current = keeperByKey.get(key);
+      if (current === undefined) {
+        keeperByKey.set(key, i);
+      } else {
+        const currentId = yArray.get(current).get("_id") as number | null;
+        const currentHasId = currentId !== null && currentId !== undefined;
+        // Upgrade only when the current keeper lacks an _id and this one has it
+        // (first non-null _id wins; otherwise first occurrence wins).
+        if (!currentHasId && thisHasId) keeperByKey.set(key, i);
+      }
+    }
 
+    // Second pass: delete any keyed entry that is not its key's keeper, plus any
+    // exact _id duplicate (first occurrence wins).
+    const seenIds = new Set<number>();
+    const indicesToDelete: number[] = [];
     for (let i = 0; i < yArray.length; i++) {
       const yMap = yArray.get(i);
       const id = yMap.get("_id") as number | null;
       const key = String(yMap.get(entityKey) ?? "");
 
-      // Duplicate by D1 id
-      if (id !== null && id !== undefined && seenIds.has(id)) {
+      if (key && keeperByKey.get(key) !== i) {
         indicesToDelete.push(i);
         continue;
       }
-      // Duplicate by entity key (skip empty keys — new items may not have one yet)
-      if (key && seenKeys.has(key)) {
-        indicesToDelete.push(i);
-        continue;
+      if (id !== null && id !== undefined) {
+        if (seenIds.has(id)) {
+          indicesToDelete.push(i);
+          continue;
+        }
+        seenIds.add(id);
       }
-
-      if (id !== null && id !== undefined) seenIds.add(id);
-      if (key) seenKeys.add(key);
     }
 
     if (indicesToDelete.length > 0) {
@@ -1260,70 +1366,303 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     }
   }
 
-  /** Sections 3+4: project_config + project_landing UPDATEs. No INSERTs. */
-  private snapshotConfig(statements: D1PreparedStatement[], now: string): void {
+  /**
+   * Sections 3+4: project_config + project_landing. These are singleton rows
+   * (one per project). They are normally created at import/onboarding, but if a
+   * project ever reaches the DO without one, a plain UPDATE would match zero rows
+   * and silently drop every config/landing edit forever (the same strand class
+   * as Fix A). So we SELECT-guard: UPDATE when the row exists, INSERT-on-missing
+   * otherwise. `project_config`/`project_landing` have no UNIQUE(project_id)
+   * index, hence the explicit existence check rather than ON CONFLICT.
+   */
+  private async snapshotConfig(statements: D1PreparedStatement[], now: string): Promise<void> {
     // 3. Snapshot config
     const config = this.ydoc.getMap<unknown>("config");
     const landing = config.get("landing") as Y.Map<unknown> | undefined;
-    statements.push(
-      this.env.DB
-        .prepare(
-          "UPDATE project_config SET " +
-          "title = ?, description = ?, author = ?, email = ?, lang = ?, " +
-          "baseurl = ?, url = ?, theme = ?, logo = ?, " +
-          "include_demo_content = ?, google_sheets_enabled = ?, google_sheets_published_url = ?, " +
-          "show_on_homepage = ?, show_story_steps = ?, show_object_credits = ?, " +
-          "browse_and_search = ?, show_link_on_homepage = ?, show_sample_on_homepage = ?, " +
-          "featured_count = ?, story_key = ?, navigation_json = ?, updated_at = ? " +
-          "WHERE project_id = ?",
-        )
-        .bind(
-          yTextToString(config.get("title")),
-          yTextToString(config.get("description")),
-          yTextToString(config.get("author")),
-          yTextToString(config.get("email")),
-          String(config.get("lang") ?? "en"),
-          String(config.get("baseurl") ?? ""),
-          String(config.get("url") ?? ""),
-          String(config.get("theme") ?? ""),
-          String(config.get("logo") ?? ""),
-          config.get("include_demo_content") ? 1 : 0,
-          config.get("google_sheets_enabled") ? 1 : 0,
-          String(config.get("google_sheets_published_url") ?? ""),
-          config.get("show_on_homepage") !== false ? 1 : 0,
-          config.get("show_story_steps") !== false ? 1 : 0,
-          config.get("show_object_credits") !== false ? 1 : 0,
-          config.get("browse_and_search") !== false ? 1 : 0,
-          config.get("show_link_on_homepage") !== false ? 1 : 0,
-          config.get("show_sample_on_homepage") ? 1 : 0,
-          Number(config.get("featured_count") ?? 4),
-          String(config.get("story_key") ?? ""),
-          JSON.stringify((config.get("navigation") as Y.Array<unknown>)?.toArray() ?? []),
-          now,
-          this.projectId,
-        ),
-    );
 
-    // 4. Snapshot landing (project_landing)
-    if (landing) {
+    const configVals: unknown[] = [
+      yTextToString(config.get("title")),
+      yTextToString(config.get("description")),
+      yTextToString(config.get("author")),
+      yTextToString(config.get("email")),
+      String(config.get("lang") ?? "en"),
+      String(config.get("baseurl") ?? ""),
+      String(config.get("url") ?? ""),
+      String(config.get("theme") ?? ""),
+      String(config.get("logo") ?? ""),
+      config.get("include_demo_content") ? 1 : 0,
+      config.get("google_sheets_enabled") ? 1 : 0,
+      String(config.get("google_sheets_published_url") ?? ""),
+      config.get("show_on_homepage") !== false ? 1 : 0,
+      config.get("show_story_steps") !== false ? 1 : 0,
+      config.get("show_object_credits") !== false ? 1 : 0,
+      config.get("browse_and_search") !== false ? 1 : 0,
+      config.get("show_link_on_homepage") !== false ? 1 : 0,
+      config.get("show_sample_on_homepage") ? 1 : 0,
+      config.get("collection_mode") ? 1 : 0,
+      Number(config.get("featured_count") ?? 4),
+      String(config.get("story_key") ?? ""),
+      JSON.stringify((config.get("navigation") as Y.Array<unknown>)?.toArray() ?? []),
+      now,
+    ];
+    const configExists = await this.env.DB
+      .prepare("SELECT id FROM project_config WHERE project_id = ?")
+      .bind(this.projectId)
+      .first<{ id: number }>();
+    if (configExists) {
       statements.push(
         this.env.DB
           .prepare(
-            "UPDATE project_landing SET " +
-            "stories_heading = ?, stories_intro = ?, objects_heading = ?, " +
-            "objects_intro = ?, welcome_body = ?, updated_at = ? " +
+            "UPDATE project_config SET " +
+            "title = ?, description = ?, author = ?, email = ?, lang = ?, " +
+            "baseurl = ?, url = ?, theme = ?, logo = ?, " +
+            "include_demo_content = ?, google_sheets_enabled = ?, google_sheets_published_url = ?, " +
+            "show_on_homepage = ?, show_story_steps = ?, show_object_credits = ?, " +
+            "browse_and_search = ?, show_link_on_homepage = ?, show_sample_on_homepage = ?, " +
+            "collection_mode = ?, featured_count = ?, story_key = ?, navigation_json = ?, updated_at = ? " +
             "WHERE project_id = ?",
           )
-          .bind(
-            yTextToString(landing.get("stories_heading")),
-            yTextToString(landing.get("stories_intro")),
-            yTextToString(landing.get("objects_heading")),
-            yTextToString(landing.get("objects_intro")),
-            yTextToString(landing.get("welcome_body")),
-            now,
-            this.projectId,
-          ),
+          .bind(...configVals, this.projectId),
       );
+    } else {
+      statements.push(
+        this.env.DB
+          .prepare(
+            "INSERT INTO project_config (project_id, " +
+            "title, description, author, email, lang, baseurl, url, theme, logo, " +
+            "include_demo_content, google_sheets_enabled, google_sheets_published_url, " +
+            "show_on_homepage, show_story_steps, show_object_credits, browse_and_search, " +
+            "show_link_on_homepage, show_sample_on_homepage, collection_mode, featured_count, story_key, " +
+            "navigation_json, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          )
+          .bind(this.projectId, ...configVals),
+      );
+    }
+
+    // 4. Snapshot landing (project_landing)
+    if (landing) {
+      const landingVals: unknown[] = [
+        yTextToString(landing.get("stories_heading")),
+        yTextToString(landing.get("stories_intro")),
+        yTextToString(landing.get("objects_heading")),
+        yTextToString(landing.get("objects_intro")),
+        yTextToString(landing.get("welcome_body")),
+        now,
+      ];
+      const landingExists = await this.env.DB
+        .prepare("SELECT id FROM project_landing WHERE project_id = ?")
+        .bind(this.projectId)
+        .first<{ id: number }>();
+      if (landingExists) {
+        statements.push(
+          this.env.DB
+            .prepare(
+              "UPDATE project_landing SET " +
+              "stories_heading = ?, stories_intro = ?, objects_heading = ?, " +
+              "objects_intro = ?, welcome_body = ?, updated_at = ? " +
+              "WHERE project_id = ?",
+            )
+            .bind(...landingVals, this.projectId),
+        );
+      } else {
+        statements.push(
+          this.env.DB
+            .prepare(
+              "INSERT INTO project_landing (project_id, " +
+              "stories_heading, stories_intro, objects_heading, objects_intro, welcome_body, updated_at) " +
+              "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(this.projectId, ...landingVals),
+        );
+      }
+    }
+  }
+
+  /**
+   * INSERT one story row. Crash-proof: a failure never throws out of the
+   * snapshot — it logs and reschedules instead.
+   *   - explicitId undefined → new Y.Map: autoincrement INSERT + backfill `_id`.
+   *   - explicitId set → re-create a stranded row WITH the same id (Y.Doc `_id`
+   *     stays valid, FK children stay attached). On a constraint failure, retry
+   *     once as a fresh autoincrement row + backfill the new id. If that also
+   *     fails (e.g. a UNIQUE story_id collision), warn + reschedule and return
+   *     id 0 so the caller skips this story's children this pass.
+   * Returns the id actually used (0 on terminal failure) and whether `_id` was
+   * backfilled (so the caller can broadcast).
+   */
+  private async insertStoryRow(
+    storyMap: Y.Map<unknown>,
+    order: number,
+    now: string,
+    explicitId?: number,
+  ): Promise<{ id: number; backfilled: boolean }> {
+    const run = async (withId: boolean): Promise<number> => {
+      const sql = withId
+        ? 'INSERT INTO stories (id, project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, created_by, updated_at) ' +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        : 'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, created_by, updated_at) ' +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+      const base = [
+        this.projectId,
+        String(storyMap.get("story_id") ?? ""),
+        yTextToString(storyMap.get("title")),
+        yTextToString(storyMap.get("subtitle")),
+        yTextToString(storyMap.get("byline")),
+        order,
+        storyMap.get("private") ? 1 : 0,
+        storyMap.get("draft") ? 1 : 0,
+        storyMap.get("show_sections") ? 1 : 0,
+        (storyMap.get("created_by") as number | null) ?? null,
+        now,
+      ];
+      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
+      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
+    };
+    const backfill = (id: number) => { this.ydoc.transact(() => { storyMap.set("_id", id); }); };
+
+    if (explicitId !== undefined) {
+      try {
+        return { id: await run(true), backfilled: false }; // re-created same id; _id already correct
+      } catch {
+        try {
+          const id = await run(false);
+          backfill(id);
+          return { id, backfilled: true };
+        } catch {
+          console.warn(
+            `[snapshot] story "${String(storyMap.get("story_id") ?? "")}" insert blocked (likely slug collision) — manual remediation needed`,
+          );
+          this.scheduleSnapshot();
+          return { id: 0, backfilled: false };
+        }
+      }
+    }
+    try {
+      const id = await run(false);
+      backfill(id);
+      return { id, backfilled: true };
+    } catch {
+      console.warn(`[snapshot] new story "${String(storyMap.get("story_id") ?? "")}" insert failed`);
+      this.scheduleSnapshot();
+      return { id: 0, backfilled: false };
+    }
+  }
+
+  /** INSERT one step row. Crash-proof; explicit id re-creates a stranded step. */
+  private async insertStepRow(
+    stepMap: Y.Map<unknown>,
+    storyId: number,
+    stepNumber: number,
+    now: string,
+    explicitId?: number,
+  ): Promise<{ id: number; backfilled: boolean }> {
+    const run = async (withId: boolean): Promise<number> => {
+      const sql = withId
+        ? "INSERT INTO steps (id, story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, created_by, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        : "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, created_by, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+      const base = [
+        storyId,
+        stepNumber,
+        String(stepMap.get("kind") ?? "media"),
+        String(stepMap.get("object_id") ?? ""),
+        stepMap.get("x") as number | null,
+        stepMap.get("y") as number | null,
+        stepMap.get("zoom") as number | null,
+        String(stepMap.get("page") ?? ""),
+        yTextToString(stepMap.get("question")),
+        yTextToString(stepMap.get("answer")),
+        yTextToString(stepMap.get("alt_text")),
+        String(stepMap.get("clip_start") ?? ""),
+        String(stepMap.get("clip_end") ?? ""),
+        String(stepMap.get("loop") ?? ""),
+        (stepMap.get("created_by") as number | null) ?? null,
+        now,
+      ];
+      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
+      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
+    };
+    const backfill = (id: number) => { this.ydoc.transact(() => { stepMap.set("_id", id); }); };
+
+    if (explicitId !== undefined) {
+      try {
+        return { id: await run(true), backfilled: false };
+      } catch {
+        try {
+          const id = await run(false);
+          backfill(id);
+          return { id, backfilled: true };
+        } catch {
+          console.warn("[snapshot] step insert blocked — manual remediation needed");
+          this.scheduleSnapshot();
+          return { id: 0, backfilled: false };
+        }
+      }
+    }
+    try {
+      const id = await run(false);
+      backfill(id);
+      return { id, backfilled: true };
+    } catch {
+      console.warn("[snapshot] new step insert failed");
+      this.scheduleSnapshot();
+      return { id: 0, backfilled: false };
+    }
+  }
+
+  /** INSERT one layer row. Crash-proof; explicit id re-creates a stranded layer. */
+  private async insertLayerRow(
+    layerMap: Y.Map<unknown>,
+    stepId: number,
+    layerNumber: number,
+    now: string,
+    explicitId?: number,
+  ): Promise<{ id: number; backfilled: boolean }> {
+    const run = async (withId: boolean): Promise<number> => {
+      const sql = withId
+        ? "INSERT INTO layers (id, step_id, layer_number, title, button_label, content, created_by, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        : "INSERT INTO layers (step_id, layer_number, title, button_label, content, created_by, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?)";
+      const base = [
+        stepId,
+        layerNumber,
+        yTextToString(layerMap.get("title")),
+        yTextToString(layerMap.get("button_label")),
+        yTextToString(layerMap.get("content")),
+        (layerMap.get("created_by") as number | null) ?? null,
+        now,
+      ];
+      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
+      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
+    };
+    const backfill = (id: number) => { this.ydoc.transact(() => { layerMap.set("_id", id); }); };
+
+    if (explicitId !== undefined) {
+      try {
+        return { id: await run(true), backfilled: false };
+      } catch {
+        try {
+          const id = await run(false);
+          backfill(id);
+          return { id, backfilled: true };
+        } catch {
+          console.warn("[snapshot] layer insert blocked — manual remediation needed");
+          this.scheduleSnapshot();
+          return { id: 0, backfilled: false };
+        }
+      }
+    }
+    try {
+      const id = await run(false);
+      backfill(id);
+      return { id, backfilled: true };
+    } catch {
+      console.warn("[snapshot] new layer insert failed");
+      this.scheduleSnapshot();
+      return { id: 0, backfilled: false };
     }
   }
 
@@ -1354,31 +1693,22 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       let storyId = storyMap.get("_id") as number | null;
 
       if (storyId === null || storyId === undefined) {
-        // INSERT — await individually so we can capture last_row_id for backfill
-        const storyResult = await this.env.DB
-          .prepare(
-            'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, created_by, updated_at) ' +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          )
-          .bind(
-            this.projectId,
-            String(storyMap.get("story_id") ?? ""),
-            yTextToString(storyMap.get("title")),
-            yTextToString(storyMap.get("subtitle")),
-            yTextToString(storyMap.get("byline")),
-            si, // order from Y.Array index
-            storyMap.get("private") ? 1 : 0,
-            storyMap.get("draft") ? 1 : 0,
-            storyMap.get("show_sections") ? 1 : 0,
-            (storyMap.get("created_by") as number | null) ?? null,
-            now,
-          )
-          .run();
-        storyId = storyResult.meta.last_row_id as number;
-        // Backfill the canonical D1 ID onto the Y.Map so all peers converge
-        const insertedStoryId = storyId;
-        this.ydoc.transact(() => { storyMap.set("_id", insertedStoryId); });
-        didBackfill = true;
+        // New Y.Map — INSERT (autoincrement) + backfill the canonical id.
+        const r = await this.insertStoryRow(storyMap, si, now);
+        if (r.backfilled) didBackfill = true;
+        storyId = r.id;
+        if (!storyId) continue; // INSERT failed (crash-proofed); retry next snapshot
+      } else if (!d1StoryIds.has(storyId)) {
+        // Stale _id: the D1 row was deleted out from under this Y.Map. Stories own
+        // FK children (steps/layers), so we do NOT adopt a same-slug live row
+        // (that would clobber the live row's children). Re-INSERT with the SAME
+        // id so the children's story_id FK stays valid; on a constraint failure
+        // insertStoryRow falls back to a new id, and a same-slug collision
+        // degrades to caught+logged+stranded (no crash, no silent clobber).
+        const r = await this.insertStoryRow(storyMap, si, now, storyId);
+        if (r.backfilled) didBackfill = true;
+        storyId = r.id;
+        if (!storyId) continue; // re-INSERT blocked; left stranded for remediation
       } else {
         statements.push(
           this.env.DB
@@ -1415,34 +1745,18 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           let stepId = stepMap.get("_id") as number | null;
 
           if (stepId === null || stepId === undefined) {
-            const stepResult = await this.env.DB
-              .prepare(
-                "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, created_by, updated_at) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              )
-              .bind(
-                storyId,
-                sti + 1, // step_number is 1-based
-                String(stepMap.get("kind") ?? "media"),
-                String(stepMap.get("object_id") ?? ""),
-                stepMap.get("x") as number | null,
-                stepMap.get("y") as number | null,
-                stepMap.get("zoom") as number | null,
-                String(stepMap.get("page") ?? ""),
-                yTextToString(stepMap.get("question")),
-                yTextToString(stepMap.get("answer")),
-                yTextToString(stepMap.get("alt_text")),
-                String(stepMap.get("clip_start") ?? ""),
-                String(stepMap.get("clip_end") ?? ""),
-                String(stepMap.get("loop") ?? ""),
-                (stepMap.get("created_by") as number | null) ?? null,
-                now,
-              )
-              .run();
-            stepId = stepResult.meta.last_row_id as number;
-            const insertedStepId = stepId;
-            this.ydoc.transact(() => { stepMap.set("_id", insertedStepId); });
-            didBackfill = true;
+            const r = await this.insertStepRow(stepMap, storyId, sti + 1, now);
+            if (r.backfilled) didBackfill = true;
+            stepId = r.id;
+            if (!stepId) continue; // INSERT failed (crash-proofed); skip its layers
+          } else if (!d1StepIds.has(stepId)) {
+            // Stale _id: the D1 row was deleted (e.g. cascade when its story was
+            // orphaned, then undo restored the Y.Map). Re-INSERT with the same id
+            // so the layers' step_id FK stays valid. No human key → no adopt.
+            const r = await this.insertStepRow(stepMap, storyId, sti + 1, now, stepId);
+            if (r.backfilled) didBackfill = true;
+            stepId = r.id;
+            if (!stepId) continue;
           } else {
             statements.push(
               this.env.DB
@@ -1486,25 +1800,12 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
               let layerId = layerMap.get("_id") as number | null;
 
               if (layerId === null || layerId === undefined) {
-                const layerResult = await this.env.DB
-                  .prepare(
-                    "INSERT INTO layers (step_id, layer_number, title, button_label, content, created_by, updated_at) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  )
-                  .bind(
-                    stepId,
-                    li + 1, // layer_number is 1-based
-                    yTextToString(layerMap.get("title")),
-                    yTextToString(layerMap.get("button_label")),
-                    yTextToString(layerMap.get("content")),
-                    (layerMap.get("created_by") as number | null) ?? null,
-                    now,
-                  )
-                  .run();
-                layerId = layerResult.meta.last_row_id as number;
-                const insertedLayerId = layerId;
-                this.ydoc.transact(() => { layerMap.set("_id", insertedLayerId); });
-                didBackfill = true;
+                const r = await this.insertLayerRow(layerMap, stepId, li + 1, now);
+                if (r.backfilled) didBackfill = true;
+              } else if (!d1LayerIds.has(layerId)) {
+                // Stale _id: re-INSERT with the same id (no human key → no adopt).
+                const r = await this.insertLayerRow(layerMap, stepId, li + 1, now, layerId);
+                if (r.backfilled) didBackfill = true;
               } else {
                 statements.push(
                   this.env.DB
@@ -1579,6 +1880,85 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     return didBackfill;
   }
 
+  /**
+   * INSERT one object row. Crash-proof, mirroring `insertStoryRow`:
+   * explicitId undefined → new autoincrement row + backfill; explicitId set →
+   * re-create a stranded row with the same id, falling back to autoincrement +
+   * backfill on a constraint failure, and to a logged no-op (id 0) if that also
+   * fails. Carries every content column the Y.Map holds — including
+   * object_type/subjects/source/credit (editable) and thumbnail/dimensions/
+   * extra_columns (import passthrough), all loaded by buildFromD1Rows — so a
+   * re-INSERT preserves them instead of resetting them. origin defaults and
+   * missing_from_repo=0 on a fresh insert.
+   */
+  private async insertObjectRow(
+    objMap: Y.Map<unknown>,
+    now: string,
+    explicitId?: number,
+  ): Promise<{ id: number; backfilled: boolean }> {
+    const run = async (withId: boolean): Promise<number> => {
+      const sql = withId
+        ? "INSERT INTO objects (id, project_id, object_id, title, creator, description, alt_text, source_url, period, year, object_type, subjects, source, credit, thumbnail, dimensions, extra_columns, featured, image_available, origin, missing_from_repo, created_by, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        : "INSERT INTO objects (project_id, object_id, title, creator, description, alt_text, source_url, period, year, object_type, subjects, source, credit, thumbnail, dimensions, extra_columns, featured, image_available, origin, missing_from_repo, created_by, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+      const base = [
+        this.projectId,
+        String(objMap.get("object_id") ?? ""),
+        yTextToString(objMap.get("title")),
+        yTextToString(objMap.get("creator")),
+        yTextToString(objMap.get("description")),
+        yTextToString(objMap.get("alt_text")),
+        String(objMap.get("source_url") ?? ""),
+        yTextToString(objMap.get("period")),
+        yTextToString(objMap.get("year")),
+        yTextToString(objMap.get("object_type")),
+        yTextToString(objMap.get("subjects")),
+        yTextToString(objMap.get("source")),
+        yTextToString(objMap.get("credit")),
+        String(objMap.get("thumbnail") ?? ""),
+        String(objMap.get("dimensions") ?? ""),
+        String(objMap.get("extra_columns") ?? ""),
+        objMap.get("featured") ? 1 : 0,
+        objMap.get("image_available") ? 1 : 0,
+        String(objMap.get("origin") ?? "iiif"),
+        0, // missing_from_repo = false on insert
+        (objMap.get("created_by") as number | null) ?? null,
+        now,
+      ];
+      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
+      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
+    };
+    const backfill = (id: number) => { this.ydoc.transact(() => { objMap.set("_id", id); }); };
+
+    if (explicitId !== undefined) {
+      try {
+        return { id: await run(true), backfilled: false };
+      } catch {
+        try {
+          const id = await run(false);
+          backfill(id);
+          return { id, backfilled: true };
+        } catch {
+          console.warn(
+            `[snapshot] object "${String(objMap.get("object_id") ?? "")}" insert blocked — manual remediation needed`,
+          );
+          this.scheduleSnapshot();
+          return { id: 0, backfilled: false };
+        }
+      }
+    }
+    try {
+      const id = await run(false);
+      backfill(id);
+      return { id, backfilled: true };
+    } catch {
+      console.warn(`[snapshot] new object "${String(objMap.get("object_id") ?? "")}" insert failed`);
+      this.scheduleSnapshot();
+      return { id: 0, backfilled: false };
+    }
+  }
+
   /** Section 6: objects INSERT (with _id backfill) / UPDATE / DELETE. */
   private async snapshotObjects(
     statements: D1PreparedStatement[],
@@ -1592,10 +1972,47 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     //    Order column is written from the Y.Array index.
     const objectsArray = this.ydoc.getArray<Y.Map<unknown>>("objects");
     const d1ObjectsResult = await this.env.DB
-      .prepare("SELECT id FROM objects WHERE project_id = ?")
+      .prepare("SELECT id, object_id FROM objects WHERE project_id = ?")
       .bind(this.projectId)
-      .all<{ id: number }>();
+      .all<{ id: number; object_id: string }>();
     const d1ObjectIds = new Set(d1ObjectsResult.results.map((r) => r.id));
+    const d1ObjectKeyToId = new Map(
+      d1ObjectsResult.results.filter((r) => r.object_id).map((r) => [r.object_id, r.id]),
+    );
+
+    // Push the object UPDATE bound to a target row id (used for both an in-place
+    // update and an adopt onto a live same-object_id row).
+    const pushObjectUpdate = (m: Y.Map<unknown>, targetId: number) => {
+      statements.push(
+        this.env.DB
+          .prepare(
+            "UPDATE objects SET title = ?, creator = ?, description = ?, alt_text = ?, " +
+            "source_url = ?, period = ?, year = ?, object_type = ?, subjects = ?, " +
+            "source = ?, credit = ?, thumbnail = ?, dimensions = ?, extra_columns = ?, " +
+            "featured = ?, image_available = ?, updated_at = ? WHERE id = ?",
+          )
+          .bind(
+            yTextToString(m.get("title")),
+            yTextToString(m.get("creator")),
+            yTextToString(m.get("description")),
+            yTextToString(m.get("alt_text")),
+            String(m.get("source_url") ?? ""),
+            yTextToString(m.get("period")),
+            yTextToString(m.get("year")),
+            yTextToString(m.get("object_type")),
+            yTextToString(m.get("subjects")),
+            yTextToString(m.get("source")),
+            yTextToString(m.get("credit")),
+            String(m.get("thumbnail") ?? ""),
+            String(m.get("dimensions") ?? ""),
+            String(m.get("extra_columns") ?? ""),
+            m.get("featured") ? 1 : 0,
+            m.get("image_available") ? 1 : 0,
+            now,
+            targetId,
+          ),
+      );
+    };
 
     for (let oi = 0; oi < objectsArray.length; oi++) {
       const objMap = objectsArray.get(oi);
@@ -1610,56 +2027,31 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       }
 
       if (objId === null || objId === undefined) {
-        const objResult = await this.env.DB
-          .prepare(
-            "INSERT INTO objects (project_id, object_id, title, creator, description, alt_text, source_url, period, year, featured, image_available, origin, missing_from_repo, created_by, updated_at) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          )
-          .bind(
-            this.projectId,
-            String(objMap.get("object_id") ?? ""),
-            yTextToString(objMap.get("title")),
-            yTextToString(objMap.get("creator")),
-            yTextToString(objMap.get("description")),
-            yTextToString(objMap.get("alt_text")),
-            String(objMap.get("source_url") ?? ""),
-            yTextToString(objMap.get("period")),
-            yTextToString(objMap.get("year")),
-            objMap.get("featured") ? 1 : 0,
-            objMap.get("image_available") ? 1 : 0,
-            String(objMap.get("origin") ?? "iiif"),
-            0, // missing_from_repo = false on insert
-            (objMap.get("created_by") as number | null) ?? null,
-            now,
-          )
-          .run();
-        objId = objResult.meta.last_row_id as number;
-        const insertedObjId = objId;
-        this.ydoc.transact(() => { objMap.set("_id", insertedObjId); });
-        didBackfill = true;
-      } else {
-        statements.push(
-          this.env.DB
-            .prepare(
-              "UPDATE objects SET title = ?, creator = ?, description = ?, alt_text = ?, " +
-              "source_url = ?, period = ?, year = ?, featured = ?, image_available = ?, " +
-              "updated_at = ? WHERE id = ?",
-            )
-            .bind(
-              yTextToString(objMap.get("title")),
-              yTextToString(objMap.get("creator")),
-              yTextToString(objMap.get("description")),
-              yTextToString(objMap.get("alt_text")),
-              String(objMap.get("source_url") ?? ""),
-              yTextToString(objMap.get("period")),
-              yTextToString(objMap.get("year")),
-              objMap.get("featured") ? 1 : 0,
-              objMap.get("image_available") ? 1 : 0,
-              now,
-              objId,
-            ),
-        );
+        const r = await this.insertObjectRow(objMap, now);
+        if (r.backfilled) didBackfill = true;
+      } else if (d1ObjectIds.has(objId)) {
+        pushObjectUpdate(objMap, objId);
         d1ObjectIds.delete(objId);
+      } else {
+        // Stale _id: the D1 row was deleted out from under this Y.Map. Objects
+        // have no FK children, so adopt a live same-object_id row when one exists
+        // (UPDATE it — the Y.Map now carries every content column, including
+        // object_type/subjects/source/credit/thumbnail/dimensions/extra_columns,
+        // so the UPDATE writes them faithfully; only origin and missing_from_repo
+        // are D1-only and preserved by omission). Otherwise re-INSERT with the
+        // same id; only origin (default) and missing_from_repo (0) reset.
+        const key = String(objMap.get("object_id") ?? "");
+        const liveId = key ? d1ObjectKeyToId.get(key) : undefined;
+        if (liveId !== undefined) {
+          pushObjectUpdate(objMap, liveId);
+          const adoptId = liveId;
+          this.ydoc.transact(() => { objMap.set("_id", adoptId); });
+          didBackfill = true;
+          d1ObjectIds.delete(liveId);
+        } else {
+          const r = await this.insertObjectRow(objMap, now, objId);
+          if (r.backfilled) didBackfill = true;
+        }
       }
     }
 
@@ -1674,6 +2066,75 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     return didBackfill;
   }
 
+  /**
+   * INSERT one glossary term. Crash-proof, mirroring `insertObjectRow`. The
+   * term_id resolution (slugify on a brand-new term, keep the existing slug for a
+   * re-created stranded term) is shared by both paths: a stranded term already
+   * carries its term_id, so `resolvedTermId` is that existing value.
+   */
+  private async insertGlossaryRow(
+    termMap: Y.Map<unknown>,
+    now: string,
+    explicitId?: number,
+  ): Promise<{ id: number; backfilled: boolean }> {
+    const existingTermId = termMap.get("term_id") as string | undefined;
+    const tempId = termMap.get("_temp_id") as string | undefined;
+    const titleStr = yTextToString(termMap.get("title"));
+    const slugBase = titleStr.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const resolvedTermId = existingTermId
+      ? existingTermId
+      : slugBase
+        ? `${slugBase}-${(tempId ?? crypto.randomUUID()).slice(0, 8)}`
+        : (tempId ?? crypto.randomUUID());
+
+    const run = async (withId: boolean): Promise<number> => {
+      const sql = withId
+        ? "INSERT INTO glossary_terms (id, project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        : "INSERT INTO glossary_terms (project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)";
+      const base = [
+        this.projectId,
+        resolvedTermId,
+        titleStr,
+        yTextToString(termMap.get("definition")),
+        (termMap.get("created_by") as number | null) ?? null,
+        now,
+      ];
+      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
+      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
+    };
+    const backfill = (id: number) => {
+      this.ydoc.transact(() => {
+        termMap.set("_id", id);
+        if (!existingTermId) termMap.set("term_id", resolvedTermId);
+      });
+    };
+
+    if (explicitId !== undefined) {
+      try {
+        return { id: await run(true), backfilled: false };
+      } catch {
+        try {
+          const id = await run(false);
+          backfill(id);
+          return { id, backfilled: true };
+        } catch {
+          console.warn(`[snapshot] glossary term "${resolvedTermId}" insert blocked — manual remediation needed`);
+          this.scheduleSnapshot();
+          return { id: 0, backfilled: false };
+        }
+      }
+    }
+    try {
+      const id = await run(false);
+      backfill(id);
+      return { id, backfilled: true };
+    } catch {
+      console.warn(`[snapshot] new glossary term "${resolvedTermId}" insert failed`);
+      this.scheduleSnapshot();
+      return { id: 0, backfilled: false };
+    }
+  }
+
   /** Section 7: glossary_terms INSERT (with _id backfill) / UPDATE / DELETE. */
   private async snapshotGlossary(
     statements: D1PreparedStatement[],
@@ -1685,60 +2146,54 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     //    to the Y.Map's _temp_id (UUID) so the NOT NULL constraint is satisfied.
     const glossaryArray = this.ydoc.getArray<Y.Map<unknown>>("glossary");
     const d1GlossaryResult = await this.env.DB
-      .prepare("SELECT id FROM glossary_terms WHERE project_id = ?")
+      .prepare("SELECT id, term_id FROM glossary_terms WHERE project_id = ?")
       .bind(this.projectId)
-      .all<{ id: number }>();
+      .all<{ id: number; term_id: string }>();
     const d1GlossaryIds = new Set(d1GlossaryResult.results.map((r) => r.id));
+    const d1GlossaryKeyToId = new Map(
+      d1GlossaryResult.results.filter((r) => r.term_id).map((r) => [r.term_id, r.id]),
+    );
+
+    const pushGlossaryUpdate = (m: Y.Map<unknown>, targetId: number) => {
+      statements.push(
+        this.env.DB
+          .prepare(
+            "UPDATE glossary_terms SET title = ?, definition = ?, updated_at = ? WHERE id = ?",
+          )
+          .bind(
+            yTextToString(m.get("title")),
+            yTextToString(m.get("definition")),
+            now,
+            targetId,
+          ),
+      );
+    };
 
     for (let gi = 0; gi < glossaryArray.length; gi++) {
       const termMap = glossaryArray.get(gi);
-      let termId = termMap.get("_id") as number | null;
+      const termId = termMap.get("_id") as number | null;
 
       if (termId === null || termId === undefined) {
-        const existingTermId = termMap.get("term_id") as string | undefined;
-        const tempId = termMap.get("_temp_id") as string | undefined;
-        const titleStr = yTextToString(termMap.get("title"));
-        const slugBase = titleStr.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-        const resolvedTermId = existingTermId
-          ? existingTermId
-          : slugBase
-            ? `${slugBase}-${(tempId ?? crypto.randomUUID()).slice(0, 8)}`
-            : (tempId ?? crypto.randomUUID());
-
-        const termResult = await this.env.DB
-          .prepare(
-            "INSERT INTO glossary_terms (project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-          )
-          .bind(
-            this.projectId,
-            resolvedTermId,
-            titleStr,
-            yTextToString(termMap.get("definition")),
-            (termMap.get("created_by") as number | null) ?? null,
-            now,
-          )
-          .run();
-        termId = termResult.meta.last_row_id as number;
-        const insertedTermId = termId;
-        this.ydoc.transact(() => {
-          termMap.set("_id", insertedTermId);
-          if (!existingTermId) termMap.set("term_id", resolvedTermId);
-        });
-        didBackfill = true;
-      } else {
-        statements.push(
-          this.env.DB
-            .prepare(
-              "UPDATE glossary_terms SET title = ?, definition = ?, updated_at = ? WHERE id = ?",
-            )
-            .bind(
-              yTextToString(termMap.get("title")),
-              yTextToString(termMap.get("definition")),
-              now,
-              termId,
-            ),
-        );
+        const r = await this.insertGlossaryRow(termMap, now);
+        if (r.backfilled) didBackfill = true;
+      } else if (d1GlossaryIds.has(termId)) {
+        pushGlossaryUpdate(termMap, termId);
         d1GlossaryIds.delete(termId);
+      } else {
+        // Stale _id: adopt a live same-term_id row when one exists, else
+        // re-INSERT with the same id (term_id has no UNIQUE constraint).
+        const key = String(termMap.get("term_id") ?? "");
+        const liveId = key ? d1GlossaryKeyToId.get(key) : undefined;
+        if (liveId !== undefined) {
+          pushGlossaryUpdate(termMap, liveId);
+          const adoptId = liveId;
+          this.ydoc.transact(() => { termMap.set("_id", adoptId); });
+          didBackfill = true;
+          d1GlossaryIds.delete(liveId);
+        } else {
+          const r = await this.insertGlossaryRow(termMap, now, termId);
+          if (r.backfilled) didBackfill = true;
+        }
       }
     }
 
@@ -1753,6 +2208,59 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     return didBackfill;
   }
 
+  /** INSERT one project_pages row. Crash-proof, mirroring `insertObjectRow`. */
+  private async insertPageRow(
+    pageMap: Y.Map<unknown>,
+    order: number,
+    now: string,
+    explicitId?: number,
+  ): Promise<{ id: number; backfilled: boolean }> {
+    const run = async (withId: boolean): Promise<number> => {
+      const sql = withId
+        ? 'INSERT INTO project_pages (id, project_id, title, slug, body, "order", created_by, updated_at) ' +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        : 'INSERT INTO project_pages (project_id, title, slug, body, "order", created_by, updated_at) ' +
+          "VALUES (?, ?, ?, ?, ?, ?, ?)";
+      const base = [
+        this.projectId,
+        yTextToString(pageMap.get("title")),
+        String(pageMap.get("slug") ?? ""),
+        yTextToString(pageMap.get("body")),
+        order,
+        (pageMap.get("created_by") as number | null) ?? null,
+        now,
+      ];
+      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
+      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
+    };
+    const backfill = (id: number) => { this.ydoc.transact(() => { pageMap.set("_id", id); }); };
+
+    if (explicitId !== undefined) {
+      try {
+        return { id: await run(true), backfilled: false };
+      } catch {
+        try {
+          const id = await run(false);
+          backfill(id);
+          return { id, backfilled: true };
+        } catch {
+          console.warn(`[snapshot] page "${String(pageMap.get("slug") ?? "")}" insert blocked — manual remediation needed`);
+          this.scheduleSnapshot();
+          return { id: 0, backfilled: false };
+        }
+      }
+    }
+    try {
+      const id = await run(false);
+      backfill(id);
+      return { id, backfilled: true };
+    } catch {
+      console.warn(`[snapshot] new page "${String(pageMap.get("slug") ?? "")}" insert failed`);
+      this.scheduleSnapshot();
+      return { id: 0, backfilled: false };
+    }
+  }
+
   /** Section 8: project_pages INSERT (with _id backfill) / UPDATE / DELETE. */
   private async snapshotPages(
     statements: D1PreparedStatement[],
@@ -1763,52 +2271,57 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     //    index so D1 stays aligned with the Yjs position.
     const pagesArray = this.ydoc.getArray<Y.Map<unknown>>("pages");
     const d1PagesResult = await this.env.DB
-      .prepare("SELECT id FROM project_pages WHERE project_id = ?")
+      .prepare("SELECT id, slug FROM project_pages WHERE project_id = ?")
       .bind(this.projectId)
-      .all<{ id: number }>();
+      .all<{ id: number; slug: string }>();
     const d1PageIds = new Set(d1PagesResult.results.map((r) => r.id));
+    const d1PageKeyToId = new Map(
+      d1PagesResult.results.filter((r) => r.slug).map((r) => [r.slug, r.id]),
+    );
+
+    const pushPageUpdate = (m: Y.Map<unknown>, order: number, targetId: number) => {
+      statements.push(
+        this.env.DB
+          .prepare(
+            'UPDATE project_pages SET title = ?, slug = ?, body = ?, ' +
+            '"order" = ?, updated_at = ? WHERE id = ?',
+          )
+          .bind(
+            yTextToString(m.get("title")),
+            String(m.get("slug") ?? ""),
+            yTextToString(m.get("body")),
+            order,
+            now,
+            targetId,
+          ),
+      );
+    };
 
     for (let pi = 0; pi < pagesArray.length; pi++) {
       const pageMap = pagesArray.get(pi);
-      let pageId = pageMap.get("_id") as number | null;
+      const pageId = pageMap.get("_id") as number | null;
 
       if (pageId === null || pageId === undefined) {
-        const pageResult = await this.env.DB
-          .prepare(
-            'INSERT INTO project_pages (project_id, title, slug, body, "order", created_by, updated_at) ' +
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-          )
-          .bind(
-            this.projectId,
-            yTextToString(pageMap.get("title")),
-            String(pageMap.get("slug") ?? ""),
-            yTextToString(pageMap.get("body")),
-            pi, // order from Y.Array index
-            (pageMap.get("created_by") as number | null) ?? null,
-            now,
-          )
-          .run();
-        pageId = pageResult.meta.last_row_id as number;
-        const insertedPageId = pageId;
-        this.ydoc.transact(() => { pageMap.set("_id", insertedPageId); });
-        didBackfill = true;
-      } else {
-        statements.push(
-          this.env.DB
-            .prepare(
-              'UPDATE project_pages SET title = ?, slug = ?, body = ?, ' +
-              '"order" = ?, updated_at = ? WHERE id = ?',
-            )
-            .bind(
-              yTextToString(pageMap.get("title")),
-              String(pageMap.get("slug") ?? ""),
-              yTextToString(pageMap.get("body")),
-              pi, // order from Y.Array index
-              now,
-              pageId,
-            ),
-        );
+        const r = await this.insertPageRow(pageMap, pi, now);
+        if (r.backfilled) didBackfill = true;
+      } else if (d1PageIds.has(pageId)) {
+        pushPageUpdate(pageMap, pi, pageId);
         d1PageIds.delete(pageId);
+      } else {
+        // Stale _id: adopt a live same-slug row when one exists (UNIQUE-safe),
+        // else re-INSERT with the same id.
+        const key = String(pageMap.get("slug") ?? "");
+        const liveId = key ? d1PageKeyToId.get(key) : undefined;
+        if (liveId !== undefined) {
+          pushPageUpdate(pageMap, pi, liveId);
+          const adoptId = liveId;
+          this.ydoc.transact(() => { pageMap.set("_id", adoptId); });
+          didBackfill = true;
+          d1PageIds.delete(liveId);
+        } else {
+          const r = await this.insertPageRow(pageMap, pi, now, pageId);
+          if (r.backfilled) didBackfill = true;
+        }
       }
     }
 
@@ -1879,55 +2392,90 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           );
         }
 
-        // Emit coarse activity rows for editor edits.
-        // buildActivityRows derives one row per (user, entity) touched from the
-        // accumulated field-paths; we filter against activityEmitted so each
-        // entity emits at most once per DO lifetime (userFieldSets never clears,
-        // so an unfiltered emit would re-INSERT every entity every snapshot).
-        // Rows ride the same atomic this.env.DB.batch(statements) as the
-        // contribution UPDATEs. Raw DB.prepare/bind (not Drizzle) — the DO
-        // writes through the raw D1 binding. Actor is the server-resolved
-        // userId, never client-supplied (spoofing mitigation).
-        const activityRows = buildActivityRows(activeUserIds, this.userFieldSets, this.projectId);
-        let activityInserts = 0;
-        // Collect keys to commit to activityEmitted only AFTER the batch
-        // succeeds — see newlyEmittedKeys declaration at block top (E2 fix).
-        // buildActivityRows already deduplicates (actorUserId, entityKey)
-        // pairs within a single call, so a plain array is sufficient.
-        for (const row of activityRows) {
-          let emitted = this.activityEmitted.get(row.actorUserId);
-          if (!emitted) {
-            emitted = new Set<string>();
-            this.activityEmitted.set(row.actorUserId, emitted);
-          }
-          const entityKey = `${row.entityType}:${row.entityId}`;
-          if (emitted.has(entityKey)) continue; // already recorded this lifetime
-          // Defer the actual emitted.add() until after the batch succeeds.
-          newlyEmittedKeys.push({ actorUserId: row.actorUserId, entityKey });
-          activityInserts++;
-          statements.push(
-            this.env.DB
-              .prepare(
-                "INSERT INTO activity_log (project_id, actor_user_id, verb, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              )
-              .bind(this.projectId, row.actorUserId, row.verb, row.entityType, row.entityId, now),
-          );
-        }
+        // Emit coarse activity rows for editor edits. The build/dedup/prune
+        // logic is extracted into buildActivityStatements so the SAME code runs
+        // from two callers: here (the snapshot, a backstop) and eagerly from
+        // flushActivityRows on the warm webSocketMessage path. The warm path is
+        // the PRIMARY emitter — the snapshot usually runs cold after hibernation
+        // eviction with an empty userFieldSets, so deferring emission to it lost
+        // nearly every editor edit. In-memory activityEmitted dedups across both
+        // callers within a DO instance, so there is no double-emit. These rows
+        // ride the same atomic batch as the contribution UPDATEs.
+        const built = this.buildActivityStatements(now);
+        statements.push(...built.inserts);
+        newlyEmittedKeys.push(...built.newlyEmittedKeys);
+      }
+      // userFieldSets Sets are NOT cleared — they keep accumulating.
+      // NOTE: newSessions.clear() and activityEmitted updates are deferred;
+      // they happen after the batch succeeds (below).
+    }
+    return newlyEmittedKeys;
+  }
 
-        // Opportunistic prune: editor edits are the high-volume
-        // activity producer and write the raw INSERTs above, NOT recordActivity,
-        // so the per-project retention cap must be enforced here too — otherwise
-        // the table grows unbounded for active projects. Mirrors the prune in
-        // activity.server.ts and shares ACTIVITY_RETENTION_CAP as the single
-        // source of truth. Rides the same atomic batch AFTER the inserts (D1
-        // batch is sequential+transactional, so the subquery sees the new rows).
-        // project-scoped — never touches another project's rows. Only when rows
-        // were actually inserted, to avoid a needless DELETE every snapshot.
-        if (activityInserts > 0) {
-          statements.push(
-            this.env.DB
-              .prepare(
-                `DELETE FROM activity_log
+  /**
+   * Build the activity_log INSERT statements (+ retention prune) for the
+   * field-paths accumulated in userFieldSets, deduped against activityEmitted
+   * and a per-call seenKeys set. Pure w.r.t. D1: it returns prepared statements
+   * and the keys to commit to activityEmitted AFTER the caller's batch succeeds
+   * (never mutates activityEmitted membership itself — it only creates the
+   * per-user Set so it exists at commit time). Shared by snapshotContributions
+   * (backstop) and flushActivityRows (the warm primary emitter).
+   *
+   * buildActivityRows derives one coarse row per (user, entity) touched. We
+   * resolve each row's field-path id to the entity's human slug + title
+   * (entity_id / entity_label) and dedup on the RESOLVED slug, so a same-session
+   * add (temp-uuid id) and a later edit (numeric id) of one entity collapse to a
+   * single feed row. Actor is the server-resolved userId, never client-supplied.
+   */
+  private buildActivityStatements(
+    now: string,
+  ): { inserts: D1PreparedStatement[]; newlyEmittedKeys: Array<{ actorUserId: number; entityKey: string }> } {
+    const inserts: D1PreparedStatement[] = [];
+    const newlyEmittedKeys: Array<{ actorUserId: number; entityKey: string }> = [];
+    if (!this.projectId) return { inserts, newlyEmittedKeys };
+
+    const userIds = [...this.userFieldSets.keys()];
+    const activityRows = buildActivityRows(userIds, this.userFieldSets, this.projectId);
+    const seenKeys = new Set<string>();
+    for (const row of activityRows) {
+      let emitted = this.activityEmitted.get(row.actorUserId);
+      if (!emitted) {
+        emitted = new Set<string>();
+        this.activityEmitted.set(row.actorUserId, emitted);
+      }
+      const resolved = resolveActivityEntity(this.ydoc, row.entityType, row.entityId);
+      const entityKey = `${row.entityType}:${resolved.entityId ?? row.entityId}`;
+      if (emitted.has(entityKey) || seenKeys.has(entityKey)) continue; // already recorded
+      seenKeys.add(entityKey);
+      newlyEmittedKeys.push({ actorUserId: row.actorUserId, entityKey });
+      inserts.push(
+        this.env.DB
+          .prepare(
+            "INSERT INTO activity_log (project_id, actor_user_id, verb, entity_type, entity_id, entity_label, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          )
+          .bind(
+            this.projectId,
+            row.actorUserId,
+            row.verb,
+            row.entityType,
+            resolved.entityId ?? row.entityId,
+            resolved.entityLabel,
+            now,
+          ),
+      );
+    }
+
+    // Opportunistic prune: editor edits are the high-volume activity producer
+    // and write the raw INSERTs above (NOT recordActivity), so the per-project
+    // retention cap must be enforced here too. Shares ACTIVITY_RETENTION_CAP as
+    // the single source of truth. Rides AFTER the inserts in the same batch (D1
+    // batch is sequential+transactional, so the subquery sees the new rows).
+    // Only when rows were inserted, to avoid a needless DELETE.
+    if (inserts.length > 0) {
+      inserts.push(
+        this.env.DB
+          .prepare(
+            `DELETE FROM activity_log
                  WHERE project_id = ?
                    AND id NOT IN (
                      SELECT id FROM activity_log
@@ -1935,16 +2483,51 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
                      ORDER BY created_at DESC, id DESC
                      LIMIT ?
                    )`,
-              )
-              .bind(this.projectId, this.projectId, ACTIVITY_RETENTION_CAP),
-          );
-        }
-      }
-      // userFieldSets Sets are NOT cleared — they keep accumulating.
-      // NOTE: newSessions.clear() and activityEmitted updates are deferred;
-      // they happen after the batch succeeds (below).
+          )
+          .bind(this.projectId, this.projectId, ACTIVITY_RETENTION_CAP),
+      );
     }
-    return newlyEmittedKeys;
+
+    return { inserts, newlyEmittedKeys };
+  }
+
+  /**
+   * Emit pending editor-edit activity rows NOW, while the DO instance is warm.
+   *
+   * Called from webSocketMessage the moment an edit applies — the only point at
+   * which getUserContext(ws) can attribute the edit and the Y.Doc is guaranteed
+   * loaded. This is the PRIMARY activity emitter: deferring emission to the +30s
+   * alarm snapshot lost nearly every edit because the DO hibernates between
+   * events and the snapshot runs cold with an empty userFieldSets. Writes its
+   * own small batch (the activity feed is append-only — it does not need to be
+   * atomic with the yjs_state blob). Best-effort: a D1 failure is logged and the
+   * keys are NOT committed, so the snapshot backstop can retry them. Never
+   * throws — it must not break the realtime message path.
+   */
+  private async flushActivityRows(): Promise<void> {
+    if (!this.projectId || !this.docLoaded) return;
+    const now = new Date().toISOString();
+    const { inserts, newlyEmittedKeys } = this.buildActivityStatements(now);
+    if (inserts.length === 0) return;
+    // Commit the dedup keys SYNCHRONOUSLY — before the await below — so that
+    // concurrent webSocketMessage handlers (which interleave only at awaits)
+    // can't each slip past the dedup check and re-emit the same entity once per
+    // keystroke. Deferring the commit to after the await (as the snapshot path
+    // safely does, because it runs single-shot) produced a per-keystroke flood
+    // under real concurrent typing. On a write failure we roll the keys back so
+    // a later edit can re-emit; losing one coarse row on a rare D1 error is
+    // acceptable for an append-only feed.
+    for (const { actorUserId, entityKey } of newlyEmittedKeys) {
+      this.activityEmitted.get(actorUserId)?.add(entityKey);
+    }
+    try {
+      await this.env.DB.batch(inserts);
+    } catch (err) {
+      for (const { actorUserId, entityKey } of newlyEmittedKeys) {
+        this.activityEmitted.get(actorUserId)?.delete(entityKey);
+      }
+      console.error("[activity] eager flush failed; will retry on next edit", err);
+    }
   }
 
   private async doSnapshot(): Promise<void> {
@@ -1974,7 +2557,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // 5-8. Otherwise a cold-start restore from the blob would see _id: null
     // items that have already been INSERTed to D1 and would re-INSERT them.
 
-    this.snapshotConfig(statements, now);
+    await this.snapshotConfig(statements, now);
 
     if (await this.snapshotStories(statements, now)) didBackfill = true;
 
