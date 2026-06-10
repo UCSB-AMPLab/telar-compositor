@@ -368,7 +368,7 @@ export async function applySyncChanges(
   owner: string,
   repo: string,
   db: ReturnType<typeof getDb>
-): Promise<{ appliedCount: number; pendingObjects: PendingObject[] }> {
+): Promise<{ appliedCount: number; pendingObjects: PendingObject[]; removedObjectIds: string[] }> {
   const { newObjectIds, changedObjectIds, fieldChoices, removedObjectIds, unregisteredObjectIds } = changes;
 
   // Re-fetch CSV and tree to get authoritative repo values
@@ -523,7 +523,10 @@ export async function applySyncChanges(
     }
   }
 
-  return { appliedCount, pendingObjects };
+  // Echo the removed ids so the client can drop their Y.Maps — the route delete
+  // above removes the D1 rows, but the Y.Doc is the source of truth and the next
+  // snapshot would re-INSERT (resurrect) any object whose Y.Map still exists.
+  return { appliedCount, pendingObjects, removedObjectIds };
 }
 
 // ===========================================================================

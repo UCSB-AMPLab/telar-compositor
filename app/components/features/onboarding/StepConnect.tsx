@@ -74,12 +74,10 @@ export function StepConnect({
   const { t } = useTranslation("onboarding");
   const [selected, setSelected] = useState<RepoWithInstallation | null>(null);
   const [search, setSearch] = useState("");
-  const [unlinkTarget, setUnlinkTarget] = useState<ConnectedProject | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "create">("list");
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   // `scopeBlocked` state lives in WizardShell now —
   // received as a prop and rendered in the existing slot below.
-  const unlinkFetcher = useFetcher();
 
   // Build installation options from the loader's `installations` payload so we
   // know each installation's target_type ("User" vs "Organization") and can
@@ -130,17 +128,6 @@ export function StepConnect({
   );
 
   const hasConnectedSites = connectedProjects.length >= 1;
-
-  const isUnlinking = unlinkFetcher.state !== "idle";
-
-  function handleUnlink() {
-    if (!unlinkTarget) return;
-    unlinkFetcher.submit(
-      { intent: "unlink-project", project_id: String(unlinkTarget.id) },
-      { method: "post", action: "/onboarding" },
-    );
-    setUnlinkTarget(null);
-  }
 
   return (
     <div className={className}>
@@ -345,16 +332,17 @@ export function StepConnect({
                         {t("step_connect.resume")}
                       </Link>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => setUnlinkTarget(project)}
-                      disabled={isUnlinking}
+                    {/* Removal is handled on the Account page (Connected sites →
+                        Delete project) — a working type-to-confirm flow. The
+                        in-onboarding unlink modal was removed; this links there. */}
+                    <Link
+                      to="/account"
                       className="inline-flex items-center gap-1 text-xs font-heading font-semibold uppercase tracking-wider text-red-600 hover:bg-red-50 border border-red-200 rounded-full px-3 py-1 transition-colors cursor-pointer"
                       title={t("step_connect.unlink")}
                     >
                       <Link2Off className="w-3.5 h-3.5" aria-hidden="true" />
                       {t("step_connect.unlink")}
-                    </button>
+                    </Link>
                   </div>
                 </li>
               );
@@ -510,42 +498,6 @@ export function StepConnect({
         </Button>
       </div>
       </>
-      )}
-
-      {/* Unlink confirmation dialog */}
-      {unlinkTarget && (
-        <>
-          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setUnlinkTarget(null)} />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-              <h3 className="font-heading font-semibold text-lg text-charcoal mb-2">
-                {t("step_connect.unlink_title")}
-              </h3>
-              <p className="font-body text-sm text-gray-600 mb-1">
-                {t("step_connect.unlink_body", { repo: unlinkTarget.github_repo_full_name, interpolation: { escapeValue: false } })}
-              </p>
-              <p className="font-body text-sm text-red-600 mb-5">
-                {t("step_connect.unlink_warning")}
-              </p>
-              <div className="flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setUnlinkTarget(null)}
-                  className="inline-flex items-center justify-center border border-gray-200 hover:bg-gray-50 text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-2.5 transition-colors cursor-pointer"
-                >
-                  {t("step_connect.unlink_cancel")}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleUnlink}
-                  className="inline-flex items-center justify-center bg-red-600 hover:bg-red-700 text-white font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-2.5 transition-colors cursor-pointer"
-                >
-                  {t("step_connect.unlink_confirm")}
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
       )}
     </div>
   );
