@@ -61,8 +61,26 @@ export const authMiddleware: MiddlewareFunction = async ({ request, context }, n
     });
   }
 
-  // Auto-refresh token if near expiry (throws redirect on expired refresh token)
-  const refreshedUser = await maybeRefreshToken(userRows[0], env);
+  // Auto-refresh token if near expiry. A failed or expired refresh throws a
+  // redirect to /signin?reason=session_expired — but that redirect MUST also
+  // clear this session cookie. Otherwise the still-valid cookie makes /signin
+  // bounce the user straight back to an _app route, which fails the refresh
+  // again, and the two routes ping-pong until the browser gives up
+  // (ERR_TOO_MANY_REDIRECTS). Re-throw with destroySession so an expired
+  // session becomes a clean logout, consistent with the exits above.
+  let refreshedUser: AuthenticatedUser;
+  try {
+    refreshedUser = await maybeRefreshToken(userRows[0], env);
+  } catch (thrown) {
+    if (thrown instanceof Response && thrown.status >= 300 && thrown.status < 400) {
+      throw redirect(thrown.headers.get("Location") ?? "/signin?reason=session_expired", {
+        headers: {
+          "Set-Cookie": await sessionStorage.destroySession(session),
+        },
+      });
+    }
+    throw thrown;
+  }
 
   // Set user on context for child loaders/actions
   context.set(userContext, refreshedUser);
