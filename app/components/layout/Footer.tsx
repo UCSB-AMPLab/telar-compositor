@@ -11,7 +11,7 @@ interface FooterProps {
   className?: string;
 }
 
-const VERSION = "1.3.3-beta";
+const VERSION = "1.3.4-beta";
 
 const linkClass = "text-cream/60 hover:text-cream hover:underline underline-offset-2";
 
