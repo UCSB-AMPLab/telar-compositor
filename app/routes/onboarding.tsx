@@ -25,6 +25,7 @@ import { commitFilesToRepo, disableGoogleSheetsInConfig, verifySiteUrl, enableGi
 import { getInstallationToken } from "~/lib/github-app.server";
 import { handleCreateSiteIntents } from "~/lib/onboarding-create-site.server";
 import { getDb } from "~/lib/db.server";
+import { resetCollabDocIfBlobExists } from "~/lib/collab-reset.server";
 import {
   projects,
   project_config,
@@ -418,6 +419,13 @@ export async function action({ request, context }: Route.ActionArgs) {
         updated_at: new Date().toISOString(),
       }).where(eq(project_config.project_id, projectId));
     }
+
+    // The url/baseurl/google_sheets_enabled writes above round-trip through the
+    // collaboration snapshot. If the project already has a Y.Doc blob (the editor
+    // was opened before this repair), rebuild it from the repaired D1 so a stale
+    // Y.Map can't clobber the fix on its next snapshot. No-op (and no DO spin-up)
+    // when there is no blob — the common first-onboarding case. Best-effort.
+    await resetCollabDocIfBlobExists(db, env as never, projectId);
 
     return { ok: true, intent: "fix-site-config" };
   }
