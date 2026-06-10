@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.3.3-beta (2026-06-10)
+
+A small fix release for the glossary editor.
+
+### Fixes
+
+- **Glossary definitions no longer lose text while you type** — Editing a
+  newly-created term's definition could drop everything after the first
+  character or two when the term was first saved in the background. The editor
+  now keeps the term selected through that save, so definitions are typed and
+  saved in full.
+
 ## v1.3.2-beta (2026-06-09)
 
 A reliability release focused on image uploads and object data. Object
