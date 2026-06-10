@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.3.4-beta (2026-06-10)
+
+A follow-up fix for the glossary editor.
+
+### Fixes
+
+- **Glossary definitions now save in full** — Typing a term's definition could
+  lose everything after the first character or two. Definitions are now captured
+  completely as you type.
+
 ## v1.3.3-beta (2026-06-10)
 
 A small fix release for the glossary editor.
