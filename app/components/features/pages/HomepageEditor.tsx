@@ -46,6 +46,7 @@ import { InlineTextArea } from "~/components/ui/InlineTextArea";
 import { InlineHtmlEditor } from "~/components/ui/InlineHtmlEditor";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { reorderInPlace } from "~/hooks/use-structural-ops";
 import { getYText } from "~/lib/yjs-helpers";
 import { LANDING_LABELS, V121_FRONTMATTER_DEFAULTS, WELCOME_BODY_LOCALISED } from "~/lib/v130-framework-labels";
 import * as Y from "yjs";
@@ -179,6 +180,7 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
   const configTitleYText = getYText(configYMap as Y.Map<unknown> | null, "title");
   const configDescriptionYText = getYText(configYMap as Y.Map<unknown> | null, "description");
   const storiesHeadingYText = getYText(landingYMap, "stories_heading");
+  const storiesIntroYText = getYText(landingYMap, "stories_intro");
   const objectsHeadingYText = getYText(landingYMap, "objects_heading");
   const objectsIntroYText = getYText(landingYMap, "objects_intro");
   // welcome_body is collaborative like every other landing field: edits flow
@@ -256,6 +258,15 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
     const newOrder = arrayMove(items, oldIndex, newIndex);
 
     setItems(newOrder);
+    // Reorder the `stories` Y.Array to match. Without this the next snapshot
+    // rewrites `stories.order` from the (unchanged) Y.Array index and clobbers
+    // the D1 write below back to the old order. The homepage list is the full
+    // stories set ordered by `order`, so these indices map 1:1 to the Y.Array.
+    if (ydoc) {
+      ydoc.transact(() => {
+        reorderInPlace(ydoc.getArray<Y.Map<unknown>>("stories"), oldIndex, newIndex);
+      });
+    }
     fetcher.submit(
       { intent: "reorder", order: JSON.stringify(newOrder), projectId: String(project.id) },
       { method: "post" }
@@ -377,6 +388,28 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
             {(!landing?.stories_heading || landing.stories_heading.trim() === "") && (
               <p className="mt-1 font-body text-xs italic text-charcoal/50">
                 {t("preview.empty_default_hint")}
+              </p>
+            )}
+          </div>
+
+          <div>
+            {/* Optional intro paragraph for the stories section. Unlike
+                objects_intro, the framework has no default for it (index.html
+                renders it only when set), so there is no defaultValues literal
+                to suppress and the empty-state note says "optional", not
+                "a default will show". */}
+            <InlineTextArea
+              initialValue={landing?.stories_intro ?? ""}
+              yText={storiesIntroYText}
+              placeholder={t("preview.stories_intro_placeholder")}
+              defaultValues={[]}
+              className="text-sm text-gray-600"
+              bordered
+              fieldKey="homepage-stories-intro"
+            />
+            {(!landing?.stories_intro || landing.stories_intro.trim() === "") && (
+              <p className="mt-1 font-body text-xs italic text-charcoal/50">
+                {t("preview.stories_intro_hint")}
               </p>
             )}
           </div>
