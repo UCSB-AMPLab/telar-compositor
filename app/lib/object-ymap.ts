@@ -18,7 +18,7 @@
  * snapshot UPDATE's bind list. If you add a column to pushObjectUpdate, add it
  * here (and to the test's canonical list) in the same change.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import * as Y from "yjs";

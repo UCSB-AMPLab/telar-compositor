@@ -17,7 +17,7 @@
  * paths are what let the DO attribute edits to entities and users without
  * threading bespoke metadata through every Yjs mutation.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import * as Y from "yjs";

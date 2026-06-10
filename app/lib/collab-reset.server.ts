@@ -21,7 +21,7 @@
  * negligible for the onboarding-only trigger and shares the broader sync-gate
  * question tracked for the dashboard full-sync path.)
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { eq } from "drizzle-orm";

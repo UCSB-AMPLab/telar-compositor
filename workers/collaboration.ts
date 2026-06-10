@@ -24,7 +24,7 @@
  * makes the DO durable against forced eviction without any state
  * loss beyond the in-flight edit window.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import * as Y from "yjs";

@@ -5,7 +5,7 @@
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { eq, and } from "drizzle-orm";

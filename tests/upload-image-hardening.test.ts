@@ -15,7 +15,7 @@
  * never throw from the pre-commit region (structured upload_failed), resolve
  * the project membership-aware, and enforce the convenor gate the UI assumes.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

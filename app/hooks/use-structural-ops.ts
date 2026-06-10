@@ -18,7 +18,7 @@
  * anything; collaborators can delete only items they created
  * themselves.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { useMemo } from "react";

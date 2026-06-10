@@ -32,7 +32,7 @@
  * is NEVER keyed off `isPublishing` (which flips false on commit return, before
  * the build runs — the landmine).
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { eq } from "drizzle-orm";

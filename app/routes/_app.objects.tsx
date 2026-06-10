@@ -13,7 +13,7 @@
  * with thumbnails, sort/filter controls, featured-star toggles, a
  * slide-in edit panel, and a build progress banner.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { and, asc, count, eq, inArray } from "drizzle-orm";

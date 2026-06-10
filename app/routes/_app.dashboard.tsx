@@ -18,7 +18,7 @@
  * `_app.homepage.tsx` — they were relocated and this route keeps
  * the project-management shell only.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { asc, count, desc, eq, and, gt, inArray, isNull, sql } from "drizzle-orm";

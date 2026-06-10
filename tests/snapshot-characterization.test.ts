@@ -14,7 +14,7 @@
  * out of scope for this refactor, which never touches blob encoding); its SQL
  * and position in the stream ARE pinned.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

@@ -9,7 +9,7 @@
  * (where the user's first Sheets URL was inaccessible and they enter a
  * corrected one).
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { redirect } from "react-router";

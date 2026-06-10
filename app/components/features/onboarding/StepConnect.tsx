@@ -7,7 +7,7 @@
  * search filter. Already-connected repos show a "Connected" badge
  * and an "Unlink" button instead of being selectable.
  *
- * @version v1.3.0-beta
+ * @version v1.3.2-beta
  */
 
 import { useMemo, useState } from "react";
