@@ -1,4 +1,12 @@
 {
+  "error": {
+    "not_available_title": "Este objeto aún no está disponible",
+    "not_available_body": "Es posible que aún se esté guardando. Espera unos segundos e intenta de nuevo.",
+    "generic_title": "Algo salió mal",
+    "generic_body": "No pudimos abrir este objeto. Vuelve a tus objetos e intenta de nuevo.",
+    "back_to_objects": "Volver a los objetos",
+    "retry": "Reintentar"
+  },
   "title": "Objetos",
   "hint": "Gestiona las imágenes que referencian tus historias. Agrega metadatos, verifica las teselas IIIF e importa fuentes externas.",
   "sync_button": "Sincronizar desde el repositorio",
@@ -150,7 +158,7 @@
 
   "committingToRepo": "Guardando en el repositorio...",
   "staleHeadError": "El repositorio ha cambiado desde tu última sincronización. Vuelve a sincronizar antes de guardar.",
-  "commitFailed": "Falló la construcción del sitio. Revisa GitHub Actions para más detalles.",
+  "commitFailed": "No se pudieron guardar los cambios en GitHub. Intenta de nuevo.",
   "sheetsWarning": "Google Sheets está habilitado para este sitio. Al guardar se desactivará para que la construcción use los datos del compositor.",
   "sheetsReversible": "Puedes volver a Google Sheets en cualquier momento configurando enabled: true en google_sheets en el _config.yml de tu sitio.",
   "buildQueued": "Construcción en cola — esperando GitHub Actions...",
@@ -171,6 +179,10 @@
   "commitModal.done": "Listo",
   "commitModal.insertingObjects": "Registrando objetos...",
   "commitModal.discardChanges": "Descartar objetos agregados",
+  "commitModal.insertFailedHeading": "Las imágenes se guardaron, pero no quedaron registradas",
+  "commitModal.insertFailedBody": "Tus imágenes ya quedaron guardadas en el repositorio de tu sitio, pero no se pudieron registrar en el compositor. Puedes intentarlo de nuevo sin problema: no se duplicará nada.",
+  "commitModal.insertRetry": "Reintentar",
+  "commitModal.close": "Cerrar",
 
   "upload_button": "Subir imagen",
   "upload_title": "Subir imágenes",
@@ -191,6 +203,11 @@
   "upload_error_generic": "Error al subir. Verifica tu conexi\u00f3n e intenta de nuevo.",
   "upload_error_stale": "El repositorio cambi\u00f3. Sincroniza e intenta de nuevo.",
   "upload_error_payload": "El archivo es demasiado grande para GitHub. Prueba con una imagen m\u00e1s peque\u00f1a.",
+  "upload_error_missing_data": "Algo sali\u00f3 mal al preparar las im\u00e1genes. Cierra la ventana e intenta de nuevo.",
+  "upload_error_invalid_id": "El ID del objeto solo puede tener letras min\u00fasculas, n\u00fameros y guiones.",
+  "upload_error_no_project": "No encontramos un proyecto activo. Recarga la p\u00e1gina e intenta de nuevo.",
+  "upload_error_forbidden": "Solo quien coordina el proyecto puede subir im\u00e1genes.",
+  "sync_error_toast": "Fall\u00f3 la sincronizaci\u00f3n. Revisa tu repositorio en GitHub e intenta de nuevo.",
   "upload_dismiss_confirm": "Tienes cambios sin guardar. \u00bfSeguro que quieres cerrar?",
   "upload_id_collision_hint": "Este ID ya existe — el servidor generará uno único.",
   "upload_batch_header": "Imágenes en el lote",

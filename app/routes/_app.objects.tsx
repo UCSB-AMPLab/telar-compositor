@@ -70,6 +70,7 @@ import type {
 } from "~/components/features/objects/AddObjectDialog";
 import type { UploadImageConfirmPayload } from "~/components/features/objects/UploadImageDialog";
 import { matchesObjectFilter } from "~/lib/objects-filter";
+import { makeObjectYMap } from "~/lib/object-ymap";
 import { commitMultipleBinaryFilesWithCsv, arrayBufferToBase64, validateUploadFile } from "~/lib/upload.server";
 import type { SyncApplyPayload } from "~/components/features/objects/SyncDiffDialog";
 
@@ -323,27 +324,26 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "compute-sync-diff": {
-      // Get active project and GitHub token
+      // Membership-aware resolution — the old owner-only query with the
+      // ?? allProjects[0] fallback could diff the WRONG owned project when
+      // the session id pointed elsewhere. Sync is convenor-only in the UI;
+      // enforce the same here.
       const sessionStorage = createSessionStorage(env.SESSION_SECRET);
       const session = await sessionStorage.getSession(request.headers.get("Cookie"));
       const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-      const allProjects = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects.length === 0) {
+      const resolvedDiff = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolvedDiff) {
         return { ok: false, intent: "compute-sync-diff", error: "no_project" };
       }
-
-      const activeProject =
-        allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+      if (resolvedDiff.userRole !== "convenor") {
+        return { ok: false, intent: "compute-sync-diff", error: "forbidden" };
+      }
+      const activeProject = resolvedDiff.project;
 
       try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
         const diff = await computeSyncDiff(
           activeProject.id,
           token,
@@ -375,28 +375,26 @@ export async function action({ request, context }: Route.ActionArgs) {
         return { ok: false, intent: "sync-apply", error: "invalid_changes" };
       }
 
-      // Get active project credentials
+      // Membership-aware resolution + convenor gate (matches the UI; the old
+      // owner-only query could apply sync changes to the wrong owned project).
       const sessionStorage = createSessionStorage(env.SESSION_SECRET);
       const session = await sessionStorage.getSession(request.headers.get("Cookie"));
       const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-      const allProjects = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects.length === 0) {
+      const resolvedApply = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolvedApply) {
         return { ok: false, intent: "sync-apply", error: "no_project" };
       }
-
-      const activeProject =
-        allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+      if (resolvedApply.userRole !== "convenor") {
+        return { ok: false, intent: "sync-apply", error: "forbidden" };
+      }
+      const activeProject = resolvedApply.project;
 
       try {
-        const { appliedCount, pendingObjects } = await applySyncChanges(
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
+
+        const { appliedCount, pendingObjects, removedObjectIds } = await applySyncChanges(
           activeProject.id,
           changes,
           token,
@@ -404,7 +402,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           repo,
           db
         );
-        return { ok: true, intent: "sync-apply", appliedCount, pendingObjects };
+        return { ok: true, intent: "sync-apply", appliedCount, pendingObjects, removedObjectIds };
       } catch (err) {
         return {
           ok: false,
@@ -521,17 +519,28 @@ export async function action({ request, context }: Route.ActionArgs) {
         }
       }
 
-      // 3. Get active project (same pattern as add-iiif-object)
+      // 3. Get active project — membership-aware, no first-owned-project
+      // fallback (the old owner-only query + ?? allProjects[0] could target
+      // the wrong project on a stale session). The Upload tab is convenor-
+      // gated in the UI; enforce the same server-side.
       const uploadSessionStorage = createSessionStorage(env.SESSION_SECRET);
       const uploadSession = await uploadSessionStorage.getSession(request.headers.get("Cookie"));
       const uploadSessionActiveId = uploadSession.get("activeProjectId") as number | undefined;
-      const uploadAllProjects = await db.select().from(projects).where(eq(projects.user_id, user.id));
-      if (uploadAllProjects.length === 0) {
+      const resolvedUpload = await resolveActiveProject(db, user.id, uploadSessionActiveId);
+      if (!resolvedUpload) {
         return { ok: false, intent: "upload-image", error: "no_project" };
       }
-      const uploadActiveProject =
-        uploadAllProjects.find((p) => p.id === Number(uploadSessionActiveId)) ?? uploadAllProjects[0];
+      if (resolvedUpload.userRole !== "convenor") {
+        return { ok: false, intent: "upload-image", error: "forbidden" };
+      }
+      const uploadActiveProject = resolvedUpload.project;
 
+      // Everything from here to the commit runs inside try/catch: decrypt,
+      // slug generation (D1 queries), file reads, the CSV fetch and the D1
+      // object listing can all throw, and an uncaught throw becomes an opaque
+      // 500. Issue #25's report ("check your connection", deterministic)
+      // came from failures in this region being either thrown or collapsed.
+      try {
       const uploadToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
       const [uploadOwner, uploadRepo] = uploadActiveProject.github_repo_full_name.split("/");
 
@@ -543,11 +552,19 @@ export async function action({ request, context }: Route.ActionArgs) {
         const imageFile = imageFiles[i];
         const metadata = metadataArray[i];
 
-        // Generate unique slug (each call sees previously generated IDs via DB)
-        const requestedSlug = metadata.objectId.trim() || slugify(metadata.title);
+        // Normalise the user-typed id with the same slugifier used for
+        // titles — users type "Mission Bell #2" in good faith, and rejecting
+        // it was issue #25's deterministic failure. Fall back to the title,
+        // then to "object" for titles with no ASCII alphanumerics
+        // (slugify("中文") === ""). generateUniqueObjectSlug appends -2, -3…
+        // on collision; each call sees previously generated IDs via DB.
+        const requestedSlug =
+          slugify(metadata.objectId, 0) || slugify(metadata.title) || "object";
         const uploadObjectId = await generateUniqueObjectSlug(requestedSlug, uploadActiveProject.id, db);
 
-        // Validate slug is path-safe (no traversal, only lowercase alphanumeric + hyphens)
+        // Backstop: slug must stay path-safe (no traversal, only lowercase
+        // alphanumerics + hyphens). With the normalisation above this should
+        // be unreachable for real input.
         const safeSlugPattern = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
         if (!safeSlugPattern.test(uploadObjectId)) {
           return { ok: false, intent: "upload-image", error: "invalid_object_id" };
@@ -607,55 +624,60 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       const uploadCsvContent = serializeObjectsCsv(uploadAllObjectsForCsv.map(dbObjectToCsvRow), uploadExistingCsv ?? undefined);
 
-      // 9. Commit all images + CSV atomically in a single Git commit
-      const commitLabel = uploadPendingObjects.map((p) => p.object_id).join(", ");
+      // 9. Commit all images + CSV atomically in a single Git commit.
+      // The repo WRITE uses the App installation token — it carries
+      // contents:write on the repo regardless of the signed-in user's own
+      // GitHub access (an owner whose personal access lapsed, e.g. after a
+      // repo transfer, previously failed here with the generic copy). The
+      // user token is the local-dev fallback, matching _app.upgrade.tsx.
+      let uploadCommitToken = uploadToken;
       try {
-        const uploadCommitResult = await commitMultipleBinaryFilesWithCsv({
-          token: uploadToken,
-          owner: uploadOwner,
-          repo: uploadRepo,
-          branch: "main",
-          images: imagePayloads,
-          csvContent: uploadCsvContent,
-          commitMessage: `Add ${commitLabel} via Telar Compositor`,
-        });
+        uploadCommitToken = await getInstallationToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          uploadActiveProject.installation_id,
+        );
+      } catch {
+        // Installation token unavailable (local dev) — fall back to user token
+      }
 
-        // 10. Update project head_sha (also invalidates GitHub status cache)
-        await bumpProjectHead(db, uploadActiveProject.id, uploadCommitResult.newHeadSha);
+      const commitLabel = uploadPendingObjects.map((p) => p.object_id).join(", ");
+      const uploadCommitResult = await commitMultipleBinaryFilesWithCsv({
+        token: uploadCommitToken,
+        owner: uploadOwner,
+        repo: uploadRepo,
+        branch: "main",
+        images: imagePayloads,
+        csvContent: uploadCsvContent,
+        commitMessage: `Add ${commitLabel} via Telar Compositor`,
+      });
 
-        // 11. Dispatch IIIF-only workflow and capture run ID for direct polling
-        let dispatchRunId: number | null = null;
-        let dispatchHtmlUrl: string | null = null;
-        try {
-          let dispatchToken = uploadToken;
-          try {
-            dispatchToken = await getInstallationToken(
-              env.GITHUB_APP_ID,
-              env.GITHUB_PRIVATE_KEY,
-              uploadActiveProject.installation_id,
-            );
-          } catch {
-            // Installation token unavailable (local dev) — try user token
-          }
-          const dispatch = await dispatchWorkflow(dispatchToken, uploadOwner, uploadRepo, "build.yml");
-          dispatchRunId = dispatch.runId || null;
-          dispatchHtmlUrl = dispatch.htmlUrl || null;
-        } catch {
-          // Non-fatal: tiles will generate on next full build
-        }
+      // 10. Update project head_sha (also invalidates GitHub status cache)
+      await bumpProjectHead(db, uploadActiveProject.id, uploadCommitResult.newHeadSha);
 
-        // 12. Return the first pending object for CommitAndBuildModal
-        //     (multi-object insert is handled by insert-pending-objects with the full array)
-        return {
-          ok: true,
-          intent: "upload-image",
-          objectId: uploadPendingObjects[0].object_id,
-          newHeadSha: uploadCommitResult.newHeadSha,
-          pendingObject: uploadPendingObjects[0],
-          pendingObjects: uploadPendingObjects,
-          dispatchRunId,
-          dispatchHtmlUrl,
-        };
+      // 11. Dispatch IIIF-only workflow and capture run ID for direct polling
+      let dispatchRunId: number | null = null;
+      let dispatchHtmlUrl: string | null = null;
+      try {
+        const dispatch = await dispatchWorkflow(uploadCommitToken, uploadOwner, uploadRepo, "build.yml");
+        dispatchRunId = dispatch.runId || null;
+        dispatchHtmlUrl = dispatch.htmlUrl || null;
+      } catch {
+        // Non-fatal: tiles will generate on next full build
+      }
+
+      // 12. Return the first pending object for CommitAndBuildModal
+      //     (multi-object insert is handled by insert-pending-objects with the full array)
+      return {
+        ok: true,
+        intent: "upload-image",
+        objectId: uploadPendingObjects[0].object_id,
+        newHeadSha: uploadCommitResult.newHeadSha,
+        pendingObject: uploadPendingObjects[0],
+        pendingObjects: uploadPendingObjects,
+        dispatchRunId,
+        dispatchHtmlUrl,
+      };
       } catch (err) {
         // No D1 rollback needed — nothing was inserted (pending-object pattern)
         if (err instanceof StaleHeadError) {
@@ -674,30 +696,31 @@ export async function action({ request, context }: Route.ActionArgs) {
       const session = await sessionStorage.getSession(request.headers.get("Cookie"));
       const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-      const allProjects = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects.length === 0) {
+      // Membership-aware resolution (no first-owned-project fallback). This
+      // check is read-only and fail-open by design, so any internal failure
+      // degrades to the same benign default instead of an uncaught 500.
+      const resolvedCheck = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolvedCheck) {
         return { ok: true, intent: "pre-commit-check", sheetsEnabled: false, urlCheck: { match: true, pagesUrl: "", configUrl: "" } };
       }
+      const activeProject = resolvedCheck.project;
 
-      const activeProject =
-        allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+      try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
 
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+        const content = await getFileContent(token, owner, repo, "_config.yml");
+        if (content === null) {
+          return { ok: true, intent: "pre-commit-check", sheetsEnabled: false, urlCheck: { match: true, pagesUrl: "", configUrl: "" } };
+        }
 
-      const content = await getFileContent(token, owner, repo, "_config.yml");
-      if (content === null) {
+        const sheetsEnabled = isGoogleSheetsEnabled(content);
+        const urlCheck = await verifySiteUrl(token, owner, repo, content);
+
+        return { ok: true, intent: "pre-commit-check", sheetsEnabled, urlCheck };
+      } catch {
         return { ok: true, intent: "pre-commit-check", sheetsEnabled: false, urlCheck: { match: true, pagesUrl: "", configUrl: "" } };
       }
-
-      const sheetsEnabled = isGoogleSheetsEnabled(content);
-      const urlCheck = await verifySiteUrl(token, owner, repo, content);
-
-      return { ok: true, intent: "pre-commit-check", sheetsEnabled, urlCheck };
     }
 
     case "commit-objects": {
@@ -705,22 +728,30 @@ export async function action({ request, context }: Route.ActionArgs) {
       const session = await sessionStorage.getSession(request.headers.get("Cookie"));
       const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-      const allProjects = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects.length === 0) {
+      // Membership-aware resolution + convenor gate (the commit modal flows
+      // are convenor-only in the UI; the old owner-only query could commit
+      // to the wrong owned project on a stale session).
+      const resolvedCommit = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolvedCommit) {
         return { ok: false, intent: "commit-objects", error: "no_project" };
       }
-
-      const activeProject =
-        allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+      if (resolvedCommit.userRole !== "convenor") {
+        return { ok: false, intent: "commit-objects", error: "forbidden" };
+      }
+      const activeProject = resolvedCommit.project;
 
       const disableSheets = formData.get("disableSheets") === "true";
+
+      // token/owner/repo escape the try below: the post-commit dispatch needs
+      // them after the commit has already succeeded.
+      let token: string;
+      let owner: string;
+      let repo: string;
+      let commitResult: { newHeadSha: string };
+
+      try {
+      token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      [owner, repo] = activeProject.github_repo_full_name.split("/");
 
       // Server-side recheck — supersedes client-passed fixUrl/pagesUrl.
       // The client form fields (CommitAndBuildModal: fixUrl, pagesUrl) are
@@ -812,48 +843,38 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       const commitMessage = `${commitParts.join(", ")} via Telar Compositor`;
 
+      // Repo WRITE on the App installation token (contents:write independent
+      // of the user's own GitHub access); user token is the local-dev
+      // fallback — matching the upload flow and _app.upgrade.tsx.
+      let commitToken = token;
       try {
-        // Commit with [skip ci] to prevent the full build.yml from firing.
-        // Full build dispatched below to deploy changes via GitHub Pages.
-        const result = await commitFilesToRepo(
-          token, owner, repo, "main", files, commitMessage,
-          undefined, undefined,
-          true, // skipCi — suppress full build
-        );
-
-        // Update projects.head_sha (also invalidates GitHub status cache)
-        await bumpProjectHead(db, activeProject.id, result.newHeadSha);
-
-        // If sheets were disabled, update project_config
-        if (disableSheets) {
-          await db
-            .update(project_config)
-            .set({ google_sheets_enabled: false, updated_at: new Date().toISOString() })
-            .where(eq(project_config.project_id, activeProject.id));
-        }
-
-        // Dispatch the lightweight objects-only workflow instead of the full build.
-        // Fire-and-forget: if dispatch fails, objects are still committed and the
-        // full build will pick them up on next push.
-        const installToken = await getInstallationToken(
+        commitToken = await getInstallationToken(
           env.GITHUB_APP_ID,
           env.GITHUB_PRIVATE_KEY,
           activeProject.installation_id,
         );
-        let commitObjectsDispatchRunId: number | null = null;
-        try {
-          const dispatch = await dispatchWorkflow(installToken, owner, repo, "build.yml");
-          commitObjectsDispatchRunId = dispatch.runId || null;
-        } catch {
-          // Dispatch failed — objects committed, processing deferred to next full build
-        }
+      } catch {
+        // Installation token unavailable (local dev) — fall back to user token
+      }
 
-        return {
-          ok: true,
-          intent: "commit-objects",
-          newHeadSha: result.newHeadSha,
-          dispatchRunId: commitObjectsDispatchRunId,
-        };
+      // Commit with [skip ci] to prevent the full build.yml from firing.
+      // Full build dispatched below to deploy changes via GitHub Pages.
+      commitResult = await commitFilesToRepo(
+        commitToken, owner, repo, "main", files, commitMessage,
+        undefined, undefined,
+        true, // skipCi — suppress full build
+      );
+
+      // Update projects.head_sha (also invalidates GitHub status cache)
+      await bumpProjectHead(db, activeProject.id, commitResult.newHeadSha);
+
+      // If sheets were disabled, update project_config
+      if (disableSheets) {
+        await db
+          .update(project_config)
+          .set({ google_sheets_enabled: false, updated_at: new Date().toISOString() })
+          .where(eq(project_config.project_id, activeProject.id));
+      }
       } catch (err) {
         if (err instanceof StaleHeadError) {
           return { ok: false, intent: "commit-objects", error: "stale_head" };
@@ -865,6 +886,39 @@ export async function action({ request, context }: Route.ActionArgs) {
           message: err instanceof Error ? err.message : "Unknown error",
         };
       }
+
+      // Post-commit: dispatch is best-effort and must NOT flip the result —
+      // the commit already landed and head_sha is bumped. (Previously a
+      // getInstallationToken failure here returned commit_failed for a commit
+      // that succeeded, sending users into stale-head retries; and a silently
+      // swallowed dispatch failure left the modal polling by SHA for a run
+      // that never started. dispatchFailed tells the modal to skip build
+      // tracking — tiles regenerate on the next full build.)
+      let commitObjectsDispatchRunId: number | null = null;
+      try {
+        let dispatchToken = token;
+        try {
+          dispatchToken = await getInstallationToken(
+            env.GITHUB_APP_ID,
+            env.GITHUB_PRIVATE_KEY,
+            activeProject.installation_id,
+          );
+        } catch {
+          // Installation token unavailable (local dev) — try user token
+        }
+        const dispatch = await dispatchWorkflow(dispatchToken, owner, repo, "build.yml");
+        commitObjectsDispatchRunId = dispatch.runId || null;
+      } catch {
+        // Dispatch failed — objects committed, processing deferred to next full build
+      }
+
+      return {
+        ok: true,
+        intent: "commit-objects",
+        newHeadSha: commitResult.newHeadSha,
+        dispatchRunId: commitObjectsDispatchRunId,
+        dispatchFailed: commitObjectsDispatchRunId === null,
+      };
     }
 
     case "poll-build": {
@@ -880,22 +934,17 @@ export async function action({ request, context }: Route.ActionArgs) {
       const session = await sessionStorage.getSession(request.headers.get("Cookie"));
       const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-      const allProjects = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects.length === 0) {
+      // Membership-aware (member-level: polling is read-only build status).
+      const resolvedPoll = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolvedPoll) {
         return { ok: false, intent: "poll-build", error: "no_project" };
       }
-
-      const activeProject =
-        allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
+      const activeProject = resolvedPoll.project;
 
       try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
+
         // Run-ID-only path: polls the dispatched run directly by ID.
         if (runIdParam && !sha) {
           const runId = Number(runIdParam);
@@ -973,75 +1022,105 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "insert-pending-objects": {
+      // Hardened for telar-compositor#24: by the time this intent fires the
+      // images are ALREADY committed to the repo by upload-image, so any
+      // failure here strands them (repo/D1 divergence). The action must never
+      // throw — an uncaught throw becomes an opaque 500 that white-screens the
+      // route — and must be idempotent so the modal's retry cannot duplicate
+      // rows (objects has no UNIQUE(project_id, object_id)).
       const pendingJson = formData.get("pendingObjects") as string | null;
       if (!pendingJson) {
         return { ok: false, intent: "insert-pending-objects", error: "missing_data" };
       }
 
-      const pendingObjects: PendingObject[] = JSON.parse(pendingJson);
+      let pendingObjects: PendingObject[];
+      try {
+        const parsed = JSON.parse(pendingJson);
+        if (!Array.isArray(parsed)) throw new Error("pendingObjects must be an array");
+        pendingObjects = parsed;
+      } catch {
+        return { ok: false, intent: "insert-pending-objects", error: "missing_data" };
+      }
 
       const sessionStorage = createSessionStorage(env.SESSION_SECRET);
       const session = await sessionStorage.getSession(request.headers.get("Cookie"));
       const sessionActiveId = session.get("activeProjectId") as number | undefined;
 
-      const allProjects = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.user_id, user.id));
-
-      if (allProjects.length === 0) {
+      const resolvedIns = await resolveActiveProject(db, user.id, sessionActiveId);
+      if (!resolvedIns) {
         return { ok: false, intent: "insert-pending-objects", error: "no_project" };
       }
+      const activeProject = resolvedIns.project;
 
-      const activeProject =
-        allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
+      try {
+        // Idempotency pre-check: a retry after a mid-chunk failure (or a
+        // double submit) re-sends the same pending objects. Skip object_ids
+        // that already have a D1 row, but return them WITH their canonical ids
+        // so the client's Y.Array mirror still works on the retry pass.
+        const existingRows = await db
+          .select({ id: objects.id, object_id: objects.object_id })
+          .from(objects)
+          .where(eq(objects.project_id, activeProject.id));
+        const existingByKey = new Map(existingRows.map((r) => [r.object_id, r.id]));
 
-      // Insert pending objects into D1 now that the build has succeeded
-      const rows = pendingObjects.map((p) => ({
-        project_id: activeProject.id,
-        object_id: p.object_id,
-        title: p.title,
-        featured: p.featured,
-        creator: p.creator,
-        description: p.description,
-        source_url: p.source_url,
-        period: p.period,
-        year: p.year,
-        object_type: p.object_type,
-        subjects: p.subjects,
-        source: p.source,
-        credit: p.credit,
-        thumbnail: p.thumbnail,
-        image_available: p.image_available,
-        missing_from_repo: false,
-        origin: (p as any).origin ?? "compositor",
-        alt_text: (p as any).alt_text ?? null,
-        dimensions: (p as any).dimensions ?? null,
-        extra_columns: (p as any).extra_columns ?? null,
-      }));
+        const rows = pendingObjects
+          .filter((p) => !existingByKey.has(p.object_id))
+          .map((p) => ({
+            project_id: activeProject.id,
+            object_id: p.object_id,
+            title: p.title,
+            featured: p.featured,
+            creator: p.creator,
+            description: p.description,
+            source_url: p.source_url,
+            period: p.period,
+            year: p.year,
+            object_type: p.object_type,
+            subjects: p.subjects,
+            source: p.source,
+            credit: p.credit,
+            thumbnail: p.thumbnail,
+            image_available: p.image_available,
+            missing_from_repo: false,
+            origin: (p as any).origin ?? "compositor",
+            alt_text: (p as any).alt_text ?? null,
+            dimensions: (p as any).dimensions ?? null,
+            extra_columns: (p as any).extra_columns ?? null,
+          }));
 
-      // D1 batch limit: 100 bindings per INSERT, 20 columns → max 5 rows (100 bound params, D1's inclusive limit).
-      // Collect inserted rows so the client can mirror them into the Yjs
-      // Y.Array with canonical D1 ids (self-hosted objects appear in
-      // the shared doc only after the repo build succeeds and D1 INSERT
-      // completes; the snapshot writes them as UPDATEs on the next cycle).
-      const maxRows = Math.floor(100 / 20);
-      type InsertedRow = { id: number; object_id: string };
-      const inserted: InsertedRow[] = [];
-      for (let i = 0; i < rows.length; i += maxRows) {
-        const chunk = await db
-          .insert(objects)
-          .values(rows.slice(i, i + maxRows))
-          .returning({ id: objects.id, object_id: objects.object_id });
-        for (const row of chunk) inserted.push(row);
+        type InsertedRow = { id: number; object_id: string };
+        const inserted: InsertedRow[] = pendingObjects
+          .filter((p) => existingByKey.has(p.object_id))
+          .map((p) => ({ id: existingByKey.get(p.object_id)!, object_id: p.object_id }));
+
+        // D1 batch limit: 100 bindings per INSERT, 20 columns → max 5 rows (100 bound params, D1's inclusive limit).
+        // Collect inserted rows so the client can mirror them into the Yjs
+        // Y.Array with canonical D1 ids (self-hosted objects appear in
+        // the shared doc only after the repo build succeeds and D1 INSERT
+        // completes; the snapshot writes them as UPDATEs on the next cycle).
+        const maxRows = Math.floor(100 / 20);
+        for (let i = 0; i < rows.length; i += maxRows) {
+          const chunk = await db
+            .insert(objects)
+            .values(rows.slice(i, i + maxRows))
+            .returning({ id: objects.id, object_id: objects.object_id });
+          for (const row of chunk) inserted.push(row);
+        }
+
+        return {
+          ok: true,
+          intent: "insert-pending-objects",
+          insertedCount: rows.length,
+          inserted,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          intent: "insert-pending-objects",
+          error: "insert_failed",
+          message: err instanceof Error ? err.message : "Unknown error",
+        };
       }
-
-      return {
-        ok: true,
-        intent: "insert-pending-objects",
-        insertedCount: rows.length,
-        inserted,
-      };
     }
 
     default:
@@ -1256,7 +1335,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   // Handle sync diff result
   const syncFetcherData = syncFetcher.data as
     | { ok: true; intent: "compute-sync-diff"; diff: SyncDiff }
-    | { ok: true; intent: "sync-apply"; appliedCount: number; pendingObjects: PendingObject[] }
+    | { ok: true; intent: "sync-apply"; appliedCount: number; pendingObjects: PendingObject[]; removedObjectIds: string[] }
     | { ok: false; intent: string; error: string }
     | null
     | undefined;
@@ -1336,6 +1415,24 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   // Close dialogs on successful apply/add → collect pending objects → open commit modal
   useEffect(() => {
     if (syncFetcherData?.ok && syncFetcherData.intent === "sync-apply" && syncDialogOpen) {
+      // The sync deleted these objects from D1. Remove their Y.Maps too — the
+      // Y.Doc is the source of truth, and the next snapshot would otherwise
+      // re-INSERT (resurrect) any object whose Y.Map still exists.
+      if (ydoc && ops && syncFetcherData.removedObjectIds?.length) {
+        const removed = new Set(syncFetcherData.removedObjectIds);
+        const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+        const targets: Array<{ id: number | null; tempId: string | null }> = [];
+        for (let i = 0; i < objectsArray.length; i++) {
+          const m = objectsArray.get(i);
+          if (removed.has(String(m.get("object_id") ?? ""))) {
+            targets.push({
+              id: (m.get("_id") as number | null) ?? null,
+              tempId: (m.get("_temp_id") as string | null) ?? null,
+            });
+          }
+        }
+        for (const target of targets) ops.deleteObject(target.id, target.tempId);
+      }
       setSyncDialogOpen(false);
       setSyncDiffData(null);
       if (syncFetcherData.pendingObjects.length > 0) {
@@ -1344,7 +1441,23 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         setCommitModalOpen(true);
       }
     }
-  }, [syncFetcherData, syncDialogOpen]);
+  }, [syncFetcherData, syncDialogOpen, ydoc, ops]);
+
+  // Surface sync failures — previously ok:false results were silently
+  // ignored: the dialog hung open (blank content or a stopped spinner) with
+  // no feedback at all. Toast the failure and close so the user can retry.
+  useEffect(() => {
+    if (
+      syncFetcherData &&
+      !syncFetcherData.ok &&
+      (syncFetcherData.intent === "compute-sync-diff" || syncFetcherData.intent === "sync-apply")
+    ) {
+      showToast({ message: t("sync_error_toast"), type: "destructive" });
+      setSyncDialogOpen(false);
+      setSyncDiffData(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncFetcherData]);
 
   // IIIF add flow migrated to Yjs — no route action for add-iiif-object.
   // The confirm handler below writes to the Y.Array and kicks off client-side
@@ -1366,7 +1479,9 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       setCommitModalOpen(true);
     } else if (uploadSubmitted && uploadFetcherData && !uploadFetcherData.ok && uploadFetcherData.intent === "upload-image") {
       setUploadSubmitted(false);
-      // Map error codes to i18n keys
+      // Map error codes to i18n keys. Every code the action can return MUST
+      // be mapped — unmapped codes fell back to the generic "check your
+      // connection" copy, which is how issue #25's real cause stayed hidden.
       const errorMap: Record<string, string> = {
         stale_head: t("upload_error_stale"),
         payload_too_large: t("upload_error_payload"),
@@ -1374,6 +1489,11 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         invalid_format: t("upload_error_format"),
         file_too_large: t("upload_error_size"),
         title_required: t("field_title_required"),
+        missing_data: t("upload_error_missing_data"),
+        batch_too_large: t("upload_error_batch_full"),
+        invalid_object_id: t("upload_error_invalid_id"),
+        no_project: t("upload_error_no_project"),
+        forbidden: t("upload_error_forbidden"),
       };
       setUploadError(errorMap[uploadFetcherData.error] || t("upload_error_generic"));
     }
@@ -1737,28 +1857,48 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     for (const row of inserted) idByObjectId.set(row.object_id, row.id);
 
     const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
+    // Dedupe guard: the hardened insert action is idempotent and echoes ids
+    // for objects that already existed in D1 — some of those may already have
+    // Y.Maps (e.g. registered by an earlier attempt or another client).
+    // Pushing again would duplicate them in the shared doc.
+    const alreadyInDoc = new Set<string>();
+    for (let i = 0; i < objectsArray.length; i++) {
+      const oid = objectsArray.get(i).get("object_id");
+      if (typeof oid === "string") alreadyInDoc.add(oid);
+    }
     ydoc.transact(() => {
       for (const p of pending) {
         const d1Id = idByObjectId.get(p.object_id);
         if (d1Id === undefined) continue;
-        const objMap = new Y.Map<unknown>();
-        objMap.set("_id", d1Id);
-        objMap.set("_temp_id", crypto.randomUUID());
-        objMap.set("created_by", currentUserId);
-        objMap.set("object_id", p.object_id);
-        objMap.set("title", new Y.Text(p.title ?? ""));
-        objMap.set("creator", new Y.Text(p.creator ?? ""));
-        objMap.set("description", new Y.Text(p.description ?? ""));
-        objMap.set("alt_text", new Y.Text(p.title ?? ""));
-        objMap.set("source_url", p.source_url ?? "");
-        objMap.set("period", new Y.Text(p.period ?? ""));
-        objMap.set("year", new Y.Text(p.year ?? ""));
-        objMap.set("featured", p.featured);
-        objMap.set("image_available", p.image_available);
-        objMap.set("_validation_state", "valid");
-        objMap.set("origin", "repo");
-        objMap.set("missing_from_repo", false);
-        objMap.set("thumbnail", p.thumbnail ?? "");
+        if (alreadyInDoc.has(p.object_id)) continue;
+        // makeObjectYMap sets EVERY snapshot-bound key. The hand-rolled
+        // version omitted object_type/subjects/source/credit/dimensions/
+        // extra_columns — the next snapshot UPDATE then erased the
+        // just-uploaded values in D1 (yTextToString(undefined) === "") — and
+        // wrote the TITLE into alt_text, clobbering the user's alt text.
+        const objMap = makeObjectYMap({
+          id: d1Id,
+          createdBy: currentUserId,
+          objectId: p.object_id,
+          title: p.title,
+          creator: p.creator,
+          description: p.description,
+          altText: p.alt_text ?? p.title,
+          sourceUrl: p.source_url,
+          period: p.period,
+          year: p.year,
+          objectType: p.object_type,
+          subjects: p.subjects,
+          source: p.source,
+          credit: p.credit,
+          thumbnail: p.thumbnail,
+          dimensions: p.dimensions,
+          extraColumns: p.extra_columns,
+          featured: p.featured,
+          imageAvailable: p.image_available,
+          validationState: "valid",
+          origin: "repo",
+        });
         objectsArray.push([objMap]);
       }
     });
