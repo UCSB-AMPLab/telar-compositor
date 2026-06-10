@@ -184,9 +184,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       // white-screens the whole Pages tab. A best-effort scan must degrade to
       // the plain empty state instead, so the user can still create pages by
       // hand. Return an empty list on any failure.
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
       try {
+        // decrypt is inside the guard too — a corrupted token would otherwise
+        // throw past the fail-open design straight into the 500 this comment
+        // warns about.
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
         const pages = await scanRepoPages(token, owner, repo);
         return { ok: true, intent: "scan-repo-pages", pages };
       } catch (err) {
@@ -203,16 +206,17 @@ export async function action({ request, context }: Route.ActionArgs) {
       // and reported in `already_present` so the UI can surface
       // them. The client effect mirrors the returned `pages` into the active
       // Yjs document so the editor hydrates immediately.
-      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-      const [owner, repo] = activeProject.github_repo_full_name.split("/");
       const requestedSlugs = formData.getAll("slugs").map((s) => String(s));
       // Same fail-open guard as scan-repo-pages: getRepoTree throws on a
-      // non-2xx (e.g. an empty repo's tree 404s). This action is user-initiated
-      // and only reachable after a successful scan, so a throw here is a rare
-      // transient — but an uncaught one still white-screens the tab. Return a
-      // structured failure so the client can clear its spinners and toast.
+      // non-2xx (e.g. an empty repo's tree 404s), and decrypt throws on a
+      // corrupted token. This action is user-initiated and only reachable
+      // after a successful scan, so a throw here is a rare transient — but an
+      // uncaught one still white-screens the tab. Return a structured failure
+      // so the client can clear its spinners and toast.
       let allPages: Awaited<ReturnType<typeof scanRepoPages>>;
       try {
+        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const [owner, repo] = activeProject.github_repo_full_name.split("/");
         allPages = await scanRepoPages(token, owner, repo);
       } catch (err) {
         console.error("import-pages scan failed:", err);
@@ -241,16 +245,25 @@ export async function action({ request, context }: Route.ActionArgs) {
         .map((p) => p.slug);
 
       const now = new Date().toISOString();
+      // Capture each inserted row's real D1 id so the client mirrors the Y.Map
+      // with that `_id` (not null). A null `_id` would make the next snapshot
+      // INSERT a second row with the same slug → UNIQUE(project_id, slug) clash.
+      const insertedIdBySlug: Record<string, number> = {};
       for (const page of toInsert) {
-        await db.insert(project_pages).values({
-          project_id: activeProjectId,
-          title: page.title,
-          slug: page.slug,
-          body: page.body,
-          order: page.order,
-          created_at: now,
-          updated_at: now,
-        });
+        const [row] = await db
+          .insert(project_pages)
+          .values({
+            project_id: activeProjectId,
+            title: page.title,
+            slug: page.slug,
+            body: page.body,
+            order: page.order,
+            created_by: user.id,
+            created_at: now,
+            updated_at: now,
+          })
+          .returning({ id: project_pages.id });
+        if (row) insertedIdBySlug[page.slug] = row.id;
       }
 
       return {
@@ -259,6 +272,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         imported: toInsert.length,
         pages: toInsert,
         already_present: alreadyPresent,
+        insertedIdBySlug,
       };
     }
 
@@ -388,6 +402,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     imported: number;
     pages: ScannedPage[];
     already_present: string[];
+    insertedIdBySlug?: Record<string, number>;
   }>();
   const [importingSlugs, setImportingSlugs] = useState<Set<string>>(new Set());
   const repoScanRequestedRef = useRef(false);
@@ -467,7 +482,9 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
       for (const page of data.pages) {
         if (existingSlugs.has(page.slug)) continue;
         const pageMap = new Y.Map<unknown>();
-        pageMap.set("_id", null);
+        // Mirror with the real D1 id so the snapshot UPDATEs this row instead of
+        // INSERTing a duplicate slug (which would clash on UNIQUE(project_id, slug)).
+        pageMap.set("_id", data.insertedIdBySlug?.[page.slug] ?? null);
         pageMap.set("_temp_id", crypto.randomUUID());
         pageMap.set("created_by", currentUserId);
         const titleY = new Y.Text();

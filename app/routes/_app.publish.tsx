@@ -426,7 +426,15 @@ export async function action({ request, context }: Route.ActionArgs) {
   // Guard: only owners may publish
   await requireOwner(db, activeProject.id, user.id);
 
-  const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+  // decrypt runs before the per-intent try/catch blocks below, so its own
+  // guard is needed: a corrupted token would otherwise become an uncaught 500
+  // for EVERY publish intent (including dismiss-intro, which never uses it).
+  let token: string;
+  try {
+    token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+  } catch {
+    return { ok: false, intent, error: "auth_failed" };
+  }
   const [owner, repo] = activeProject.github_repo_full_name.split("/");
 
   switch (intent) {
@@ -714,6 +722,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           actorUserId: user.id,
           verb: "published",
           entityType: "site",
+          entityLabel: config?.title ?? null,
         });
 
         // commitUrl derived from commit SHA
