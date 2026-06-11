@@ -34,7 +34,7 @@ export function ProgressBar({ currentStep, className = "" }: ProgressBarProps) {
   const currentOrder = STEP_ORDER[currentStep];
 
   return (
-    <nav aria-label="Onboarding progress" className={`flex items-center justify-between ${className}`}>
+    <nav aria-label={t("common:a11y.onboarding_progress")} className={`flex items-center justify-between ${className}`}>
       {STEPS.map((step, index) => {
         const stepOrder = STEP_ORDER[step.key];
         const isCompleted = stepOrder < currentOrder;

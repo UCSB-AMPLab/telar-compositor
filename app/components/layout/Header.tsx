@@ -11,7 +11,7 @@
  * deliberately do NOT live here; they belong with the TabNav tab bar so the
  * header stays purely a global-context strip.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -284,7 +284,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
                   className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-body text-terracotta hover:bg-cream transition-colors"
                 >
                   <LogOut className="w-4 h-4" />
-                  Sign out
+                  {tCommon("sign_out")}
                 </button>
               </Form>
             </div>

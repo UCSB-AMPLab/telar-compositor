@@ -10,7 +10,7 @@
  * tracked — navigating away with unsaved changes shows a
  * confirmation modal.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -290,13 +290,13 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
     return (
       <div className="max-w-3xl mx-auto py-20 text-center">
         <p className="font-body text-gray-500 mb-4">
-          Connect a project first to configure your site.
+          {t("empty_no_project")}
         </p>
         <Link
           to="/onboarding"
           className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-6 py-2.5 transition-colors"
         >
-          Connect a Repository
+          {t("connect_repo_cta")}
         </Link>
       </div>
     );

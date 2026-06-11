@@ -83,5 +83,8 @@
   "drag_reorder_aria": "Arrastrar para reordenar",
   "show_nav_aria": "Mostrar en la navegación",
   "hide_nav_aria": "Ocultar de la navegación",
-  "remove_link_aria": "Eliminar enlace"
+  "remove_link_aria": "Eliminar enlace",
+  "themes_none": "No se encontraron temas en este repositorio.",
+  "empty_no_project": "Conecta un proyecto primero para configurar tu sitio.",
+  "connect_repo_cta": "Conectar un repositorio"
 }

@@ -173,16 +173,16 @@ export function ImageInsertDialog({ open, onClose, onInsert, objects, siteBaseUr
                   {obj.thumbnail && obj.image_available !== false ? (
                     <img
                       src={obj.thumbnail}
-                      alt={obj.title ?? obj.object_id}
+                      alt={obj.title ?? t("common:untitled")}
                       className="w-full aspect-square object-cover rounded"
                     />
                   ) : (
                     <div className="w-full aspect-square bg-gray-100 rounded flex items-center justify-center text-gray-400 text-xs text-center p-1">
-                      {obj.title ?? obj.object_id}
+                      {obj.title ?? t("common:untitled")}
                     </div>
                   )}
                   <span className="font-body text-xs text-charcoal truncate w-full text-center">
-                    {obj.title ?? obj.object_id}
+                    {obj.title ?? t("common:untitled")}
                   </span>
                 </button>
               ))}

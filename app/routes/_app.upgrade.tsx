@@ -15,7 +15,7 @@
  * Renders a 4-stage state machine — review | upgrading | building |
  * done.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { redirect, useFetcher } from "react-router";
@@ -1494,7 +1494,7 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
           {!phases && (
             <div className="flex items-center gap-2 text-gray-500 mb-4">
               <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
-              <span className="font-body text-sm">Waiting for build to start...</span>
+              <span className="font-body text-sm">{t("waiting_build")}</span>
             </div>
           )}
 
@@ -1533,7 +1533,7 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 font-body text-xs text-blue-600 hover:underline"
             >
-              View on GitHub
+              {t("view_on_github")}
               <ExternalLink className="w-3 h-3" />
             </a>
           )}

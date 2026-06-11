@@ -1,4 +1,9 @@
 {
   "page_title": "Homepage",
-  "view_live_site": "View live site"
+  "view_live_site": "View live site",
+  "no_image": "No image",
+  "title_label": "Title",
+  "title_placeholder": "Your site title",
+  "description_label": "Description",
+  "description_placeholder": "A brief description of your site"
 }

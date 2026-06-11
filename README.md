@@ -1,6 +1,6 @@
 # Telar Compositor
 
-![Version](https://img.shields.io/badge/version-1.3.5--beta-orange) ![License](https://img.shields.io/badge/license-AGPL%20v3-blue)
+![Version](https://img.shields.io/badge/version-1.3.6--beta-orange) ![License](https://img.shields.io/badge/license-AGPL%20v3-blue)
 
 **[Versión en español abajo](#español)** | **[English version](#telar-compositor)**
 
@@ -12,7 +12,7 @@ A web-based visual editor for creating [Telar](https://github.com/UCSB-AMPLab/te
 
 ---
 
-> **⚠️ Beta Release — v1.3.5-beta**
+> **⚠️ Beta Release — v1.3.6-beta**
 > The compositor is in active development. It works with Telar sites running framework v0.9.2-beta or later, and ships with bundled migrations through v1.2.0.
 
 ## Overview
@@ -92,7 +92,7 @@ We gratefully acknowledge the support of the [Caribbean Digital Scholarship Coll
 
 # Español
 
-![Versión](https://img.shields.io/badge/versión-1.3.5--beta-orange) ![Licencia](https://img.shields.io/badge/licencia-AGPL%20v3-blue)
+![Versión](https://img.shields.io/badge/versión-1.3.6--beta-orange) ![Licencia](https://img.shields.io/badge/licencia-AGPL%20v3-blue)
 
 **[Versión en español](#español)** | **[English version above](#telar-compositor)**
 
@@ -104,7 +104,7 @@ Un editor visual web para crear historias de [Telar](https://github.com/UCSB-AMP
 
 ---
 
-> **⚠️ Versión Beta — v1.3.5-beta**
+> **⚠️ Versión Beta — v1.3.6-beta**
 > El compositor está en desarrollo activo. Funciona con sitios Telar que usan el framework v0.9.2-beta o posterior, e incluye las migraciones para actualizar hasta la v1.2.0.
 
 ## Descripción general

@@ -14,7 +14,7 @@
  *
  * All-or-nothing: the apply step accepts every change in the diff.
  *
- * @version v1.2.0-beta
+ * @version v1.3.6-beta
  */
 
 import { useEffect, useState } from "react";
@@ -30,6 +30,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Dialog } from "~/components/ui/Dialog";
 import type { FullSyncDiff, FullSyncChanges } from "~/lib/sync.server";
+import { configFieldLabel } from "~/lib/activity-display";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -274,37 +275,65 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
     if (!diff) return [];
     const sections: { label: string; items: string[] }[] = [];
 
+    // Translated "{name} (new|changed|removed)" — never composed from English
+    // fragments, so the parenthetical localizes with the name.
+    const itemNew = (name: string) => t("sync_modal.item_new", { name });
+    const itemChanged = (name: string) => t("sync_modal.item_changed", { name });
+    const itemRemoved = (name: string) => t("sync_modal.item_removed", { name });
+    // "{category} ({n} total|changed)" with a translated qualifier.
+    const sectionLabel = (category: string, count: number, anyChanged: boolean) =>
+      `${category} (${anyChanged
+        ? t("sync_modal.section_count_changed", { count })
+        : t("sync_modal.section_count", { count })})`;
+
     // Objects
     const objectItems: string[] = [
-      ...diff.objects.newObjects.map((o) => `${o.object_id} (${t("sync_modal.new_items", { count: 1 }).replace("1 ", "").trim()} new)`),
-      ...diff.objects.changedObjects.map((o) => `${o.object_id} (changed)`),
-      ...diff.objects.missingObjects.map((o) => `${o.object_id} (removed)`),
+      ...diff.objects.newObjects.map((o) => itemNew(o.object_id)),
+      ...diff.objects.changedObjects.map((o) => itemChanged(o.object_id)),
+      ...diff.objects.missingObjects.map((o) => itemRemoved(o.object_id)),
     ];
     if (objectItems.length > 0) {
       sections.push({
-        label: `${t("sync_modal.objects_category")} (${diff.objects.newObjects.length + diff.objects.changedObjects.length + diff.objects.missingObjects.length} ${diff.objects.changedObjects.length > 0 ? "changed" : "total"})`,
+        label: sectionLabel(
+          t("sync_modal.objects_category"),
+          diff.objects.newObjects.length + diff.objects.changedObjects.length + diff.objects.missingObjects.length,
+          diff.objects.changedObjects.length > 0,
+        ),
         items: objectItems,
       });
     }
 
-    // Stories
+    // Stories — fall back to a translated "untitled", never the raw story_id.
+    const storyName = (s: { title?: string | null; story_id: string }) =>
+      s.title || t("common:untitled");
     const storyItems: string[] = [
-      ...diff.stories.newStories.map((s) => `${s.title ?? s.story_id} (new)`),
-      ...diff.stories.changedStories.map((s) => `${s.title ?? s.story_id} (changed)`),
-      ...diff.stories.missingStories.map((s) => `${s.title ?? s.story_id} (removed)`),
+      ...diff.stories.newStories.map((s) => itemNew(storyName(s))),
+      ...diff.stories.changedStories.map((s) => itemChanged(storyName(s))),
+      ...diff.stories.missingStories.map((s) => itemRemoved(storyName(s))),
     ];
     if (storyItems.length > 0) {
       sections.push({
-        label: `${t("sync_modal.stories_category")} (${diff.stories.newStories.length + diff.stories.changedStories.length + diff.stories.missingStories.length} total)`,
+        label: sectionLabel(
+          t("sync_modal.stories_category"),
+          diff.stories.newStories.length + diff.stories.changedStories.length + diff.stories.missingStories.length,
+          false,
+        ),
         items: storyItems,
       });
     }
 
-    // Config
+    // Config — resolve each field key to its friendly Config-tab label (shared
+    // with the activity feed); unknown keys degrade to the generic noun.
     if (diff.config.changedFields.length > 0) {
       sections.push({
-        label: `${t("sync_modal.config_category")} (${diff.config.changedFields.length} changed)`,
-        items: diff.config.changedFields.map((c) => c.key),
+        label: sectionLabel(
+          t("sync_modal.config_category"),
+          diff.config.changedFields.length,
+          true,
+        ),
+        items: diff.config.changedFields.map(
+          (c) => configFieldLabel(c.key, t) || t("sync_modal.config_setting"),
+        ),
       });
     }
 

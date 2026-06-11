@@ -65,5 +65,19 @@
     "upgrade_cta": "Actualizar",
     "saving": "Guardando…",
     "repo_unavailable": "Sin acceso al repositorio"
-  }
+  },
+  "untitled": "Sin título",
+  "a11y": {
+    "notifications": "Notificaciones",
+    "close_notification": "Cerrar notificación",
+    "main_navigation": "Navegación principal",
+    "edit_slug": "Editar el identificador de la URL",
+    "orphan_story_files": "Archivos de historias huérfanos",
+    "onboarding_progress": "Progreso de la configuración inicial",
+    "import_progress": "Progreso de la importación",
+    "activity_rail": "Panel de actividad y recuperación"
+  },
+  "cancel": "Cancelar",
+  "sign_out": "Cerrar sesión",
+  "no_image": "Sin imagen"
 }

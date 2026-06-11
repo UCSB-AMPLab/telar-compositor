@@ -18,7 +18,7 @@
  * `_app.homepage.tsx` — they were relocated and this route keeps
  * the project-management shell only.
  *
- * @version v1.3.2-beta
+ * @version v1.3.6-beta
  */
 
 import { asc, count, desc, eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
@@ -56,7 +56,7 @@ import { useVersionChangeToast } from "~/hooks/use-version-change-toast";
 import { EmptyState } from "~/components/features/dashboard/EmptyState";
 import { Settings, Image, BookOpen, Sparkles, Upload } from "lucide-react";
 
-export const handle = { i18n: ["common", "dashboard", "team", "upgrade", "sync"] };
+export const handle = { i18n: ["common", "dashboard", "team", "upgrade", "sync", "config"] };
 
 export async function loader() {
   // The dashboard is retired AS A DESTINATION. A stray nav to /dashboard

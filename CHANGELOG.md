@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.3.6-beta (2026-06-11)
+
+A localization and labelling fix release.
+
+### Fixes
+
+- **Activity feed reads correctly in Spanish** — Action words and item types in
+  the Start-tab activity feed (edited, added, story, settings, and so on) now
+  translate, and the feed shows a setting's friendly name or a story's title
+  instead of a raw identifier.
+
+- **Object usage counts are per-project** — The "used in N steps" count on the
+  Objects tab now counts only the steps in your own project, instead of adding up
+  references across every project that shares an object identifier.
+
+- **Untitled items show a label, not an identifier** — Objects, stories, pages,
+  and terms without a title now show "Untitled" everywhere they are listed,
+  rather than their internal slug or id.
+
+- **Spanish across more of the interface** — The sync review dialog, accessibility
+  labels, and a number of buttons, field labels, and placeholders that were
+  English-only are now fully translated.
+
 ## v1.3.5-beta (2026-06-10)
 
 A reliability fix release for the glossary and publishing.

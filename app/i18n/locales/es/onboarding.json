@@ -160,5 +160,7 @@
       "organization_label": "Organización",
       "cancel": "Cancelar"
     }
-  }
+  },
+  "repo_private": "Privado",
+  "inline_url_help": "La URL de tu sitio en GitHub Pages o tu dominio propio"
 }

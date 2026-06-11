@@ -5,7 +5,7 @@
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
  *
- * @version v1.3.2-beta
+ * @version v1.3.6-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -631,7 +631,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
 
               {/* Object ID — read-only */}
               <div>
-                <FieldLabel htmlFor="field-object-id">Object ID</FieldLabel>
+                <FieldLabel htmlFor="field-object-id">{t("upload_object_id")}</FieldLabel>
                 <p
                   id="field-object-id"
                   className="font-mono text-sm text-gray-500 bg-gray-100 px-3 py-2 rounded-lg truncate"
@@ -841,7 +841,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                         key={i}
                         className="font-body text-xs text-gray-500 bg-gray-50 px-3 py-1.5 rounded"
                       >
-                        {ref.storyTitle || "Untitled"} — step {ref.stepNumber}
+                        {t("used_in_step", { title: ref.storyTitle || t("common:untitled"), step: ref.stepNumber })}
                       </li>
                     ))}
                   </ul>

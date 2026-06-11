@@ -38,5 +38,8 @@
   "quick_create_edit": "Editar término →",
   "empty_title": "Define los términos de tus historias",
   "empty_body": "Agrega los términos que tus lectores encontrarán en las historias. Usa enlaces <chip>[[term_id]]</chip> en cualquier campo de texto para conectarlos.",
-  "empty_cta": "Nuevo término"
+  "empty_cta": "Nuevo término",
+  "used_in_story_ref": "{{title}} · Paso {{step}} · Capa {{layer}}",
+  "used_in_page_ref": "Página: {{title}}",
+  "used_in_term_ref": "Término: {{title}}"
 }

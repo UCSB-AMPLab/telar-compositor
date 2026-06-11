@@ -14,7 +14,7 @@
  * The component bundles the live-language observer (config.lang → placeholders),
  * the stories-showcase drag-and-drop, and the featured-objects derivation.
  *
- * @version v1.3.2-beta
+ * @version v1.3.6-beta
  */
 
 import { useTranslation } from "react-i18next";
@@ -122,6 +122,7 @@ function HomepageObjectCard({
   obj: HomepageObjectItem;
   siteBaseUrl: string | null;
 }) {
+  const { t } = useTranslation(["homepage", "common"]);
   const needsResolve = !obj.thumbnail && obj.image_available && siteBaseUrl;
   const infoJsonUrl = needsResolve
     ? `${siteBaseUrl}/iiif/objects/${obj.object_id}/info.json`
@@ -139,18 +140,18 @@ function HomepageObjectCard({
         {thumbSrc ? (
           <img
             src={thumbSrc}
-            alt={obj.title ?? obj.object_id}
+            alt={obj.title ?? t("common:untitled")}
             className="w-full h-full object-cover"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs font-body">
-            No image
+            {t("homepage:no_image")}
           </div>
         )}
       </div>
       <div className="p-2">
         <p className="font-body text-xs text-charcoal leading-snug">
-          {obj.title ?? obj.object_id}
+          {obj.title ?? t("common:untitled")}
         </p>
         {obj.creator && (
           <p className="font-body text-[10px] text-gray-500 mt-0.5">{obj.creator}</p>
@@ -304,12 +305,12 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
         <div className="space-y-3">
           <div>
             <label className="block font-heading font-semibold text-xs text-gray-400 uppercase tracking-wider mb-1">
-              Title
+              {tHome("title_label")}
             </label>
             <InlineTextField
               initialValue={config?.title ?? ""}
               yText={configTitleYText}
-              placeholder="Your site title"
+              placeholder={tHome("title_placeholder")}
               className="font-bold text-xl"
               bordered
               fieldKey="homepage-config-title"
@@ -317,12 +318,12 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
           </div>
           <div>
             <label className="block font-heading font-semibold text-xs text-gray-400 uppercase tracking-wider mb-1">
-              Description
+              {tHome("description_label")}
             </label>
             <InlineHtmlEditor
               initialValue={config?.description ?? ""}
               yText={configDescriptionYText}
-              placeholder="A brief description of your site"
+              placeholder={tHome("description_placeholder")}
             />
           </div>
         </div>

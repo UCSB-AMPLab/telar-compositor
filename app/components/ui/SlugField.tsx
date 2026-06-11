@@ -112,7 +112,7 @@ export function SlugField({
       <span className="font-body text-xs text-gray-500">/{slug}/</span>
       <button
         type="button"
-        aria-label="Edit URL slug"
+        aria-label={t("common:a11y.edit_slug")}
         className={`transition-opacity ${isHovered ? "opacity-100" : "opacity-0"}`}
         onClick={(e) => {
           e.stopPropagation();

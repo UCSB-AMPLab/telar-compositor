@@ -1,4 +1,9 @@
 {
   "page_title": "Inicio",
-  "view_live_site": "Ver sitio en vivo"
+  "view_live_site": "Ver sitio en vivo",
+  "no_image": "Sin imagen",
+  "title_label": "Título",
+  "title_placeholder": "El título de tu sitio",
+  "description_label": "Descripción",
+  "description_placeholder": "Una descripción breve de tu sitio"
 }

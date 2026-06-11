@@ -12,10 +12,11 @@
  * Exit animation: 200ms fade before the container removes the toast
  * from the DOM (handled by the provider via `dismissToast`).
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ToastData } from "~/hooks/use-toast";
 
 interface ToastContainerProps {
@@ -30,6 +31,7 @@ interface ToastContainerProps {
  * backdrops (z-50 with explicit stacking context via fixed positioning).
  */
 export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
+  const { t } = useTranslation("common");
   if (toasts.length === 0) return null;
 
   return (
@@ -37,7 +39,7 @@ export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
       className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm"
       role="region"
       aria-live="polite"
-      aria-label="Notifications"
+      aria-label={t("a11y.notifications")}
     >
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />
@@ -52,6 +54,7 @@ interface ToastItemProps {
 }
 
 function ToastItem({ toast, onDismiss }: ToastItemProps) {
+  const { t } = useTranslation("common");
   const borderClass =
     toast.type === "destructive"
       ? "border-l-4 border-red-500"
@@ -86,7 +89,7 @@ function ToastItem({ toast, onDismiss }: ToastItemProps) {
         type="button"
         onClick={() => onDismiss(toast.id)}
         className="text-gray-400 hover:text-charcoal transition-colors"
-        aria-label="Close notification"
+        aria-label={t("a11y.close_notification")}
       >
         <X className="w-4 h-4" />
       </button>
