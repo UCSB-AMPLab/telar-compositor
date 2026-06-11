@@ -21,7 +21,7 @@
  * slot) is composed in the default export; the rail (activity / recovery)
  * and docs drawer mount into this shell.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 
@@ -54,10 +54,11 @@ import { OrphanRecoveryCard } from "~/components/features/start/OrphanRecoveryCa
 import { OtherProjectsRibbon } from "~/components/features/start/OtherProjectsRibbon";
 import { FromTheDocs } from "~/components/features/start/FromTheDocs";
 
+import { useTranslation } from "react-i18next";
 import { useIsConvenor } from "~/hooks/use-role";
 import { useGithubStatusPoll } from "~/hooks/use-github-status-poll";
 
-export const handle = { i18n: ["common", "start", "dashboard"] };
+export const handle = { i18n: ["common", "start", "dashboard", "config"] };
 
 // ---------------------------------------------------------------------------
 // Loader
@@ -264,6 +265,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 type AppShellData = { unpublishedCount?: number } | null;
 
 export default function StartPage({ loaderData }: Route.ComponentProps) {
+  const { t } = useTranslation("common");
   const {
     project,
     userRole,
@@ -336,7 +338,7 @@ export default function StartPage({ loaderData }: Route.ComponentProps) {
         <aside
           data-rail-slot="true"
           className="flex flex-col gap-[14px]"
-          aria-label="Activity and recovery rail"
+          aria-label={t("common:a11y.activity_rail")}
         >
           <ActivityFeed rows={activity} />
           {isConvenor && state !== "empty" && orphanStoryIds.length > 0 && (

@@ -39,7 +39,24 @@
   "activity": {
     "empty": "Todavía no hay cambios. Cuando tú o alguien del equipo edite una historia, un objeto o un término, aparecerá aquí.",
     "fail_open": "La actividad no está disponible — vuelve a revisar en un momento",
-    "see_all": "Ver toda la actividad"
+    "see_all": "Ver toda la actividad",
+    "someone": "Alguien",
+    "untitled": "sin título",
+    "verb": {
+      "edited": "editó",
+      "added": "agregó",
+      "created": "creó",
+      "synced": "sincronizó",
+      "published": "publicó"
+    },
+    "entity": {
+      "story": "historia",
+      "object": "objeto",
+      "term": "término",
+      "page": "página",
+      "config": "configuración",
+      "site": "sitio"
+    }
   },
   "recovery": {
     "eyebrow": "Necesita tu atención",

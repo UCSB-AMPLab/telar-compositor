@@ -39,7 +39,24 @@
   "activity": {
     "empty": "No edits yet. When you or a teammate touches a story, an object, or a term, it will show up here.",
     "fail_open": "Activity unavailable — check back shortly",
-    "see_all": "See all activity"
+    "see_all": "See all activity",
+    "someone": "Someone",
+    "untitled": "untitled",
+    "verb": {
+      "edited": "edited",
+      "added": "added",
+      "created": "created",
+      "synced": "synced",
+      "published": "published"
+    },
+    "entity": {
+      "story": "story",
+      "object": "object",
+      "term": "term",
+      "page": "page",
+      "config": "settings",
+      "site": "site"
+    }
   },
   "recovery": {
     "eyebrow": "Needs your attention",

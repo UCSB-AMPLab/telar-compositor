@@ -21,12 +21,13 @@
  * (never hardcoded hex); a neutral token background is used when a row has no
  * presence colour.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { useTranslation } from "react-i18next";
 import { useRelativeTime } from "~/lib/use-relative-time";
 import type { RecentActivityRow } from "~/lib/activity.server";
+import { activityEntityLabel } from "~/lib/activity-display";
 
 export interface ActivityFeedProps {
   rows: RecentActivityRow[];
@@ -55,8 +56,22 @@ function ActivityRow({
   presenceColor?: string | null;
   withRule: boolean;
 }) {
-  const actorName = row.actor_github_name || row.actor_github_login || "Someone";
-  const entityLabel = row.entity_label || row.entity_id || row.entity_type;
+  // `config` is loaded alongside `start` so config-field labels (resolved via
+  // the `config:` prefix in activity-display) are available on this tab.
+  const { t } = useTranslation(["start", "config"]);
+  const actorName =
+    row.actor_github_name || row.actor_github_login || t("activity.someone");
+  // verb and entity_type are stable English enum values (activity.server
+  // ACTIVITY_VERBS / ACTIVITY_ENTITY_TYPES) — translate them for display, with
+  // the raw token as defaultValue so a legacy out-of-set row degrades to the
+  // token rather than a visible key string.
+  const verbLabel = t(`activity.verb.${row.verb}`, { defaultValue: row.verb });
+  const entityTypeLabel = t(`activity.entity.${row.entity_type}`, {
+    defaultValue: row.entity_type,
+  });
+  // Resolve the human label — config field keys → Config-tab labels, missing
+  // titles → "untitled"; a raw slug/id is never shown (see activity-display).
+  const entityLabel = activityEntityLabel(row, t);
   const bgStyle = presenceColor ? { backgroundColor: presenceColor } : undefined;
   // Client-only relative timestamp (see useRelativeTime); empty until mount.
   const relative = useRelativeTime(row.created_at);
@@ -92,13 +107,13 @@ function ActivityRow({
 
       <span className="flex flex-col gap-0.5 min-w-0">
         <span className="font-body text-sm text-charcoal">
-          <span className="font-medium">{actorName}</span> {row.verb}{" "}
+          <span className="font-medium">{actorName}</span> {verbLabel}{" "}
           <span className="text-anil-ink underline decoration-anil underline-offset-2">
             {entityLabel}
           </span>
         </span>
         <span className="font-mono text-xs text-fg-muted">
-          {relative ? `${relative} · ` : ""}{row.entity_type}
+          {relative ? `${relative} · ` : ""}{entityTypeLabel}
         </span>
       </span>
     </li>
