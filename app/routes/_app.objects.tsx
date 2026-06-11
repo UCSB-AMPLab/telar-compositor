@@ -13,10 +13,10 @@
  * with thumbnails, sort/filter controls, featured-star toggles, a
  * slide-in edit panel, and a build progress banner.
  *
- * @version v1.3.2-beta
+ * @version v1.3.6-beta
  */
 
-import { and, asc, count, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, redirect, useFetcher, useOutletContext, useSearchParams } from "react-router";
@@ -25,9 +25,10 @@ import { RefreshCw } from "lucide-react";
 import type { Route } from "./+types/_app.objects";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, objects, steps, project_config, project_members, users } from "~/db/schema";
+import { projects, objects, project_config, project_members, users } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { resolveActiveProject } from "~/lib/membership.server";
+import { getObjectStepCounts } from "~/lib/objects.server";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { findYMapById, findYMapByIdOrTempId } from "~/lib/yjs-helpers";
@@ -220,18 +221,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     }
   }
 
-  // Count step references per object_id
-  const stepRefRows = await db
-    .select({ object_id: steps.object_id, count: count() })
-    .from(steps)
-    .groupBy(steps.object_id);
-
-  const objectStepCounts: Record<string, number> = {};
-  for (const row of stepRefRows) {
-    if (row.object_id) {
-      objectStepCounts[row.object_id] = row.count;
-    }
-  }
+  // Count step references per object_id, scoped to the active project (a
+  // global count would inflate shared seeded slugs like `telar-placeholder`).
+  const objectStepCounts = await getObjectStepCounts(db, activeProject.id);
 
   // Fetch project config for self-hosted thumbnail URL construction
   const [config] = await db
