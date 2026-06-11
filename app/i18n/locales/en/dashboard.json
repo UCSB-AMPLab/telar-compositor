@@ -119,7 +119,13 @@
     "accepted_success": "Sync baseline updated",
     "retry": "Try again",
     "sync_now": "Sync now",
-    "close": "Close"
+    "close": "Close",
+    "section_count": "{{count}} total",
+    "section_count_changed": "{{count}} changed",
+    "config_setting": "settings",
+    "item_new": "{{name}} (new)",
+    "item_changed": "{{name}} (changed)",
+    "item_removed": "{{name}} (removed)"
   },
   "orphan_banner": {
     "count_text": "Found {{count}} unreferenced story file(s) on GitHub.",

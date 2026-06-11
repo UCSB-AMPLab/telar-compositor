@@ -119,7 +119,13 @@
     "accepted_success": "Punto de partida actualizado",
     "retry": "Intentar de nuevo",
     "sync_now": "Sincronizar ahora",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "section_count": "{{count}} en total",
+    "section_count_changed": "{{count}} modificado(s)",
+    "config_setting": "configuración",
+    "item_new": "{{name}} (nuevo)",
+    "item_changed": "{{name}} (modificado)",
+    "item_removed": "{{name}} (eliminado)"
   },
   "orphan_banner": {
     "count_text": "Hay {{count}} archivo(s) de historia sin referencia en GitHub.",

@@ -33,20 +33,8 @@ interface Props {
   isApplying: boolean;
 }
 
-// Field display labels — used for diff table headers
-const FIELD_LABELS: Record<SyncField, string> = {
-  title: "Title",
-  creator: "Creator",
-  description: "Description",
-  period: "Period",
-  year: "Year",
-  object_type: "Object type",
-  dimensions: "Dimensions",
-  subjects: "Subjects",
-  source: "Source",
-  credit: "Credit",
-  featured: "Featured",
-};
+// Field display labels are translated at render via `t("sync_field.<field>")`
+// (objects namespace) — see the diff table header below.
 
 // ---------------------------------------------------------------------------
 // Component
@@ -161,7 +149,7 @@ export function SyncDiffDialog({
         {isComputing && (
           <div className="flex items-center justify-center py-12">
             <div className="w-6 h-6 border-2 border-anil border-t-transparent rounded-full animate-spin mr-3" />
-            <span className="font-body text-sm text-gray-500">Computing diff…</span>
+            <span className="font-body text-sm text-gray-500">{t("sync_computing")}</span>
           </div>
         )}
 
@@ -201,7 +189,7 @@ export function SyncDiffDialog({
                     className="w-4 h-4 rounded border-green-300 accent-green-600"
                   />
                   <span className="font-body text-sm text-charcoal flex-1">
-                    {obj.title || obj.object_id}
+                    {obj.title || t("common:untitled")}
                   </span>
                   <code className="font-mono text-xs text-gray-400">
                     {obj.object_id}
@@ -276,7 +264,7 @@ export function SyncDiffDialog({
                       className="w-4 h-4 rounded border-amber-300 accent-amber-600"
                     />
                     <span className="font-body text-sm font-medium text-charcoal">
-                      {obj.title || obj.object_id}
+                      {obj.title || t("common:untitled")}
                     </span>
                     <code className="font-mono text-xs text-gray-400 ml-auto">
                       {obj.object_id}
@@ -293,7 +281,7 @@ export function SyncDiffDialog({
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="font-body text-xs font-medium text-gray-600 uppercase tracking-wider">
-                              {FIELD_LABELS[field]}
+                              {t(`sync_field.${field}`)}
                             </span>
                             {/* Radio choice */}
                             <div className="flex items-center gap-3">
@@ -309,7 +297,7 @@ export function SyncDiffDialog({
                                   className="accent-amber-600"
                                 />
                                 <span className="font-body text-xs text-amber-700">
-                                  Use repo
+                                  {t("sync_use_repo")}
                                 </span>
                               </label>
                               <label className="flex items-center gap-1.5 cursor-pointer">
@@ -324,7 +312,7 @@ export function SyncDiffDialog({
                                   className="accent-amber-600"
                                 />
                                 <span className="font-body text-xs text-gray-600">
-                                  Keep mine
+                                  {t("sync_keep_mine")}
                                 </span>
                               </label>
                             </div>
@@ -387,7 +375,7 @@ export function SyncDiffDialog({
                       className="w-4 h-4 rounded border-red-300 accent-red-600"
                     />
                     <span className="font-body text-sm text-charcoal flex-1">
-                      {obj.title || obj.object_id}
+                      {obj.title || t("common:untitled")}
                     </span>
                     <code className="font-mono text-xs text-gray-400">
                       {obj.object_id}
