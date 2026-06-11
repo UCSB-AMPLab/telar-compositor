@@ -32,7 +32,7 @@
  * is NEVER keyed off `isPublishing` (which flips false on commit return, before
  * the build runs — the landmine).
  *
- * @version v1.3.2-beta
+ * @version v1.3.5-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -66,6 +66,7 @@ import { PublishingStepper } from "~/components/features/site-status/PublishingS
 import {
   computeChangeSummary,
   computeStoryDeletions,
+  computePageDeletions,
   runPrePublishValidation,
   buildPublishFileSet,
   buildConfigChangeFields,
@@ -616,10 +617,30 @@ export async function action({ request, context }: Route.ActionArgs) {
             priorSnapshot = null;
           }
         }
-        const deletions = computeStoryDeletions(
-          currentStoryIdsForDeletion.map((r) => r.story_id),
-          priorSnapshot,
-        );
+        // Hard-deleted/renamed pages: a prior committable page slug no longer
+        // present gets its {slug}.md deleted, mirroring the story logic. Use the
+        // SAME trim/non-empty filter the snapshot's page_slugs is built with
+        // (committablePageSlugs below), so a still-live page is never targeted.
+        const currentPageRowsForDeletion = await db
+          .select({ slug: project_pages.slug })
+          .from(project_pages)
+          .where(eq(project_pages.project_id, activeProject.id));
+        const currentCommittablePageSlugsForDeletion = currentPageRowsForDeletion
+          .map((p) => (p.slug ?? "").trim())
+          .filter((slug) => slug.length > 0);
+
+        // Combine story + page hard-deletes, but never delete a path we are also
+        // writing this publish (a recycled slug being rewritten — additions and
+        // deletions ship in one commit payload, so an overlap must resolve to a
+        // write, not a delete).
+        const additionPaths = new Set(files.map((f) => f.path));
+        const deletions = [
+          ...computeStoryDeletions(
+            currentStoryIdsForDeletion.map((r) => r.story_id),
+            priorSnapshot,
+          ),
+          ...computePageDeletions(currentCommittablePageSlugsForDeletion, priorSnapshot),
+        ].filter((path) => !additionPaths.has(path));
 
         // Publish always triggers a full build — tiles are deployed via GitHub
         // Pages (artifact upload), so partial workflows can't deploy content.

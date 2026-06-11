@@ -24,7 +24,7 @@
  * makes the DO durable against forced eviction without any state
  * loss beyond the in-flight edit window.
  *
- * @version v1.3.2-beta
+ * @version v1.3.5-beta
  */
 
 import * as Y from "yjs";
@@ -44,6 +44,7 @@ import {
   makeCanDeleteHandler,
   makeViolationCounter,
 } from "./can-delete";
+import { makeUniqueTermId } from "~/lib/glossary-slug";
 
 // y-websocket message type constants (must match client)
 const messageSync = 0;
@@ -1230,9 +1231,32 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
    * story_id, object_id). The first occurrence wins; later duplicates are
    * deleted from the Y.Array inside a transaction.
    */
-  private deduplicateYArray(arrayName: string, entityKey: string): void {
+  /**
+   * Remove (or re-key) duplicate entries from a top-level Y.Array<Y.Map> keyed
+   * by `entityKey`. `mode` decides how a same-key NON-keeper with a distinct _id
+   * is handled:
+   *   - "delete" (default): the loser is removed. Used for stories/objects/pages
+   *     whose key is an FK-like reference (story_id/object_id/slug) — removing a
+   *     stray duplicate is correct there.
+   *   - "re-key": the loser's `entityKey` is rewritten to a unique value via
+   *     makeUniqueTermId so BOTH rows survive. Used for glossary ONLY, where
+   *     deleting the loser was a LIVE data-loss bug: the deleted Y.Map then fell
+   *     out of the snapshot and its D1 row (definition + related_terms) was
+   *     orphan-deleted. A re-key preserves both terms and makes them
+   *     constraint-safe ahead of UNIQUE(project_id, term_id).
+   * Exact-_id duplicates (two Y.Maps sharing one _id = the same persisted row)
+   * always COLLAPSE via delete, in both modes.
+   * Returns true iff it re-keyed at least one entry, so the caller can broadcast
+   * the mutated Y.Doc to connected clients (otherwise a peer's stale key
+   * resurrects the collision via Yjs last-write-wins).
+   */
+  private deduplicateYArray(
+    arrayName: string,
+    entityKey: string,
+    mode: "delete" | "re-key" = "delete",
+  ): boolean {
     const yArray = this.ydoc.getArray<Y.Map<unknown>>(arrayName);
-    if (yArray.length === 0) return;
+    if (yArray.length === 0) return false;
 
     // First pass: choose the keeper index per human key. Prefer the entry that
     // already carries a non-null _id (the persisted copy) over an _id=null
@@ -1257,41 +1281,73 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       }
     }
 
-    // Second pass: delete any keyed entry that is not its key's keeper, plus any
-    // exact _id duplicate (first occurrence wins).
+    // Second pass: classify each non-keeper. An exact _id duplicate (same _id as
+    // an already-seen entry = the same persisted row) always collapses via
+    // delete. A key-collision non-keeper with a distinct _id is RE-KEYED in
+    // re-key mode (both rows kept) or deleted otherwise.
     const seenIds = new Set<number>();
     const indicesToDelete: number[] = [];
+    const indicesToRekey: number[] = [];
     for (let i = 0; i < yArray.length; i++) {
       const yMap = yArray.get(i);
       const id = yMap.get("_id") as number | null;
       const key = String(yMap.get(entityKey) ?? "");
 
-      if (key && keeperByKey.get(key) !== i) {
+      // Exact _id duplicate (same persisted row) collapses first, in BOTH modes —
+      // re-keying same-_id Y.Maps would mint a phantom row. The keeper for any
+      // _id is always at a lower index (first occurrence / first-with-_id), so it
+      // was already recorded in seenIds before this loser is reached.
+      if (id !== null && id !== undefined && seenIds.has(id)) {
         indicesToDelete.push(i);
         continue;
       }
-      if (id !== null && id !== undefined) {
-        if (seenIds.has(id)) {
+
+      if (key && keeperByKey.get(key) !== i) {
+        if (mode === "re-key") {
+          indicesToRekey.push(i);
+          // The re-keyed loser is kept and is a distinct live row, so track its
+          // _id (delete-mode leaves it untracked, since the loser is removed).
+          if (id !== null && id !== undefined) seenIds.add(id);
+        } else {
           indicesToDelete.push(i);
-          continue;
         }
-        seenIds.add(id);
+        continue;
       }
+      if (id !== null && id !== undefined) seenIds.add(id);
     }
 
+    if (indicesToRekey.length === 0 && indicesToDelete.length === 0) return false;
+
+    // Re-keys must avoid EVERY live key, so seed the taken set with all keeper
+    // keys and grow it as each loser is assigned a fresh, collision-free key.
+    const takenKeys = new Set<string>(keeperByKey.keys());
+    this.ydoc.transact(() => {
+      // Re-key first (no length change), then delete in reverse (indices shift).
+      for (const i of indicesToRekey) {
+        const yMap = yArray.get(i);
+        const current = String(yMap.get(entityKey) ?? "");
+        const fresh = makeUniqueTermId(current, [...takenKeys]);
+        takenKeys.add(fresh);
+        yMap.set(entityKey, fresh);
+      }
+      for (let i = indicesToDelete.length - 1; i >= 0; i--) {
+        yArray.delete(indicesToDelete[i], 1);
+      }
+    });
+
+    // Dedup runs as a recovery path; surface as a warning so a real bug
+    // producing dupes is distinguishable from idle snapshot traffic.
+    if (indicesToRekey.length > 0) {
+      console.warn(
+        `[snapshot] Deduplicated ${arrayName}: re-keyed ${indicesToRekey.length} duplicate(s) to a unique ${entityKey} (content preserved)`,
+      );
+    }
     if (indicesToDelete.length > 0) {
-      // Delete in reverse order so indices stay valid
-      this.ydoc.transact(() => {
-        for (let i = indicesToDelete.length - 1; i >= 0; i--) {
-          yArray.delete(indicesToDelete[i], 1);
-        }
-      });
-      // Dedup runs as a recovery path; surface as a warning so a real bug
-      // producing dupes is distinguishable from idle snapshot traffic.
       console.warn(
         `[snapshot] Deduplicated ${arrayName}: removed ${indicesToDelete.length} duplicate(s)`,
       );
     }
+    return indicesToRekey.length > 0;
   }
 
   /**
@@ -1713,6 +1769,13 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         statements.push(
           this.env.DB
             .prepare(
+              // story_id is INTENTIONALLY not in this SET clause (unlike
+              // glossary.term_id / objects.object_id). Stories have no rename UI
+              // (story_id is set once at creation), and stories(project_id,
+              // story_id) is UNIQUE (migration 0002). This UPDATE runs inside the
+              // atomic D1 batch, so a story_id write that ever collided would
+              // discard EVERY entity's writes in the snapshot — all downside, no
+              // benefit. Do not "complete the symmetry" by adding it.
               "UPDATE stories SET title = ?, subtitle = ?, byline = ?, " +
               "\"order\" = ?, private = ?, draft = ?, show_sections = ?, updated_at = ? WHERE id = ?",
             )
@@ -1986,13 +2049,17 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       statements.push(
         this.env.DB
           .prepare(
-            "UPDATE objects SET title = ?, creator = ?, description = ?, alt_text = ?, " +
+            // object_id IS written here for symmetry with the glossary fix:
+            // object_id has no UNIQUE index, so persisting the human key on
+            // UPDATE is constraint-free and keeps D1 faithful to the Y.Doc.
+            "UPDATE objects SET title = ?, object_id = ?, creator = ?, description = ?, alt_text = ?, " +
             "source_url = ?, period = ?, year = ?, object_type = ?, subjects = ?, " +
             "source = ?, credit = ?, thumbnail = ?, dimensions = ?, extra_columns = ?, " +
             "featured = ?, image_available = ?, updated_at = ? WHERE id = ?",
           )
           .bind(
             yTextToString(m.get("title")),
+            String(m.get("object_id") ?? ""),
             yTextToString(m.get("creator")),
             yTextToString(m.get("description")),
             yTextToString(m.get("alt_text")),
@@ -2158,10 +2225,17 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       statements.push(
         this.env.DB
           .prepare(
-            "UPDATE glossary_terms SET title = ?, definition = ?, updated_at = ? WHERE id = ?",
+            // term_id IS written here (unlike stories.story_id): the glossary
+            // editor lets users rename a term's id, and term_id has no UNIQUE
+            // index, so persisting it on UPDATE can never collide/abort the batch.
+            "UPDATE glossary_terms SET title = ?, term_id = ?, definition = ?, updated_at = ? WHERE id = ?",
           )
           .bind(
             yTextToString(m.get("title")),
+            // term_id is a plain-string Y.Map field (not a Y.Text), so bind it
+            // with String(...) like the page slug — yTextToString would emit
+            // "[object Object]" on a non-Y.Text value.
+            String(m.get("term_id") ?? ""),
             yTextToString(m.get("definition")),
             now,
             targetId,
@@ -2538,16 +2612,19 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // here to prevent the corruption from persisting to D1. Duplicates are
     // detected by _id (D1 primary key) for existing items, and by entity key
     // (story_id, object_id) for all items. The first occurrence wins.
+    // Track whether the Y.Doc was mutated in a way connected clients must adopt —
+    // either an INSERT backfilled a canonical _id, or the glossary dedup re-keyed
+    // a duplicate term_id. Either way we broadcast the updated state at the end;
+    // without it a peer's stale value resurrects the problem via Yjs LWW.
+    let didBackfill = false;
+
     this.deduplicateYArray("stories", "story_id");
     this.deduplicateYArray("objects", "object_id");
-    this.deduplicateYArray("glossary", "term_id");
+    // Glossary re-keys (not deletes) same-term_id duplicates; a re-key mutates
+    // the doc and MUST be broadcast so peers adopt the new term_id.
+    if (this.deduplicateYArray("glossary", "term_id", "re-key")) didBackfill = true;
     this.deduplicateYArray("pages", "slug");
     this.deduplicateNestedStepArrays();
-
-    // Track whether we performed any INSERTs that backfilled _id onto Y.Maps —
-    // if so, broadcast the updated Y.Doc state to all connected clients at the
-    // end so they converge on the canonical D1 IDs.
-    let didBackfill = false;
     const now = new Date().toISOString();
 
     const statements: D1PreparedStatement[] = [];

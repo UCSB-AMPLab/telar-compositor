@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.3.5-beta (2026-06-10)
+
+A reliability fix release for the glossary and publishing.
+
+### Fixes
+
+- **Glossary term ID renames now persist** — Renaming a term's identifier could
+  be lost on the next sync, leaving published links pointing at the old ID.
+  Renames are now saved reliably. The same fix applies to object IDs.
+
+- **Duplicate glossary terms keep their definitions** — When two terms ended up
+  sharing the same identifier, saving could drop one of them along with its
+  definition. Both terms are now preserved, with one automatically given a
+  unique identifier.
+
+- **Renaming a page removes the old file on publish** — Changing a page's slug
+  left an orphaned copy of the old page in the repository. Publishing now
+  deletes the stale file.
+
 ## v1.3.4-beta (2026-06-10)
 
 A follow-up fix for the glossary editor.

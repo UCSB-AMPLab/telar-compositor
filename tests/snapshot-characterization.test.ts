@@ -14,7 +14,7 @@
  * out of scope for this refactor, which never touches blob encoding); its SQL
  * and position in the stream ARE pinned.
  *
- * @version v1.3.2-beta
+ * @version v1.3.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -1053,5 +1053,180 @@ describe("eager activity emission — emit on webSocketMessage, not the cold sna
     await (doInstance as unknown as { flushActivityRows: () => Promise<void> }).flushActivityRows();
 
     expect(activityInsertsIn(db.ops)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slug-rename persistence on the in-place UPDATE branch.
+//
+// A rename mutates the human slug (term_id / object_id) on a Y.Map whose _id is
+// still valid, so the snapshot takes the in-place UPDATE branch. The UPDATE must
+// carry the slug column or the rename never reaches D1 (and thus never
+// publishes). stories.story_id is DELIBERATELY excluded — see the guard test.
+// ---------------------------------------------------------------------------
+function batchStatements(db: { ops: RecordedOp[] }): Array<{ sql: string; binds: unknown[] }> {
+  return db.ops
+    .filter((o): o is Extract<RecordedOp, { op: "batch" }> => o.op === "batch")
+    .flatMap((o) => o.statements);
+}
+
+describe("snapshotToD1 persists slug renames on the in-place UPDATE", () => {
+  it("glossary UPDATE writes the renamed term_id, not just title/definition", async () => {
+    const seed = emptySeed();
+    seed.glossaryIds = [33]; // live D1 row, so the in-place UPDATE branch runs
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    ydoc.transact(() => {
+      const term = new Y.Map<unknown>();
+      term.set("_id", 33);
+      term.set("term_id", "maize-corn"); // renamed from "maize"
+      term.set("title", new Y.Text("Maize"));
+      term.set("definition", new Y.Text("A cereal grain."));
+      ydoc.getArray<Y.Map<unknown>>("glossary").push([term]);
+    }, null);
+
+    await snapshot(doInstance);
+
+    const upd = batchStatements(db).find((s) => /UPDATE glossary_terms SET/.test(s.sql));
+    expect(upd).toBeDefined();
+    expect(upd!.sql).toMatch(/term_id\s*=\s*\?/);
+    expect(upd!.binds).toContain("maize-corn");
+    // the renamed slug must be a plain string, not "[object Object]"
+    expect(upd!.binds.some((b) => b === "maize-corn" && typeof b === "string")).toBe(true);
+    // WHERE id = ? keeps the stable numeric _id as the key
+    expect(upd!.binds[upd!.binds.length - 1]).toBe(33);
+  });
+
+  it("objects UPDATE writes the renamed object_id", async () => {
+    const seed = emptySeed();
+    seed.objectIds = [77];
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    ydoc.transact(() => {
+      const obj = new Y.Map<unknown>();
+      obj.set("_id", 77);
+      obj.set("object_id", "clay-pot-2"); // renamed
+      obj.set("title", new Y.Text("Clay pot"));
+      obj.set("_validation_state", "valid"); // not pending → persists
+      ydoc.getArray<Y.Map<unknown>>("objects").push([obj]);
+    }, null);
+
+    await snapshot(doInstance);
+
+    const upd = batchStatements(db).find((s) => /UPDATE objects SET/.test(s.sql));
+    expect(upd).toBeDefined();
+    expect(upd!.sql).toMatch(/object_id\s*=\s*\?/);
+    expect(upd!.binds).toContain("clay-pot-2");
+    expect(upd!.binds[upd!.binds.length - 1]).toBe(77);
+  });
+
+  it("stories UPDATE does NOT write story_id (intentional — UNIQUE index + atomic batch)", async () => {
+    const seed = emptySeed();
+    seed.storyIds = [11];
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    ydoc.transact(() => {
+      ydoc
+        .getArray<Y.Map<unknown>>("stories")
+        .push([makeStory({ _id: 11, story_id: "s1", title: "Story One" })]);
+    }, null);
+
+    await snapshot(doInstance);
+
+    const upd = batchStatements(db).find((s) => /UPDATE stories SET/.test(s.sql));
+    expect(upd).toBeDefined();
+    expect(upd!.sql).not.toMatch(/story_id/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deduplicateYArray re-key mode (glossary) — fixes the LIVE data-loss bug where
+// two distinct-_id same-term_id Y.Maps (the prod "untitled-term" x2 shape) had
+// the loser DELETED from the Y.Array and its D1 row orphan-deleted. Glossary
+// must RE-KEY the loser (preserve both terms); stories/pages/objects keep
+// delete semantics; exact-_id duplicates still collapse.
+// ---------------------------------------------------------------------------
+function makeGlossaryTerm(id: number | null, termId: string, title: string, def = "def"): Y.Map<unknown> {
+  const m = new Y.Map<unknown>();
+  m.set("_id", id);
+  m.set("term_id", termId);
+  m.set("title", new Y.Text(title));
+  m.set("definition", new Y.Text(def));
+  return m;
+}
+function dedup(doInstance: unknown, arr: string, key: string, mode?: string): boolean {
+  return (doInstance as { deduplicateYArray: (a: string, k: string, m?: string) => boolean })
+    .deduplicateYArray(arr, key, mode);
+}
+
+describe("deduplicateYArray re-key mode (glossary)", () => {
+  it("re-keys a distinct-_id same-term_id loser instead of deleting it", () => {
+    const { doInstance, ydoc } = makeDo(emptySeed());
+    ydoc.transact(() => {
+      ydoc.getArray<Y.Map<unknown>>("glossary").push([
+        makeGlossaryTerm(144, "untitled-term", "Love", "d1"),
+        makeGlossaryTerm(153, "untitled-term", "Connection", "d2"),
+      ]);
+    }, null);
+
+    const didRekey = dedup(doInstance, "glossary", "term_id", "re-key");
+
+    const g = ydoc.getArray<Y.Map<unknown>>("glossary");
+    expect(g.length).toBe(2); // BOTH preserved (not deleted)
+    const keys = [String(g.get(0).get("term_id")), String(g.get(1).get("term_id"))];
+    expect(new Set(keys).size).toBe(2); // now distinct
+    expect(keys).toContain("untitled-term");
+    expect(keys.some((k) => /^untitled-term-\d+$/.test(k))).toBe(true);
+    expect(new Set([g.get(0).get("_id"), g.get(1).get("_id")])).toEqual(new Set([144, 153]));
+    expect(didRekey).toBe(true);
+  });
+
+  it("still DELETES exact-_id duplicates even in re-key mode (same persisted row)", () => {
+    const { doInstance, ydoc } = makeDo(emptySeed());
+    ydoc.transact(() => {
+      ydoc.getArray<Y.Map<unknown>>("glossary").push([
+        makeGlossaryTerm(50, "alpha", "Alpha"),
+        makeGlossaryTerm(50, "alpha", "Alpha dup"),
+      ]);
+    }, null);
+
+    dedup(doInstance, "glossary", "term_id", "re-key");
+
+    expect(ydoc.getArray("glossary").length).toBe(1); // collapsed
+  });
+
+  it("delete mode is unchanged for stories (a same-story_id loser is deleted)", () => {
+    const { doInstance, ydoc } = makeDo(emptySeed());
+    ydoc.transact(() => {
+      ydoc.getArray<Y.Map<unknown>>("stories").push([
+        makeStory({ _id: 11, story_id: "dup", title: "A" }),
+        makeStory({ _id: 12, story_id: "dup", title: "B" }),
+      ]);
+    }, null);
+
+    dedup(doInstance, "stories", "story_id"); // default delete mode
+
+    expect(ydoc.getArray("stories").length).toBe(1);
+  });
+
+  it("LIVE BUG regression: a full snapshot does NOT orphan-delete either duplicate term's D1 row", async () => {
+    const seed = emptySeed();
+    seed.glossaryIds = [144, 153]; // both live in D1
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    ydoc.transact(() => {
+      ydoc.getArray<Y.Map<unknown>>("glossary").push([
+        makeGlossaryTerm(144, "untitled-term", "Love", "d1"),
+        makeGlossaryTerm(153, "untitled-term", "Connection", "d2"),
+      ]);
+    }, null);
+
+    await snapshot(doInstance);
+
+    const deletedIds = batchStatements(db)
+      .filter((s) => /DELETE FROM glossary_terms/.test(s.sql))
+      .map((s) => s.binds[0]);
+    expect(deletedIds).not.toContain(144);
+    expect(deletedIds).not.toContain(153);
   });
 });

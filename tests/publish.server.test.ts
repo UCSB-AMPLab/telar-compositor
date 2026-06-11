@@ -14,7 +14,7 @@
  *   - storyPathsForPublish + computeStoryDeletions: draft round-trip + hard-delete cleanup
  *   - publish defensive gate: v1.2.1 frontmatter literals are stripped at publish time
  *
- * @version v1.3.0-beta
+ * @version v1.3.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -43,6 +43,7 @@ import {
   ENTITY_HASHES_VERSION,
   buildEntityHashes,
   computeStoryDeletions,
+  computePageDeletions,
   storyPathsForPublish,
 } from "~/lib/publish.server";
 import type { PublishSnapshot, CurrentPublishState, EntityHashes } from "~/lib/publish.server";
@@ -2828,6 +2829,43 @@ describe("drafts round-trip + hard-delete cleanup", () => {
       };
       const deletions = computeStoryDeletions(["a", "b"], emptySnapshot);
       expect(deletions).toEqual([]);
+    });
+  });
+
+  describe("computePageDeletions", () => {
+    const baseSnapshot: PublishSnapshot = {
+      story_ids: [],
+      object_ids: [],
+      page_slugs: ["about", "team"],
+      config_hash: "",
+      landing_hash: "",
+    };
+
+    it("emits a deletion for a page slug removed/renamed since the last publish", () => {
+      // Prior publish wrote about.md + team.md; current committable slugs are
+      // [about, crew] (team renamed to crew) → team.md must be deleted so the
+      // stale page does not linger live.
+      const deletions = computePageDeletions(["about", "crew"], baseSnapshot);
+      expect(deletions).toEqual(["telar-content/texts/pages/team.md"]);
+    });
+
+    it("emits zero deletions when the current slugs still contain all prior slugs", () => {
+      const deletions = computePageDeletions(["about", "team", "extra"], baseSnapshot);
+      expect(deletions).toEqual([]);
+    });
+
+    it("emits zero deletions when the snapshot is null (first publish)", () => {
+      const deletions = computePageDeletions(["about"], null);
+      expect(deletions).toEqual([]);
+    });
+
+    it("treats a snapshot predating page_slugs tracking as a no-op (back-compat)", () => {
+      // Old snapshots have no page_slugs field (it is optional). A missing/empty
+      // prior set must not claim every current page was deleted.
+      const noPagesSnapshot: PublishSnapshot = { ...baseSnapshot, page_slugs: undefined };
+      expect(computePageDeletions(["about", "team"], noPagesSnapshot)).toEqual([]);
+      const emptyPagesSnapshot: PublishSnapshot = { ...baseSnapshot, page_slugs: [] };
+      expect(computePageDeletions(["about", "team"], emptyPagesSnapshot)).toEqual([]);
     });
   });
 

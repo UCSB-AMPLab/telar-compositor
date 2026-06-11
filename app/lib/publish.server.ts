@@ -18,7 +18,7 @@
  *
  * Called by the Publish route — no UI logic lives here.
  *
- * @version v1.3.0-beta
+ * @version v1.3.5-beta
  */
 
 import Papa from "papaparse";
@@ -2066,6 +2066,35 @@ export function computeStoryDeletions(
   return priorIds
     .filter((id) => !currentSet.has(id))
     .map((id) => `telar-content/spreadsheets/${id}.csv`);
+}
+
+/**
+ * Page-file hard-delete detection — the page analogue of
+ * `computeStoryDeletions`. A page slug rename writes the new
+ * `texts/pages/{new}.md` but never removes `texts/pages/{old}.md`, so without
+ * this a renamed (or hard-deleted) page orphans a stale `.md` — and a stale
+ * live page — in the repo. Returns the `.md` paths for prior committable slugs
+ * absent from the current committable set. Empty on first publish (no
+ * snapshot) or for snapshots written before `page_slugs` tracking existed
+ * (the field is optional — missing/empty means "nothing known to delete",
+ * mirroring the `priorIds.length === 0` guard above).
+ *
+ * The caller MUST pass `currentPageSlugs` computed with the SAME trim/
+ * non-empty filter used to build `page_slugs` in the snapshot, and MUST drop
+ * any returned path that also appears in this publish's additions (a recycled
+ * slug being rewritten), so a still-live page is never deleted.
+ */
+export function computePageDeletions(
+  currentPageSlugs: string[],
+  snapshot: PublishSnapshot | null,
+): string[] {
+  if (!snapshot) return [];
+  const priorSlugs = snapshot.page_slugs ?? [];
+  if (priorSlugs.length === 0) return [];
+  const currentSet = new Set(currentPageSlugs);
+  return priorSlugs
+    .filter((slug) => !currentSet.has(slug))
+    .map((slug) => `telar-content/texts/pages/${slug}.md`);
 }
 
 /**
