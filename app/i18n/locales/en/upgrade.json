@@ -72,5 +72,7 @@
   "phase_label_iiif_tiles": "IIIF tiles",
   "phase_label_deploy": "Deploy",
   "externalUpgradeToast": "Your site was upgraded to v{{version}} externally.",
-  "externalDowngradeToast": "The repository is on v{{repo}} but the compositor has v{{d1}}. Please verify."
+  "externalDowngradeToast": "The repository is on v{{repo}} but the compositor has v{{d1}}. Please verify.",
+  "view_on_github": "View on GitHub",
+  "waiting_build": "Waiting for build to start..."
 }

@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface ThemeOption {
   theme_id: string;
@@ -21,13 +22,14 @@ interface ThemeSwatchesProps {
 }
 
 export function ThemeSwatches({ name, value: initialValue, themes, onChange }: ThemeSwatchesProps) {
+  const { t } = useTranslation(["config", "common"]);
   const [selected, setSelected] = useState(initialValue || themes[0]?.theme_id || "");
   useEffect(() => { setSelected(initialValue || themes[0]?.theme_id || ""); }, [initialValue, themes]);
 
   if (themes.length === 0) {
     return (
       <div>
-        <p className="text-xs font-body text-gray-400 italic">No themes found in this repository.</p>
+        <p className="text-xs font-body text-gray-400 italic">{t("config:themes_none")}</p>
         <input type="hidden" name={name} value={selected} />
       </div>
     );
@@ -55,7 +57,7 @@ export function ThemeSwatches({ name, value: initialValue, themes, onChange }: T
               }`}
               style={{ backgroundColor: theme.swatch_color || "#999" }}
             />
-            <span className="text-xs font-body text-gray-500">{theme.name || theme.theme_id}</span>
+            <span className="text-xs font-body text-gray-500">{theme.name || t("common:untitled")}</span>
           </button>
         ))}
       </div>

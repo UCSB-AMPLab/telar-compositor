@@ -44,11 +44,20 @@ describe("ObjectPickerDialog", () => {
       />
     );
 
-    // All four objects should render as buttons
+    // All four objects should render as buttons. A null-title object shows the
+    // translated "untitled" placeholder (mocked to the key) — never its raw
+    // object_id.
     const buttons = screen.getAllByRole("button").filter((b) =>
-      testObjects.some((o) => b.textContent?.includes(o.title ?? o.object_id))
+      testObjects.some((o) => b.textContent?.includes(o.title ?? "common:untitled"))
     );
     expect(buttons.length).toBe(testObjects.length);
+
+    // The null-title object must NOT surface its raw object_id as the label.
+    const untitledButton = screen.getAllByRole("button").find((b) =>
+      b.textContent?.includes("common:untitled"),
+    );
+    expect(untitledButton).toBeTruthy();
+    expect(untitledButton?.textContent).not.toContain("no-title-obj");
   });
 
   it("renders nothing when closed", () => {

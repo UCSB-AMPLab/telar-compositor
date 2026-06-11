@@ -208,7 +208,7 @@ export function ObjectRow({
         ) : thumbnailUrl && !imgFailed ? (
           <img
             src={thumbnailUrl}
-            alt={object.title ?? object.object_id}
+            alt={object.title ?? t("common:untitled")}
             className="w-full h-full object-cover"
             // Fall through to the Package icon if the thumbnail fails to load
             onError={() => setImgFailed(true)}
@@ -221,7 +221,7 @@ export function ObjectRow({
       {/* Title block — title + mono object_id + used-in line */}
       <div className="flex-1 min-w-0">
         <p className="font-heading font-semibold text-charcoal truncate">
-          {object.title ?? object.object_id}
+          {object.title ?? t("common:untitled")}
         </p>
         {object.title && object.title !== object.object_id && (
           <p className="font-mono text-xs text-gray-400 truncate">

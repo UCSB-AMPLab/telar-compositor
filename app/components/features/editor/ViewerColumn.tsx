@@ -16,7 +16,7 @@
  *
  * Also accepts a `children` slot for the layer panel overlay.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { useRef, useState, useEffect, useCallback } from "react";
@@ -609,7 +609,7 @@ export function ViewerColumn({
                   className="flex items-center gap-1 px-2 py-1 bg-anil hover:bg-anil/80 text-charcoal rounded text-[10px] font-heading uppercase tracking-wider transition-colors"
                 >
                   <Play className="w-3 h-3" />
-                  Preview clip
+                  {t("preview_clip")}
                 </button>
               )}
             </div>

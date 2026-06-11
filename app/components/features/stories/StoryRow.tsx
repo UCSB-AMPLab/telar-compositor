@@ -101,7 +101,7 @@ export function StoryRow({
         {/* Title + subtitle + byline */}
         <div className="flex-1 min-w-0">
           <p className="font-heading font-semibold text-charcoal truncate">
-            {story.title || story.story_id}
+            {story.title || t("common:untitled")}
           </p>
           {story.subtitle && (
             <p className="font-body text-sm text-gray-500 truncate">{story.subtitle}</p>

@@ -75,12 +75,12 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
         {thumbSrc ? (
           <img
             src={thumbSrc}
-            alt={story.title || story.story_id}
+            alt={story.title || t("common:untitled")}
             className="w-full h-full object-cover"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-300 text-xs font-body">
-            No image
+            {t("common:no_image")}
           </div>
         )}
         {storyCollaborators.length > 0 && (
@@ -108,7 +108,7 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
       <div>
         <div className="flex items-start justify-between gap-2">
           <h3 className="font-heading font-semibold text-charcoal leading-tight">
-            {story.title || story.story_id}
+            {story.title || t("common:untitled")}
           </h3>
           <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
             <button

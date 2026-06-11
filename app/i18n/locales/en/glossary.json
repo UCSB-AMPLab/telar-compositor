@@ -38,5 +38,8 @@
   "quick_create_edit": "Edit term →",
   "empty_title": "Define the terms in your stories",
   "empty_body": "Add terms your readers will encounter in the stories. Use <chip>[[term_id]]</chip> links in any text field to connect them.",
-  "empty_cta": "New term"
+  "empty_cta": "New term",
+  "used_in_story_ref": "{{title}} · Step {{step}} · Layer {{layer}}",
+  "used_in_page_ref": "Page: {{title}}",
+  "used_in_term_ref": "Term: {{title}}"
 }

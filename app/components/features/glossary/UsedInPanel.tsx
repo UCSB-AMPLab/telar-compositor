@@ -3,9 +3,11 @@
  *
  * Renders the TermRef[] rows produced by `buildTermRefIndex` for the selected
  * term. Three row shapes, one per surface:
- *   - story    → `<story title> · Step N · Layer M`
- *   - page     → `Page: <title>`
- *   - glossary → `Term: <title>` (a cross-reference from another definition)
+ *   - story    → `<story title> · Step N · Layer M` (via `used_in_story_ref`)
+ *   - page     → `Page: <title>` (via `used_in_page_ref`)
+ *   - glossary → `Term: <title>` (via `used_in_term_ref`, a cross-reference)
+ * Each row label is a single interpolated i18n string so word order localizes;
+ * a missing title falls back to the translated `common:untitled`.
  *
  * Each row is a jump affordance:
  *   - story    → navigate to `/stories/<id>?step=N&layer=M` (we emit the
@@ -21,7 +23,7 @@
  * Pure presentation over the already-tested ref index — no scanning
  * here; the route passes the resolved `refs` for the selected term.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { useNavigate } from "react-router";
@@ -67,9 +69,11 @@ export function UsedInPanel({ refs, onSelectTerm, className = "" }: UsedInPanelP
                     }
                     className="w-full text-left font-body text-sm text-charcoal hover:text-anil-ink hover:underline truncate"
                   >
-                    {ref.storyTitle || ref.storyId}
-                    {" · "}Step {ref.stepNumber}
-                    {" · "}Layer {ref.layerNumber}
+                    {t("used_in_story_ref", {
+                      title: ref.storyTitle || t("common:untitled"),
+                      step: ref.stepNumber,
+                      layer: ref.layerNumber,
+                    })}
                   </button>
                 </li>
               );
@@ -82,7 +86,7 @@ export function UsedInPanel({ refs, onSelectTerm, className = "" }: UsedInPanelP
                     onClick={() => navigate(`/pages/${encodeURIComponent(ref.pageSlug)}`)}
                     className="w-full text-left font-body text-sm text-charcoal hover:text-anil-ink hover:underline truncate"
                   >
-                    Page: {ref.pageTitle || ref.pageSlug}
+                    {t("used_in_page_ref", { title: ref.pageTitle || t("common:untitled") })}
                   </button>
                 </li>
               );
@@ -95,7 +99,7 @@ export function UsedInPanel({ refs, onSelectTerm, className = "" }: UsedInPanelP
                   onClick={() => onSelectTerm(ref.refTermId)}
                   className="w-full text-left font-body text-sm text-charcoal hover:text-anil-ink hover:underline truncate"
                 >
-                  Term: {ref.refTermTitle || ref.refTermId}
+                  {t("used_in_term_ref", { title: ref.refTermTitle || t("common:untitled") })}
                 </button>
               </li>
             );

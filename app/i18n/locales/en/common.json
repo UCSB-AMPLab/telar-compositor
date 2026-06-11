@@ -65,5 +65,19 @@
     "upgrade_cta": "Run upgrade",
     "saving": "Saving…",
     "repo_unavailable": "Repo unavailable"
-  }
+  },
+  "untitled": "Untitled",
+  "a11y": {
+    "notifications": "Notifications",
+    "close_notification": "Close notification",
+    "main_navigation": "Main navigation",
+    "edit_slug": "Edit URL slug",
+    "orphan_story_files": "Orphan story files",
+    "onboarding_progress": "Onboarding progress",
+    "import_progress": "Import progress",
+    "activity_rail": "Activity and recovery rail"
+  },
+  "cancel": "Cancel",
+  "sign_out": "Sign out",
+  "no_image": "No image"
 }

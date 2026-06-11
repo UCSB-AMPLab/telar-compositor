@@ -22,7 +22,7 @@
  * (structural) operations, distinct from the per-field undo inside text
  * editors.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { useEffect } from "react";
@@ -122,7 +122,7 @@ export function TabNav({ className = "", pagesUrl = null, onOpenDoc }: TabNavPro
   return (
     <nav
       className={`bg-white border-b border-gray-200 overflow-x-auto sticky top-14 z-20 ${className}`}
-      aria-label="Main navigation"
+      aria-label={t("common:a11y.main_navigation")}
     >
       <div className="flex items-center justify-between px-6">
         <ul className="flex items-center min-w-max gap-0">

@@ -12,7 +12,7 @@
  * tokens so the screen feels like one empty state with an extra
  * import section.
  *
- * @version v1.3.0-beta
+ * @version v1.3.6-beta
  */
 
 import { FileText } from "lucide-react";
@@ -106,7 +106,7 @@ export function PagesRepoImportEmptyState({
             <li key={page.slug} className="flex items-center justify-between gap-3 px-4 py-3">
               <div className="text-left min-w-0 flex-1">
                 <p className="font-heading font-semibold text-sm text-charcoal truncate">
-                  {page.title || page.slug}
+                  {page.title || t("common:untitled")}
                 </p>
                 <p className="font-mono text-xs text-gray-400 truncate">{page.slug}</p>
               </div>

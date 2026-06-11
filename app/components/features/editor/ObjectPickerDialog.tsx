@@ -43,6 +43,7 @@ function ObjectCard({
   siteBaseUrl: string | null;
   onSelect: (objectId: string) => void;
 }) {
+  const { t } = useTranslation("common");
   // For self-hosted objects without a stored thumbnail, resolve from info.json
   const needsResolve = !obj.thumbnail && obj.image_available && siteBaseUrl;
   const infoJsonUrl = needsResolve
@@ -71,7 +72,7 @@ function ObjectCard({
         {thumbSrc ? (
           <img
             src={thumbSrc}
-            alt={obj.title ?? obj.object_id}
+            alt={obj.title ?? t("common:untitled")}
             className="w-full h-full object-cover"
           />
         ) : (
@@ -81,7 +82,7 @@ function ObjectCard({
       {/* Labels */}
       <div className="p-2">
         <p className="font-body text-xs font-medium text-charcoal truncate leading-tight">
-          {obj.title || obj.object_id}
+          {obj.title || t("common:untitled")}
         </p>
         {obj.title && obj.title !== obj.object_id && (
           <p className="font-mono text-[10px] text-gray-400 truncate mt-0.5">

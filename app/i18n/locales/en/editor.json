@@ -176,5 +176,6 @@
     "retry": "Try again",
     "generic_title": "Something went wrong",
     "generic_body": "This story couldn't be opened. Go back to your stories and try again."
-  }
+  },
+  "preview_clip": "Preview clip"
 }

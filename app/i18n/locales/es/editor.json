@@ -176,5 +176,6 @@
     "retry": "Reintentar",
     "generic_title": "Algo salió mal",
     "generic_body": "No pudimos abrir esta historia. Vuelve a tus historias e intenta de nuevo."
-  }
+  },
+  "preview_clip": "Previsualizar fragmento"
 }

@@ -73,7 +73,7 @@ export function StepSync({
       </h2>
 
       {/* Checklist */}
-      <ul className="space-y-3 mb-6" aria-label="Import progress">
+      <ul className="space-y-3 mb-6" aria-label={t("common:a11y.import_progress")}>
         {items.map((item) => (
           <li key={item.key} className="flex items-center gap-3">
             <StateIcon state={item.state} />

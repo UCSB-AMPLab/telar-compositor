@@ -72,5 +72,7 @@
   "phase_label_iiif_tiles": "Teselas IIIF",
   "phase_label_deploy": "Desplegar",
   "externalUpgradeToast": "Actualizaron tu sitio a v{{version}} desde fuera del compositor.",
-  "externalDowngradeToast": "El repositorio quedó en v{{repo}} y el compositor todavía tiene v{{d1}}. Revisa qué pasó."
+  "externalDowngradeToast": "El repositorio quedó en v{{repo}} y el compositor todavía tiene v{{d1}}. Revisa qué pasó.",
+  "view_on_github": "Ver en GitHub",
+  "waiting_build": "Esperando a que comience la compilación..."
 }

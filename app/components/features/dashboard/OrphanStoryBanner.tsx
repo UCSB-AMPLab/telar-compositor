@@ -19,7 +19,7 @@
  * tampered request can't trick the compositor into fetching arbitrary
  * files or blacklisting arbitrary IDs.
  *
- * @version v1.2.0-beta
+ * @version v1.3.6-beta
  */
 
 import { AlertCircle } from "lucide-react";
@@ -54,7 +54,7 @@ export default function OrphanStoryBanner({
   return (
     <section
       role="region"
-      aria-label="Orphan story files"
+      aria-label={t("common:a11y.orphan_story_files")}
       className={`flex flex-col md:flex-row md:items-center gap-3 md:gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 ${className ?? ""}`}
     >
       <AlertCircle

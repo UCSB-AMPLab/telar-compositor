@@ -149,7 +149,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
                     : "hover:bg-cream-dark/50"
                 }`}
               >
-                <div className="font-body text-sm text-charcoal">{term.title || term.term_id}</div>
+                <div className="font-body text-sm text-charcoal">{term.title || t("common:untitled")}</div>
                 <div className="font-body text-xs text-gray-400">{term.term_id}</div>
               </button>
             ))
@@ -196,7 +196,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
             onClick={() => setOpen(false)}
             className="font-heading font-semibold text-sm uppercase tracking-wider text-charcoal border border-gray-200 rounded-full px-4 py-2 hover:bg-gray-50 transition-colors"
           >
-            Cancel
+            {t("common:cancel")}
           </button>
           <button
             type="button"

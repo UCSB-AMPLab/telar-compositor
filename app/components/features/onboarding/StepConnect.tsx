@@ -7,7 +7,7 @@
  * search filter. Already-connected repos show a "Connected" badge
  * and an "Unlink" button instead of being selectable.
  *
- * @version v1.3.2-beta
+ * @version v1.3.6-beta
  */
 
 import { useMemo, useState } from "react";
@@ -411,7 +411,7 @@ export function StepConnect({
                     {repo.private && (
                       <span className="inline-flex items-center gap-1 text-xs font-body text-gray-500 border border-gray-200 rounded px-1.5 py-0.5 flex-shrink-0">
                         <Lock className="w-3 h-3" aria-hidden="true" />
-                        Private
+                        {t("repo_private")}
                       </span>
                     )}
                   </div>

@@ -210,7 +210,7 @@ export function AddIiifDialog({
             {/* Object ID preview (read-only) */}
             <div>
               <label className="block font-body text-xs font-medium text-charcoal mb-1">
-                Object ID
+                {t("upload_object_id")}
               </label>
               <code className="block font-mono text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                 {previewSlug || "—"}
