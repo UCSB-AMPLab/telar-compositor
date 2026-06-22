@@ -15,7 +15,7 @@
  * once the user edits it. That lets the user create a new page
  * without immediately committing to a URL.
  *
- * @version v1.3.2-beta
+ * @version v1.3.7-beta
  */
 
 import { asc, eq, and } from "drizzle-orm";
@@ -25,20 +25,13 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import * as Y from "yjs";
 import { decrypt } from "~/lib/crypto.server";
 import { scanRepoPages } from "~/lib/import.server";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+import { DndContext, closestCenter } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
 import {
   SortableContext,
-  sortableKeyboardCoordinates,
   horizontalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useSortableSensors } from "~/hooks/use-sortable-sensors";
 import { Upload } from "lucide-react";
 import type { Route } from "./+types/_app.pages";
 import { userContext } from "~/middleware/auth.server";
@@ -932,10 +925,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   };
 
   // DnD sensors
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
+  const sensors = useSortableSensors();
 
   // ------------------------------------------------------------------
   // Delete confirmation modal state
@@ -1141,8 +1131,8 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
       {/* Nav bar preview — the navigation-menu simulator, kept above the
           two-column block. Renders the FULL published menu (built-ins + titled
           pages) MINUS untitled pages, which can't be published. */}
-      <div className="mx-6 border border-gray-200 rounded-lg bg-white">
-        <div className="flex items-center h-[44px] px-4">
+      <div className="mx-6 border border-gray-200 rounded-lg bg-white overflow-x-auto">
+        <div className="flex items-center h-[44px] px-4 min-w-max">
           {/* Site title — left */}
           <span className="font-heading text-xl font-semibold text-gray-300 mr-auto">
             {siteTitle || t("nav_site_title_placeholder")}
@@ -1216,7 +1206,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
           canAdd={useYjs}
         />
 
-        <main className="flex-1 flex flex-col overflow-hidden bg-cream">
+        <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-cream">
           {isHomeSelected ? (
             // Pinned Home row: the shared landing editor, in-place.
             <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6">

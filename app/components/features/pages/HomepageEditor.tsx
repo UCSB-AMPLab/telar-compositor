@@ -14,28 +14,20 @@
  * The component bundles the live-language observer (config.lang → placeholders),
  * the stories-showcase drag-and-drop, and the featured-objects derivation.
  *
- * @version v1.3.6-beta
+ * @version v1.3.7-beta
  */
 
 import { useTranslation } from "react-i18next";
 import { useFetcher, useNavigate } from "react-router";
 import { useState, useEffect } from "react";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragOverlay,
-} from "@dnd-kit/core";
+import { DndContext, closestCenter, DragOverlay } from "@dnd-kit/core";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import {
   SortableContext,
-  sortableKeyboardCoordinates,
   rectSortingStrategy,
   arrayMove,
 } from "@dnd-kit/sortable";
+import { useSortableSensors } from "~/hooks/use-sortable-sensors";
 import { ExternalLink, ArrowRight } from "lucide-react";
 import { DashboardPreviewSection } from "~/components/features/dashboard/DashboardPreviewSection";
 import { StoryCard } from "~/components/features/dashboard/StoryCard";
@@ -240,10 +232,7 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
     storyMap[s.id] = s;
   }
 
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
+  const sensors = useSortableSensors();
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as number);

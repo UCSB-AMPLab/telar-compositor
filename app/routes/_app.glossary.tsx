@@ -22,7 +22,7 @@
  * quick-create) are role-gated in the UI; the server-side gates remain
  * the real boundary.
  *
- * @version v1.3.3-beta
+ * @version v1.3.7-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -486,7 +486,7 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
 
     <div className="flex h-[calc(100dvh-220px)]">
       {/* Sidebar */}
-      <aside className="w-60 border-r border-gray-200 flex flex-col h-full bg-cream shrink-0">
+      <aside className="w-44 sm:w-60 border-r border-gray-200 flex flex-col h-full bg-cream shrink-0">
         {/* Filter input — ?q= state */}
         <div className="p-3 border-b border-gray-200 space-y-3">
           <input
@@ -537,7 +537,7 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                       aria-label={t("delete_term")}
                       onClick={() => handleRequestDelete(term)}
                       disabled={isPublishing || !ops}
-                      className="pr-3 pl-1 py-3 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:cursor-not-allowed"
+                      className="pr-3 pl-1 py-3 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity disabled:cursor-not-allowed"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -550,7 +550,7 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
       </aside>
 
       {/* Detail editor — cream surface, charcoal ink */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-cream rounded-lg">
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-cream rounded-lg">
         {!selectedTerm ? (
           <div className="flex-1 flex items-center justify-center">
             <p className="font-body text-sm text-fg-muted">{t("no_term_selected")}</p>
@@ -640,14 +640,19 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
               </div>
             </div>
 
-            {/* Right column: live reader preview */}
-            <GlossaryPreviewPane
-              yMap={selectedTerm.yMap}
-              theme={theme}
-              termVersion={termVersion}
-              titleLabel={selectedTerm.title}
-              className="shrink-0 m-6 ml-0"
-            />
+            {/* Right column: live reader preview. Hidden below lg — on a phone
+                or tablet-portrait there's no room for a third pane beside the
+                term rail and editor, so the preview was running off-screen.
+                The editor fills the width instead; the preview returns at lg+. */}
+            <div className="hidden lg:flex shrink-0">
+              <GlossaryPreviewPane
+                yMap={selectedTerm.yMap}
+                theme={theme}
+                termVersion={termVersion}
+                titleLabel={selectedTerm.title}
+                className="m-6 ml-0"
+              />
+            </div>
           </div>
         )}
       </main>
