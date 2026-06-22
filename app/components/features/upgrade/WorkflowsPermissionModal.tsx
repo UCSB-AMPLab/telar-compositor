@@ -11,7 +11,7 @@
  * "upgrade manually" link target is locale-specific (workflowsModalManualUrl).
  * Escape and overlay-click dismiss.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 import { useEffect } from "react";
 import { useTranslation, Trans } from "react-i18next";
@@ -55,7 +55,7 @@ export function WorkflowsPermissionModal({
         aria-modal="true"
         aria-labelledby="workflows-perm-title"
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[85vh] w-[440px] max-w-[90vw] flex-col gap-4 overflow-y-auto rounded-xl bg-cream p-6 shadow-lg"
+        className="flex max-h-[85dvh] w-[440px] max-w-[90vw] flex-col gap-4 overflow-y-auto rounded-xl bg-cream p-6 shadow-lg"
       >
         <div className="flex h-11 w-11 items-center justify-center rounded-pill bg-lavender text-terracotta">
           <KeyRound className="h-5 w-5" aria-hidden="true" />

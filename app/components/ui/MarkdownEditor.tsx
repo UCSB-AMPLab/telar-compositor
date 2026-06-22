@@ -28,7 +28,7 @@
  * onUnresolvedChipClick. A live preview guard returns null during
  * server-side render since all of CodeMirror is browser-only.
  *
- * @version v1.3.4-beta
+ * @version v1.3.7-beta
  */
 
 import { useRef, useEffect, useState, useCallback } from "react";
@@ -181,7 +181,7 @@ function ToolbarButton({
         e.preventDefault(); // Prevent stealing focus from the editor
         onAction();
       }}
-      className="p-1.5 text-gray-500 hover:text-charcoal hover:bg-cream-dark rounded transition-colors"
+      className="inline-flex items-center justify-center p-1.5 pointer-coarse:min-w-11 pointer-coarse:min-h-11 text-gray-500 hover:text-charcoal hover:bg-cream-dark rounded transition-colors"
     >
       <Icon className="w-4 h-4" />
     </button>
@@ -667,7 +667,7 @@ export function MarkdownEditor({
     >
       {/* Toolbar — appears on focus (or always if alwaysShowToolbar) */}
       {(isFocused || alwaysShowToolbar) && (
-        <div className={`flex items-center gap-0.5 px-4 py-1.5 mb-3 border-b bg-black/5 ${transparent ? "mx-0 mt-0 rounded-t-lg border-gray-200/30" : "-mx-6 -mt-6 border-gray-100/30"}`}>
+        <div className={`flex flex-wrap items-center gap-0.5 px-4 py-1.5 mb-3 border-b bg-black/5 ${transparent ? "mx-0 mt-0 rounded-t-lg border-gray-200/30" : "-mx-6 -mt-6 border-gray-100/30"}`}>
           <ToolbarButton
             icon={Bold}
             tooltip={t("toolbar.bold")}
@@ -701,7 +701,7 @@ export function MarkdownEditor({
                 e.preventDefault();
                 setHeadingMenuOpen((v) => !v);
               }}
-              className="flex items-center gap-0.5 p-1.5 text-gray-500 hover:text-charcoal hover:bg-cream-dark rounded transition-colors"
+              className="flex items-center gap-0.5 p-1.5 pointer-coarse:min-h-11 text-gray-500 hover:text-charcoal hover:bg-cream-dark rounded transition-colors"
             >
               <Heading className="w-4 h-4" />
               <ChevronDown className="w-3 h-3" />
