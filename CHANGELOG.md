@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.3.7-beta (2026-06-22)
+
+A tablet and mobile release. The compositor now adapts to phones and
+tablets, so you can build and edit a site from a touch device, not just a
+desktop.
+
+### New features
+
+- **Works on tablets and phones** — Every tab — objects, the story editor,
+  glossary, pages, and site settings — now reflows to fit smaller screens,
+  with larger touch targets and no accidental zoom when you tap a field.
+
+- **Touch-friendly reordering** — Reordering steps, pages, stories,
+  navigation items, and homepage sections now works with a brief
+  press-and-hold before you drag, so a normal swipe still scrolls the list
+  instead of grabbing an item.
+
+- **Story editor on small screens** — The editor adapts to three layouts: a
+  single pane you switch between writing and the image on phones, a
+  side-by-side view on tablets, and the full three-column layout on desktop.
+  The steps list opens in a drawer and is open by default. Held in landscape
+  on a phone, the header slims and the tab bar tucks away to give the editor
+  more room, with a one-time hint suggesting you turn the phone sideways.
+
+- **Framing viewfinder in the editor** — The editor's image viewer now shows
+  a centre target and a safe-area circle, so you can frame the part of an
+  object that stays visible on every visitor's screen, whatever the shape of
+  their device.
+
+### Fixes
+
+- **Object list rows fit on phones** — On a narrow screen an object's year
+  and status now tuck under its title instead of being squeezed off the
+  edge, so long titles are no longer cut to a single letter.
+
 ## v1.3.6-beta (2026-06-11)
 
 A localization and labelling fix release.
