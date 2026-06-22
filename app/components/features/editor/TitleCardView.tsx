@@ -11,7 +11,7 @@
  * Each field has a pencil icon that darkens on hover with a "Click
  * to edit" affordance.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useRef } from "react";
@@ -94,7 +94,7 @@ function EditableField({
         onClick={focusField}
         className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
       >
-        <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
+        <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           {label}
         </span>
         <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />

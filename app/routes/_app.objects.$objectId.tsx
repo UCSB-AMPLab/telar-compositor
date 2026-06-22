@@ -5,7 +5,7 @@
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
  *
- * @version v1.3.6-beta
+ * @version v1.3.7-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -598,10 +598,12 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
       )}
 
       {/* Layout: side-by-side for IIIF/video, full-width for audio */}
-      <div className={`flex gap-6 flex-1 min-h-0 ${mediaType === "audio" ? "flex-col" : ""}`}>
-        {/* Viewer — hidden for audio (shown above), shown for IIIF/video */}
+      <div className={`flex gap-6 flex-1 min-h-0 ${mediaType === "audio" ? "flex-col" : "flex-col lg:flex-row"}`}>
+        {/* Viewer — hidden for audio (shown above), shown for IIIF/video.
+            Stacks above the form below lg (no room for side-by-side on a
+            phone/tablet-portrait); fixed 50dvh tall when stacked. */}
         {mediaType !== "audio" && (
-        <div className="w-3/5 shrink-0">
+        <div className="w-full lg:w-3/5 shrink-0 min-h-[50dvh] lg:min-h-0">
           {isMedia && (mediaType === "youtube" || mediaType === "vimeo" || mediaType === "google-drive") && object.source_url ? (
             <div className="w-full h-full rounded-xl bg-cream-dark flex items-center justify-center p-4">
               <VideoEmbed
@@ -624,7 +626,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
         )}
 
         {/* Metadata editor */}
-        <div className={`overflow-y-auto bg-white rounded-xl border border-gray-100 ${mediaType === "audio" ? "w-full" : "w-2/5"}`}>
+        <div className={`overflow-y-auto bg-white rounded-xl border border-gray-100 ${mediaType === "audio" ? "w-full" : "w-full lg:w-2/5 flex-1 lg:flex-none min-h-0"}`}>
           <div className={`p-6 space-y-4 ${mediaType === "audio" ? "columns-2 gap-8 [&>*]:break-inside-avoid [&>hr]:break-after-column" : ""}`}>
               {/* Status badge */}
               <StatusBadge status={status} />

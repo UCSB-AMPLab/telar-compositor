@@ -21,7 +21,7 @@
  * `sidebarIdToFullIdx` map and supplies `onDragEnd` / `onDelete` / `onAddPage`
  * callbacks plus the DnD `sensors`.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import {
@@ -121,7 +121,7 @@ function SortableSidebarRow({
             aria-label={t("delete_page")}
             onClick={onDelete}
             disabled={!row.canDelete}
-            className="pr-3 pl-1 py-3 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:cursor-not-allowed disabled:text-gray-200"
+            className="pr-3 pl-1 py-3 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity disabled:cursor-not-allowed disabled:text-gray-200"
           >
             <Trash2 className="w-4 h-4" />
           </button>
@@ -150,7 +150,7 @@ export function PagesSidebar({
 
   return (
     <aside
-      className={`w-60 border-r border-gray-200 flex flex-col h-full bg-cream shrink-0 ${className}`}
+      className={`w-44 sm:w-60 border-r border-gray-200 flex flex-col h-full bg-cream shrink-0 ${className}`}
     >
       {/* Header: heading + convenor-gated Add page control */}
       <div className="p-3 border-b border-gray-200 space-y-3">
@@ -240,7 +240,7 @@ export function PagesSidebar({
                     aria-label={t("delete_page")}
                     onClick={() => onDelete(row.selectKey)}
                     disabled={!row.canDelete}
-                    className="pr-3 pl-1 py-3 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:cursor-not-allowed disabled:text-gray-200"
+                    className="pr-3 pl-1 py-3 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity disabled:cursor-not-allowed disabled:text-gray-200"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

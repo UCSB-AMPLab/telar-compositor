@@ -7,6 +7,11 @@
  * message if tiles are not yet available (build in progress).
  *
  * Client-only — guarded with typeof window check to avoid SSR crashes.
+ *
+ * An optional capture-guides overlay (the `enableCaptureGuides` prop) draws a
+ * camera-style centre target and safe-area circle over the image, helping an
+ * author frame the portion of an object that stays visible across every
+ * visitor's screen aspect ratio.
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -19,7 +24,14 @@ import {
   Maximize,
   ChevronLeft,
   ChevronRight,
+  Crosshair,
 } from "lucide-react";
+import {
+  ASPECT_DESKTOP,
+  ASPECT_PHONE,
+  visitorVisibleRect,
+  safeZoneRect,
+} from "~/lib/viewer-utils";
 
 interface PageInfo {
   /** info.json or direct image URL for this page */
@@ -48,6 +60,14 @@ interface IiifViewerProps {
   onGenerateTiles?: () => void;
   /** Whether tile generation is in progress */
   isGenerating?: boolean;
+  /**
+   * Show capture framing guides — overlays showing what a desktop (wide) and a
+   * phone (tall) visitor will see at the current centre/zoom, plus the "safe
+   * zone" visible on all screens. Only meaningful in the story editor's
+   * capture-position flow (the published viewer is full-screen, so its shape is
+   * the visitor's device, not this panel). Off by the parent for non-image media.
+   */
+  enableCaptureGuides?: boolean;
 }
 
 export function IiifViewer({
@@ -60,14 +80,22 @@ export function IiifViewer({
   hideZoomControls = false,
   onGenerateTiles,
   isGenerating = false,
+  enableCaptureGuides = false,
 }: IiifViewerProps) {
   const { t } = useTranslation("objects");
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<OpenSeadragon.Viewer | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // The OpenSeadragon module (for constructing Points in the guide-draw loop).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const osdModuleRef = useRef<any>(null);
   const [tilesAvailable, setTilesAvailable] = useState<boolean | null>(null);
   const [checking, setChecking] = useState(false);
   const [pages, setPages] = useState<PageInfo[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
+  // Bumped whenever a fresh OSD viewer is created, so the guide effect re-binds.
+  const [viewerReadyTick, setViewerReadyTick] = useState(0);
+  const [guidesOn, setGuidesOn] = useState(true);
 
   // Check tile availability for self-hosted objects
   const checkTiles = useCallback(async () => {
@@ -141,6 +169,7 @@ export function IiifViewer({
     async function init() {
       const OpenSeadragon = (await import("openseadragon")).default;
       if (destroyed || !containerRef.current) return;
+      osdModuleRef.current = OpenSeadragon;
 
       // Destroy previous instance
       if (viewerRef.current) {
@@ -153,6 +182,18 @@ export function IiifViewer({
         tileSources: pages[currentPage].tileSource,
         showNavigationControl: false,
         gestureSettingsMouse: { scrollToZoom: true },
+        // OSD 6 defaults gestureSettingsTouch.clickToZoom = true, so on a tablet
+        // every accidental single tap on the image zooms in (recoverable only via
+        // the small home button) — disruptive during the capture-position editing
+        // flow. Disable tap-to-zoom; keep the natural touch gestures (pinch,
+        // double-tap, drag-to-pan, flick).
+        gestureSettingsTouch: {
+          clickToZoom: false,
+          dblClickToZoom: true,
+          pinchToZoom: true,
+          dragToPan: true,
+          flickEnabled: true,
+        },
         prefixUrl: "",
         // Force the Canvas2D drawer. OSD 6 defaults to WebGL, whose texImage2D()
         // throws SecurityError on cross-origin IIIF tiles loaded without
@@ -169,6 +210,7 @@ export function IiifViewer({
       if (onViewerReady) {
         onViewerReady(viewerRef.current, () => currentPage);
       }
+      if (!destroyed) setViewerReadyTick((n) => n + 1);
     }
 
     init();
@@ -181,6 +223,148 @@ export function IiifViewer({
       }
     };
   }, [pages, currentPage]);
+
+  // Capture framing guides. Draws, in OSD viewport coords mapped to canvas
+  // pixels, the rect a desktop (wide) and a phone (tall) visitor sees at the
+  // current centre/zoom, plus the safe zone visible on all screens. Redrawn on
+  // every viewport change via requestAnimationFrame coalescing.
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    const viewer = viewerRef.current;
+    const OSD = osdModuleRef.current;
+    const container = containerRef.current;
+    const ctx = canvas?.getContext("2d") ?? null;
+
+    const clear = () => {
+      if (!canvas || !ctx) return;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+
+    if (!enableCaptureGuides || !guidesOn || !canvas || !ctx || !viewer || !OSD || !container) {
+      clear();
+      return;
+    }
+
+    let raf = 0;
+    type R = { x: number; y: number; width: number; height: number };
+
+    const draw = () => {
+      raf = 0;
+      const vp = viewer.viewport;
+      const dpr = window.devicePixelRatio || 1;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      if (cw === 0 || ch === 0) return;
+      if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
+        canvas.width = Math.round(cw * dpr);
+        canvas.height = Math.round(ch * dpr);
+        canvas.style.width = `${cw}px`;
+        canvas.style.height = `${ch}px`;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cw, ch);
+
+      let homeBounds: R;
+      let homeZoom: number;
+      try {
+        homeBounds = vp.getHomeBounds();
+        homeZoom = vp.getHomeZoom();
+      } catch {
+        return;
+      }
+      if (!homeBounds || !homeZoom) return;
+      const z = vp.getZoom() / homeZoom;
+      if (!Number.isFinite(z) || z <= 0) return;
+      const center = vp.getCenter();
+
+      const wide = visitorVisibleRect(homeBounds, center, z, ASPECT_DESKTOP);
+      const tall = visitorVisibleRect(homeBounds, center, z, ASPECT_PHONE);
+      const safe = safeZoneRect(center, [wide, tall]);
+
+      const toPx = (r: R) => {
+        const tl = vp.viewportToViewerElementCoordinates(new OSD.Point(r.x, r.y));
+        const br = vp.viewportToViewerElementCoordinates(
+          new OSD.Point(r.x + r.width, r.y + r.height)
+        );
+        return { x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y };
+      };
+
+      // The captured centre maps to the centre of the viewer; the circle is the
+      // largest area visible on every device (inscribed in the safe zone).
+      const sp = toPx(safe);
+      const cx = sp.x + sp.w / 2;
+      const cy = sp.y + sp.h / 2;
+      let radius = Math.min(sp.w, sp.h) / 2;
+      const maxR = Math.min(cw, ch) / 2 - 6;
+      if (radius > maxR) radius = maxR; // keep it on-screen when zoomed out
+      if (radius < 6) return;
+
+      // Stroke a path with a dark halo under a white line so it reads on any image.
+      const halo = (path: Path2D, lw: number) => {
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "rgba(0,0,0,0.45)";
+        ctx.lineWidth = lw + 2;
+        ctx.stroke(path);
+        ctx.strokeStyle = "rgba(255,255,255,0.96)";
+        ctx.lineWidth = lw;
+        ctx.stroke(path);
+      };
+
+      // Safe-area circle (visible on all screens).
+      const circle = new Path2D();
+      circle.arc(cx, cy, radius, 0, Math.PI * 2);
+      halo(circle, 1.5);
+
+      // Centre target — a camera-style focus frame: four corner brackets around
+      // the captured point, plus a small centre dot.
+      const s = 15; // half-size of the focus square
+      const b = 7; // corner bracket arm length
+      const frame = new Path2D();
+      // top-left
+      frame.moveTo(cx - s, cy - s + b);
+      frame.lineTo(cx - s, cy - s);
+      frame.lineTo(cx - s + b, cy - s);
+      // top-right
+      frame.moveTo(cx + s - b, cy - s);
+      frame.lineTo(cx + s, cy - s);
+      frame.lineTo(cx + s, cy - s + b);
+      // bottom-right
+      frame.moveTo(cx + s, cy + s - b);
+      frame.lineTo(cx + s, cy + s);
+      frame.lineTo(cx + s - b, cy + s);
+      // bottom-left
+      frame.moveTo(cx - s + b, cy + s);
+      frame.lineTo(cx - s, cy + s);
+      frame.lineTo(cx - s, cy + s - b);
+      halo(frame, 1.5);
+
+      const dot = new Path2D();
+      dot.arc(cx, cy, 2, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.fillStyle = "rgba(255,255,255,0.96)";
+      ctx.fill(dot);
+      ctx.stroke(dot);
+    };
+
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(draw);
+    };
+
+    const events = ["animation", "animation-finish", "update-viewport", "open", "resize"];
+    events.forEach((e) => viewer.addHandler(e as never, schedule));
+    const ro = new ResizeObserver(schedule);
+    ro.observe(container);
+    schedule();
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      events.forEach((e) => viewer.removeHandler(e as never, schedule));
+      ro.disconnect();
+      clear();
+    };
+  }, [enableCaptureGuides, guidesOn, viewerReadyTick, currentPage]);
 
   function goToPage(page: number) {
     if (page >= 0 && page < pages.length) {
@@ -265,12 +449,46 @@ export function IiifViewer({
         className="iiif-viewer-surface w-full h-full"
       />
 
+      {/* Capture framing guides — canvas overlay (drawn imperatively) + a toggle
+          and legend. Shows what desktop/phone visitors see and the safe zone. */}
+      {enableCaptureGuides && (
+        <>
+          <canvas
+            ref={overlayCanvasRef}
+            className="pointer-events-none absolute inset-0 z-[5]"
+            aria-hidden="true"
+          />
+          {/* Top-right so it clears the zoom cluster (left) and the status bar
+              (top). On a short landscape phone the explanatory hint is dropped to
+              avoid stacking controls on top of each other. */}
+          <div className="absolute top-14 right-3 z-10 flex flex-col items-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setGuidesOn((v) => !v)}
+              aria-pressed={guidesOn}
+              title={t("viewer_viewfinder_toggle")}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 pointer-coarse:min-h-11 font-heading text-[11px] uppercase tracking-wider shadow transition-colors ${
+                guidesOn ? "bg-white text-charcoal" : "bg-black/60 text-white/80 hover:bg-black/70"
+              }`}
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+              {t("viewer_viewfinder_toggle")}
+            </button>
+            {guidesOn && (
+              <div className="max-w-[160px] rounded-lg bg-black/60 px-2.5 py-1.5 font-body text-[11px] leading-tight text-white/90 text-right landscape-compact:hidden">
+                {t("viewer_viewfinder_hint")}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {/* Zoom controls — top left (hidden when parent provides its own overlays) */}
       {!hideZoomControls && <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10">
         <button
           type="button"
           onClick={() => viewerRef.current?.viewport.zoomBy(1.5)}
-          className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
+          className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
           aria-label={t("viewer_zoom_in_aria")}
         >
           <ZoomIn className="w-4 h-4" />
@@ -278,7 +496,7 @@ export function IiifViewer({
         <button
           type="button"
           onClick={() => viewerRef.current?.viewport.zoomBy(0.67)}
-          className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
+          className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
           aria-label={t("viewer_zoom_out_aria")}
         >
           <ZoomOut className="w-4 h-4" />
@@ -286,7 +504,7 @@ export function IiifViewer({
         <button
           type="button"
           onClick={() => viewerRef.current?.viewport.goHome()}
-          className="w-8 h-8 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
+          className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 bg-white/90 hover:bg-white rounded-lg shadow flex items-center justify-center text-charcoal transition-colors"
           aria-label={t("viewer_reset_aria")}
         >
           <Maximize className="w-4 h-4" />

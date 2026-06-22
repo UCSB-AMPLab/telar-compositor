@@ -10,7 +10,7 @@
  * stays handle-only via `setActivatorNodeRef`. A `Trash2` delete button
  * is revealed on hover via the group-hover CSS pattern.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useSortable } from "@dnd-kit/sortable";
@@ -137,7 +137,7 @@ export function SortableStepItem({
       <div
         ref={setActivatorNodeRef}
         {...listeners}
-        className="w-3.5 shrink-0 flex justify-center cursor-grab touch-none text-fg-subtle/50 group-hover:text-fg-subtle transition-colors"
+        className="w-3.5 pointer-coarse:w-9 shrink-0 flex items-center justify-center cursor-grab touch-none text-fg-subtle/50 group-hover:text-fg-subtle pointer-coarse:text-fg-subtle transition-colors"
         onClick={(e) => e.stopPropagation()}
       >
         <GripVertical className="w-3.5 h-3.5" />
@@ -185,7 +185,7 @@ export function SortableStepItem({
         }}
         disabled={!canDelete}
         title={!canDelete ? deleteTooltip : undefined}
-        className={`opacity-0 group-hover:opacity-100 p-0.5 shrink-0 transition-colors ${
+        className={`opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 p-0.5 pointer-coarse:p-2 shrink-0 transition-colors ${
           canDelete
             ? "text-gray-500 hover:text-red-400"
             : "text-gray-600 cursor-not-allowed"

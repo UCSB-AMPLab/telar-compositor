@@ -42,6 +42,13 @@
     "step": "Paso {{number}}",
     "layer": "Capa {{number}}"
   },
+  "shell": {
+    "steps_open": "Mostrar pasos",
+    "steps_close": "Ocultar pasos",
+    "steps_heading": "Pasos",
+    "rotate_hint": "Gira el celular para tener más espacio al editar.",
+    "rotate_hint_dismiss": "Cerrar"
+  },
   "capture_toast": {
     "captured": "Posición capturada",
     "undo": "Deshacer"

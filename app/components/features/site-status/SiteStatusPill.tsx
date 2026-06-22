@@ -30,7 +30,7 @@
  *
  * Light mode only; lucide-react icons only; `~/` imports; accepts `className`.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useState } from "react";
@@ -206,10 +206,13 @@ export function SiteStatusPill({ className = "" }: SiteStatusPillProps) {
           </span>
         )}
 
-        {/* Per-state action divider + label (only the two actionable states). */}
+        {/* Per-state action divider + label (only the two actionable states).
+            Hidden on phones to keep the header from crowding the avatar cluster;
+            the same action is still reachable by tapping the pill (it opens the
+            popover, which carries the action). */}
         {actionLabel && (
           <span
-            className="inline-flex items-center border-l border-current/30"
+            className="hidden sm:inline-flex items-center border-l border-current/30"
             style={{ marginLeft: "4px", paddingLeft: "8px", fontSize: "12px", fontWeight: 700 }}
           >
             {actionLabel} →

@@ -131,7 +131,7 @@ export function SyncDiffDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      className="max-w-[50vw] min-w-[600px] w-full mx-4 p-0 overflow-hidden"
+      className="w-full max-w-2xl sm:min-w-[600px] p-0 overflow-hidden"
     >
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-100">
@@ -144,7 +144,7 @@ export function SyncDiffDialog({
       </div>
 
       {/* Content area */}
-      <div className="max-h-[60vh] overflow-y-auto px-6 py-4 space-y-4">
+      <div className="max-h-[55dvh] overflow-y-auto px-6 py-4 space-y-4">
         {/* Loading state */}
         {isComputing && (
           <div className="flex items-center justify-center py-12">

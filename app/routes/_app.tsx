@@ -21,7 +21,7 @@
  * fail-closed: a below-minimum convenor on a gated route cannot slip
  * through on a cold isolate.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -534,6 +534,11 @@ function LocationAwarenessSync() {
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
   const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarSeats, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor, needsWorkflowsApproval, workflowsApprovalUrl } = loaderData;
   const { t: tCollab } = useTranslation("collaboration");
+  const location = useLocation();
+  // Story editor route (`/stories/:id`, not the `/stories` list). There the tab
+  // nav is dead weight mid-edit, so it's hidden on a landscape phone to reclaim
+  // vertical space — the editor breadcrumb's "Start" link remains the way out.
+  const isStoryEditor = /^\/stories\/[^/]+/.test(location.pathname);
   const welcomeFetcher = useFetcher();
   const releaseFetcher = useFetcher();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -625,7 +630,11 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
             usersIconRef={usersIconRef}
             hasProject={activeProjectId !== null}
           />
-          <TabNav pagesUrl={pagesUrl ?? null} onOpenDoc={openDoc} />
+          <TabNav
+            pagesUrl={pagesUrl ?? null}
+            onOpenDoc={openDoc}
+            className={isStoryEditor ? "landscape-compact:hidden" : ""}
+          />
           <main className="flex-1 p-6">
             <Outlet context={{ openCollaborationSidebar: handleSidebarToggle, openDoc }} />
           </main>

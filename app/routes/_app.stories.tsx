@@ -17,7 +17,7 @@
  * from the Y.Array so remote collaborators' changes appear in real
  * time; it falls back to loader data during SSR or pre-connection.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { and, asc, count, eq, gt } from "drizzle-orm";
@@ -25,22 +25,14 @@ import { useTranslation } from "react-i18next";
 import { redirect, useFetcher, useNavigate, useOutletContext } from "react-router";
 import { useState, useEffect, useRef, useMemo } from "react";
 import * as Y from "yjs";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragOverlay,
-} from "@dnd-kit/core";
+import { DndContext, closestCenter, DragOverlay } from "@dnd-kit/core";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import {
   SortableContext,
-  sortableKeyboardCoordinates,
   verticalListSortingStrategy,
   arrayMove,
 } from "@dnd-kit/sortable";
+import { useSortableSensors } from "~/hooks/use-sortable-sensors";
 import type { Route } from "./+types/_app.stories";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
@@ -416,10 +408,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     if (showNewForm) setShowNewCard(true);
   }, [showNewForm]);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
+  const sensors = useSortableSensors();
 
   // ------------------------------------------------------------------
   // Delete confirmation modal state
@@ -705,7 +694,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   void navigate;
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-7xl mx-auto">
       {/* Page header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">

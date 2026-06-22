@@ -228,28 +228,42 @@ export function ObjectRow({
             {object.object_id}
           </p>
         )}
-        {/* Read-only "Used in N steps" line. Source: the objects loader's
-            objectStepCounts. No toggle, no mutation. */}
-        {usedInSteps !== undefined &&
-          (usedInSteps > 0 ? (
-            <p className="font-body text-xs text-chilca-deep flex items-center gap-1.5">
-              <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-chilca" />
-              {t("used_in_n", { count: usedInSteps })}
-            </p>
-          ) : (
-            <p className="font-body text-xs italic text-fg-subtle">
-              {t("unused")}
-            </p>
-          ))}
+        {/* Metadata line — "Used in N steps" always; on phones the year and
+            status fold in here (their own columns are hidden < sm) so the title
+            keeps the full row width and stops truncating to "T…". */}
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          {usedInSteps !== undefined &&
+            (usedInSteps > 0 ? (
+              <span className="font-body text-xs text-chilca-deep inline-flex items-center gap-1.5">
+                <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-chilca" />
+                {t("used_in_n", { count: usedInSteps })}
+              </span>
+            ) : (
+              <span className="font-body text-xs italic text-fg-subtle">
+                {t("unused")}
+              </span>
+            ))}
+          {object.year && (
+            <span className="sm:hidden font-body text-xs text-gray-500 tabular-nums">
+              {object.year}
+            </span>
+          )}
+          <span className="sm:hidden">
+            <StatusBadge status={status} objectId={object.object_id} />
+          </span>
+        </div>
       </div>
 
-      {/* Year column */}
-      <span className="shrink-0 w-16 text-right font-body text-xs text-gray-500 tabular-nums">
+      {/* Year column — hidden on phones (folded into the metadata line above) */}
+      <span className="hidden sm:block shrink-0 w-16 text-right font-body text-xs text-gray-500 tabular-nums">
         {object.year ?? ""}{/* empty when year absent/null */}
       </span>
 
-      {/* Status badge — retained actionable signal */}
-      <StatusBadge status={status} objectId={object.object_id} />
+      {/* Status badge — retained actionable signal; hidden on phones (shown in
+          the metadata line above) */}
+      <span className="hidden sm:inline-flex">
+        <StatusBadge status={status} objectId={object.object_id} />
+      </span>
 
       {/* Per-row delete — hover-revealed, canDelete-gated. */}
       {onDelete && (
@@ -259,7 +273,7 @@ export function ObjectRow({
           disabled={!canDelete}
           title={!canDelete ? deleteTooltip : undefined}
           aria-label={t("delete_button")}
-          className="shrink-0 text-terracotta hover:text-terracotta/80 opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:text-gray-300 disabled:cursor-not-allowed disabled:opacity-100 transition-all"
+          className="shrink-0 text-terracotta hover:text-terracotta/80 opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 focus:opacity-100 disabled:text-gray-300 disabled:cursor-not-allowed disabled:opacity-100 transition-all"
         >
           <Trash2 className="w-4 h-4" />
         </button>

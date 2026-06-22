@@ -11,7 +11,7 @@
  * data + fetcher singleton, and use-collaboration is stubbed to keep the
  * Yjs surface inert.
  *
- * @version v1.2.0-beta
+ * @version v1.3.7-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -145,6 +145,8 @@ vi.mock("@dnd-kit/core", () => ({
   closestCenter: () => undefined,
   KeyboardSensor: class {},
   PointerSensor: class {},
+  MouseSensor: class {},
+  TouchSensor: class {},
   useSensor: () => undefined,
   useSensors: () => [],
   DragOverlay: ({ children }: { children?: React.ReactNode }) => <>{children}</>,

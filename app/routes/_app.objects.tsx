@@ -13,7 +13,7 @@
  * with thumbnails, sort/filter controls, featured-star toggles, a
  * slide-in edit panel, and a build progress banner.
  *
- * @version v1.3.6-beta
+ * @version v1.3.7-beta
  */
 
 import { and, asc, eq, inArray } from "drizzle-orm";
@@ -1989,7 +1989,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   );
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-7xl mx-auto">
       {/* Page header */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-4">

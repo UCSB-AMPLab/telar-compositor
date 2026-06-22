@@ -158,7 +158,7 @@ export function ObjectPickerDialog({
             {t("object_picker.no_results")}
           </p>
         ) : (
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {filtered.map((obj) => (
               <ObjectCard
                 key={obj.object_id}
