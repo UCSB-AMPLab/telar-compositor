@@ -11,7 +11,7 @@
  * deliberately do NOT live here; they belong with the TabNav tab bar so the
  * header stays purely a global-context strip.
  *
- * @version v1.3.6-beta
+ * @version v1.3.7-beta
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -116,17 +116,17 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
 
   return (
     <header
-      className={`h-14 bg-charcoal flex items-center justify-between px-6 sticky top-0 z-30 ${className}`}
+      className={`h-14 landscape-compact:h-11 bg-charcoal flex items-center justify-between px-3 sm:px-6 sticky top-0 z-30 ${className}`}
     >
       {/* Left section: brand + project switcher */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4 min-w-0">
         {/* Brand — links to /. */}
         <Link
           to="/"
-          className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-2.5 shrink-0 hover:opacity-80 transition-opacity"
         >
-          <img src="/logo-lila-amarillo.svg" alt="Telar" className="h-9 w-auto max-h-9" />
-          <span className="font-heading font-normal text-anil" style={{ fontSize: "24px" }}>
+          <img src="/logo-lila-amarillo.svg" alt="Telar" className="h-9 max-h-9 landscape-compact:h-7 landscape-compact:max-h-7 w-auto shrink-0" />
+          <span className="font-heading font-normal text-anil hidden lg:inline" style={{ fontSize: "24px" }}>
             Compositor
           </span>
           {environment === "staging" && (
@@ -147,7 +147,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
       </div>
 
       {/* Right section: site status + presence bar + connection status + user menu */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Site Status pill — the global five-state status indicator. Guarded by
             hasProject, mirroring the ConnectionPill: site status is meaningless
             during onboarding. */}
@@ -167,7 +167,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
             disabled={!hasProject || isFrozen}
             aria-expanded={sidebarOpen}
             aria-label={sidebarOpen ? tCollab("sidebar_close_aria") : tCollab("sidebar_open_aria")}
-            className={`p-1.5 rounded-full transition-colors ${
+            className={`p-1.5 pointer-coarse:min-w-11 pointer-coarse:min-h-11 inline-flex items-center justify-center rounded-full transition-colors focus-visible:outline-offset-0 ${
               !hasProject || isFrozen
                 ? "text-gray-500 cursor-not-allowed"
                 : sidebarOpen
@@ -184,7 +184,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
         <button
           type="button"
           onClick={() => setDropdownOpen((v) => !v)}
-          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity rounded-full focus-visible:outline-offset-0"
           aria-haspopup="true"
           aria-expanded={dropdownOpen}
           aria-label={tCommon("user_menu_aria")}
@@ -295,7 +295,11 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
         {/* Standalone bug-report button — rightmost, to the right of the user
             menu. Self-contained (its own panel + state); the user menu also
             keeps a "Report a problem" item that opens the same panel. */}
-        <BugReportButton userLogin={user.github_login} />
+        {/* Standalone bug button — hidden below lg; it is also in the user
+            dropdown ("Report a problem"), so narrow headers stay uncluttered. */}
+        <span className="hidden lg:inline-flex">
+          <BugReportButton userLogin={user.github_login} />
+        </span>
       </div>
 
       {/* Bug-report panel — reused as-is; trigger lives in the user menu. */}

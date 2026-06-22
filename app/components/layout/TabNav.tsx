@@ -22,10 +22,10 @@
  * (structural) operations, distinct from the per-field undo inside text
  * editors.
  *
- * @version v1.3.6-beta
+ * @version v1.3.7-beta
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
@@ -40,6 +40,8 @@ import {
   ArrowUpRight,
   Undo2,
   Redo2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useUndoControls } from "~/hooks/use-undo-controls";
@@ -76,6 +78,28 @@ export function TabNav({ className = "", pagesUrl = null, onOpenDoc }: TabNavPro
   const { remoteCollaborators } = useCollaborationContext();
   const { canUndo, canRedo, undo, redo } = useUndoControls();
   const isConvenor = useIsConvenor();
+
+  // Horizontal-scroll affordance: when the tab strip overflows (narrow tablets
+  // and phones, worse with longer Spanish labels) a right-edge fade signals
+  // there are more tabs/utilities to swipe to.
+  const navRef = useRef<HTMLElement>(null);
+  const [showRightFade, setShowRightFade] = useState(false);
+  const [showLeftFade, setShowLeftFade] = useState(false);
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const update = () => {
+      setShowRightFade(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+      setShowLeftFade(el.scrollLeft > 4);
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      el.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [pagesUrl]);
 
   // The Publish tab is hidden from collaborators (the "Ask convenor to
   // publish" affordance lives in the Site Status popover instead). This is UX
@@ -120,11 +144,13 @@ export function TabNav({ className = "", pagesUrl = null, onOpenDoc }: TabNavPro
   }, [undo, redo]);
 
   return (
-    <nav
-      className={`bg-white border-b border-gray-200 overflow-x-auto sticky top-14 z-20 ${className}`}
-      aria-label={t("common:a11y.main_navigation")}
-    >
-      <div className="flex items-center justify-between px-6">
+    <div className={`relative bg-white border-b border-gray-200 sticky top-14 landscape-compact:top-11 z-20 ${className}`}>
+      <nav
+        ref={navRef}
+        className="overflow-x-auto"
+        aria-label={t("common:a11y.main_navigation")}
+      >
+      <div className="flex items-center justify-between px-3 sm:px-6">
         <ul className="flex items-center min-w-max gap-0">
           {visibleTabs.map(({ key, to, icon: Icon, labelKey }) => (
             <li key={key}>
@@ -225,6 +251,26 @@ export function TabNav({ className = "", pagesUrl = null, onOpenDoc }: TabNavPro
           </div>
         </div>
       </div>
-    </nav>
+      </nav>
+      {/* Sideways-scroll affordances — a chevron over a solid-to-transparent
+          white fade so it reads on the white bar (a plain white fade is
+          invisible). Shown only on the edge that has more content to reveal. */}
+      {showLeftFade && (
+        <div
+          className="pointer-events-none absolute left-0 top-0 bottom-px z-10 flex items-center bg-gradient-to-r from-white via-white to-transparent pl-1.5 pr-8"
+          aria-hidden="true"
+        >
+          <ChevronLeft className="w-4 h-4 text-gray-400" />
+        </div>
+      )}
+      {showRightFade && (
+        <div
+          className="pointer-events-none absolute right-0 top-0 bottom-px z-10 flex items-center bg-gradient-to-l from-white via-white to-transparent pr-1.5 pl-8"
+          aria-hidden="true"
+        >
+          <ChevronRight className="w-4 h-4 text-gray-400" />
+        </div>
+      )}
+    </div>
   );
 }

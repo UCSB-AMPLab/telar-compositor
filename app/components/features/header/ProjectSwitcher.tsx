@@ -17,7 +17,7 @@
  * Copy guard: only the user's real `github_repo_full_name` from the loader is
  * rendered. No mock/placeholder repo or owner names.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useState } from "react";
@@ -82,11 +82,11 @@ export function ProjectSwitcher({
   };
 
   return (
-    <div className={`relative shrink-0 ${className}`}>
+    <div className={`relative min-w-0 ${className}`}>
       <button
         type="button"
         onClick={() => setInternalOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 font-mono text-xs text-white hover:bg-white/20 transition-colors max-w-[220px]"
+        className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 font-mono text-xs text-white hover:bg-white/20 transition-colors max-w-[140px] sm:max-w-[220px]"
         aria-haspopup="true"
         aria-expanded={dropdownOpen}
       >
@@ -106,7 +106,7 @@ export function ProjectSwitcher({
             aria-hidden="true"
           />
           <div
-            className="absolute right-0 z-50 min-w-[320px] overflow-hidden rounded-lg bg-surface border border-gray-200"
+            className="absolute right-0 z-50 min-w-[280px] max-w-[90vw] overflow-hidden rounded-lg bg-surface border border-gray-200"
             style={{
               top: "calc(100% + 6px)",
               padding: "6px 0",
