@@ -42,6 +42,13 @@
     "step": "Step {{number}}",
     "layer": "Layer {{number}}"
   },
+  "shell": {
+    "steps_open": "Show steps",
+    "steps_close": "Hide steps",
+    "steps_heading": "Steps",
+    "rotate_hint": "Turn your phone sideways for more room to edit.",
+    "rotate_hint_dismiss": "Dismiss"
+  },
   "capture_toast": {
     "captured": "Captured position",
     "undo": "Undo"

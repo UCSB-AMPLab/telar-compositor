@@ -209,6 +209,8 @@
   "viewer_reset_aria": "Reset view",
   "viewer_prev_page_aria": "Previous page",
   "viewer_next_page_aria": "Next page",
+  "viewer_viewfinder_toggle": "Viewfinder",
+  "viewer_viewfinder_hint": "Visible on all screens",
   "used_in_step": "{{title}} — step {{step}}",
   "sync_field": {
     "title": "Title",
