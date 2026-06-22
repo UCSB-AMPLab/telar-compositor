@@ -14,21 +14,17 @@ import { useTranslation } from "react-i18next";
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
   arrayMove,
-  sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import * as Y from "yjs";
 
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { useSortableSensors } from "~/hooks/use-sortable-sensors";
 import { NavItemRow, type NavItemData } from "~/components/features/config/NavItemRow";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 
@@ -38,10 +34,7 @@ export function NavigationEditor() {
 
   const [deleteIndex, setDeleteIndex] = useState<number | null>(null);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  const sensors = useSortableSensors();
 
   // Read nav items from Yjs
   const getNavArray = useCallback((): Y.Array<unknown> | null => {

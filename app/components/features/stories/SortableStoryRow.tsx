@@ -89,7 +89,7 @@ export function SortableStoryRow({
       {...listeners}
       type="button"
       aria-label={t("drag_reorder_aria")}
-      className="cursor-grab touch-none text-gray-300 hover:text-gray-400 transition-colors"
+      className="inline-flex items-center justify-center cursor-grab touch-none text-gray-300 hover:text-gray-400 transition-colors pointer-coarse:p-2.5"
     >
       <GripVertical className="w-4 h-4" />
     </button>

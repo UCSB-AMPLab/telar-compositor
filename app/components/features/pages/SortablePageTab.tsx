@@ -6,7 +6,7 @@
  * Uses `useSortable` from `@dnd-kit/sortable`. Touch target:
  * `h-[36px]`.
  *
- * @version v1.2.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useSortable } from "@dnd-kit/sortable";
@@ -87,7 +87,7 @@ export function SortablePageTab({
             if (canDelete) onDelete();
           }}
           disabled={!canDelete}
-          className="opacity-0 group-hover/tab:opacity-100 transition-opacity text-gray-300 hover:text-red-400 disabled:text-gray-200 disabled:cursor-not-allowed"
+          className="opacity-0 group-hover/tab:opacity-100 pointer-coarse:opacity-100 transition-opacity text-gray-300 hover:text-red-400 disabled:text-gray-200 disabled:cursor-not-allowed"
         >
           <Trash2 className="w-3 h-3" />
         </button>
