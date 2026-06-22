@@ -56,19 +56,50 @@ export function Dialog({ open, onClose, children, className = "", dismissConfirm
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, showConfirm, handleDismissAttempt]);
 
+  // Keyboard-occlusion guard for touch devices: when a field inside the dialog
+  // is focused the on-screen keyboard covers the lower half, hiding inputs and
+  // the confirm/submit buttons. Scroll the focused field into the centre of the
+  // (now shorter) visible area so it — and the controls below it — stay reachable.
+  useEffect(() => {
+    if (!open) return;
+    function handleFocusIn(e: FocusEvent) {
+      const el = e.target as HTMLElement | null;
+      if (!el) return;
+      const tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable) {
+        // Defer so it runs after the keyboard animates in and layout settles.
+        setTimeout(() => {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 150);
+      }
+    }
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, [open]);
+
   if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center"
+      className="fixed inset-0 z-50 bg-black/50 overflow-y-auto overscroll-contain"
       onClick={(e) => {
         if (e.target === e.currentTarget) handleDismissAttempt();
       }}
     >
+      {/* Scroll wrapper: lets tall dialogs and keyboard-shrunk viewports scroll
+          to reach every field and the confirm buttons. Clicking the padding
+          (this element directly) still dismisses. */}
       <div
-        className={`bg-white rounded-lg shadow-xl w-full mx-4 ${className.includes("max-w-") ? "" : "max-w-md"} ${className.includes("p-") ? "" : "p-6"} ${className}`}
+        className="flex min-h-full items-center justify-center p-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) handleDismissAttempt();
+        }}
       >
-        {children}
+        <div
+          className={`bg-white rounded-lg shadow-xl w-full max-h-[calc(100dvh-2rem)] overflow-y-auto ${className.includes("max-w-") ? "" : "max-w-md"} ${className.includes("p-") ? "" : "p-6"} ${className}`}
+        >
+          {children}
+        </div>
       </div>
 
       {/* Dismiss confirmation overlay */}

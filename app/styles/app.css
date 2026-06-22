@@ -2,7 +2,7 @@
  * Telar Compositor — global stylesheet
  * Tailwind v4 @theme tokens, font imports, and shared keyframes.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 @import "tailwindcss";
@@ -12,6 +12,12 @@
 @import "@fontsource/space-grotesk/700.css";
 @import "@fontsource/roboto-condensed/400.css";
 @import "@fontsource/roboto-condensed/500.css";
+
+/* `landscape-compact:` — a phone held in landscape: short viewport + touch.
+   Tablets (>=744px tall in landscape) and desktops (fine pointer) fall outside
+   it, so they are never affected. Used to trim editor chrome (slim header,
+   hidden tab nav) and reclaim vertical space where it is scarcest. */
+@custom-variant landscape-compact (@media (orientation: landscape) and (max-height: 600px) and (pointer: coarse));
 
 @theme {
   /* ============================================================================
@@ -115,6 +121,48 @@
   :focus-visible {
     outline: 2px solid var(--color-anil-deep);
     outline-offset: 2px;
+  }
+}
+
+/* ============================================================================
+   Touch / coarse-pointer accommodations (tablets + phones)
+   Keyed on pointer type (not viewport width) so they cover iPad AND phones,
+   in both orientations, without touching desktop. Companion to the per-component
+   `pointer-coarse:` utilities used for touch-target sizing.
+   ============================================================================ */
+
+/* Never let iOS rescale text on orientation change. */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (pointer: coarse) {
+  /* iOS Safari auto-zooms the viewport whenever a focused field computes below
+     16px, forcing a manual pinch-out on every tap into the markdown body, slug,
+     or object-metadata fields — the core editing loop. Floor all text-entry at
+     16px on touch. Form controls here are <=16px by design and .cm-editor is
+     14px; the few intentionally-larger inputs (story title) render at 16px in
+     the edit field only, which is imperceptible and never affects published
+     output. The viewport meta deliberately keeps user zoom enabled, so this
+     floor is the only guard. */
+  input,
+  textarea,
+  select,
+  .cm-editor,
+  .cm-content {
+    font-size: 16px !important;
+  }
+
+  /* Minimum comfortable touch target (Apple HIG 44px). Apply `.tap-target` to
+     icon-only buttons, drag grips, and toggles that are sized for a mouse; it
+     enforces a 44x44 hit area and centres the (visually unchanged) glyph. Used
+     where a per-element `pointer-coarse:min-h-11` utility would be noisier. */
+  .tap-target {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 }
 
