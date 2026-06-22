@@ -20,7 +20,7 @@
  * Mock strategy mirrors tests/homepage-live-lang.test.tsx (the proven scaffold
  * for rendering the landing editor in jsdom).
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -108,6 +108,8 @@ vi.mock("@dnd-kit/core", () => ({
   closestCenter: () => undefined,
   KeyboardSensor: class {},
   PointerSensor: class {},
+  MouseSensor: class {},
+  TouchSensor: class {},
   useSensor: () => undefined,
   useSensors: () => [],
   DragOverlay: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
