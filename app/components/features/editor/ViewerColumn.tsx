@@ -16,7 +16,7 @@
  *
  * Also accepts a `children` slot for the layer panel overlay.
  *
- * @version v1.3.6-beta
+ * @version v1.3.7-beta
  */
 
 import { useRef, useState, useEffect, useCallback } from "react";
@@ -422,6 +422,7 @@ export function ViewerColumn({
           className="w-full h-full"
           onViewerReady={handleViewerReady}
           hideZoomControls
+          enableCaptureGuides={mediaType === "iiif"}
         />
       )}
 

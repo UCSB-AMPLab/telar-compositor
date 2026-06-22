@@ -10,7 +10,7 @@
  * Each layer button has a pencil icon to edit the button label inline.
  * Vertically centered within the narrative column.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -168,7 +168,7 @@ function LayerButtonWithEdit({
         aria-label={t("step.edit_button_label_aria")}
       >
         <Pencil className="w-3 h-3" />
-        <span className="font-body text-xs text-gray-400 opacity-0 group-hover/pencil:opacity-100 transition-opacity">
+        <span className="font-body text-xs text-gray-400 opacity-0 group-hover/pencil:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           {t("layer.edit_button_label")}
         </span>
       </button>
@@ -219,7 +219,7 @@ export function StepView({
               onClick={() => focusField(questionRef)}
               className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
             >
-              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
+              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 pointer-coarse:opacity-100 transition-opacity">
                 {t("step.click_to_edit")}
               </span>
               <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
@@ -240,7 +240,7 @@ export function StepView({
               onClick={() => focusField(answerRef)}
               className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
             >
-              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 transition-opacity">
+              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 pointer-coarse:opacity-100 transition-opacity">
                 {t("step.click_to_edit")}
               </span>
               <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />

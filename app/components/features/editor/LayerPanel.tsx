@@ -7,7 +7,7 @@
  * Navigation: "← BACK" pill on both layers and X close.
  * Editor background matches panel colour — no white box.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -438,7 +438,7 @@ export function LayerPanel({
                     aria-label={t("layer.edit_button_label_aria")}
                   >
                     <Pencil className="w-3.5 h-3.5" />
-                    <span className="font-body text-xs text-charcoal/40 opacity-0 group-hover/pencil:opacity-100 transition-opacity">
+                    <span className="font-body text-xs text-charcoal/40 opacity-0 group-hover/pencil:opacity-100 pointer-coarse:opacity-100 transition-opacity">
                       {t("layer.edit_button_label")}
                     </span>
                   </button>

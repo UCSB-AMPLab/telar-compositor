@@ -12,23 +12,18 @@
  * When `objectsByType` is provided, `SortableStepItem` shows a
  * media-type badge (Video/Music/Text icon) for non-image steps.
  *
- * @version v1.3.0-beta
+ * @version v1.3.7-beta
  */
 
 import { useTranslation } from "react-i18next";
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+import { DndContext, closestCenter } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
   arrayMove,
 } from "@dnd-kit/sortable";
+import { useSortableSensors } from "~/hooks/use-sortable-sensors";
 import { SortableStepItem } from "~/components/features/editor/SortableStepItem";
 import type { MediaType } from "~/lib/media-type";
 
@@ -112,9 +107,7 @@ export function StepSidebar({
   openLayerNumber,
 }: StepSidebarProps) {
   const { t } = useTranslation("editor");
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-  );
+  const sensors = useSortableSensors();
 
   // Stable dnd-kit id per step: D1 id when available, `_temp_id` otherwise.
   const keyFor = (s: SidebarStep): string | number =>
