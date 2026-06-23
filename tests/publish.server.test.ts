@@ -1962,6 +1962,16 @@ describe("buildNavigationYml", () => {
     expect(result).toContain("url: /glossary/");
   });
 
+  it("ignores prototype-chain keys (e.g. __proto__) without crashing", () => {
+    const result = buildNavigationYml([
+      { type: "builtin", key: "__proto__", label: "x", visible: true },
+      { type: "builtin", key: "glossary", label: "Glossary", visible: true },
+    ]);
+    // The bogus key resolves to no own entry → skipped, no crash, no "undefined"
+    expect(result).toContain("url: /glossary/");
+    expect(result).not.toContain("undefined");
+  });
+
   it("generates correct YAML for external link items", () => {
     const result = buildNavigationYml([
       { type: "external", url: "https://example.com", label: "Partner", visible: true },

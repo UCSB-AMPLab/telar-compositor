@@ -2471,9 +2471,10 @@ const BUILTIN_NAV: Record<string, { en: string; es: string; url: string }> = {
  * Serialises a navigation items array to a Telar-compatible navigation.yml string.
  *
  * Built-in items emit their canonical bilingual labels (see `BUILTIN_NAV`); a
- * `home` built-in (or any unknown key) is skipped. Custom page / external items
- * are genuinely monolingual, so the user's single label is written into both
- * `title_en` and `titulo_es`. Hidden items (visible: false) are excluded.
+ * `home` built-in (or any unknown key) is skipped. Custom page items are
+ * genuinely monolingual, so the user's single label is written into both
+ * `title_en` and `titulo_es`; external links emit only `title_en` (plus the URL
+ * and the `external` flag). Hidden items (visible: false) are excluded.
  */
 export function buildNavigationYml(navItems: NavItem[]): string {
   const visible = navItems.filter((i) => i.visible !== false);
@@ -2485,7 +2486,10 @@ export function buildNavigationYml(navItems: NavItem[]): string {
       lines.push(`    titulo_es: ${label}`);
       lines.push(`    url: /${item.slug}/`);
     } else if (item.type === "builtin") {
-      const builtin = BUILTIN_NAV[item.key ?? ""];
+      const key = item.key ?? "";
+      // Own-property lookup so inherited keys (e.g. "__proto__") can't resolve to
+      // a truthy non-entry and crash on the undefined label below.
+      const builtin = Object.hasOwn(BUILTIN_NAV, key) ? BUILTIN_NAV[key] : undefined;
       if (!builtin) continue; // home / unknown builtins are intentionally not emitted
       lines.push(`  - title_en: ${yamlQuote(builtin.en)}`);
       lines.push(`    titulo_es: ${yamlQuote(builtin.es)}`);
