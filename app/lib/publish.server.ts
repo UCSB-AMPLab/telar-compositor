@@ -18,7 +18,7 @@
  *
  * Called by the Publish route — no UI logic lives here.
  *
- * @version v1.3.5-beta
+ * @version v1.3.9-beta
  */
 
 import Papa from "papaparse";
@@ -2449,10 +2449,32 @@ interface NavItem {
 }
 
 /**
+ * Canonical labels + URLs for the built-in nav sections, in both languages.
+ *
+ * Built-in items are not user-renameable (the editor shows them via a fixed
+ * `builtinLabels` t() map), so the stored `label` is just the English seed.
+ * `navigation.yml` is bilingual — the framework header picks `title_en` vs
+ * `titulo_es` by `telar_language` — so we emit BOTH canonical values here, from
+ * one output, correct for English and Spanish sites alike. (Previously the stored
+ * English label was copied into both fields, so Spanish sites published
+ * `titulo_es: "Objects"` and the header rendered the English label.)
+ *
+ * `home` is deliberately absent: the navbar-brand already links home, so no
+ * redundant Home menu item is emitted.
+ */
+const BUILTIN_NAV: Record<string, { en: string; es: string; url: string }> = {
+  collection: { en: "Objects", es: "Objetos", url: "/objects/" },
+  glossary: { en: "Glossary", es: "Glosario", url: "/glossary/" },
+};
+
+/**
  * Serialises a navigation items array to a Telar-compatible navigation.yml string.
  *
- * Writes both `title_en` and `titulo_es` with the same label value for
- * monolingual sites. Hidden items (visible: false) are excluded.
+ * Built-in items emit their canonical bilingual labels (see `BUILTIN_NAV`); a
+ * `home` built-in (or any unknown key) is skipped. Custom page items are
+ * genuinely monolingual, so the user's single label is written into both
+ * `title_en` and `titulo_es`; external links emit only `title_en` (plus the URL
+ * and the `external` flag). Hidden items (visible: false) are excluded.
  */
 export function buildNavigationYml(navItems: NavItem[]): string {
   const visible = navItems.filter((i) => i.visible !== false);
@@ -2463,14 +2485,15 @@ export function buildNavigationYml(navItems: NavItem[]): string {
       lines.push(`  - title_en: ${label}`);
       lines.push(`    titulo_es: ${label}`);
       lines.push(`    url: /${item.slug}/`);
-    } else if (item.type === "builtin" && item.key === "glossary") {
-      lines.push(`  - title_en: ${label}`);
-      lines.push(`    titulo_es: ${label}`);
-      lines.push(`    url: /glossary/`);
-    } else if (item.type === "builtin" && item.key === "collection") {
-      lines.push(`  - title_en: ${label}`);
-      lines.push(`    titulo_es: ${label}`);
-      lines.push(`    url: /objects/`);
+    } else if (item.type === "builtin") {
+      const key = item.key ?? "";
+      // Own-property lookup so inherited keys (e.g. "__proto__") can't resolve to
+      // a truthy non-entry and crash on the undefined label below.
+      const builtin = Object.hasOwn(BUILTIN_NAV, key) ? BUILTIN_NAV[key] : undefined;
+      if (!builtin) continue; // home / unknown builtins are intentionally not emitted
+      lines.push(`  - title_en: ${yamlQuote(builtin.en)}`);
+      lines.push(`    titulo_es: ${yamlQuote(builtin.es)}`);
+      lines.push(`    url: ${builtin.url}`);
     } else if (item.type === "external") {
       lines.push(`  - title_en: ${label}`);
       lines.push(`    url: ${yamlQuote(item.url ?? "")}`);

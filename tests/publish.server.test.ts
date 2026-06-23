@@ -1921,6 +1921,7 @@ describe("buildNavigationYml", () => {
       { type: "builtin", key: "glossary", label: "Glossary", visible: true },
     ]);
     expect(result).toContain('title_en: "Glossary"');
+    expect(result).toContain('titulo_es: "Glosario"');
     expect(result).toContain("url: /glossary/");
   });
 
@@ -1929,6 +1930,46 @@ describe("buildNavigationYml", () => {
       { type: "builtin", key: "collection", label: "Collection", visible: true },
     ]);
     expect(result).toContain("url: /objects/");
+    // Canonical bilingual labels, NOT the stored "Collection" label
+    expect(result).toContain('title_en: "Objects"');
+    expect(result).toContain('titulo_es: "Objetos"');
+  });
+
+  it("emits canonical bilingual builtin labels, ignoring the stored English label", () => {
+    // Builtins are not user-renameable; the stored label is the English seed.
+    // The serializer must emit the framework's canonical pair so the published
+    // titulo_es is Spanish on es sites (the original moravia leak).
+    const result = buildNavigationYml([
+      { type: "builtin", key: "glossary", label: "Glossary", visible: true },
+      { type: "builtin", key: "collection", label: "Objects", visible: true },
+    ]);
+    expect(result).toContain('titulo_es: "Glosario"');
+    expect(result).toContain('titulo_es: "Objetos"');
+    // The English seed must never land in titulo_es
+    expect(result).not.toContain('titulo_es: "Glossary"');
+    expect(result).not.toContain('titulo_es: "Objects"');
+  });
+
+  it("does not emit a Home builtin (navbar-brand links home)", () => {
+    const result = buildNavigationYml([
+      { type: "builtin", key: "home", label: "Home", visible: true },
+      { type: "builtin", key: "glossary", label: "Glossary", visible: true },
+    ]);
+    // Home produces no menu entry; only glossary remains
+    expect(result).not.toContain("url: /\n");
+    expect(result).not.toContain('title_en: "Home"');
+    expect(result).not.toContain('titulo_es: "Inicio"');
+    expect(result).toContain("url: /glossary/");
+  });
+
+  it("ignores prototype-chain keys (e.g. __proto__) without crashing", () => {
+    const result = buildNavigationYml([
+      { type: "builtin", key: "__proto__", label: "x", visible: true },
+      { type: "builtin", key: "glossary", label: "Glossary", visible: true },
+    ]);
+    // The bogus key resolves to no own entry → skipped, no crash, no "undefined"
+    expect(result).toContain("url: /glossary/");
+    expect(result).not.toContain("undefined");
   });
 
   it("generates correct YAML for external link items", () => {
