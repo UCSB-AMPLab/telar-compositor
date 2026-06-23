@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.9-beta (2026-06-23)
+
+A navigation labelling fix for Spanish sites.
+
+### Fixes
+
+- **Navigation menu reads in Spanish on Spanish sites** — On a published site set
+  to Spanish, the built-in "Objects" and "Glossary" menu links were appearing in
+  English. They now publish with their Spanish labels (Objetos, Glosario), so the
+  top menu matches the rest of the site. Republish your site to apply the fix.
+
 ## v1.3.8-beta (2026-06-22)
 
 A fix release for object registration.
