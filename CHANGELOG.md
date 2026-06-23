@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.8-beta (2026-06-22)
+
+A fix release for object registration.
+
+### Fixes
+
+- **Registering five or more objects at once now works** — Importing several
+  unregistered images in one go (five or more) could fail after the images had
+  already been saved to your repository, leaving them missing from your objects
+  list and `objects.csv`. Registration now saves them in smaller batches, so any
+  number of objects registers reliably. If you were affected, open the objects
+  list and click Retry — the saved images will be picked up.
+
 ## v1.3.7-beta (2026-06-22)
 
 A tablet and mobile release. The compositor now adapts to phones and
