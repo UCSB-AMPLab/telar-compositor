@@ -6,13 +6,13 @@
  *
  * Three responsive tiers (mobile-first):
  *  - Phone (< sm): steps live in a slide-over drawer; the narrative and viewer
- *    share a single pane toggled by a Text / Image segmented control.
+ *    stack vertically (narrative on top, image below) and the region scrolls.
  *  - Tablet portrait (sm–lg): steps drawer + narrative and viewer side-by-side.
  *  - Desktop / landscape (lg+): the classic three columns — static 200px step
  *    sidebar + narrative (1/3) + viewer (remainder).
  *
  * When `hideViewer` is true (title card) the narrative fills the content area
- * and the Text/Image toggle is not shown.
+ * and no viewer pane is shown.
  *
  * On a phone held in portrait (< sm, coarse pointer) a dismissible hint nudges
  * the user to rotate to landscape, where crossing the `sm` breakpoint promotes
@@ -59,11 +59,15 @@ export function EditorShell({ storyTitle, sidebar, narrative, viewer, hideViewer
   const isPortraitPhone = useMediaQuery(
     "(max-width: 639px) and (orientation: portrait) and (pointer: coarse)"
   );
-  const [rotateHintDismissed, setRotateHintDismissed] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      window.sessionStorage?.getItem(ROTATE_HINT_DISMISSED_KEY) === "1"
-  );
+  const [rotateHintDismissed, setRotateHintDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.sessionStorage?.getItem(ROTATE_HINT_DISMISSED_KEY) === "1";
+    } catch {
+      // sessionStorage may be unavailable (private mode); treat as not dismissed
+      return false;
+    }
+  });
   const showRotateHint = isPortraitPhone && !hideViewer && !rotateHintDismissed;
   const dismissRotateHint = () => {
     setRotateHintDismissed(true);
@@ -114,7 +118,7 @@ export function EditorShell({ storyTitle, sidebar, narrative, viewer, hideViewer
           <button
             type="button"
             onClick={dismissRotateHint}
-            className="inline-flex items-center justify-center min-w-9 min-h-9 -my-1 rounded text-charcoal/70 hover:text-charcoal hover:bg-black/5 transition-colors"
+            className="inline-flex items-center justify-center min-w-11 min-h-11 -my-1 rounded text-charcoal/70 hover:text-charcoal hover:bg-black/5 transition-colors"
             aria-label={t("shell.rotate_hint_dismiss")}
           >
             <X className="w-4 h-4" />

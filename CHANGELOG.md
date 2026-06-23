@@ -17,8 +17,8 @@ desktop.
   press-and-hold before you drag, so a normal swipe still scrolls the list
   instead of grabbing an item.
 
-- **Story editor on small screens** — The editor adapts to three layouts: a
-  single pane you switch between writing and the image on phones, a
+- **Story editor on small screens** — The editor adapts to three layouts: the
+  writing area and the image stacked in one scrolling view on phones, a
   side-by-side view on tablets, and the full three-column layout on desktop.
   The steps list opens in a drawer and is open by default. Held in landscape
   on a phone, the header slims and the tab bar tucks away to give the editor

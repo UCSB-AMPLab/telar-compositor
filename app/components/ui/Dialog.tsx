@@ -62,19 +62,30 @@ export function Dialog({ open, onClose, children, className = "", dismissConfirm
   // (now shorter) visible area so it — and the controls below it — stay reachable.
   useEffect(() => {
     if (!open) return;
+    // Touch only — a desktop (fine pointer) has no on-screen keyboard to dodge,
+    // and scrolling the focused field would be unexpected there.
+    if (
+      typeof window === "undefined" ||
+      !window.matchMedia?.("(pointer: coarse)").matches
+    )
+      return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     function handleFocusIn(e: FocusEvent) {
       const el = e.target as HTMLElement | null;
       if (!el) return;
       const tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable) {
         // Defer so it runs after the keyboard animates in and layout settles.
-        setTimeout(() => {
+        timer = setTimeout(() => {
           el.scrollIntoView({ block: "center", behavior: "smooth" });
         }, 150);
       }
     }
     document.addEventListener("focusin", handleFocusIn);
-    return () => document.removeEventListener("focusin", handleFocusIn);
+    return () => {
+      document.removeEventListener("focusin", handleFocusIn);
+      if (timer) clearTimeout(timer);
+    };
   }, [open]);
 
   if (!open) return null;
