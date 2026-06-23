@@ -17,7 +17,7 @@
  *     them, and return their canonical ids so the client Y.Array mirror still
  *     works on retry
  *
- * @version v1.3.2-beta
+ * @version v1.3.8-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -188,6 +188,41 @@ describe("insert-pending-objects hardening", () => {
     const byKey = new Map(res.inserted.map((r) => [r.object_id, r.id]));
     expect(byKey.get("dup-obj")).toBe(7);
     expect(typeof byKey.get("fresh-obj")).toBe("number");
+  });
+
+  // The batch insert chunks rows to stay under D1's 100-bound-parameter limit.
+  // An objects row binds 21 params (20 explicit columns + the updated_at
+  // $defaultFn Drizzle auto-binds), so a chunk holds at most 4 rows (84
+  // params); 5 rows would bind 105 and D1 rejects the statement ("too many
+  // SQL variables"). The mocked db here does NOT enforce that limit, so this
+  // guards the BOUNDARY by asserting the chunking shape: registering 5 fresh
+  // objects must split into chunks of at most 4 (here 4 + 1) and still insert
+  // all 5 — not a single 5-row chunk (the bug that failed at exactly 5).
+  it("chunks a 5-object insert to stay within D1's bound-parameter limit", async () => {
+    const { db, capturedInserts } = makeDbMock([]);
+    vi.mocked(getDb).mockReturnValue(db as never);
+
+    const { context } = buildContext();
+    const res = (await action({
+      request: buildRequest([
+        pending("obj-1"),
+        pending("obj-2"),
+        pending("obj-3"),
+        pending("obj-4"),
+        pending("obj-5"),
+      ]),
+      context,
+      params: {},
+    } as never)) as { ok: boolean; insertedCount: number };
+
+    expect(res.ok).toBe(true);
+    expect(res.insertedCount).toBe(5);
+    // All five land…
+    expect(capturedInserts.flat()).toHaveLength(5);
+    // …but no single INSERT exceeds 4 rows (21 params/row × 4 = 84 ≤ 100).
+    expect(capturedInserts.every((chunk) => chunk.length <= 4)).toBe(true);
+    // Concretely: a 4 + 1 split, never one chunk of 5.
+    expect(capturedInserts.map((chunk) => chunk.length)).toEqual([4, 1]);
   });
 
   it("returns structured missing_data (not a 500) on malformed JSON", async () => {
