@@ -13,7 +13,7 @@
  * with thumbnails, sort/filter controls, featured-star toggles, a
  * slide-in edit panel, and a build progress banner.
  *
- * @version v1.3.7-beta
+ * @version v1.3.8-beta
  */
 
 import { and, asc, eq, inArray } from "drizzle-orm";
@@ -1085,12 +1085,16 @@ export async function action({ request, context }: Route.ActionArgs) {
           .filter((p) => existingByKey.has(p.object_id))
           .map((p) => ({ id: existingByKey.get(p.object_id)!, object_id: p.object_id }));
 
-        // D1 batch limit: 100 bindings per INSERT, 20 columns → max 5 rows (100 bound params, D1's inclusive limit).
-        // Collect inserted rows so the client can mirror them into the Yjs
-        // Y.Array with canonical D1 ids (self-hosted objects appear in
-        // the shared doc only after the repo build succeeds and D1 INSERT
-        // completes; the snapshot writes them as UPDATEs on the next cycle).
-        const maxRows = Math.floor(100 / 20);
+        // D1 caps bound parameters at 100 per INSERT. Each objects row binds
+        // 21 params — the 20 explicit columns above plus the updated_at
+        // $defaultFn that Drizzle auto-binds — so a chunk holds at most 4 rows
+        // (84 params); 5 rows would bind 105 and D1 rejects the statement
+        // ("too many SQL variables"). Collect inserted rows so the client can
+        // mirror them into the Yjs Y.Array with canonical D1 ids (self-hosted
+        // objects appear in the shared doc only after the repo build succeeds
+        // and the D1 INSERT completes; the snapshot writes them as UPDATEs on
+        // the next cycle).
+        const maxRows = 4;
         for (let i = 0; i < rows.length; i += maxRows) {
           const chunk = await db
             .insert(objects)
