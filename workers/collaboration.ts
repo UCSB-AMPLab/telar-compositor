@@ -24,7 +24,7 @@
  * makes the DO durable against forced eviction without any state
  * loss beyond the in-flight edit window.
  *
- * @version v1.3.5-beta
+ * @version v1.4.0-beta
  */
 
 import * as Y from "yjs";
@@ -302,8 +302,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             await this.snapshotToD1();
           });
         } catch (err) {
-          // Fix #13(B): a thrown D1-batch failure here would otherwise reject
-          // the DO fetch, and the publish action's outer catch swallows it and
+          // A thrown D1-batch failure here would otherwise reject the DO
+          // fetch, and the publish action's outer catch swallows it and
           // ships stale D1. Convert the throw into a non-200 the action can
           // distinguish from a genuine "DO unreachable" fetch rejection.
           console.error("[snapshot] forced snapshot failed", err);
@@ -1536,46 +1536,47 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
   }
 
   /**
-   * INSERT one story row. Crash-proof: a failure never throws out of the
-   * snapshot — it logs and reschedules instead.
-   *   - explicitId undefined → new Y.Map: autoincrement INSERT + backfill `_id`.
-   *   - explicitId set → re-create a stranded row WITH the same id (Y.Doc `_id`
-   *     stays valid, FK children stay attached). On a constraint failure, retry
-   *     once as a fresh autoincrement row + backfill the new id. If that also
-   *     fails (e.g. a UNIQUE story_id collision), warn + reschedule and return
-   *     id 0 so the caller skips this story's children this pass.
-   * Returns the id actually used (0 on terminal failure) and whether `_id` was
-   * backfilled (so the caller can broadcast).
+   * Crash-proof INSERT for one entity row, shared by all six snapshot pipelines
+   * (stories, steps, layers, objects, glossary terms, pages). This is the ONE
+   * place the insert-retry policy lives — read it here once, not six times:
+   *
+   *   - No explicit id (a brand-new Y.Map): one autoincrement INSERT, then
+   *     `backfill` the returned id onto the Y.Map. On failure: warn, reschedule
+   *     a retry, return id 0 — never throw, because a snapshot must not abort
+   *     mid-flush.
+   *   - Explicit id (re-creating a row stranded by an out-from-under DELETE):
+   *     INSERT with that same id so the Y.Doc `_id` and any FK children stay
+   *     valid; do NOT backfill (the id is already correct). On a constraint
+   *     failure retry ONCE as a fresh autoincrement row + backfill the new id;
+   *     if that also fails (e.g. a UNIQUE human-key collision) warn, reschedule,
+   *     return id 0 so the caller skips this row's children this pass.
+   *
+   * Does insert retry on collision? Yes — exactly once, and only in the
+   * explicit-id path, degrading to a logged no-op. The plain new-insert path
+   * does not retry. The id-bearing and autoincrement SQL variants are generated
+   * from the one `columns` list so they can never drift apart. The per-entity
+   * table, columns, bound values, the `_id` backfill (plus any second-key
+   * backfill — see glossary's term_id), and the two warn strings come from the
+   * six thin wrappers below.
    */
-  private async insertStoryRow(
-    storyMap: Y.Map<unknown>,
-    order: number,
-    now: string,
-    explicitId?: number,
+  private async insertRow(
+    table: string,
+    columns: string[],
+    binds: unknown[],
+    explicitId: number | undefined,
+    backfill: (id: number) => void,
+    warnBlocked: string,
+    warnNew: string,
   ): Promise<{ id: number; backfilled: boolean }> {
     const run = async (withId: boolean): Promise<number> => {
-      const sql = withId
-        ? 'INSERT INTO stories (id, project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, created_by, updated_at) ' +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        : 'INSERT INTO stories (project_id, story_id, title, subtitle, byline, "order", private, draft, show_sections, created_by, updated_at) ' +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-      const base = [
-        this.projectId,
-        String(storyMap.get("story_id") ?? ""),
-        yTextToString(storyMap.get("title")),
-        yTextToString(storyMap.get("subtitle")),
-        yTextToString(storyMap.get("byline")),
-        order,
-        storyMap.get("private") ? 1 : 0,
-        storyMap.get("draft") ? 1 : 0,
-        storyMap.get("show_sections") ? 1 : 0,
-        (storyMap.get("created_by") as number | null) ?? null,
-        now,
-      ];
-      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
+      const cols = withId ? ["id", ...columns] : columns;
+      const sql = `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`;
+      const res = await this.env.DB
+        .prepare(sql)
+        .bind(...(withId ? [explicitId, ...binds] : binds))
+        .run();
       return withId ? (explicitId as number) : (res.meta.last_row_id as number);
     };
-    const backfill = (id: number) => { this.ydoc.transact(() => { storyMap.set("_id", id); }); };
 
     if (explicitId !== undefined) {
       try {
@@ -1586,9 +1587,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           backfill(id);
           return { id, backfilled: true };
         } catch {
-          console.warn(
-            `[snapshot] story "${String(storyMap.get("story_id") ?? "")}" insert blocked (likely slug collision) — manual remediation needed`,
-          );
+          console.warn(warnBlocked);
           this.scheduleSnapshot();
           return { id: 0, backfilled: false };
         }
@@ -1599,13 +1598,55 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       backfill(id);
       return { id, backfilled: true };
     } catch {
-      console.warn(`[snapshot] new story "${String(storyMap.get("story_id") ?? "")}" insert failed`);
+      console.warn(warnNew);
       this.scheduleSnapshot();
       return { id: 0, backfilled: false };
     }
   }
 
-  /** INSERT one step row. Crash-proof; explicit id re-creates a stranded step. */
+  /**
+   * INSERT one story row. Thin wrapper over `insertRow` (retry policy lives
+   * there). `order` is threaded from the enclosing Y.Array index.
+   */
+  private async insertStoryRow(
+    storyMap: Y.Map<unknown>,
+    order: number,
+    now: string,
+    explicitId?: number,
+  ): Promise<{ id: number; backfilled: boolean }> {
+    const slug = String(storyMap.get("story_id") ?? "");
+    const columns = [
+      "project_id", "story_id", "title", "subtitle", "byline", '"order"',
+      "private", "draft", "show_sections", "created_by", "updated_at",
+    ];
+    const binds = [
+      this.projectId,
+      slug,
+      yTextToString(storyMap.get("title")),
+      yTextToString(storyMap.get("subtitle")),
+      yTextToString(storyMap.get("byline")),
+      order,
+      storyMap.get("private") ? 1 : 0,
+      storyMap.get("draft") ? 1 : 0,
+      storyMap.get("show_sections") ? 1 : 0,
+      (storyMap.get("created_by") as number | null) ?? null,
+      now,
+    ];
+    return this.insertRow(
+      "stories",
+      columns,
+      binds,
+      explicitId,
+      (id) => { this.ydoc.transact(() => { storyMap.set("_id", id); }); },
+      `[snapshot] story "${slug}" insert blocked (likely slug collision) — manual remediation needed`,
+      `[snapshot] new story "${slug}" insert failed`,
+    );
+  }
+
+  /**
+   * INSERT one step row. Thin wrapper over `insertRow`. `storyId` is the injected
+   * FK parent; `stepNumber` the enclosing Y.Array index (1-based).
+   */
   private async insertStepRow(
     stepMap: Y.Map<unknown>,
     storyId: number,
@@ -1613,62 +1654,44 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     now: string,
     explicitId?: number,
   ): Promise<{ id: number; backfilled: boolean }> {
-    const run = async (withId: boolean): Promise<number> => {
-      const sql = withId
-        ? "INSERT INTO steps (id, story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, created_by, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        : "INSERT INTO steps (story_id, step_number, kind, object_id, x, y, zoom, page, question, answer, alt_text, clip_start, clip_end, loop, created_by, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-      const base = [
-        storyId,
-        stepNumber,
-        String(stepMap.get("kind") ?? "media"),
-        String(stepMap.get("object_id") ?? ""),
-        stepMap.get("x") as number | null,
-        stepMap.get("y") as number | null,
-        stepMap.get("zoom") as number | null,
-        String(stepMap.get("page") ?? ""),
-        yTextToString(stepMap.get("question")),
-        yTextToString(stepMap.get("answer")),
-        yTextToString(stepMap.get("alt_text")),
-        String(stepMap.get("clip_start") ?? ""),
-        String(stepMap.get("clip_end") ?? ""),
-        String(stepMap.get("loop") ?? ""),
-        (stepMap.get("created_by") as number | null) ?? null,
-        now,
-      ];
-      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
-      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
-    };
-    const backfill = (id: number) => { this.ydoc.transact(() => { stepMap.set("_id", id); }); };
-
-    if (explicitId !== undefined) {
-      try {
-        return { id: await run(true), backfilled: false };
-      } catch {
-        try {
-          const id = await run(false);
-          backfill(id);
-          return { id, backfilled: true };
-        } catch {
-          console.warn("[snapshot] step insert blocked — manual remediation needed");
-          this.scheduleSnapshot();
-          return { id: 0, backfilled: false };
-        }
-      }
-    }
-    try {
-      const id = await run(false);
-      backfill(id);
-      return { id, backfilled: true };
-    } catch {
-      console.warn("[snapshot] new step insert failed");
-      this.scheduleSnapshot();
-      return { id: 0, backfilled: false };
-    }
+    const columns = [
+      "story_id", "step_number", "kind", "object_id", "x", "y", "zoom", "page",
+      "question", "answer", "alt_text", "clip_start", "clip_end", "loop",
+      "created_by", "updated_at",
+    ];
+    const binds = [
+      storyId,
+      stepNumber,
+      String(stepMap.get("kind") ?? "media"),
+      String(stepMap.get("object_id") ?? ""),
+      stepMap.get("x") as number | null,
+      stepMap.get("y") as number | null,
+      stepMap.get("zoom") as number | null,
+      String(stepMap.get("page") ?? ""),
+      yTextToString(stepMap.get("question")),
+      yTextToString(stepMap.get("answer")),
+      yTextToString(stepMap.get("alt_text")),
+      String(stepMap.get("clip_start") ?? ""),
+      String(stepMap.get("clip_end") ?? ""),
+      String(stepMap.get("loop") ?? ""),
+      (stepMap.get("created_by") as number | null) ?? null,
+      now,
+    ];
+    return this.insertRow(
+      "steps",
+      columns,
+      binds,
+      explicitId,
+      (id) => { this.ydoc.transact(() => { stepMap.set("_id", id); }); },
+      "[snapshot] step insert blocked — manual remediation needed",
+      "[snapshot] new step insert failed",
+    );
   }
 
-  /** INSERT one layer row. Crash-proof; explicit id re-creates a stranded layer. */
+  /**
+   * INSERT one layer row. Thin wrapper over `insertRow`. `stepId` is the injected
+   * FK parent; `layerNumber` the enclosing Y.Array index (1-based).
+   */
   private async insertLayerRow(
     layerMap: Y.Map<unknown>,
     stepId: number,
@@ -1676,50 +1699,28 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     now: string,
     explicitId?: number,
   ): Promise<{ id: number; backfilled: boolean }> {
-    const run = async (withId: boolean): Promise<number> => {
-      const sql = withId
-        ? "INSERT INTO layers (id, step_id, layer_number, title, button_label, content, created_by, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        : "INSERT INTO layers (step_id, layer_number, title, button_label, content, created_by, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?)";
-      const base = [
-        stepId,
-        layerNumber,
-        yTextToString(layerMap.get("title")),
-        yTextToString(layerMap.get("button_label")),
-        yTextToString(layerMap.get("content")),
-        (layerMap.get("created_by") as number | null) ?? null,
-        now,
-      ];
-      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
-      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
-    };
-    const backfill = (id: number) => { this.ydoc.transact(() => { layerMap.set("_id", id); }); };
-
-    if (explicitId !== undefined) {
-      try {
-        return { id: await run(true), backfilled: false };
-      } catch {
-        try {
-          const id = await run(false);
-          backfill(id);
-          return { id, backfilled: true };
-        } catch {
-          console.warn("[snapshot] layer insert blocked — manual remediation needed");
-          this.scheduleSnapshot();
-          return { id: 0, backfilled: false };
-        }
-      }
-    }
-    try {
-      const id = await run(false);
-      backfill(id);
-      return { id, backfilled: true };
-    } catch {
-      console.warn("[snapshot] new layer insert failed");
-      this.scheduleSnapshot();
-      return { id: 0, backfilled: false };
-    }
+    const columns = [
+      "step_id", "layer_number", "title", "button_label", "content",
+      "created_by", "updated_at",
+    ];
+    const binds = [
+      stepId,
+      layerNumber,
+      yTextToString(layerMap.get("title")),
+      yTextToString(layerMap.get("button_label")),
+      yTextToString(layerMap.get("content")),
+      (layerMap.get("created_by") as number | null) ?? null,
+      now,
+    ];
+    return this.insertRow(
+      "layers",
+      columns,
+      binds,
+      explicitId,
+      (id) => { this.ydoc.transact(() => { layerMap.set("_id", id); }); },
+      "[snapshot] layer insert blocked — manual remediation needed",
+      "[snapshot] new layer insert failed",
+    );
   }
 
   /**
@@ -1944,200 +1945,215 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
   }
 
   /**
-   * INSERT one object row. Crash-proof, mirroring `insertStoryRow`:
-   * explicitId undefined → new autoincrement row + backfill; explicitId set →
-   * re-create a stranded row with the same id, falling back to autoincrement +
-   * backfill on a constraint failure, and to a logged no-op (id 0) if that also
-   * fails. Carries every content column the Y.Map holds — including
-   * object_type/subjects/source/credit (editable) and thumbnail/dimensions/
-   * extra_columns (import passthrough), all loaded by buildFromD1Rows — so a
-   * re-INSERT preserves them instead of resetting them. origin defaults and
-   * missing_from_repo=0 on a fresh insert.
+   * INSERT one object row. Thin wrapper over `insertRow`. Carries every content
+   * column the Y.Map holds — including object_type/subjects/source/credit
+   * (editable) and thumbnail/dimensions/extra_columns (import passthrough), all
+   * loaded by buildFromD1Rows — so a re-INSERT preserves them instead of
+   * resetting them. origin defaults to "iiif" and missing_from_repo=0 on a fresh
+   * insert (both D1-only, not round-tripped through the Y.Map).
    */
   private async insertObjectRow(
     objMap: Y.Map<unknown>,
     now: string,
     explicitId?: number,
   ): Promise<{ id: number; backfilled: boolean }> {
-    const run = async (withId: boolean): Promise<number> => {
-      const sql = withId
-        ? "INSERT INTO objects (id, project_id, object_id, title, creator, description, alt_text, source_url, period, year, object_type, subjects, source, credit, thumbnail, dimensions, extra_columns, featured, image_available, origin, missing_from_repo, created_by, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        : "INSERT INTO objects (project_id, object_id, title, creator, description, alt_text, source_url, period, year, object_type, subjects, source, credit, thumbnail, dimensions, extra_columns, featured, image_available, origin, missing_from_repo, created_by, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-      const base = [
-        this.projectId,
-        String(objMap.get("object_id") ?? ""),
-        yTextToString(objMap.get("title")),
-        yTextToString(objMap.get("creator")),
-        yTextToString(objMap.get("description")),
-        yTextToString(objMap.get("alt_text")),
-        String(objMap.get("source_url") ?? ""),
-        yTextToString(objMap.get("period")),
-        yTextToString(objMap.get("year")),
-        yTextToString(objMap.get("object_type")),
-        yTextToString(objMap.get("subjects")),
-        yTextToString(objMap.get("source")),
-        yTextToString(objMap.get("credit")),
-        String(objMap.get("thumbnail") ?? ""),
-        String(objMap.get("dimensions") ?? ""),
-        String(objMap.get("extra_columns") ?? ""),
-        objMap.get("featured") ? 1 : 0,
-        objMap.get("image_available") ? 1 : 0,
-        String(objMap.get("origin") ?? "iiif"),
-        0, // missing_from_repo = false on insert
-        (objMap.get("created_by") as number | null) ?? null,
-        now,
-      ];
-      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
-      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
-    };
-    const backfill = (id: number) => { this.ydoc.transact(() => { objMap.set("_id", id); }); };
-
-    if (explicitId !== undefined) {
-      try {
-        return { id: await run(true), backfilled: false };
-      } catch {
-        try {
-          const id = await run(false);
-          backfill(id);
-          return { id, backfilled: true };
-        } catch {
-          console.warn(
-            `[snapshot] object "${String(objMap.get("object_id") ?? "")}" insert blocked — manual remediation needed`,
-          );
-          this.scheduleSnapshot();
-          return { id: 0, backfilled: false };
-        }
-      }
-    }
-    try {
-      const id = await run(false);
-      backfill(id);
-      return { id, backfilled: true };
-    } catch {
-      console.warn(`[snapshot] new object "${String(objMap.get("object_id") ?? "")}" insert failed`);
-      this.scheduleSnapshot();
-      return { id: 0, backfilled: false };
-    }
+    const slug = String(objMap.get("object_id") ?? "");
+    const columns = [
+      "project_id", "object_id", "title", "creator", "description", "alt_text",
+      "source_url", "period", "year", "object_type", "subjects", "source",
+      "credit", "thumbnail", "dimensions", "extra_columns", "featured",
+      "image_available", "origin", "missing_from_repo", "created_by", "updated_at",
+    ];
+    const binds = [
+      this.projectId,
+      slug,
+      yTextToString(objMap.get("title")),
+      yTextToString(objMap.get("creator")),
+      yTextToString(objMap.get("description")),
+      yTextToString(objMap.get("alt_text")),
+      String(objMap.get("source_url") ?? ""),
+      yTextToString(objMap.get("period")),
+      yTextToString(objMap.get("year")),
+      yTextToString(objMap.get("object_type")),
+      yTextToString(objMap.get("subjects")),
+      yTextToString(objMap.get("source")),
+      yTextToString(objMap.get("credit")),
+      String(objMap.get("thumbnail") ?? ""),
+      String(objMap.get("dimensions") ?? ""),
+      String(objMap.get("extra_columns") ?? ""),
+      objMap.get("featured") ? 1 : 0,
+      objMap.get("image_available") ? 1 : 0,
+      String(objMap.get("origin") ?? "iiif"),
+      0, // missing_from_repo = false on insert
+      (objMap.get("created_by") as number | null) ?? null,
+      now,
+    ];
+    return this.insertRow(
+      "objects",
+      columns,
+      binds,
+      explicitId,
+      (id) => { this.ydoc.transact(() => { objMap.set("_id", id); }); },
+      `[snapshot] object "${slug}" insert blocked — manual remediation needed`,
+      `[snapshot] new object "${slug}" insert failed`,
+    );
   }
 
-  /** Section 6: objects INSERT (with _id backfill) / UPDATE / DELETE. */
-  private async snapshotObjects(
+  /**
+   * Sections 6–8: the flat single-table pipelines — objects, glossary terms,
+   * pages — share ONE INSERT / UPDATE / DELETE shape with a stale-`_id`
+   * "adopt-or-re-INSERT" branch, walked here once.
+   *
+   * Only these three flat pipelines belong here. stories/steps/layers do NOT:
+   * they own FK children and cascade-delete, and they DELIBERATELY never adopt a
+   * live same-key row (adopting would silently clobber the live row's children) —
+   * see snapshotStories, which keeps its own nested walker.
+   *
+   * Per-entity divergences are explicit parameters, not hidden in shared code:
+   *   - `skip`       — objects skip a `_validation_state === "pending"` row so an
+   *                    unvalidated IIIF manifest never persists; if such a row
+   *                    already has a D1 id, that id is dropped from the orphan set
+   *                    so the row is left alone rather than deleted. Objects only.
+   *   - `pushUpdate` — the in-place UPDATE. It writes the human key (object_id /
+   *                    term_id / slug) because none of these columns has a UNIQUE
+   *                    index — unlike stories.story_id, which is omitted there.
+   *                    `index` is the Y.Array position (pages thread it into the
+   *                    `"order"` column; objects/glossary ignore it).
+   *   - `insert`     — the crash-proof insert wrapper (order-aware for pages).
+   * The stale-`_id` else-branch adopts a live same-key row (UPDATE it + backfill
+   * `_id`) when one exists, else re-INSERTs under the stale id.
+   */
+  private async snapshotFlatEntity(
     statements: D1PreparedStatement[],
-    now: string,
+    cfg: {
+      arrayName: string;
+      table: string;
+      keyField: string;
+      skip?: (m: Y.Map<unknown>) => boolean;
+      pushUpdate: (m: Y.Map<unknown>, index: number, targetId: number) => void;
+      insert: (
+        m: Y.Map<unknown>,
+        index: number,
+        explicitId?: number,
+      ) => Promise<{ id: number; backfilled: boolean }>;
+    },
   ): Promise<boolean> {
     let didBackfill = false;
-    // 6. Snapshot objects — INSERT for new IIIF items (with _id === null),
-    //    UPDATE for existing ones, DELETE for orphans. Objects with
-    //    _validation_state === "pending" are skipped so the object does
-    //    not persist to D1 until the IIIF manifest has been validated.
-    //    Order column is written from the Y.Array index.
-    const objectsArray = this.ydoc.getArray<Y.Map<unknown>>("objects");
-    const d1ObjectsResult = await this.env.DB
-      .prepare("SELECT id, object_id FROM objects WHERE project_id = ?")
+    const array = this.ydoc.getArray<Y.Map<unknown>>(cfg.arrayName);
+    const d1Result = await this.env.DB
+      .prepare(`SELECT id, ${cfg.keyField} FROM ${cfg.table} WHERE project_id = ?`)
       .bind(this.projectId)
-      .all<{ id: number; object_id: string }>();
-    const d1ObjectIds = new Set(d1ObjectsResult.results.map((r) => r.id));
-    const d1ObjectKeyToId = new Map(
-      d1ObjectsResult.results.filter((r) => r.object_id).map((r) => [r.object_id, r.id]),
-    );
+      .all<Record<string, unknown>>();
+    const d1Ids = new Set(d1Result.results.map((r) => r.id as number));
+    const d1KeyToId = new Map<string, number>();
+    for (const r of d1Result.results) {
+      const k = r[cfg.keyField];
+      if (k) d1KeyToId.set(k as string, r.id as number);
+    }
 
-    // Push the object UPDATE bound to a target row id (used for both an in-place
-    // update and an adopt onto a live same-object_id row).
-    const pushObjectUpdate = (m: Y.Map<unknown>, targetId: number) => {
-      statements.push(
-        this.env.DB
-          .prepare(
-            // object_id IS written here for symmetry with the glossary fix:
-            // object_id has no UNIQUE index, so persisting the human key on
-            // UPDATE is constraint-free and keeps D1 faithful to the Y.Doc.
-            "UPDATE objects SET title = ?, object_id = ?, creator = ?, description = ?, alt_text = ?, " +
-            "source_url = ?, period = ?, year = ?, object_type = ?, subjects = ?, " +
-            "source = ?, credit = ?, thumbnail = ?, dimensions = ?, extra_columns = ?, " +
-            "featured = ?, image_available = ?, updated_at = ? WHERE id = ?",
-          )
-          .bind(
-            yTextToString(m.get("title")),
-            String(m.get("object_id") ?? ""),
-            yTextToString(m.get("creator")),
-            yTextToString(m.get("description")),
-            yTextToString(m.get("alt_text")),
-            String(m.get("source_url") ?? ""),
-            yTextToString(m.get("period")),
-            yTextToString(m.get("year")),
-            yTextToString(m.get("object_type")),
-            yTextToString(m.get("subjects")),
-            yTextToString(m.get("source")),
-            yTextToString(m.get("credit")),
-            String(m.get("thumbnail") ?? ""),
-            String(m.get("dimensions") ?? ""),
-            String(m.get("extra_columns") ?? ""),
-            m.get("featured") ? 1 : 0,
-            m.get("image_available") ? 1 : 0,
-            now,
-            targetId,
-          ),
-      );
-    };
+    for (let i = 0; i < array.length; i++) {
+      const m = array.get(i);
 
-    for (let oi = 0; oi < objectsArray.length; oi++) {
-      const objMap = objectsArray.get(oi);
-      let objId = objMap.get("_id") as number | null;
-
-      // Skip pending-validation IIIF objects — they are not yet ready to persist
-      if (objMap.get("_validation_state") === "pending") {
-        // If a previously-inserted object has regressed to "pending", leave its
-        // D1 row alone (unlikely path, but be conservative).
-        if (typeof objId === "number") d1ObjectIds.delete(objId);
+      if (cfg.skip?.(m)) {
+        const existing = m.get("_id");
+        if (typeof existing === "number") d1Ids.delete(existing);
         continue;
       }
 
-      if (objId === null || objId === undefined) {
-        const r = await this.insertObjectRow(objMap, now);
+      const id = m.get("_id") as number | null;
+      if (id === null || id === undefined) {
+        const r = await cfg.insert(m, i);
         if (r.backfilled) didBackfill = true;
-      } else if (d1ObjectIds.has(objId)) {
-        pushObjectUpdate(objMap, objId);
-        d1ObjectIds.delete(objId);
+      } else if (d1Ids.has(id)) {
+        cfg.pushUpdate(m, i, id);
+        d1Ids.delete(id);
       } else {
-        // Stale _id: the D1 row was deleted out from under this Y.Map. Objects
-        // have no FK children, so adopt a live same-object_id row when one exists
-        // (UPDATE it — the Y.Map now carries every content column, including
-        // object_type/subjects/source/credit/thumbnail/dimensions/extra_columns,
-        // so the UPDATE writes them faithfully; only origin and missing_from_repo
-        // are D1-only and preserved by omission). Otherwise re-INSERT with the
-        // same id; only origin (default) and missing_from_repo (0) reset.
-        const key = String(objMap.get("object_id") ?? "");
-        const liveId = key ? d1ObjectKeyToId.get(key) : undefined;
+        // Stale _id: adopt a live same-key row when one exists, else re-INSERT
+        // with the same id. (The flat trio's key columns have no UNIQUE index,
+        // so the adopt UPDATE is collision-free.)
+        const key = String(m.get(cfg.keyField) ?? "");
+        const liveId = key ? d1KeyToId.get(key) : undefined;
         if (liveId !== undefined) {
-          pushObjectUpdate(objMap, liveId);
+          cfg.pushUpdate(m, i, liveId);
           const adoptId = liveId;
-          this.ydoc.transact(() => { objMap.set("_id", adoptId); });
+          this.ydoc.transact(() => { m.set("_id", adoptId); });
           didBackfill = true;
-          d1ObjectIds.delete(liveId);
+          d1Ids.delete(liveId);
         } else {
-          const r = await this.insertObjectRow(objMap, now, objId);
+          const r = await cfg.insert(m, i, id);
           if (r.backfilled) didBackfill = true;
         }
       }
     }
 
-    // DELETE orphan objects
-    for (const orphanObjId of d1ObjectIds) {
+    for (const orphanId of d1Ids) {
       statements.push(
-        this.env.DB
-          .prepare("DELETE FROM objects WHERE id = ?")
-          .bind(orphanObjId),
+        this.env.DB.prepare(`DELETE FROM ${cfg.table} WHERE id = ?`).bind(orphanId),
       );
     }
     return didBackfill;
   }
 
+  /** Section 6: objects INSERT (with _id backfill) / UPDATE / DELETE. */
+  private snapshotObjects(
+    statements: D1PreparedStatement[],
+    now: string,
+  ): Promise<boolean> {
+    return this.snapshotFlatEntity(statements, {
+      arrayName: "objects",
+      table: "objects",
+      keyField: "object_id",
+      // Pending-validation IIIF objects are not yet ready to persist (objects
+      // only — no other flat pipeline has this guard).
+      skip: (m) => m.get("_validation_state") === "pending",
+      pushUpdate: (m, _index, targetId) => {
+        statements.push(
+          this.env.DB
+            .prepare(
+              // object_id IS written here (unlike stories.story_id): object_id
+              // has no UNIQUE index, so persisting the human key on UPDATE is
+              // constraint-free and keeps D1 faithful to the Y.Doc. origin and
+              // missing_from_repo are D1-only and preserved by omission.
+              "UPDATE objects SET title = ?, object_id = ?, creator = ?, description = ?, alt_text = ?, " +
+              "source_url = ?, period = ?, year = ?, object_type = ?, subjects = ?, " +
+              "source = ?, credit = ?, thumbnail = ?, dimensions = ?, extra_columns = ?, " +
+              "featured = ?, image_available = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(
+              yTextToString(m.get("title")),
+              String(m.get("object_id") ?? ""),
+              yTextToString(m.get("creator")),
+              yTextToString(m.get("description")),
+              yTextToString(m.get("alt_text")),
+              String(m.get("source_url") ?? ""),
+              yTextToString(m.get("period")),
+              yTextToString(m.get("year")),
+              yTextToString(m.get("object_type")),
+              yTextToString(m.get("subjects")),
+              yTextToString(m.get("source")),
+              yTextToString(m.get("credit")),
+              String(m.get("thumbnail") ?? ""),
+              String(m.get("dimensions") ?? ""),
+              String(m.get("extra_columns") ?? ""),
+              m.get("featured") ? 1 : 0,
+              m.get("image_available") ? 1 : 0,
+              now,
+              targetId,
+            ),
+        );
+      },
+      insert: (m, _index, explicitId) => this.insertObjectRow(m, now, explicitId),
+    });
+  }
+
   /**
-   * INSERT one glossary term. Crash-proof, mirroring `insertObjectRow`. The
-   * term_id resolution (slugify on a brand-new term, keep the existing slug for a
-   * re-created stranded term) is shared by both paths: a stranded term already
-   * carries its term_id, so `resolvedTermId` is that existing value.
+   * INSERT one glossary term. Thin wrapper over `insertRow`, with the glossary's
+   * one divergence: it derives a `resolvedTermId` (slugify the title + an 8-char
+   * suffix for a brand-new term; keep the existing slug for a re-created stranded
+   * term, whose term_id is already set) ONCE — a fresh `crypto.randomUUID()` must
+   * not be recomputed between the INSERT bind and the backfill — and its backfill
+   * writes that second key onto the Y.Map when it was newly generated. No other
+   * pipeline computes or backfills a second identity field.
    */
   private async insertGlossaryRow(
     termMap: Y.Map<unknown>,
@@ -2154,260 +2170,127 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         ? `${slugBase}-${(tempId ?? crypto.randomUUID()).slice(0, 8)}`
         : (tempId ?? crypto.randomUUID());
 
-    const run = async (withId: boolean): Promise<number> => {
-      const sql = withId
-        ? "INSERT INTO glossary_terms (id, project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-        : "INSERT INTO glossary_terms (project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)";
-      const base = [
-        this.projectId,
-        resolvedTermId,
-        titleStr,
-        yTextToString(termMap.get("definition")),
-        (termMap.get("created_by") as number | null) ?? null,
-        now,
-      ];
-      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
-      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
-    };
-    const backfill = (id: number) => {
-      this.ydoc.transact(() => {
-        termMap.set("_id", id);
-        if (!existingTermId) termMap.set("term_id", resolvedTermId);
-      });
-    };
-
-    if (explicitId !== undefined) {
-      try {
-        return { id: await run(true), backfilled: false };
-      } catch {
-        try {
-          const id = await run(false);
-          backfill(id);
-          return { id, backfilled: true };
-        } catch {
-          console.warn(`[snapshot] glossary term "${resolvedTermId}" insert blocked — manual remediation needed`);
-          this.scheduleSnapshot();
-          return { id: 0, backfilled: false };
-        }
-      }
-    }
-    try {
-      const id = await run(false);
-      backfill(id);
-      return { id, backfilled: true };
-    } catch {
-      console.warn(`[snapshot] new glossary term "${resolvedTermId}" insert failed`);
-      this.scheduleSnapshot();
-      return { id: 0, backfilled: false };
-    }
+    const columns = ["project_id", "term_id", "title", "definition", "created_by", "updated_at"];
+    const binds = [
+      this.projectId,
+      resolvedTermId,
+      titleStr,
+      yTextToString(termMap.get("definition")),
+      (termMap.get("created_by") as number | null) ?? null,
+      now,
+    ];
+    return this.insertRow(
+      "glossary_terms",
+      columns,
+      binds,
+      explicitId,
+      (id) => {
+        this.ydoc.transact(() => {
+          termMap.set("_id", id);
+          if (!existingTermId) termMap.set("term_id", resolvedTermId);
+        });
+      },
+      `[snapshot] glossary term "${resolvedTermId}" insert blocked — manual remediation needed`,
+      `[snapshot] new glossary term "${resolvedTermId}" insert failed`,
+    );
   }
 
   /** Section 7: glossary_terms INSERT (with _id backfill) / UPDATE / DELETE. */
-  private async snapshotGlossary(
+  private snapshotGlossary(
     statements: D1PreparedStatement[],
     now: string,
   ): Promise<boolean> {
-    let didBackfill = false;
-    // 7. Snapshot glossary — INSERT / UPDATE / DELETE.
-    //    term_id on INSERT: slugify the title if present, otherwise fall back
-    //    to the Y.Map's _temp_id (UUID) so the NOT NULL constraint is satisfied.
-    const glossaryArray = this.ydoc.getArray<Y.Map<unknown>>("glossary");
-    const d1GlossaryResult = await this.env.DB
-      .prepare("SELECT id, term_id FROM glossary_terms WHERE project_id = ?")
-      .bind(this.projectId)
-      .all<{ id: number; term_id: string }>();
-    const d1GlossaryIds = new Set(d1GlossaryResult.results.map((r) => r.id));
-    const d1GlossaryKeyToId = new Map(
-      d1GlossaryResult.results.filter((r) => r.term_id).map((r) => [r.term_id, r.id]),
-    );
-
-    const pushGlossaryUpdate = (m: Y.Map<unknown>, targetId: number) => {
-      statements.push(
-        this.env.DB
-          .prepare(
-            // term_id IS written here (unlike stories.story_id): the glossary
-            // editor lets users rename a term's id, and term_id has no UNIQUE
-            // index, so persisting it on UPDATE can never collide/abort the batch.
-            "UPDATE glossary_terms SET title = ?, term_id = ?, definition = ?, updated_at = ? WHERE id = ?",
-          )
-          .bind(
-            yTextToString(m.get("title")),
-            // term_id is a plain-string Y.Map field (not a Y.Text), so bind it
-            // with String(...) like the page slug — yTextToString would emit
-            // "[object Object]" on a non-Y.Text value.
-            String(m.get("term_id") ?? ""),
-            yTextToString(m.get("definition")),
-            now,
-            targetId,
-          ),
-      );
-    };
-
-    for (let gi = 0; gi < glossaryArray.length; gi++) {
-      const termMap = glossaryArray.get(gi);
-      const termId = termMap.get("_id") as number | null;
-
-      if (termId === null || termId === undefined) {
-        const r = await this.insertGlossaryRow(termMap, now);
-        if (r.backfilled) didBackfill = true;
-      } else if (d1GlossaryIds.has(termId)) {
-        pushGlossaryUpdate(termMap, termId);
-        d1GlossaryIds.delete(termId);
-      } else {
-        // Stale _id: adopt a live same-term_id row when one exists, else
-        // re-INSERT with the same id (term_id has no UNIQUE constraint).
-        const key = String(termMap.get("term_id") ?? "");
-        const liveId = key ? d1GlossaryKeyToId.get(key) : undefined;
-        if (liveId !== undefined) {
-          pushGlossaryUpdate(termMap, liveId);
-          const adoptId = liveId;
-          this.ydoc.transact(() => { termMap.set("_id", adoptId); });
-          didBackfill = true;
-          d1GlossaryIds.delete(liveId);
-        } else {
-          const r = await this.insertGlossaryRow(termMap, now, termId);
-          if (r.backfilled) didBackfill = true;
-        }
-      }
-    }
-
-    // DELETE orphan glossary terms
-    for (const orphanTermId of d1GlossaryIds) {
-      statements.push(
-        this.env.DB
-          .prepare("DELETE FROM glossary_terms WHERE id = ?")
-          .bind(orphanTermId),
-      );
-    }
-    return didBackfill;
+    return this.snapshotFlatEntity(statements, {
+      arrayName: "glossary",
+      table: "glossary_terms",
+      keyField: "term_id",
+      pushUpdate: (m, _index, targetId) => {
+        statements.push(
+          this.env.DB
+            .prepare(
+              // term_id IS written here (unlike stories.story_id): the glossary
+              // editor lets users rename a term's id, and term_id has no UNIQUE
+              // index, so persisting it on UPDATE can never collide/abort the batch.
+              "UPDATE glossary_terms SET title = ?, term_id = ?, definition = ?, updated_at = ? WHERE id = ?",
+            )
+            .bind(
+              yTextToString(m.get("title")),
+              // term_id is a plain-string Y.Map field (not a Y.Text), so bind it
+              // with String(...) like the page slug — yTextToString would emit
+              // "[object Object]" on a non-Y.Text value.
+              String(m.get("term_id") ?? ""),
+              yTextToString(m.get("definition")),
+              now,
+              targetId,
+            ),
+        );
+      },
+      insert: (m, _index, explicitId) => this.insertGlossaryRow(m, now, explicitId),
+    });
   }
 
-  /** INSERT one project_pages row. Crash-proof, mirroring `insertObjectRow`. */
+  /**
+   * INSERT one project_pages row. Thin wrapper over `insertRow`. `order` is
+   * threaded from the enclosing Y.Array index.
+   */
   private async insertPageRow(
     pageMap: Y.Map<unknown>,
     order: number,
     now: string,
     explicitId?: number,
   ): Promise<{ id: number; backfilled: boolean }> {
-    const run = async (withId: boolean): Promise<number> => {
-      const sql = withId
-        ? 'INSERT INTO project_pages (id, project_id, title, slug, body, "order", created_by, updated_at) ' +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        : 'INSERT INTO project_pages (project_id, title, slug, body, "order", created_by, updated_at) ' +
-          "VALUES (?, ?, ?, ?, ?, ?, ?)";
-      const base = [
-        this.projectId,
-        yTextToString(pageMap.get("title")),
-        String(pageMap.get("slug") ?? ""),
-        yTextToString(pageMap.get("body")),
-        order,
-        (pageMap.get("created_by") as number | null) ?? null,
-        now,
-      ];
-      const res = await this.env.DB.prepare(sql).bind(...(withId ? [explicitId, ...base] : base)).run();
-      return withId ? (explicitId as number) : (res.meta.last_row_id as number);
-    };
-    const backfill = (id: number) => { this.ydoc.transact(() => { pageMap.set("_id", id); }); };
-
-    if (explicitId !== undefined) {
-      try {
-        return { id: await run(true), backfilled: false };
-      } catch {
-        try {
-          const id = await run(false);
-          backfill(id);
-          return { id, backfilled: true };
-        } catch {
-          console.warn(`[snapshot] page "${String(pageMap.get("slug") ?? "")}" insert blocked — manual remediation needed`);
-          this.scheduleSnapshot();
-          return { id: 0, backfilled: false };
-        }
-      }
-    }
-    try {
-      const id = await run(false);
-      backfill(id);
-      return { id, backfilled: true };
-    } catch {
-      console.warn(`[snapshot] new page "${String(pageMap.get("slug") ?? "")}" insert failed`);
-      this.scheduleSnapshot();
-      return { id: 0, backfilled: false };
-    }
+    const slug = String(pageMap.get("slug") ?? "");
+    const columns = ["project_id", "title", "slug", "body", '"order"', "created_by", "updated_at"];
+    const binds = [
+      this.projectId,
+      yTextToString(pageMap.get("title")),
+      slug,
+      yTextToString(pageMap.get("body")),
+      order,
+      (pageMap.get("created_by") as number | null) ?? null,
+      now,
+    ];
+    return this.insertRow(
+      "project_pages",
+      columns,
+      binds,
+      explicitId,
+      (id) => { this.ydoc.transact(() => { pageMap.set("_id", id); }); },
+      `[snapshot] page "${slug}" insert blocked — manual remediation needed`,
+      `[snapshot] new page "${slug}" insert failed`,
+    );
   }
 
   /** Section 8: project_pages INSERT (with _id backfill) / UPDATE / DELETE. */
-  private async snapshotPages(
+  private snapshotPages(
     statements: D1PreparedStatement[],
     now: string,
   ): Promise<boolean> {
-    let didBackfill = false;
-    // 8. Snapshot pages — INSERT / UPDATE / DELETE. Order written from Y.Array
-    //    index so D1 stays aligned with the Yjs position.
-    const pagesArray = this.ydoc.getArray<Y.Map<unknown>>("pages");
-    const d1PagesResult = await this.env.DB
-      .prepare("SELECT id, slug FROM project_pages WHERE project_id = ?")
-      .bind(this.projectId)
-      .all<{ id: number; slug: string }>();
-    const d1PageIds = new Set(d1PagesResult.results.map((r) => r.id));
-    const d1PageKeyToId = new Map(
-      d1PagesResult.results.filter((r) => r.slug).map((r) => [r.slug, r.id]),
-    );
-
-    const pushPageUpdate = (m: Y.Map<unknown>, order: number, targetId: number) => {
-      statements.push(
-        this.env.DB
-          .prepare(
-            'UPDATE project_pages SET title = ?, slug = ?, body = ?, ' +
-            '"order" = ?, updated_at = ? WHERE id = ?',
-          )
-          .bind(
-            yTextToString(m.get("title")),
-            String(m.get("slug") ?? ""),
-            yTextToString(m.get("body")),
-            order,
-            now,
-            targetId,
-          ),
-      );
-    };
-
-    for (let pi = 0; pi < pagesArray.length; pi++) {
-      const pageMap = pagesArray.get(pi);
-      const pageId = pageMap.get("_id") as number | null;
-
-      if (pageId === null || pageId === undefined) {
-        const r = await this.insertPageRow(pageMap, pi, now);
-        if (r.backfilled) didBackfill = true;
-      } else if (d1PageIds.has(pageId)) {
-        pushPageUpdate(pageMap, pi, pageId);
-        d1PageIds.delete(pageId);
-      } else {
-        // Stale _id: adopt a live same-slug row when one exists (UNIQUE-safe),
-        // else re-INSERT with the same id.
-        const key = String(pageMap.get("slug") ?? "");
-        const liveId = key ? d1PageKeyToId.get(key) : undefined;
-        if (liveId !== undefined) {
-          pushPageUpdate(pageMap, pi, liveId);
-          const adoptId = liveId;
-          this.ydoc.transact(() => { pageMap.set("_id", adoptId); });
-          didBackfill = true;
-          d1PageIds.delete(liveId);
-        } else {
-          const r = await this.insertPageRow(pageMap, pi, now, pageId);
-          if (r.backfilled) didBackfill = true;
-        }
-      }
-    }
-
-    // DELETE orphan pages
-    for (const orphanPageId of d1PageIds) {
-      statements.push(
-        this.env.DB
-          .prepare("DELETE FROM project_pages WHERE id = ?")
-          .bind(orphanPageId),
-      );
-    }
-    return didBackfill;
+    return this.snapshotFlatEntity(statements, {
+      arrayName: "pages",
+      table: "project_pages",
+      keyField: "slug",
+      // Pages are the one flat pipeline with a positional column: the Y.Array
+      // index threads into "order" so D1 stays aligned with the Yjs position.
+      pushUpdate: (m, index, targetId) => {
+        statements.push(
+          this.env.DB
+            .prepare(
+              'UPDATE project_pages SET title = ?, slug = ?, body = ?, ' +
+              '"order" = ?, updated_at = ? WHERE id = ?',
+            )
+            .bind(
+              yTextToString(m.get("title")),
+              String(m.get("slug") ?? ""),
+              yTextToString(m.get("body")),
+              index,
+              now,
+              targetId,
+            ),
+        );
+      },
+      insert: (m, index, explicitId) => this.insertPageRow(m, index, now, explicitId),
+    });
   }
 
   /**

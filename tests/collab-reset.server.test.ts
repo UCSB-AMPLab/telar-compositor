@@ -11,7 +11,7 @@
  * normal first-onboarding case) there is nothing to clobber, so we skip the call
  * and avoid needlessly spinning up the DO.
  *
- * @version v1.3.2-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

@@ -85,6 +85,40 @@ describe("unlinkProjectCascade — activity_log present and ordered before proje
 });
 
 // ---------------------------------------------------------------------------
+// (b2) Both project cascades must delete project_pages before projects.
+// project_pages.project_id → projects.id is a NOT NULL FK with no ON DELETE
+// CASCADE, so omitting it makes the projects-row delete fail with a FK error.
+// deleteProjectCascade already includes it; unlinkProjectCascade drifted and
+// did not — these tests lock both against future drift.
+// ---------------------------------------------------------------------------
+
+describe("project cascades — project_pages present and ordered before projects", () => {
+  it("unlinkProjectCascade deletes project_pages before the projects row delete", async () => {
+    const db = makeDb();
+    const { unlinkProjectCascade } = await import("~/routes/onboarding");
+    await unlinkProjectCascade(db, 99);
+
+    expect(db.visited).toContain("project_pages");
+    const pagesIdx = db.visited.indexOf("project_pages");
+    const projIdx = db.visited.lastIndexOf("projects");
+    expect(pagesIdx).toBeGreaterThanOrEqual(0);
+    expect(pagesIdx).toBeLessThan(projIdx);
+  });
+
+  it("deleteProjectCascade deletes project_pages before the projects row delete", async () => {
+    const db = makeDb();
+    const { deleteProjectCascade } = await import("~/lib/import.server");
+    await deleteProjectCascade(db, 99);
+
+    expect(db.visited).toContain("project_pages");
+    const pagesIdx = db.visited.indexOf("project_pages");
+    const projIdx = db.visited.lastIndexOf("projects");
+    expect(pagesIdx).toBeGreaterThanOrEqual(0);
+    expect(pagesIdx).toBeLessThan(projIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (c) account delete-account batch — activity_log scoped by actor_user_id,
 //     ordered before the users row delete
 //
