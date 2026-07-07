@@ -8,10 +8,13 @@
  * shows a confirmation prompt instead of closing immediately. This
  * prevents accidental data loss in dialogs with form input (e.g. the
  * object upload flow).
+ *
+ * @version v1.4.0-beta
  */
 
 import { useState, useCallback, useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useEscapeToClose } from "~/hooks/use-escape-to-close";
 
 interface DialogProps {
   open: boolean;
@@ -39,22 +42,13 @@ export function Dialog({ open, onClose, children, className = "", dismissConfirm
     if (!open) setShowConfirm(false);
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        if (showConfirm) {
-          setShowConfirm(false);
-        } else {
-          handleDismissAttempt();
-        }
-      }
+  useEscapeToClose(() => {
+    if (showConfirm) {
+      setShowConfirm(false);
+    } else {
+      handleDismissAttempt();
     }
-
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [open, showConfirm, handleDismissAttempt]);
+  }, open);
 
   // Keyboard-occlusion guard for touch devices: when a field inside the dialog
   // is focused the on-screen keyboard covers the lower half, hiding inputs and

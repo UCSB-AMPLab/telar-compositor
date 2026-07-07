@@ -27,7 +27,7 @@
  * alphabetically, so they will be present even in a truncated tree. Revisit
  * if truncation is ever detected in practice.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { githubHeaders, decodeGitHubContent, getRepoTree, getFileContent } from "~/lib/github.server";
@@ -35,6 +35,8 @@ import type { TreeEntry } from "~/lib/github.server";
 import type { CommitFile } from "~/lib/commit.server";
 import { validateManifest, type Manifest } from "~/lib/manifest-schema.server";
 import { BUNDLED_MANIFESTS } from "~/../migrations";
+import { normalizeVersionTag, stripVersionPrefix } from "~/lib/version";
+import { mutateYamlBlock } from "~/lib/config-yaml-block.server";
 
 const GITHUB_API = "https://api.github.com";
 const FRAMEWORK_OWNER = "UCSB-AMPLab";
@@ -101,7 +103,7 @@ export const FRAMEWORK_FILES = [
 // Types
 // ---------------------------------------------------------------------------
 
-export interface TelarVersion {
+interface TelarVersion {
   major: number;
   minor: number;
   patch: number;
@@ -149,7 +151,7 @@ export function parseTelarVersion(tag: string): TelarVersion | null {
   if (!tag) return null;
 
   // Strip leading "v"
-  const stripped = tag.startsWith("v") ? tag.slice(1) : tag;
+  const stripped = stripVersionPrefix(tag);
 
   // Split on "-" to separate the prerelease suffix
   const dashIdx = stripped.indexOf("-");
@@ -365,43 +367,25 @@ export async function healMissingFrameworkFiles(
  * _config.yml string using line-based iteration. All other content (user
  * values, comments, whitespace) is preserved verbatim.
  *
- * Pattern: identical to disableGoogleSheetsInConfig in commit.server.ts —
- * tracks inTelarBlock state, enters on /^telar:/, exits on next non-indented
- * non-comment non-empty line.
+ * Delegates the block-walking (enter on `telar:`, exit on the next
+ * non-indented non-comment non-empty line) to the shared
+ * `mutateYamlBlock` in config-yaml-block.server.ts — the same walker
+ * `disableGoogleSheetsInConfig` in commit.server.ts uses.
  */
 export function updateTelarVersionInConfig(
   content: string,
   newVersion: string,
   newReleaseDate: string,
 ): string {
-  const lines = content.split("\n");
-  let inTelarBlock = false;
-  const result: string[] = [];
-
-  for (const line of lines) {
-    if (/^telar:/.test(line)) {
-      inTelarBlock = true;
-      result.push(line);
-      continue;
+  return mutateYamlBlock(content, "telar", (line) => {
+    if (/^\s+version:/.test(line)) {
+      return line.replace(/^(\s+version:\s*).*/, `$1"${newVersion}"`);
     }
-
-    if (inTelarBlock) {
-      // End of telar: block when a non-indented, non-comment, non-empty line appears
-      if (/^[^\s#]/.test(line) && line.trim() !== "") {
-        inTelarBlock = false;
-      } else if (/^\s+version:/.test(line)) {
-        result.push(line.replace(/^(\s+version:\s*).*/, `$1"${newVersion}"`));
-        continue;
-      } else if (/^\s+release_date:/.test(line)) {
-        result.push(line.replace(/^(\s+release_date:\s*).*/, `$1"${newReleaseDate}"`));
-        continue;
-      }
+    if (/^\s+release_date:/.test(line)) {
+      return line.replace(/^(\s+release_date:\s*).*/, `$1"${newReleaseDate}"`);
     }
-
-    result.push(line);
-  }
-
-  return result.join("\n");
+    return null;
+  });
 }
 
 /** Prefix identifying GitHub Actions workflow files. Committing these requires
@@ -409,15 +393,15 @@ export function updateTelarVersionInConfig(
  *  to existing installations when newly declared, so a sizeable fraction of
  *  installs lack it (the v1.5.0 accept-gap). The upgrade commit is split so a
  *  rejection here can't zero the rest of the upgrade. */
-export const WORKFLOW_PATH_PREFIX = ".github/workflows/";
+const WORKFLOW_PATH_PREFIX = ".github/workflows/";
 
 /** True only for files under .github/workflows/ — NOT other .github/ files
  *  (e.g. dependabot.yml), which commit fine with plain contents:write. */
-export function isWorkflowPath(path: string): boolean {
+function isWorkflowPath(path: string): boolean {
   return path.startsWith(WORKFLOW_PATH_PREFIX);
 }
 
-export interface WorkflowPartition {
+interface WorkflowPartition {
   /** Additions that commit with plain contents:write (no workflows scope). */
   contentAdditions: CommitFile[];
   /** Additions under .github/workflows/ — need workflows:write. */
@@ -685,7 +669,7 @@ export async function computeUpgradeDiff(
   // use the tag name for version and today's date as a fallback.
   // The upgrade route action should pass the actual release publishedAt date
   // when building the configPatch.
-  const version = releaseTag.startsWith("v") ? releaseTag.slice(1) : releaseTag;
+  const version = stripVersionPrefix(releaseTag);
   const configPatch = { version, releaseDate: new Date().toISOString().slice(0, 10) };
 
   // 6. Build summary
@@ -711,11 +695,7 @@ export function compareTelarVersion(
   if (!latestTag) return { needsUpgrade: false, isBelowMinimum: false };
 
   // Normalise site version: the DB stores version without "v" prefix
-  const siteTag = siteVersion
-    ? siteVersion.startsWith("v")
-      ? siteVersion
-      : `v${siteVersion}`
-    : null;
+  const siteTag = siteVersion ? normalizeVersionTag(siteVersion) : null;
 
   const isBelowMinimum = siteTag
     ? compareVersions(siteTag, MIN_SUPPORTED_VERSION) < 0

@@ -35,8 +35,7 @@ import type { Route } from "./+types/_app.glossary";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { project_members, project_config } from "~/db/schema";
-import { resolveActiveProject } from "~/lib/membership.server";
-import { createSessionStorage } from "~/lib/session.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { slugifyTermId } from "~/lib/slug";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
@@ -77,11 +76,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     throw redirect("/dashboard");
   }

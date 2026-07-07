@@ -57,6 +57,7 @@ vi.mock("~/middleware/auth.server", () => ({ userContext: Symbol("userContext") 
 // i18n: an interpolating identity-ish map covering the start namespace keys
 // the components touch.
 const I18N_MAP: Record<string, string> = {
+  "workflow_tile.step": "Step",
   "welcome.eyebrow_default": "Project",
   "welcome.eyebrow_collab_empty": "You were invited",
   "welcome.title_collab_empty": "Welcome to {{project}}",
@@ -261,14 +262,14 @@ describe("WorkflowMap — Publish tile lock (don't-render gating)", () => {
 
   it("renders all six step tiles in STEP order", () => {
     const { container } = renderMap("convenor", "populated");
-    const steps = within(container).getAllByText(/^STEP · \d$/);
+    const steps = within(container).getAllByText(/^Step · \d$/);
     expect(steps.map((s) => s.textContent)).toEqual([
-      "STEP · 1",
-      "STEP · 2",
-      "STEP · 3",
-      "STEP · 4",
-      "STEP · 5",
-      "STEP · 6",
+      "Step · 1",
+      "Step · 2",
+      "Step · 3",
+      "Step · 4",
+      "Step · 5",
+      "Step · 6",
     ]);
   });
 });

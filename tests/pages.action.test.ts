@@ -23,7 +23,7 @@
  *   - `import-pages` returns `imported: N` reflecting only newly inserted
  *     rows.
  *
- * @version v1.3.2-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

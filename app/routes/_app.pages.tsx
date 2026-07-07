@@ -37,8 +37,7 @@ import type { Route } from "./+types/_app.pages";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { project_pages, project_members, users } from "~/db/schema";
-import { resolveActiveProject } from "~/lib/membership.server";
-import { createSessionStorage } from "~/lib/session.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { normaliseSlug, makeUniqueSlug, isTemporaryPageSlug } from "~/lib/slug";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
@@ -49,6 +48,7 @@ import { PagesRepoImportEmptyState } from "~/components/features/pages/PagesEmpt
 import { DocsLink } from "~/components/ui/DocsLink";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
+import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { useToast } from "~/hooks/use-toast";
 import { keyFor } from "~/lib/item-key";
 import { mergeNavItemsWithPages } from "~/lib/nav-merge";
@@ -70,11 +70,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     throw redirect("/dashboard");
   }
@@ -129,11 +125,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     throw new Response("Not found", { status: 404 });
   }
@@ -403,26 +395,10 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // ------------------------------------------------------------------
   // Source of truth: Yjs when available, loader data otherwise
   // ------------------------------------------------------------------
-  const [yjsPages, setYjsPages] = useState<PageItem[] | null>(null);
-
-  useEffect(() => {
-    if (!ydoc) {
-      setYjsPages(null);
-      return;
-    }
-    const pagesArray = ydoc.getArray<Y.Map<unknown>>("pages");
-
-    const recompute = () => {
-      const next: PageItem[] = [];
-      for (let i = 0; i < pagesArray.length; i++) {
-        next.push(yMapToPageItem(pagesArray.get(i), i));
-      }
-      setYjsPages(next);
-    };
-    recompute();
-    pagesArray.observeDeep(recompute);
-    return () => pagesArray.unobserveDeep(recompute);
-  }, [ydoc]);
+  const yjsPages = useYjsArraySync(
+    ydoc ? ydoc.getArray<Y.Map<unknown>>("pages") : null,
+    yMapToPageItem,
+  );
 
   const useYjs = ydoc !== null && ops !== null && yjsPages !== null;
   const displayPages: PageItem[] = useYjs

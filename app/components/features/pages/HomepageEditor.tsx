@@ -208,6 +208,12 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
   const [liveSiteLang, setLiveSiteLang] = useState<"en" | "es">(
     config?.lang === "es" ? "es" : "en"
   );
+  // This observe/recompute wiring is the Y.Map->scalar sibling of the
+  // Y.Array->array useYjsArraySync hook (app/hooks/use-yjs-array-sync.ts).
+  // It is intentionally NOT folded into that hook: it reads a single scalar
+  // from a Y.Map and, unlike the array hook, keeps the loader-initialised
+  // value on the no-ydoc/SSR path (no null reset), so the array hook's
+  // (Y.Array|null, mapFn) -> T[]|null contract does not fit.
   useEffect(() => {
     if (!ydoc) return;
     const cfg = ydoc.getMap<unknown>("config");

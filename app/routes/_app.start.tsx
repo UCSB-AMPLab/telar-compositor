@@ -39,11 +39,8 @@ import {
   project_members,
   users,
 } from "~/db/schema";
-import { createSessionStorage } from "~/lib/session.server";
-import {
-  resolveActiveProject,
-  getUserProjectsWithStats,
-} from "~/lib/membership.server";
+import { getUserProjectsWithStats } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { getRecentActivity } from "~/lib/activity.server";
 import { scanRepoOrphanStoryIds } from "~/lib/import.server";
 import { decrypt } from "~/lib/crypto.server";
@@ -71,11 +68,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     // Zero-project guard. MUST go to /onboarding,
     // never /objects or /dashboard (a no-project /objects/dashboard loader

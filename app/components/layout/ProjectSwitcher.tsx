@@ -1,11 +1,12 @@
 /**
  * Re-export shim — the canonical ProjectSwitcher lives in
  * `app/components/features/header/ProjectSwitcher.tsx`, where feature
- * components belong. Some callers import it from this layout path, so this
- * shim keeps that import path stable while the implementation stays in
- * features/header/.
+ * components belong. The one production consumer (Header.tsx) imports
+ * directly from that features/header/ path; this shim exists only to keep
+ * `tests/ProjectSwitcher.test.tsx` (the sole importer of this layout path)
+ * working without a rewrite.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 export {

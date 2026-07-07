@@ -15,7 +15,7 @@
  * Renders a 4-stage state machine — review | upgrading | building |
  * done.
  *
- * @version v1.3.6-beta
+ * @version v1.4.0-beta
  */
 
 import { redirect, useFetcher } from "react-router";
@@ -43,10 +43,10 @@ import type { Route } from "./+types/_app.upgrade";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { projects, project_config } from "~/db/schema";
-import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoTree, getRepoHead, getFileContent } from "~/lib/github.server";
-import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
+import { requireOwner } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import {
   fetchLatestRelease,
@@ -77,6 +77,7 @@ import {
 import { getInstallationToken } from "~/lib/github-app.server";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
 import { bumpProjectHead } from "~/lib/github-status.server";
+import { normalizeVersionTag } from "~/lib/version";
 import { marked, Renderer } from "marked";
 import { sanitiseHtml } from "~/lib/sanitise-html";
 import { Button } from "~/components/ui/Button";
@@ -109,11 +110,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     // No active project — onboarding, not /dashboard (which loops via /objects).
     throw redirect("/onboarding");
@@ -132,9 +129,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const [owner, repo] = activeProject.github_repo_full_name.split("/");
 
   // Check minimum version support
-  const siteTag = siteVersion
-    ? siteVersion.startsWith("v") ? siteVersion : `v${siteVersion}`
-    : null;
+  const siteTag = siteVersion ? normalizeVersionTag(siteVersion) : null;
   const isBelowMinimum = siteTag
     ? compareVersions(siteTag, MIN_SUPPORTED_VERSION) < 0
     : false;
@@ -187,7 +182,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     if (configContent) {
       const versionMatch = configContent.match(/^\s*version:\s*["']?([^\s"'#]+)/m);
       if (versionMatch) {
-        const repoVersion = versionMatch[1].startsWith("v") ? versionMatch[1] : `v${versionMatch[1]}`;
+        const repoVersion = normalizeVersionTag(versionMatch[1]);
         if (effectiveVersion && compareVersions(repoVersion, effectiveVersion) > 0) {
           // Repo is ahead of D1 — heal D1 silently
           effectiveVersion = repoVersion;
@@ -302,11 +297,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     return { ok: false, intent, error: "no_project" };
   }
@@ -1249,9 +1240,7 @@ export default function UpgradePage({ loaderData }: Route.ComponentProps) {
     return null;
   }
 
-  const displayVersion = siteVersion
-    ? siteVersion.startsWith("v") ? siteVersion : `v${siteVersion}`
-    : "unknown";
+  const displayVersion = siteVersion ? normalizeVersionTag(siteVersion) : "unknown";
 
   return (
     <div className="max-w-3xl mx-auto">

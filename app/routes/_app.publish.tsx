@@ -32,7 +32,7 @@
  * is NEVER keyed off `isPublishing` (which flips false on commit return, before
  * the build runs — the landmine).
  *
- * @version v1.3.5-beta
+ * @version v1.4.0-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -46,10 +46,10 @@ import type { Route } from "./+types/_app.publish";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { projects, stories, objects, steps, project_config, project_landing, project_pages, glossary_terms } from "~/db/schema";
-import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoHead } from "~/lib/github.server";
-import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
+import { requireOwner } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { recordActivity } from "~/lib/activity.server";
 import { signInternalMarker } from "../../workers/auth";
 import {
@@ -60,6 +60,7 @@ import {
   StaleHeadError,
 } from "~/lib/commit.server";
 import { healMissingFrameworkFiles } from "~/lib/upgrade.server";
+import { normalizeVersionTag } from "~/lib/version";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
 import { resolvePublishSteps } from "~/components/features/site-status/build-phase-collapse";
 import { PublishingStepper } from "~/components/features/site-status/PublishingStepper";
@@ -241,11 +242,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     // No active project — onboarding, not /dashboard (which loops via /objects).
     return redirect("/onboarding");
@@ -414,11 +411,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     return { ok: false, intent, error: "no_project" };
   }
@@ -527,15 +520,15 @@ export async function action({ request, context }: Route.ActionArgs) {
           });
           const snapshotRes = await doStub.fetch(snapshotReq);
           if (!snapshotRes.ok) {
-            // Fix #13(B): a non-200 here means the DO's forced snapshot THREW
-            // (e.g. a D1-batch failure). Fail closed — publishing now would
-            // ship stale D1. The handler converts the throw into this 500 so
-            // it is distinguishable from a fetch rejection below.
+            // A non-200 here means the DO's forced snapshot THREW (e.g. a
+            // D1-batch failure). Fail closed — publishing now would ship
+            // stale D1. The DO's /snapshot handler converts the throw into
+            // this 500 so it is distinguishable from a fetch rejection below.
             return { ok: false, intent: "publish", error: "snapshot_failed" };
           }
         } catch {
-          // Fix #13(B): a THROWN fetch means the DO is genuinely unreachable /
-          // no instance is alive (no active collaborators — the normal case).
+          // A thrown fetch means the DO is genuinely unreachable / no
+          // instance is alive (no active collaborators — the normal case).
           // Continue: D1 already holds the last persisted state. A snapshot
           // that threw does NOT land here — it returns a 500 handled above.
         }
@@ -569,7 +562,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           })(),
         ]);
 
-        // Best-effort framework-file heal (issue #18): restore any framework
+        // Best-effort framework-file heal: restore any framework
         // file entirely missing from the user repo (e.g. package-lock.json,
         // which the v1.5.0 `npm ci` build requires). Reaches sites the
         // version-gated upgrade flow can't — it self-redirects when the site is
@@ -577,9 +570,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         // publish; a miss retries next publish.
         const healedPaths: string[] = [];
         try {
-          const tag = siteVersion
-            ? siteVersion.startsWith("v") ? siteVersion : `v${siteVersion}`
-            : "";
+          const tag = siteVersion ? normalizeVersionTag(siteVersion) : "";
           const healed = await healMissingFrameworkFiles(token, owner, repo, tag);
           // Additive only — never shadow a user-content file already in the set.
           const existing = new Set(files.map((f) => f.path));

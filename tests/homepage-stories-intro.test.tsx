@@ -10,7 +10,7 @@
  * Mirrors homepage-welcome-collaborative.test.tsx, but records InlineTextArea
  * props (instead of stubbing them out) to assert the binding.
  *
- * @version v1.3.2-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";

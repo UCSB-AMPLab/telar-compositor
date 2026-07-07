@@ -5,7 +5,7 @@
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -17,8 +17,7 @@ import type { Route } from "./+types/_app.objects.$objectId";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { objects, project_config, steps, stories } from "~/db/schema";
-import { createSessionStorage } from "~/lib/session.server";
-import { resolveActiveProject } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { deriveStatus } from "~/lib/iiif-types";
 import { Switch } from "~/components/ui/Switch";
 import { InlineTextField } from "~/components/ui/InlineTextField";
@@ -56,11 +55,7 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
   const db = getDb(env.DB);
 
   // Get active project
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) throw redirect("/onboarding");
   const { project: activeProject, userRole } = resolved;
 
@@ -163,50 +158,11 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   const intent = formData.get("intent") as string;
 
   switch (intent) {
-    case "autosave-object-field": {
-      const entityId = Number(formData.get("entityId"));
-      const field = formData.get("field") as string;
-      const value = (formData.get("value") as string | null)?.trim() || null;
-
-      const allowedFields = [
-        "title", "creator", "description", "period", "year",
-        "object_type", "subjects", "source", "credit", "alt_text",
-      ];
-
-      if (!allowedFields.includes(field)) {
-        return { ok: false, error: "invalid_field" };
-      }
-
-      // Title is required — don't save empty
-      if (field === "title" && !value) {
-        return { ok: false, error: "title_required" };
-      }
-
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
-      if (!resolved) return { ok: false, error: "no_project" };
-
-      await db
-        .update(objects)
-        .set({
-          [field]: value,
-          updated_at: new Date().toISOString(),
-        })
-        .where(and(eq(objects.id, entityId), eq(objects.project_id, resolved.project.id)));
-
-      return { ok: true, intent: "autosave-object-field" };
-    }
-
     case "autosave-object-featured": {
       const entityId = Number(formData.get("entityId"));
       const featured = formData.get("value") === "true";
 
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolved) return { ok: false, error: "no_project" };
 
       await db
@@ -218,45 +174,6 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         .where(and(eq(objects.id, entityId), eq(objects.project_id, resolved.project.id)));
 
       return { ok: true, intent: "autosave-object-featured" };
-    }
-
-    case "update-object": {
-      // Legacy — kept for backward compatibility
-      const objectDbId = Number(formData.get("objectDbId"));
-      const title = (formData.get("title") as string | null)?.trim() || null;
-
-      if (!title) {
-        return { ok: false, error: "title_required" };
-      }
-
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
-      if (!resolved) return { ok: false, error: "no_project" };
-
-      await db
-        .update(objects)
-        .set({
-          title,
-          creator: (formData.get("creator") as string | null)?.trim() || null,
-          description:
-            (formData.get("description") as string | null)?.trim() || null,
-          period: (formData.get("period") as string | null)?.trim() || null,
-          year: (formData.get("year") as string | null)?.trim() || null,
-          object_type:
-            (formData.get("object_type") as string | null)?.trim() || null,
-          subjects:
-            (formData.get("subjects") as string | null)?.trim() || null,
-          source: (formData.get("source") as string | null)?.trim() || null,
-          credit: (formData.get("credit") as string | null)?.trim() || null,
-          alt_text: (formData.get("alt_text") as string | null)?.trim() || null,
-          featured: formData.get("featured") === "true",
-          updated_at: new Date().toISOString(),
-        })
-        .where(and(eq(objects.id, objectDbId), eq(objects.project_id, resolved.project.id)));
-
-      return { ok: true, intent: "update-object" };
     }
 
     case "delete-object": {
@@ -273,10 +190,7 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       if (!targetObject) throw redirect("/objects");
 
       // Resolve the caller's active project — also verifies membership
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolved) throw redirect("/objects");
 
       // Guard: only delete objects that belong to the caller's active project
@@ -371,13 +285,9 @@ export async function action({ request, params, context }: Route.ActionArgs) {
         return { ok: false, intent: "poll-build", error: "missing_run_id" };
       }
 
-      const sessionStoragePoll = createSessionStorage(env.SESSION_SECRET);
-      const sessionPoll = await sessionStoragePoll.getSession(request.headers.get("Cookie"));
-      const sessionActiveIdPoll = sessionPoll.get("activeProjectId") as number | undefined;
-
       // Membership-aware (member-level: polling is read-only build status) —
       // no first-owned-project fallback.
-      const resolvedPoll = await resolveActiveProject(db, user.id, sessionActiveIdPoll);
+      const resolvedPoll = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedPoll) {
         return { ok: false, intent: "poll-build", error: "no_project" };
       }
@@ -414,14 +324,10 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
     case "dispatch-iiif": {
       // Dispatch full site build to generate tiles (tiles are deployed via Pages, not git)
-      const sessionStorage3 = createSessionStorage(env.SESSION_SECRET);
-      const session3 = await sessionStorage3.getSession(request.headers.get("Cookie"));
-      const sessionActiveId3 = session3.get("activeProjectId") as number | undefined;
-
       // Membership-aware (member-level: the Generate-tiles button renders for
       // any project member; dispatching a rebuild is non-destructive) — no
       // first-owned-project fallback.
-      const resolved3 = await resolveActiveProject(db, user.id, sessionActiveId3);
+      const resolved3 = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolved3) {
         return { ok: false, intent: "dispatch-iiif", error: "no_project" };
       }
