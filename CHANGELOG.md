@@ -22,7 +22,7 @@ A creation release: new sites are now born clean and ready to use, set up throug
 
 - **Image alt text survives import** — A story image's alt text is now preserved when a story is imported from the repository and republished, instead of being dropped — keeping published sites accessible.
 
-- **Story-deletion notice names the right person** — When a collaborator deletes a story, the notice other editors see now correctly names who deleted it.
+- **Story-deletion notice shows the right story** — Deleting a story could surface a previously-deleted story's title in the notice other editors see; the notice now shows the title of the story that was actually deleted.
 
 ### Interface language
 
