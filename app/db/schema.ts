@@ -53,6 +53,11 @@ export const projects = sqliteTable("projects", {
   // permissions" login modal so affected convenors aren't trapped at upgrade.
   gh_workflows_write_missing: integer("gh_workflows_write_missing"),
   gh_install_target_type: text("gh_install_target_type"), // "User" | "Organization" | null (cold) — org-aware reauth URL
+  // How this project entered the compositor: "imported" (added from an existing
+  // GitHub repo) or "created" (provisioned born-clean by the create flow).
+  // Durable signal for telemetry and create-vs-import branching; the post-import
+  // config-check skip is gated on a per-run success flag, never on this alone.
+  origin: text("origin").default("imported"),
 });
 
 export const project_config = sqliteTable("project_config", {
