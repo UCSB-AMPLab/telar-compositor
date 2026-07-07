@@ -49,7 +49,7 @@ const PROJECT_CSV_CHANGED_TITLE = `order,story_id,title,subtitle,byline,private
 1,my-story,Updated Story Title,A subtitle,An author,false`;
 
 const CONFIG_YML_BASE = `title: My Site
-lang: en
+telar_language: en
 description: A great site
 author: Test User
 email: test@example.com
@@ -59,7 +59,7 @@ telar:
   version: 0.9.0`;
 
 const CONFIG_YML_CHANGED_TITLE = `title: Updated Site Title
-lang: en
+telar_language: en
 description: A great site
 author: Test User
 email: test@example.com
@@ -270,7 +270,7 @@ describe("computeFullSyncDiff — stories", () => {
       [],          // project_config
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.stories.newStories).toHaveLength(1);
     expect(result.stories.newStories[0].story_id).toBe("new-story");
@@ -294,7 +294,7 @@ describe("computeFullSyncDiff — stories", () => {
       [],                  // project_config
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.stories.changedStories).toHaveLength(1);
     expect(result.stories.changedStories[0].story_id).toBe("my-story");
@@ -319,7 +319,7 @@ describe("computeFullSyncDiff — stories", () => {
       [],
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.stories.missingStories).toHaveLength(1);
     expect(result.stories.missingStories[0].story_id).toBe("my-story");
@@ -363,7 +363,7 @@ describe("computeFullSyncDiff — config", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.config.changedFields.length).toBeGreaterThan(0);
     const titleChange = result.config.changedFields.find((f) => f.key === "title");
@@ -371,36 +371,35 @@ describe("computeFullSyncDiff — config", () => {
     expect(titleChange!.repoValue).toBe("Updated Site Title");
     expect(titleChange!.d1Value).toBe("My Site");
   });
-});
 
-// ---------------------------------------------------------------------------
-// computeFullSyncDiff — conflict detection
-// ---------------------------------------------------------------------------
+  // Regression: extractConfigFields used to match a literal `^lang:`
+  // line, but real _config.yml files (and buildConfigManagedFields' write side)
+  // key this field "telar_language". A repo-side language edit never surfaced
+  // in the sync diff. Real fixtures/config always use "telar_language", never "lang".
+  it("detects a repo-side telar_language change and surfaces it in config.changedFields", async () => {
+    const CONFIG_YML_CHANGED_LANGUAGE = `title: My Site
+telar_language: es
+description: A great site
+author: Test User
+email: test@example.com
+baseurl: /my-repo
+url: https://mysite.github.io
+telar:
+  version: 0.9.0`;
 
-describe("computeFullSyncDiff — conflict detection", () => {
-  const projectId = 1;
-  const token = "test-token";
-  const owner = "test-owner";
-  const repo = "test-repo";
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
-  });
-
-  it("when publishSnapshot is null (never published), hasConflicts is false (auto-merge mode)", async () => {
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
       if (path === "telar-content/spreadsheets/objects.csv") return "";
-      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_TWO_STORIES;
-      if (path === "_config.yml") return CONFIG_YML_CHANGED_TITLE;
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_CHANGED_LANGUAGE;
       return null;
     });
 
     const d1Stories: MockStory[] = [
       { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
     ];
+
     const d1Config: MockConfig[] = [
-      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: null, url: null, description: null, author: null, email: null },
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com" },
     ];
 
     const mockDb = createSequentialMockDb([
@@ -409,44 +408,124 @@ describe("computeFullSyncDiff — conflict detection", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
-    // No snapshot — no conflicts possible
-    expect(result.hasConflicts).toBe(false);
+    const langChange = result.config.changedFields.find((f) => f.key === "lang");
+    expect(langChange).toBeDefined();
+    expect(langChange!.repoValue).toBe("es");
+    expect(langChange!.d1Value).toBe("en");
   });
 
-  it("when publishSnapshot exists, entities changed in both repo and D1 since baseline are flagged as conflicts", async () => {
+  // Regression: publish's buildConfigManagedFields unconditionally
+  // rewrites logo/story_key/collection_mode from D1 on every publish, but
+  // sync's managed set omitted all three, so direct repo edits to them never
+  // surfaced in a diff before being silently clobbered on the next publish.
+  it("detects repo-side logo/story_key/collection_mode changes and surfaces them in config.changedFields", async () => {
+    const CONFIG_YML_CHANGED_MANAGED_EXTRAS = `title: My Site
+telar_language: en
+description: A great site
+author: Test User
+email: test@example.com
+baseurl: /my-repo
+url: https://mysite.github.io
+logo: /assets/new-logo.png
+story_key: new-story-key
+collection_mode: true
+telar:
+  version: 0.9.0`;
+
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
       if (path === "telar-content/spreadsheets/objects.csv") return "";
-      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_CHANGED_TITLE;
-      if (path === "_config.yml") return CONFIG_YML_BASE;
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_CHANGED_MANAGED_EXTRAS;
       return null;
     });
 
-    // D1 has a different title from baseline (user edited in compositor)
     const d1Stories: MockStory[] = [
-      { id: 1, project_id: projectId, story_id: "my-story", title: "D1 Edited Title", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+
+    const d1Config: MockConfig[] = [
+      {
+        id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io",
+        description: "A great site", author: "Test User", email: "test@example.com",
+        logo: "/assets/old-logo.png", story_key: "old-story-key", collection_mode: "false",
+      },
     ];
 
     const mockDb = createSequentialMockDb([
       [], [], d1Stories,
       d1Stories,
-      [],
+      d1Config,
     ]);
 
-    // Snapshot baseline had original title
-    const publishSnapshot = {
-      stories: [{ story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, isPrivate: false }],
-      config: {} as Record<string, string | null>,
-    };
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, publishSnapshot);
+    expect(result.config.changedFields.find((f) => f.key === "logo")?.repoValue).toBe("/assets/new-logo.png");
+    expect(result.config.changedFields.find((f) => f.key === "story_key")?.repoValue).toBe("new-story-key");
+    expect(result.config.changedFields.find((f) => f.key === "collection_mode")?.repoValue).toBe("true");
+  });
 
-    // Both changed relative to baseline — conflict
-    const conflict = result.stories.changedStories.find((s) => s.story_id === "my-story");
-    expect(conflict).toBeDefined();
-    expect(conflict!.isConflict).toBe(true);
-    expect(result.hasConflicts).toBe(true);
+  // Regression — collection_mode boolean/string mismatch: project_config.collection_mode
+  // is a real D1 boolean column (schema.ts, mode: "boolean"), so drizzle returns a JS
+  // boolean, not the string the test above hand-mocks. Repo _config.yml stores
+  // collection_mode as the bare scalar "true"/"false", which parseYamlScalar always
+  // returns as a string. Before normalizing, "true" !== true always mismatched, so an
+  // unchanged collection_mode false-positived as a diff on every check.
+  it("normalizes collection_mode boolean vs string: unchanged does not diff, a genuine change still does", async () => {
+    const CONFIG_YML_COLLECTION_MODE_ON = `title: My Site
+telar_language: en
+description: A great site
+author: Test User
+email: test@example.com
+baseurl: /my-repo
+url: https://mysite.github.io
+collection_mode: true
+telar:
+  version: 0.9.0`;
+
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_COLLECTION_MODE_ON;
+      return null;
+    });
+
+    const d1Stories: MockStory[] = [
+      { id: 1, project_id: projectId, story_id: "my-story", title: "My Story", subtitle: "A subtitle", byline: "An author", order: 1, private: false, draft: false, updated_at: null },
+    ];
+
+    // Unchanged: D1 stores collection_mode as a real boolean `true`, matching the
+    // repo's "true" — must NOT surface as a diff.
+    const d1ConfigUnchanged: MockConfig[] = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", collection_mode: true },
+    ];
+
+    const mockDbUnchanged = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1ConfigUnchanged,
+    ]);
+
+    const unchangedResult = await computeFullSyncDiff(projectId, token, owner, repo, mockDbUnchanged);
+    expect(unchangedResult.config.changedFields.find((f) => f.key === "collection_mode")).toBeUndefined();
+
+    // Genuine change: D1 boolean `false` vs repo "true" — must still surface.
+    const d1ConfigChanged: MockConfig[] = [
+      { id: 1, project_id: projectId, title: "My Site", lang: "en", baseurl: "/my-repo", url: "https://mysite.github.io", description: "A great site", author: "Test User", email: "test@example.com", collection_mode: false },
+    ];
+
+    const mockDbChanged = createSequentialMockDb([
+      [], [], d1Stories,
+      d1Stories,
+      d1ConfigChanged,
+    ]);
+
+    const changedResult = await computeFullSyncDiff(projectId, token, owner, repo, mockDbChanged);
+    const collectionModeChange = changedResult.config.changedFields.find((f) => f.key === "collection_mode");
+    expect(collectionModeChange).toBeDefined();
+    expect(collectionModeChange!.repoValue).toBe("true");
+    expect(collectionModeChange!.d1Value).toBe("false");
   });
 });
 
@@ -680,7 +759,7 @@ describe("FullSyncDiff return structure", () => {
   it("computeFullSyncDiff result has objects, stories, and config keys with correct shapes", async () => {
     const mockDb = createSequentialMockDb(Array(10).fill([]));
 
-    const result = await computeFullSyncDiff(1, "t", "o", "r", mockDb, null);
+    const result = await computeFullSyncDiff(1, "t", "o", "r", mockDb);
 
     expect(result).toHaveProperty("objects");
     expect(result).toHaveProperty("stories");
@@ -962,7 +1041,7 @@ describe("extractTelarVersion", () => {
 // ---------------------------------------------------------------------------
 
 const CONFIG_YML_REPO_NEWER = `title: My Site
-lang: en
+telar_language: en
 description: A great site
 author: Test User
 email: test@example.com
@@ -972,7 +1051,7 @@ telar:
   version: "0.10.0"`;
 
 const CONFIG_YML_REPO_OLDER = `title: My Site
-lang: en
+telar_language: en
 description: A great site
 author: Test User
 email: test@example.com
@@ -982,7 +1061,7 @@ telar:
   version: "0.8.0"`;
 
 const CONFIG_YML_NO_TELAR_VERSION = `title: My Site
-lang: en
+telar_language: en
 description: A great site
 author: Test User
 email: test@example.com
@@ -1021,7 +1100,7 @@ describe("computeFullSyncDiff — versionChange", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.config.versionChange).not.toBeNull();
     expect(result.config.versionChange!.direction).toBe("ahead");
@@ -1050,7 +1129,7 @@ describe("computeFullSyncDiff — versionChange", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.config.versionChange).not.toBeNull();
     expect(result.config.versionChange!.direction).toBe("behind");
@@ -1079,7 +1158,7 @@ describe("computeFullSyncDiff — versionChange", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.config.versionChange).toBeNull();
   });
@@ -1106,7 +1185,7 @@ describe("computeFullSyncDiff — versionChange", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.config.versionChange).not.toBeNull();
     expect(result.config.versionChange!.direction).toBe("ahead");
@@ -1135,7 +1214,7 @@ describe("computeFullSyncDiff — versionChange", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.config.versionChange).toBeNull();
   });
@@ -1161,7 +1240,7 @@ describe("computeFullSyncDiff — versionChange", () => {
       d1Config,
     ]);
 
-    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb, null);
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
     expect(result.config.versionChange).toBeNull();
   });

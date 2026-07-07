@@ -213,9 +213,7 @@ export async function refreshGithubStatus(
     let divergedAgainst: string | null = localHead;
     if (remoteHead !== localHead) {
       try {
-        // null snapshot — matches the original _app loader and the
-        // api.site-status out-of-sync payload (behaviour-preserving).
-        const diff = await computeFullSyncDiff(project.id, token, owner, repo, db, null);
+        const diff = await computeFullSyncDiff(project.id, token, owner, repo, db);
         if (hasDivergentChanges(diff)) {
           diverged = 1;
         } else {
