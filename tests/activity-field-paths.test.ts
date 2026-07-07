@@ -16,7 +16,7 @@
  * dropped every Y.Text edit: the activity feed stayed empty for the most common
  * kind of edit. These tests lock in that Y.Text edits DO produce a field path.
  *
- * @version v1.3.2-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect } from "vitest";

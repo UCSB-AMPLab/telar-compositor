@@ -50,8 +50,12 @@
   "seats_available": "{{used}} of {{max}} seats",
   "cancel_invite": "Cancel invite",
   "cancel_invite_aria": "Cancel pending invitation",
+  "pending_invites_heading": "Pending invitations",
+  "pending_invites_empty": "No pending invitations",
   "role_convenor": "Convenor",
   "team_heading": "Team",
   "remove_modal_title": "Remove collaborator",
-  "remove_modal_body": "Remove @{{username}}? They'll lose access to this project. You can re-invite them anytime."
+  "remove_modal_body": "Remove @{{username}}? They'll lose access to this project. You can re-invite them anytime.",
+  "close": "Close",
+  "row_menu_aria": "Row menu for @{{username}}"
 }

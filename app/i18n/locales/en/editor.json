@@ -20,6 +20,7 @@
   },
   "link_popover": {
     "url_placeholder": "Paste or type a URL",
+    "link_text": "Link text: ",
     "insert": "Insert",
     "cancel": "Cancel"
   },
@@ -184,5 +185,6 @@
     "generic_title": "Something went wrong",
     "generic_body": "This story couldn't be opened. Go back to your stories and try again."
   },
-  "preview_clip": "Preview clip"
+  "preview_clip": "Preview clip",
+  "video_player_title": "{{type}} video player"
 }

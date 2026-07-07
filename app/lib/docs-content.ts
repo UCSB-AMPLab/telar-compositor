@@ -31,7 +31,7 @@
  *   video     ← 9-5-video-audio.md      (/docs/the-compositor/video-audio/)
  *   sync      ← 9-7-sync-updates.md     (/docs/the-compositor/sync-updates/)
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 /** A single vendored doc slice. */
@@ -996,9 +996,6 @@ Durante la resincronización, el Compositor:
 El Compositor verifica qué versión de Telar ejecuta tu sitio. Si hay una versión más reciente disponible, te lo informa y ofrece actualizar. Las actualizaciones modifican el código de Telar en tu repositorio pero no alteran tu contenido — tus objetos, historias y configuración se mantienen sin cambios.`,
   },
 };
-
-/** All DOC ids in declaration order. */
-export const DOC_IDS = Object.keys(DOCS) as DocId[];
 
 /** Type guard: is the given string a known DOC id? */
 export function isDocId(value: string | null | undefined): value is DocId {

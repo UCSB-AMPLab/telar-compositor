@@ -3,7 +3,7 @@
  * deletion cascades to avoid FK violations (activity_log.project_id → projects
  * and activity_log.actor_user_id → users are both NOT NULL FKs enforced by D1).
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 import { describe, it, expect, vi } from "vitest";
 
@@ -81,6 +81,40 @@ describe("unlinkProjectCascade — activity_log present and ordered before proje
     expect(actIdx).toBeGreaterThanOrEqual(0);
     expect(projIdx).toBeGreaterThanOrEqual(0);
     expect(actIdx).toBeLessThan(projIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (b2) Both project cascades must delete project_pages before projects.
+// project_pages.project_id → projects.id is a NOT NULL FK with no ON DELETE
+// CASCADE, so omitting it makes the projects-row delete fail with a FK error.
+// deleteProjectCascade already includes it; unlinkProjectCascade drifted and
+// did not — these tests lock both against future drift.
+// ---------------------------------------------------------------------------
+
+describe("project cascades — project_pages present and ordered before projects", () => {
+  it("unlinkProjectCascade deletes project_pages before the projects row delete", async () => {
+    const db = makeDb();
+    const { unlinkProjectCascade } = await import("~/routes/onboarding");
+    await unlinkProjectCascade(db, 99);
+
+    expect(db.visited).toContain("project_pages");
+    const pagesIdx = db.visited.indexOf("project_pages");
+    const projIdx = db.visited.lastIndexOf("projects");
+    expect(pagesIdx).toBeGreaterThanOrEqual(0);
+    expect(pagesIdx).toBeLessThan(projIdx);
+  });
+
+  it("deleteProjectCascade deletes project_pages before the projects row delete", async () => {
+    const db = makeDb();
+    const { deleteProjectCascade } = await import("~/lib/import.server");
+    await deleteProjectCascade(db, 99);
+
+    expect(db.visited).toContain("project_pages");
+    const pagesIdx = db.visited.indexOf("project_pages");
+    const projIdx = db.visited.lastIndexOf("projects");
+    expect(pagesIdx).toBeGreaterThanOrEqual(0);
+    expect(pagesIdx).toBeLessThan(projIdx);
   });
 });
 

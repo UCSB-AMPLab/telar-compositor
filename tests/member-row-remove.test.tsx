@@ -8,7 +8,7 @@
  * through to onRemove?.() (undefined) — nothing happened.
  * Post-fix: userId is passed as a prop and the correct branch fires.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -41,7 +41,7 @@ describe("MemberRow — sidebar Remove button threads userId", () => {
     );
 
     // Open the kebab menu
-    const kebab = screen.getByRole("button", { name: /row menu/i });
+    const kebab = screen.getByRole("button", { name: /row_menu_aria/i });
     fireEvent.click(kebab);
 
     // Click the Remove item

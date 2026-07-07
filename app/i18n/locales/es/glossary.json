@@ -17,6 +17,11 @@
   "term_id_label": "ID del término (usado en enlaces del glosario)",
   "untitled_term": "Término sin título",
   "insert_link_button": "Insertar enlace de glosario",
+  "link_button": {
+    "no_match": "Ningún término coincide con tu búsqueda.",
+    "no_terms": "Aún no hay términos definidos.",
+    "inserts": "Inserta: "
+  },
   "custom_text_toggle": "Texto personalizado del enlace",
   "search_terms_placeholder": "Buscar términos...",
   "custom_display_placeholder": "Texto personalizado",

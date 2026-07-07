@@ -10,7 +10,7 @@
  * tracked — navigating away with unsaved changes shows a
  * confirmation modal.
  *
- * @version v1.3.6-beta
+ * @version v1.4.0-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,9 +22,8 @@ import * as Y from "yjs";
 import type { Route } from "./+types/_app.config";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { createSessionStorage } from "~/lib/session.server";
 import { project_config, project_themes } from "~/db/schema";
-import { resolveActiveProject } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoTree, getFileContent } from "~/lib/github.server";
 import { parseYaml } from "~/lib/yaml.server";
@@ -49,11 +48,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     return { hasProject: false as const, config: null, themes: [] };
   }
@@ -84,11 +79,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     return { saved: false, error: "No project found" };
   }

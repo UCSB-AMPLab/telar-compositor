@@ -23,7 +23,7 @@
  * on the step-select / layer-open / layer-close handlers — never
  * inside the one-shot `deepLinkConsumedRef` mount read.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -33,8 +33,8 @@ import type { Route } from "./+types/_app.stories.$storyId";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { stories, steps, layers, objects, project_config, project_members, users as usersTable } from "~/db/schema";
-import { resolveActiveProject, requireProjectMember } from "~/lib/membership.server";
-import { createSessionStorage } from "~/lib/session.server";
+import { requireProjectMember } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { EditorShell } from "~/components/features/editor/EditorShell";
 import { StepSidebar } from "~/components/features/editor/StepSidebar";
 import type { SidebarLayerSummary } from "~/components/features/editor/StepSidebar";
@@ -49,6 +49,7 @@ import { detectMediaType } from "~/lib/media-type";
 import type { MediaType } from "~/lib/media-type";
 import { useCollaborationContext, useSetAwarenessLocation } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
+import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { useToast } from "~/hooks/use-toast";
 import { findYMapById, getYText } from "~/lib/yjs-helpers";
 import { recordError } from "~/lib/error-capture";
@@ -64,11 +65,7 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
   const db = getDb(env.DB);
 
   // Read activeProjectId from session, fall back to first project
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) throw redirect("/dashboard");
   const { project: activeProject, userRole } = resolved;
   const activeProjectId = activeProject.id;
@@ -565,23 +562,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
       ? (storyYMap.get("steps") as Y.Array<Y.Map<unknown>>)
       : null;
 
-  const [yjsSteps, setYjsSteps] = useState<EditorStep[] | null>(null);
-  useEffect(() => {
-    if (!stepsArray) {
-      setYjsSteps(null);
-      return;
-    }
-    const recompute = () => {
-      const next: EditorStep[] = [];
-      for (let i = 0; i < stepsArray.length; i++) {
-        next.push(stepFromYMap(stepsArray.get(i)));
-      }
-      setYjsSteps(next);
-    };
-    recompute();
-    stepsArray.observeDeep(recompute);
-    return () => stepsArray.unobserveDeep(recompute);
-  }, [stepsArray]);
+  const yjsSteps = useYjsArraySync(stepsArray, stepFromYMap);
 
   const useYjs = ydoc !== null && ops !== null && yjsSteps !== null;
 
@@ -925,7 +906,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     const handler = () => {
       const gone = findYMapById(storiesArray, story.id) === null;
       if (gone) {
-        const deleterName = remoteCollaborators[0]?.user.name ?? "";
+        const deleterName = remoteCollaboratorsRef.current[0]?.user.name ?? "";
         const label = story.title ?? story.story_id;
         showToast({
           message: deleterName

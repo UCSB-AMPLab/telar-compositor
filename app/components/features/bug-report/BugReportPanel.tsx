@@ -13,13 +13,14 @@
  *    and a captured boundary error is rendered pinned + unremovable
  *    in the AttachmentList.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Bug, X } from "lucide-react";
 import { useToast } from "~/hooks/use-toast";
+import { useEscapeToClose } from "~/hooks/use-escape-to-close";
 import {
   buildIssueBody,
   type FormInput,
@@ -129,17 +130,10 @@ export function BugReportPanel({
   );
 
   // Escape closes.
-  useEffect(() => {
-    if (!open) return;
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
+  useEscapeToClose((e) => {
+    e.preventDefault();
+    onClose();
+  }, open);
 
   // Initial focus on first textarea.
   useEffect(() => {

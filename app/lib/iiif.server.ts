@@ -7,11 +7,13 @@
  *
  * Exports:
  *   fetchAndParseManifest(url) — fetches and parses a manifest URL
- *   deriveStatus(obj)          — derives object status from DB fields
  *   IiifMetadata               — normalised metadata interface
  *   IiifFetchResult            — discriminated union result type
  *   extractV2Label             — helper (exported for testing)
  *   extractV3Label             — helper (exported for testing)
+ *
+ * deriveStatus(obj) lives in iiif-types.ts, not here — every real consumer
+ * imports it from there.
  */
 
 // ---------------------------------------------------------------------------

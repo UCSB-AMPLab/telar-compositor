@@ -16,12 +16,13 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { Link } from "react-router";
 import { ArrowRight } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 /** Status-pill recipe — bg + ink token pairs. */
 export type PillVariant = "ok" | "draft" | "mark" | "info" | "soft";
@@ -77,6 +78,7 @@ export function WorkflowTile({
   locked = false,
   className = "",
 }: WorkflowTileProps) {
+  const { t } = useTranslation("start");
   // Empty applies to all tiles except the locked Publish tile
   // (`empty && !t.locked`).
   const dim = empty && !locked;
@@ -94,7 +96,7 @@ export function WorkflowTile({
       {/* Top row: STEP · n (mono) + tinted icon */}
       <div className="flex items-center justify-between">
         <span className="font-mono text-xs uppercase tracking-wider text-fg-muted">
-          {`STEP · ${step}`}
+          {`${t("workflow_tile.step")} · ${step}`}
         </span>
         <Icon className={`w-4 h-4 ${locked ? "text-fg-muted" : iconTint}`} aria-hidden="true" />
       </div>

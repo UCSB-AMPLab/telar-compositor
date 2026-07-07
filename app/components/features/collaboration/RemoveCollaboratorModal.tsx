@@ -10,10 +10,13 @@
  *
  * Copy: "Remove @username? They'll lose access to this project.
  *        You can re-invite them anytime."
+ *
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useEscapeToClose } from "~/hooks/use-escape-to-close";
 
 export interface RemoveCollaboratorModalProps {
   open: boolean;
@@ -42,17 +45,10 @@ export function RemoveCollaboratorModal({
   }, [open]);
 
   // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [open, onCancel]);
+  useEscapeToClose((e) => {
+    e.preventDefault();
+    onCancel();
+  }, open);
 
   if (!open) return null;
 

@@ -14,7 +14,7 @@
  * denied-toast, the /objects empty-state hint, and the server-gate integrity
  * assertions proving don't-render never replaced the server boundary.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -177,16 +177,20 @@ describe("/objects denied-toast + empty-state hint", () => {
 // still rejected by these guards.
 
 const structuralOpsSrc = readFileSync(join(APP_DIR, "hooks", "use-structural-ops.ts"), "utf-8");
+const appSrc = readFileSync(join(APP_DIR, "routes", "_app.tsx"), "utf-8");
 
 describe("server gates remain intact (security)", () => {
   it("keeps every requireOwner guard on the gated /dashboard intents", () => {
     const guards = dashboardSrc.match(/requireOwner\(db, activeProject\.id, user\.id\)/g) ?? [];
-    // The 9 per-intent guards (autosave-config, generate-invite, search-users,
-    // send-invite, cancel-invite, remove-member, restore-orphan-drafts,
-    // ignore-orphans, + 1 structural intent) are all present.
+    // The 9 per-intent guards (generate-invite, send-invite, cancel-invite,
+    // remove-member, compute-full-sync-diff, apply-full-sync,
+    // accept-divergence, restore-orphan-drafts, ignore-orphans) are all
+    // present. autosave-config and reorder are retired (v1.4.0-beta) and
+    // never contributed to this count — they were requireProjectMember
+    // guards, not requireOwner.
     expect(guards.length).toBe(9);
     expect(dashboardSrc).toContain(
-      'import { getUserProjects, requireOwner, requireProjectMember } from "~/lib/membership.server"',
+      'import { getUserProjects, requireOwner } from "~/lib/membership.server"',
     );
   });
 
@@ -197,5 +201,16 @@ describe("server gates remain intact (security)", () => {
   it("keeps the use-structural-ops canDelete role gate (convenor or owner)", () => {
     expect(structuralOpsSrc).toContain('if (role === "convenor") return true;');
     expect(structuralOpsSrc).toContain('return yMap.get("created_by") === currentUserId;');
+  });
+
+  it("gates the sidebar pending-invite loader query to convenors", () => {
+    // Pending-invite rows are a convenor-only affordance; they must not ride
+    // down in a non-convenor's loader payload. The fetch + assignment sit
+    // inside a userRole === "convenor" check (default stays the empty array).
+    const gated =
+      /if \(userRole === "convenor"\) \{[\s\S]*?sidebarPendingInvites = inviteRows;[\s\S]*?\}/.test(
+        appSrc,
+      );
+    expect(gated).toBe(true);
   });
 });

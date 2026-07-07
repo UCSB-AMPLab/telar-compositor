@@ -23,7 +23,7 @@
  * its `autosave-landing` action travels with the editor — a known pitfall
  * is that /dashboard's action does NOT handle autosave-landing.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { and, eq, inArray } from "drizzle-orm";
@@ -32,8 +32,8 @@ import type { Route } from "./+types/_app.homepage";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { stories, project_config, project_landing } from "~/db/schema";
-import { resolveActiveProject, requireProjectMember } from "~/lib/membership.server";
-import { createSessionStorage } from "~/lib/session.server";
+import { requireProjectMember } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { loadHomepageEditorData } from "~/lib/homepage-editor-data.server";
 import { HomepageEditor } from "~/components/features/pages/HomepageEditor";
 
@@ -54,11 +54,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     throw redirect("/onboarding");
   }

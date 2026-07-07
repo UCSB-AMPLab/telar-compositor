@@ -14,7 +14,7 @@
  * `BuildPhaseStatus` is imported type-only so no `.server` runtime reaches the
  * client bundle.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useRef } from "react";
@@ -71,6 +71,11 @@ export function PublishingPopover({
     pollDataRef.current = pollData;
   }, [pollData]);
 
+  // Cross-reference: CommitAndBuildModal.tsx has a structurally similar 5s
+  // poll-build loop but is NOT extracted into a shared hook with this one —
+  // see the cross-reference comment there for the three material
+  // differences (gate variables, payload-shape branching, fetcher action
+  // target).
   useEffect(() => {
     if (!sha || !isActive) {
       if (intervalRef.current) clearInterval(intervalRef.current);

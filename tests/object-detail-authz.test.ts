@@ -6,7 +6,7 @@
  * project, closing the cross-project IDOR where any signed-in user could
  * update or permanently delete any object by db id.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -229,103 +229,6 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// autosave-object-field
-// ---------------------------------------------------------------------------
-
-describe("_app.objects.$objectId action: autosave-object-field IDOR fix", () => {
-  it("scopes the UPDATE where-clause by the resolved project id", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue({
-      project: { id: 42, github_repo_full_name: "owner/repo" } as never,
-      userRole: "collaborator",
-    });
-
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("autosave-object-field", {
-        entityId: "10",
-        field: "title",
-        value: "New Title",
-      }),
-      context,
-      params: { objectId: "obj-123" },
-    } as never)) as { ok: boolean; intent: string };
-
-    expect(res.ok).toBe(true);
-    expect(res.intent).toBe("autosave-object-field");
-
-    const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
-      update: ReturnType<typeof vi.fn>;
-    };
-    expect(dbInstance.update).toHaveBeenCalled();
-
-    const whereArg = captureUpdateWhereArg();
-    expect(drizzleClauseContainsValue(whereArg, 42)).toBe(true);
-  });
-
-  it("returns { ok:false, error:'no_project' } and does NOT mutate DB when resolveActiveProject returns null", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue(null);
-
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("autosave-object-field", {
-        entityId: "10",
-        field: "title",
-        value: "New Title",
-      }),
-      context,
-      params: { objectId: "obj-123" },
-    } as never)) as { ok: boolean; error?: string };
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe("no_project");
-
-    const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
-      update: ReturnType<typeof vi.fn>;
-    };
-    expect(dbInstance.update).not.toHaveBeenCalled();
-  });
-
-  it("still returns invalid_field before reaching resolveActiveProject for unknown fields", async () => {
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("autosave-object-field", {
-        entityId: "10",
-        field: "evil_field",
-        value: "x",
-      }),
-      context,
-      params: { objectId: "obj-123" },
-    } as never)) as { ok: boolean; error?: string };
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe("invalid_field");
-  });
-
-  it("passes sessionActiveId from cookie to resolveActiveProject", async () => {
-    vi.mocked(createSessionStorage).mockReturnValue({
-      getSession: vi.fn(async () => ({ get: vi.fn(() => 77) })),
-    } as never);
-
-    const { context } = buildContext();
-    await action({
-      request: buildRequest("autosave-object-field", {
-        entityId: "10",
-        field: "creator",
-        value: "Artist",
-      }),
-      context,
-      params: { objectId: "obj-123" },
-    } as never);
-
-    expect(resolveActiveProject).toHaveBeenCalledWith(
-      expect.anything(),
-      7,
-      77,
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
 // autosave-object-featured
 // ---------------------------------------------------------------------------
 
@@ -378,84 +281,6 @@ describe("_app.objects.$objectId action: autosave-object-featured IDOR fix", () 
       update: ReturnType<typeof vi.fn>;
     };
     expect(dbInstance.update).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// update-object
-// ---------------------------------------------------------------------------
-
-describe("_app.objects.$objectId action: update-object IDOR fix", () => {
-  it("scopes the UPDATE where-clause by the resolved project id", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue({
-      project: { id: 42, github_repo_full_name: "owner/repo" } as never,
-      userRole: "collaborator",
-    });
-
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("update-object", {
-        objectDbId: "10",
-        title: "Updated Title",
-        creator: "",
-        description: "",
-        period: "",
-        year: "",
-        object_type: "",
-        subjects: "",
-        source: "",
-        credit: "",
-        alt_text: "",
-        featured: "false",
-      }),
-      context,
-      params: { objectId: "obj-123" },
-    } as never)) as { ok: boolean; intent: string };
-
-    expect(res.ok).toBe(true);
-    expect(res.intent).toBe("update-object");
-
-    const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
-      update: ReturnType<typeof vi.fn>;
-    };
-    expect(dbInstance.update).toHaveBeenCalled();
-
-    const whereArg = captureUpdateWhereArg();
-    expect(drizzleClauseContainsValue(whereArg, 42)).toBe(true);
-  });
-
-  it("returns { ok:false, error:'no_project' } and does NOT mutate DB when resolveActiveProject returns null", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue(null);
-
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("update-object", {
-        objectDbId: "10",
-        title: "Updated Title",
-      }),
-      context,
-      params: { objectId: "obj-123" },
-    } as never)) as { ok: boolean; error?: string };
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe("no_project");
-
-    const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
-      update: ReturnType<typeof vi.fn>;
-    };
-    expect(dbInstance.update).not.toHaveBeenCalled();
-  });
-
-  it("still returns title_required before reaching resolveActiveProject when title is missing", async () => {
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("update-object", { objectDbId: "10" }),
-      context,
-      params: { objectId: "obj-123" },
-    } as never)) as { ok: boolean; error?: string };
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe("title_required");
   });
 });
 

@@ -135,7 +135,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
         <div className="max-h-[300px] overflow-y-auto border border-gray-100 rounded-md mb-3">
           {filteredTerms.length === 0 ? (
             <p className="font-body text-sm text-gray-400 text-center py-6">
-              {search ? "No terms match your search." : "No terms defined yet."}
+              {search ? t("link_button.no_match") : t("link_button.no_terms")}
             </p>
           ) : (
             filteredTerms.map((term) => (
@@ -180,7 +180,7 @@ export function GlossaryLinkButton({ editorView, className = "" }: GlossaryLinkB
         {/* Preview */}
         {selectedTermId && (
           <p className="font-body text-xs text-gray-400 mb-3">
-            Inserts:{" "}
+            {t("link_button.inserts")}
             <code className="text-charcoal bg-cream-dark px-1 rounded">
               {useCustomText && customText.trim()
                 ? `[[${selectedTermId}|${customText.trim()}]]`

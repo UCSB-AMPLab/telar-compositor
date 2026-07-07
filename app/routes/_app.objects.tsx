@@ -6,35 +6,45 @@
  *
  * Loader fetches the active project's objects ordered by title ASC,
  * plus a step-reference count per `object_id` for "used in" info.
- * Action handles ten intents — `toggle-featured`, `update-object`,
- * `compute-sync-diff`, `sync-apply`, `fetch-iiif-preview`,
- * `add-iiif-object`, `upload-image`, `check-google-sheets`,
- * `commit-objects`, and `poll-build`. The page renders a table view
- * with thumbnails, sort/filter controls, featured-star toggles, a
+ * Action handles the `toggle-featured`, `compute-sync-diff`,
+ * `sync-apply`, `fetch-iiif-preview`, `upload-image`, `commit-objects`,
+ * and `poll-build` intents, among others. The page renders a table
+ * view with thumbnails, sort/filter controls, featured-star toggles, a
  * slide-in edit panel, and a build progress banner.
  *
- * @version v1.3.8-beta
+ * As the daily home, this page also hosts the full-repo sync review
+ * modal (SyncConfirmModal, opened via the `?sync=1` deep-link) — not
+ * to be confused with this route's own objects-scoped SyncDiffDialog.
+ * The modal's intents live on the /dashboard action; this page only
+ * mounts it and surfaces the version-change toast.
+ *
+ * @version v1.4.0-beta
  */
 
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, redirect, useFetcher, useOutletContext, useSearchParams } from "react-router";
+import { Link, redirect, useFetcher, useOutletContext, useRouteLoaderData, useSearchParams } from "react-router";
 import * as Y from "yjs";
 import { RefreshCw } from "lucide-react";
 import type { Route } from "./+types/_app.objects";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { projects, objects, project_config, project_members, users } from "~/db/schema";
-import { createSessionStorage } from "~/lib/session.server";
-import { resolveActiveProject } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { getObjectStepCounts } from "~/lib/objects.server";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
+import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { findYMapById, findYMapByIdOrTempId } from "~/lib/yjs-helpers";
 import { useToast } from "~/hooks/use-toast";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { DocsLink } from "~/components/ui/DocsLink";
+import {
+  SyncConfirmModal,
+  SYNC_DIFF_FETCHER_KEY,
+} from "~/components/features/dashboard/SyncConfirmModal";
+import { useVersionChangeToast } from "~/hooks/use-version-change-toast";
 import { fetchAndParseManifest } from "~/lib/iiif.server";
 import { deriveStatus } from "~/lib/iiif-types";
 import type { IiifFetchResult } from "~/lib/iiif-types";
@@ -69,13 +79,15 @@ import type {
   AddObjectIiifPayload,
   AddObjectExternalPayload,
 } from "~/components/features/objects/AddObjectDialog";
-import type { UploadImageConfirmPayload } from "~/components/features/objects/UploadImageDialog";
+import type { UploadImageConfirmPayload } from "~/lib/upload-types";
 import { matchesObjectFilter } from "~/lib/objects-filter";
 import { makeObjectYMap } from "~/lib/object-ymap";
 import { commitMultipleBinaryFilesWithCsv, arrayBufferToBase64, validateUploadFile } from "~/lib/upload.server";
 import type { SyncApplyPayload } from "~/components/features/objects/SyncDiffDialog";
 
-export const handle = { i18n: ["common", "objects", "structural"] };
+// "dashboard" and "upgrade" ride along for the full-repo sync review modal
+// this page hosts (SyncConfirmModal + its version-change toast).
+export const handle = { i18n: ["common", "objects", "structural", "dashboard", "upgrade"] };
 
 // ---------------------------------------------------------------------------
 // Loader
@@ -88,11 +100,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     // No active project — send to onboarding (which creates one). Must NOT
     // bounce to /dashboard: that route now redirects to /objects, which would
@@ -264,10 +272,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "toggle-featured": {
       const objectDbId = Number(formData.get("objectDbId"));
       const currentValue = formData.get("currentValue") === "true";
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolved) return { ok: false, intent: "toggle-featured", error: "no_project" };
       await db
         .update(objects)
@@ -276,55 +281,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       return { ok: true, intent: "toggle-featured" };
     }
 
-    case "update-object": {
-      const objectDbId = Number(formData.get("objectDbId"));
-      const title = (formData.get("title") as string | null)?.trim() || null;
-
-      if (!title) {
-        return { ok: false, error: "title_required" };
-      }
-
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
-      if (!resolved) return { ok: false, intent: "update-object", error: "no_project" };
-
-      const now = new Date().toISOString();
-      await db
-        .update(objects)
-        .set({
-          title,
-          creator: (formData.get("creator") as string | null)?.trim() || null,
-          description:
-            (formData.get("description") as string | null)?.trim() || null,
-          period: (formData.get("period") as string | null)?.trim() || null,
-          year: (formData.get("year") as string | null)?.trim() || null,
-          object_type:
-            (formData.get("object_type") as string | null)?.trim() || null,
-          subjects:
-            (formData.get("subjects") as string | null)?.trim() || null,
-          source: (formData.get("source") as string | null)?.trim() || null,
-          credit: (formData.get("credit") as string | null)?.trim() || null,
-          alt_text: (formData.get("alt_text") as string | null)?.trim() || null,
-          featured: formData.get("featured") === "true",
-          updated_at: now,
-        })
-        .where(and(eq(objects.id, objectDbId), eq(objects.project_id, resolved.project.id)));
-
-      return { ok: true, intent: "update-object" };
-    }
-
     case "compute-sync-diff": {
       // Membership-aware resolution — the old owner-only query with the
       // ?? allProjects[0] fallback could diff the WRONG owned project when
       // the session id pointed elsewhere. Sync is convenor-only in the UI;
       // enforce the same here.
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-      const resolvedDiff = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolvedDiff = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedDiff) {
         return { ok: false, intent: "compute-sync-diff", error: "no_project" };
       }
@@ -369,11 +331,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // Membership-aware resolution + convenor gate (matches the UI; the old
       // owner-only query could apply sync changes to the wrong owned project).
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-      const resolvedApply = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolvedApply = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedApply) {
         return { ok: false, intent: "sync-apply", error: "no_project" };
       }
@@ -431,11 +389,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
 
       // Verify ownership + project scope.
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-      const resolvedDel = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolvedDel = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedDel) {
         return { ok: false, intent: "delete-object", error: "no_project" };
       }
@@ -515,10 +469,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       // fallback (the old owner-only query + ?? allProjects[0] could target
       // the wrong project on a stale session). The Upload tab is convenor-
       // gated in the UI; enforce the same server-side.
-      const uploadSessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const uploadSession = await uploadSessionStorage.getSession(request.headers.get("Cookie"));
-      const uploadSessionActiveId = uploadSession.get("activeProjectId") as number | undefined;
-      const resolvedUpload = await resolveActiveProject(db, user.id, uploadSessionActiveId);
+      const resolvedUpload = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedUpload) {
         return { ok: false, intent: "upload-image", error: "no_project" };
       }
@@ -684,14 +635,10 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "pre-commit-check": {
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
       // Membership-aware resolution (no first-owned-project fallback). This
       // check is read-only and fail-open by design, so any internal failure
       // degrades to the same benign default instead of an uncaught 500.
-      const resolvedCheck = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolvedCheck = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedCheck) {
         return { ok: true, intent: "pre-commit-check", sheetsEnabled: false, urlCheck: { match: true, pagesUrl: "", configUrl: "" } };
       }
@@ -716,14 +663,10 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "commit-objects": {
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
       // Membership-aware resolution + convenor gate (the commit modal flows
       // are convenor-only in the UI; the old owner-only query could commit
       // to the wrong owned project on a stale session).
-      const resolvedCommit = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolvedCommit = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedCommit) {
         return { ok: false, intent: "commit-objects", error: "no_project" };
       }
@@ -922,12 +865,8 @@ export async function action({ request, context }: Route.ActionArgs) {
         return { ok: false, intent: "poll-build", error: "missing_sha" };
       }
 
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
       // Membership-aware (member-level: polling is read-only build status).
-      const resolvedPoll = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolvedPoll = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedPoll) {
         return { ok: false, intent: "poll-build", error: "no_project" };
       }
@@ -1034,11 +973,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         return { ok: false, intent: "insert-pending-objects", error: "missing_data" };
       }
 
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-      const resolvedIns = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolvedIns = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolvedIns) {
         return { ok: false, intent: "insert-pending-objects", error: "no_project" };
       }
@@ -1381,6 +1316,41 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [denied]);
+
+  // Full-repo sync review modal (SyncConfirmModal) — distinct from this
+  // route's objects-scoped SyncDiffDialog. Opened by the ?sync=1 deep-link
+  // that the out-of-sync popover and the publish page's stale-head blocker
+  // point at; the param is stripped once consumed (mirrors `denied` above)
+  // so the modal never re-fires on refresh. unpublishedCount comes from the
+  // _app layout loader — the same updated_at proxy the retired dashboard
+  // page used to compute for the modal's conflict warning.
+  const appLoaderData = useRouteLoaderData("routes/_app") as
+    | { unpublishedCount?: number }
+    | undefined;
+  const [fullSyncModalOpen, setFullSyncModalOpen] = useState(false);
+  const syncParam = searchParams.get("sync");
+  useEffect(() => {
+    if (syncParam !== "1") return;
+    setFullSyncModalOpen(true);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("sync");
+        return next;
+      },
+      { replace: true, preventScrollReset: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncParam]);
+
+  // Surface external version drift as a toast. The compute-full-sync-diff
+  // submission happens inside SyncConfirmModal via useFetcher({ key }); we
+  // subscribe to the same fetcher here so the toast fires once at the page
+  // level and stays visible after the modal closes.
+  const fullSyncDiffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
+  useVersionChangeToast(
+    fullSyncDiffFetcher.data as Parameters<typeof useVersionChangeToast>[0],
+  );
 
   // Update state from pre-commit check result
   useEffect(() => {
@@ -1754,25 +1724,10 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   // --------------------------------------------------------------------
   // Source of truth: Y.Array when ydoc is available, loader data otherwise
   // --------------------------------------------------------------------
-  const [yjsObjects, setYjsObjects] = useState<YjsObjectRow[] | null>(null);
-
-  useEffect(() => {
-    if (!ydoc) {
-      setYjsObjects(null);
-      return;
-    }
-    const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
-    const recompute = () => {
-      const next: YjsObjectRow[] = [];
-      for (let i = 0; i < objectsArray.length; i++) {
-        next.push(yMapToObjectRow(objectsArray.get(i), i));
-      }
-      setYjsObjects(next);
-    };
-    recompute();
-    objectsArray.observeDeep(recompute);
-    return () => objectsArray.unobserveDeep(recompute);
-  }, [ydoc]);
+  const yjsObjects = useYjsArraySync(
+    ydoc ? ydoc.getArray<Y.Map<unknown>>("objects") : null,
+    yMapToObjectRow,
+  );
 
   const useYjs = ydoc !== null && ops !== null && yjsObjects !== null;
 
@@ -2173,6 +2128,13 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         entityType="object"
         entityLabel={deleteTarget?.object.title ?? deleteTarget?.object.object_id ?? ""}
         contributors={deleteTarget?.contributors}
+      />
+
+      {/* Full-repo sync review (?sync=1 deep-link) */}
+      <SyncConfirmModal
+        open={fullSyncModalOpen}
+        unpublishedCount={appLoaderData?.unpublishedCount ?? 0}
+        onClose={() => setFullSyncModalOpen(false)}
       />
     </div>
   );

@@ -14,7 +14,7 @@
  * keys, not the copy. MemoryRouter wraps the render because the stale_head
  * blocker renders a <Link>.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -94,5 +94,17 @@ describe("reworded page_no_title blocker renders without an empty quote", () => 
     expect(screen.getByText("checks.page_no_title")).toBeTruthy();
     expect(document.body.textContent).not.toContain('Page ""');
     expect(document.body.textContent).not.toContain("{{slug}}");
+  });
+});
+
+describe("stale_head blocker action link", () => {
+  it("deep-links to the Objects-page sync review flow", () => {
+    renderChecks({
+      blockers: [{ code: "stale_head", message: "stale_head" }],
+      warnings: [],
+    });
+    const link = screen.getByText("checks.stale_head_action").closest("a");
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("href")).toBe("/objects?sync=1");
   });
 });

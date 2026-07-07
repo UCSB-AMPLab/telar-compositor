@@ -23,11 +23,12 @@
  * set, in which case focus moves to the type-to-confirm input so
  * the user can start typing immediately.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useEscapeToClose } from "~/hooks/use-escape-to-close";
 
 export type DeletableEntityType =
   | "story"
@@ -127,17 +128,10 @@ export function DeleteConfirmationModal({
   const [typed, setTyped] = useState("");
 
   // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
+  useEscapeToClose((e) => {
+    e.preventDefault();
+    onClose();
+  }, open);
 
   // Reset the typed value on every open transition (false → true).
   useEffect(() => {

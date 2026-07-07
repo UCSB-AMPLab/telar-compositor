@@ -14,6 +14,7 @@
  */
 
 import { graphqlGitHub, githubHeaders } from "~/lib/github.server";
+import { findInYamlBlock, mutateYamlBlock } from "~/lib/config-yaml-block.server";
 
 // ---------------------------------------------------------------------------
 // GraphQL query strings
@@ -159,25 +160,11 @@ export async function commitFilesToRepo(
  * enabled: true.
  */
 export function isGoogleSheetsEnabled(configYmlContent: string): boolean {
-  const lines = configYmlContent.split("\n");
-  let inGoogleSheets = false;
-  for (const line of lines) {
-    if (/^google_sheets:/.test(line)) {
-      inGoogleSheets = true;
-      continue;
-    }
-    if (inGoogleSheets) {
-      // End of google_sheets block: a non-indented, non-comment, non-empty line
-      if (/^[^\s#]/.test(line) && line.trim() !== "") {
-        inGoogleSheets = false;
-        continue;
-      }
-      if (/^\s+enabled:\s*(true|True)\b/.test(line)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return (
+    findInYamlBlock(configYmlContent, "google_sheets", (line) =>
+      /^\s+enabled:\s*(true|True)\b/.test(line) ? true : undefined,
+    ) ?? false
+  );
 }
 
 /**
@@ -188,31 +175,11 @@ export function isGoogleSheetsEnabled(configYmlContent: string): boolean {
  * Idempotent: if already disabled, returns the content unchanged.
  */
 export function disableGoogleSheetsInConfig(configYmlContent: string): string {
-  const lines = configYmlContent.split("\n");
-  let inGoogleSheets = false;
-  const result: string[] = [];
-
-  for (const line of lines) {
-    if (/^google_sheets:/.test(line)) {
-      inGoogleSheets = true;
-      result.push(line);
-      continue;
-    }
-
-    if (inGoogleSheets) {
-      // End of google_sheets block
-      if (/^[^\s#]/.test(line) && line.trim() !== "") {
-        inGoogleSheets = false;
-      } else if (/^(\s+enabled:\s*)true\b/.test(line)) {
-        result.push(line.replace(/^(\s+enabled:\s*)true\b/, "$1false"));
-        continue;
-      }
-    }
-
-    result.push(line);
-  }
-
-  return result.join("\n");
+  return mutateYamlBlock(configYmlContent, "google_sheets", (line) =>
+    /^(\s+enabled:\s*)true\b/.test(line)
+      ? line.replace(/^(\s+enabled:\s*)true\b/, "$1false")
+      : null,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -237,17 +204,33 @@ export async function verifySiteUrl(
   owner: string,
   repo: string,
   configYmlContent: string,
+  opts: { attempts?: number; intervalMs?: number } = {},
 ): Promise<SiteUrlCheck> {
   // Extract url and baseurl from _config.yml
   const urlMatch = configYmlContent.match(/^url:\s*"?([^"\n]+)"?\s*$/m);
   const baseurlMatch = configYmlContent.match(/^baseurl:\s*"?([^"\n]*)"?\s*$/m);
   const configUrl = (urlMatch?.[1]?.trim() ?? "") + (baseurlMatch?.[1]?.trim() ?? "");
 
-  // Fetch the Pages deployment URL
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/pages`,
-    { headers: githubHeaders(token) },
-  );
+  // Opt-in Pages-settling backoff. Right after Pages is enabled, GET /pages
+  // returns a transient 404 until the first deployment registers; a single read
+  // would then wrongly report "Pages not enabled." Callers that run in that
+  // window (the onboarding check-site-config on a degraded born-clean site) pass
+  // attempts>1 to retry on a transient 404/5xx. Default attempts=1 keeps the
+  // commit-hot-path callers (_app.objects.tsx) fast — a 404 is the normal
+  // response for a genuinely Pages-less repo, so they must not eat the latency.
+  const attempts = Math.max(1, opts.attempts ?? 1);
+  const intervalMs = opts.intervalMs ?? 1500;
+  let res!: Response;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pages`,
+      { headers: githubHeaders(token) },
+    );
+    if (res.ok) break;
+    const transient = res.status === 404 || res.status >= 500;
+    if (!transient || attempt === attempts - 1) break;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 
   if (!res.ok) {
     // Pages not enabled or no permission

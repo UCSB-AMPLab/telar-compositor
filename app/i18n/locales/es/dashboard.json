@@ -132,5 +132,6 @@
     "primary_cta": "Recuperar como borradores",
     "secondary_cta": "Ignorar",
     "success_toast": "Se recuperaron {{count}} historia(s) como borradores."
-  }
+  },
+  "unknown_error": "Error desconocido"
 }

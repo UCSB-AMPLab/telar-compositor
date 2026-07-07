@@ -18,7 +18,7 @@
  * anything; collaborators can delete only items they created
  * themselves.
  *
- * @version v1.3.2-beta
+ * @version v1.4.0-beta
  */
 
 import { useMemo } from "react";
@@ -155,6 +155,68 @@ export function reorderInPlace(
   yArray.insert(newIndex, [clone]);
 }
 
+/**
+ * deleteFromArray — shared body for every structural delete operation
+ * (stories, steps, layers, pages, objects, glossary terms).
+ *
+ * Resolves the target index via `findYMapIndex` and deletes it if found.
+ * `array` is `unknown` rather than `Y.Array<Y.Map<unknown>>` because callers
+ * pass both root arrays (`ydoc.getArray(...)`, always a real `Y.Array`) and
+ * nested arrays read off a parent `Y.Map` via `.get(...)` (typed as
+ * `unknown` until runtime-checked) — the `instanceof` guard is a no-op for
+ * the former and the load-bearing check for the latter, so one helper
+ * covers both without weakening either call site's existing guard.
+ *
+ * Must be called inside a ydoc.transact() block.
+ */
+function deleteFromArray(
+  array: unknown,
+  id: number | null,
+  tempId: string | null
+): void {
+  if (!(array instanceof Y.Array)) return;
+  const idx = findYMapIndex(array as Y.Array<Y.Map<unknown>>, id, tempId);
+  if (idx >= 0) array.delete(idx, 1);
+}
+
+/**
+ * buildStepYMap — shared field-by-field construction for the two step
+ * kinds (`addStep` / `addSectionCard`). The two kinds differ only in the
+ * `kind` sentinel and in two field comments below; every other field is
+ * identical, including the always-empty `layers` array for section cards
+ * (kept for Y.Map shape consistency across both kinds) and the always-empty
+ * `object_id` (empty signals "section card, no media" to the framework on
+ * publish for both kinds — media steps fill it in later via the object
+ * picker).
+ */
+function buildStepYMap(
+  currentUserId: number,
+  stepNumber: number,
+  kind: "media" | "section"
+): Y.Map<unknown> {
+  const stepMap = new Y.Map<unknown>();
+  stepMap.set("_id", null);
+  stepMap.set("_temp_id", crypto.randomUUID());
+  stepMap.set("created_by", currentUserId);
+  stepMap.set("step_number", stepNumber);
+  stepMap.set("kind", kind);
+  stepMap.set("object_id", "");
+  stepMap.set("x", null);
+  stepMap.set("y", null);
+  stepMap.set("zoom", null);
+  stepMap.set("page", "");
+  // The heading text for section cards lives in this same `question` field —
+  // Y.Text so collaborative edits work for both kinds.
+  stepMap.set("question", new Y.Text(""));
+  stepMap.set("answer", new Y.Text(""));
+  stepMap.set("alt_text", new Y.Text(""));
+  stepMap.set("clip_start", "");
+  stepMap.set("clip_end", "");
+  stepMap.set("loop", "");
+  stepMap.set("layers", new Y.Array<Y.Map<unknown>>());
+  return stepMap;
+}
+
 export const __test__ = { reorderInPlace };
 
 /**
@@ -202,9 +264,7 @@ export function useStructuralOps(
 
     const deleteStory: StructuralOps["deleteStory"] = (id, tempId) => {
       ydoc.transact(() => {
-        const storiesArray = ydoc.getArray<Y.Map<unknown>>("stories");
-        const idx = findYMapIndex(storiesArray, id, tempId);
-        if (idx >= 0) storiesArray.delete(idx, 1);
+        deleteFromArray(ydoc.getArray<Y.Map<unknown>>("stories"), id, tempId);
       });
     };
 
@@ -224,25 +284,9 @@ export function useStructuralOps(
       ydoc.transact(() => {
         const stepsArray = storyYMap.get("steps") as Y.Array<Y.Map<unknown>>;
         if (!(stepsArray instanceof Y.Array)) return;
-        const stepMap = new Y.Map<unknown>();
-        stepMap.set("_id", null);
-        stepMap.set("_temp_id", crypto.randomUUID());
-        stepMap.set("created_by", currentUserId);
-        stepMap.set("step_number", stepsArray.length + 1);
-        stepMap.set("kind", "media");
-        stepMap.set("object_id", "");
-        stepMap.set("x", null);
-        stepMap.set("y", null);
-        stepMap.set("zoom", null);
-        stepMap.set("page", "");
-        stepMap.set("question", new Y.Text(""));
-        stepMap.set("answer", new Y.Text(""));
-        stepMap.set("alt_text", new Y.Text(""));
-        stepMap.set("clip_start", "");
-        stepMap.set("clip_end", "");
-        stepMap.set("loop", "");
-        stepMap.set("layers", new Y.Array<Y.Map<unknown>>());
-        stepsArray.push([stepMap]);
+        stepsArray.push([
+          buildStepYMap(currentUserId, stepsArray.length + 1, "media"),
+        ]);
       });
     };
 
@@ -250,37 +294,15 @@ export function useStructuralOps(
       ydoc.transact(() => {
         const stepsArray = storyYMap.get("steps") as Y.Array<Y.Map<unknown>>;
         if (!(stepsArray instanceof Y.Array)) return;
-        const stepMap = new Y.Map<unknown>();
-        stepMap.set("_id", null);
-        stepMap.set("_temp_id", crypto.randomUUID());
-        stepMap.set("created_by", currentUserId);
-        stepMap.set("step_number", stepsArray.length + 1);
-        stepMap.set("kind", "section");
-        // Section cards have no media — empty object_id signals a section card to the framework on publish
-        stepMap.set("object_id", "");
-        stepMap.set("x", null);
-        stepMap.set("y", null);
-        stepMap.set("zoom", null);
-        stepMap.set("page", "");
-        // The heading text lives in the existing `question` field — Y.Text so collaborative edits work
-        stepMap.set("question", new Y.Text(""));
-        stepMap.set("answer", new Y.Text(""));
-        stepMap.set("alt_text", new Y.Text(""));
-        stepMap.set("clip_start", "");
-        stepMap.set("clip_end", "");
-        stepMap.set("loop", "");
-        // Section cards never carry layers; store an empty Y.Array for shape consistency
-        stepMap.set("layers", new Y.Array<Y.Map<unknown>>());
-        stepsArray.push([stepMap]);
+        stepsArray.push([
+          buildStepYMap(currentUserId, stepsArray.length + 1, "section"),
+        ]);
       });
     };
 
     const deleteStep: StructuralOps["deleteStep"] = (storyYMap, stepId, tempId) => {
       ydoc.transact(() => {
-        const stepsArray = storyYMap.get("steps") as Y.Array<Y.Map<unknown>>;
-        if (!(stepsArray instanceof Y.Array)) return;
-        const idx = findYMapIndex(stepsArray, stepId, tempId);
-        if (idx >= 0) stepsArray.delete(idx, 1);
+        deleteFromArray(storyYMap.get("steps"), stepId, tempId);
       });
     };
 
@@ -320,10 +342,7 @@ export function useStructuralOps(
 
     const deleteLayer: StructuralOps["deleteLayer"] = (stepYMap, layerId, tempId) => {
       ydoc.transact(() => {
-        const layersArray = stepYMap.get("layers") as Y.Array<Y.Map<unknown>>;
-        if (!(layersArray instanceof Y.Array)) return;
-        const idx = findYMapIndex(layersArray, layerId, tempId);
-        if (idx >= 0) layersArray.delete(idx, 1);
+        deleteFromArray(stepYMap.get("layers"), layerId, tempId);
       });
     };
 
@@ -355,9 +374,7 @@ export function useStructuralOps(
 
     const deletePage: StructuralOps["deletePage"] = (id, tempId) => {
       ydoc.transact(() => {
-        const pagesArray = ydoc.getArray<Y.Map<unknown>>("pages");
-        const idx = findYMapIndex(pagesArray, id, tempId);
-        if (idx >= 0) pagesArray.delete(idx, 1);
+        deleteFromArray(ydoc.getArray<Y.Map<unknown>>("pages"), id, tempId);
       });
     };
 
@@ -448,9 +465,7 @@ export function useStructuralOps(
 
     const deleteObject: StructuralOps["deleteObject"] = (id, tempId) => {
       ydoc.transact(() => {
-        const objectsArray = ydoc.getArray<Y.Map<unknown>>("objects");
-        const idx = findYMapIndex(objectsArray, id, tempId);
-        if (idx >= 0) objectsArray.delete(idx, 1);
+        deleteFromArray(ydoc.getArray<Y.Map<unknown>>("objects"), id, tempId);
       });
     };
 
@@ -506,9 +521,7 @@ export function useStructuralOps(
 
     const deleteGlossaryTerm: StructuralOps["deleteGlossaryTerm"] = (id, tempId) => {
       ydoc.transact(() => {
-        const glossaryArray = ydoc.getArray<Y.Map<unknown>>("glossary");
-        const idx = findYMapIndex(glossaryArray, id, tempId);
-        if (idx >= 0) glossaryArray.delete(idx, 1);
+        deleteFromArray(ydoc.getArray<Y.Map<unknown>>("glossary"), id, tempId);
       });
     };
 

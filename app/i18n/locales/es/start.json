@@ -122,6 +122,9 @@
     "terms": "{{N}} términos",
     "pages": "{{N}} páginas"
   },
+  "workflow_tile": {
+    "step": "Paso"
+  },
   "drawer": {
     "open_on_telar": "Abrir en telar.org",
     "see_also": "Véase también",

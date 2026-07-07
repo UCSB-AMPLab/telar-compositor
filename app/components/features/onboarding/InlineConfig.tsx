@@ -126,7 +126,7 @@ export function InlineConfig({ configFields, projectId, themes, onSaved, classNa
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400"
             />
             <p className="text-xs font-body text-gray-400 mt-1">
-              Path prefix for GitHub Pages project sites (e.g. /my-repo)
+              {t("inline_config.baseurl_help")}
             </p>
           </div>
         </div>

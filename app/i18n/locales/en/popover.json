@@ -2,7 +2,7 @@
   "in_sync": {
     "title": "Everything is in sync",
     "published": "Last published {{time}}",
-    "commit": "commit {{sha}} — {{msg}}",
+    "commit": "commit {{sha}}",
     "synced": "Synced from repo {{time}}",
     "view_site": "View published site"
   },
@@ -17,6 +17,8 @@
       "pages": "Pages",
       "settings": "Site settings"
     },
+    "landing_page": "Landing page",
+    "navigation": "Navigation",
     "modified": "modified",
     "added": "added",
     "review": "Review all changes",

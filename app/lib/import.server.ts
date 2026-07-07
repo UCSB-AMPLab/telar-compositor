@@ -19,7 +19,7 @@
  * importing whatever stale rows happen to sit in the repo would
  * desynchronise the user's content without them noticing.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import Papa from "papaparse";
@@ -175,6 +175,8 @@ interface ImportParams {
   env: Env;
   /** Override the Google Sheets URL from _config.yml — used on retry when user corrects the URL */
   overrideGoogleSheetsUrl?: string;
+  /** How the project entered the compositor; defaults to "imported". The create flow passes "created". */
+  origin?: "imported" | "created";
 }
 
 // ---------------------------------------------------------------------------
@@ -699,6 +701,7 @@ export function mapStoryCsv(
     "layer1_content",
     "layer2_button",
     "layer2_content",
+    "alt_text",
   ];
   const nonBlankRows = rows.filter((row) =>
     meaningfulFields.some((f) => row[f]?.trim()),
@@ -722,6 +725,7 @@ export function mapStoryCsv(
       page: row.page || undefined,
       question: row.question || undefined,
       answer: row.answer || undefined,
+      alt_text: row.alt_text || undefined,
       clip_start: row.clip_start || undefined,
       clip_end: row.clip_end || undefined,
       loop: row.loop || undefined,
@@ -891,6 +895,7 @@ export async function importRepo({
   userId,
   env,
   overrideGoogleSheetsUrl,
+  origin = "imported",
 }: ImportParams): Promise<ImportResult> {
   const [owner, repo] = repoFullName.split("/");
 
@@ -1026,7 +1031,6 @@ export async function importRepo({
   let glossaryRows: Array<typeof glossary_terms.$inferInsert> = [];
   let pageRows: Array<{ title: string; slug: string; body: string; order: number }> = [];
   let objectWarnings: string[] = [...treeWarnings];
-  let storyWarnings: string[] = [];
   let sheetsDisabled = false;
   let storiesFound = 0;
 
@@ -1264,6 +1268,7 @@ export async function importRepo({
       github_repo_full_name: repoFullName,
       installation_id: installationId,
       last_synced_at: new Date().toISOString(),
+      origin,
     })
     .returning();
 
@@ -1451,7 +1456,7 @@ export async function importRepo({
       skipped: 0,
       warnings: objectWarnings,
     },
-    stories: { imported: storyRows.filter((r) => r.story_id && String(r.story_id).trim() !== "").length, warnings: storyWarnings },
+    stories: { imported: storyRows.filter((r) => r.story_id && String(r.story_id).trim() !== "").length, warnings: [] },
     glossary: { imported: glossaryRows.length },
     pages: { imported: pageRows.length },
     themes: {

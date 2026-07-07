@@ -55,7 +55,7 @@ export function StepSync({
   // No auto-advance — user clicks Continue after reviewing import results
 
   // Build checklist items
-  const items = buildChecklistItems(importResult, isImporting);
+  const items = buildChecklistItems(importResult, isImporting, t);
 
   const isValidationError =
     !isImporting &&
@@ -186,6 +186,7 @@ function StateIcon({ state }: { state: ItemState }) {
 function buildChecklistItems(
   result: ImportResult | null,
   isImporting: boolean,
+  t: (key: string, options?: Record<string, unknown>) => string,
 ): ChecklistItem[] {
   // While import is running, show first item loading, rest pending
   if (isImporting) {
@@ -245,9 +246,9 @@ function buildChecklistItems(
   const videoCount = result.videoObjectCount ?? 0;
   const imageCount = result.objects.imported - audioCount - videoCount;
   const objectBreakdown = [
-    imageCount > 0 ? `${imageCount} images` : null,
-    audioCount > 0 ? `${audioCount} audio` : null,
-    videoCount > 0 ? `${videoCount} videos` : null,
+    imageCount > 0 ? t("step_sync.count_images", { count: imageCount }) : null,
+    audioCount > 0 ? t("step_sync.count_audio", { count: audioCount }) : null,
+    videoCount > 0 ? t("step_sync.count_videos", { count: videoCount }) : null,
   ].filter(Boolean).join(", ");
 
   const items: ChecklistItem[] = [

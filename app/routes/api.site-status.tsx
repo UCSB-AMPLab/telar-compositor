@@ -23,16 +23,16 @@
  * fails open: it returns the stored timestamps without the commit message
  * rather than erroring (mirrors the `_app` loader's fail-open posture).
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import type { Route } from "./+types/api.site-status";
 import { eq } from "drizzle-orm";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
-import { resolveActiveProject, getUserRole } from "~/lib/membership.server";
+import { getUserRole } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { githubHeaders } from "~/lib/github.server";
 import {
   stories,
@@ -160,11 +160,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // (it reads getUserProjects). We then re-verify membership explicitly with
   // getUserRole before computing anything, so a manifest/diff can never leak
   // across projects.
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     throw new Response("Not Found: no active project", { status: 404 });
   }
@@ -204,7 +200,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           owner,
           repo,
           db,
-          null,
         );
         return Response.json(diff);
       } catch {

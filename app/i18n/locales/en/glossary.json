@@ -17,6 +17,11 @@
   "term_id_label": "Term ID (used in glossary links)",
   "untitled_term": "Untitled term",
   "insert_link_button": "Insert glossary link",
+  "link_button": {
+    "no_match": "No terms match your search.",
+    "no_terms": "No terms defined yet.",
+    "inserts": "Inserts: "
+  },
   "custom_text_toggle": "Custom link text",
   "search_terms_placeholder": "Search terms...",
   "custom_display_placeholder": "Custom display text",

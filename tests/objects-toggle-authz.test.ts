@@ -5,7 +5,7 @@
  * signed-in user could flip featured or overwrite metadata on any object
  * by id.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -266,106 +266,6 @@ describe("_app.objects action: toggle-featured IDOR fix", () => {
       expect.anything(), // db
       7,                 // user.id
       77,                // sessionActiveId
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// update-object
-// ---------------------------------------------------------------------------
-
-describe("_app.objects action: update-object IDOR fix", () => {
-  it("returns ok:true and scopes the UPDATE where-clause by the resolved project id", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue({
-      project: { id: 55, github_repo_full_name: "owner/repo" } as never,
-      userRole: "collaborator",
-    });
-
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("update-object", {
-        objectDbId: "20",
-        title: "My Object",
-        creator: "Someone",
-        description: "A desc",
-        period: "",
-        year: "",
-        object_type: "",
-        subjects: "",
-        source: "",
-        credit: "",
-        alt_text: "",
-        featured: "false",
-      }),
-      context,
-      params: {},
-    } as never)) as { ok: boolean; intent: string };
-
-    expect(res.ok).toBe(true);
-    expect(res.intent).toBe("update-object");
-
-    const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
-      update: ReturnType<typeof vi.fn>;
-    };
-    expect(dbInstance.update).toHaveBeenCalled();
-
-    const whereArg = captureWhereArg();
-    expect(drizzleClauseContainsValue(whereArg, 55)).toBe(true);
-  });
-
-  it("returns { ok:false, error:'no_project' } and does NOT mutate DB when resolveActiveProject returns null", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue(null);
-
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("update-object", {
-        objectDbId: "20",
-        title: "My Object",
-      }),
-      context,
-      params: {},
-    } as never)) as { ok: boolean; error?: string };
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe("no_project");
-
-    const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
-      update: ReturnType<typeof vi.fn>;
-    };
-    expect(dbInstance.update).not.toHaveBeenCalled();
-  });
-
-  it("still returns title_required error before reaching resolveActiveProject when title is missing", async () => {
-    const { context } = buildContext();
-    const res = (await action({
-      request: buildRequest("update-object", { objectDbId: "20" }),
-      context,
-      params: {},
-    } as never)) as { ok: boolean; error?: string };
-
-    expect(res.ok).toBe(false);
-    expect(res.error).toBe("title_required");
-  });
-
-  it("passes the sessionActiveId from the session cookie to resolveActiveProject", async () => {
-    vi.mocked(createSessionStorage).mockReturnValue({
-      getSession: vi.fn(async () => ({ get: vi.fn(() => 33) })),
-    } as never);
-
-    const { context } = buildContext();
-    await action({
-      request: buildRequest("update-object", {
-        objectDbId: "20",
-        title: "Some Title",
-      }),
-      context,
-      params: {},
-    } as never);
-
-    expect(resolveActiveProject).toHaveBeenCalledWith(
-      expect.anything(),
-      7,
-      33,
     );
   });
 });

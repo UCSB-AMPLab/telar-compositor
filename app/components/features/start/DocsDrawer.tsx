@@ -23,15 +23,16 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { marked } from "marked";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, BookOpen, ExternalLink, X } from "lucide-react";
 import { sanitiseHtml } from "~/lib/sanitise-html";
 import { DOCS as DEFAULT_DOCS, type DocId, type DocSlice } from "~/lib/docs-content";
+import { useEscapeToClose } from "~/hooks/use-escape-to-close";
 
 type Locale = "en" | "es";
 
@@ -71,14 +72,7 @@ export function DocsDrawer({
 
   // Escape-key close (Dialog pattern). Hook order is fixed — declared before
   // any early return.
-  useEffect(() => {
-    if (!open) return;
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
+  useEscapeToClose(() => onClose(), open);
 
   const doc = docId ? docs[docId] : undefined;
 

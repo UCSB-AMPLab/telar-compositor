@@ -151,6 +151,17 @@
   "objectSavedHint": "The image has been committed to your repository. A site rebuild is needed to generate the IIIF tiles — you can trigger one from the object's detail page.",
   "buildFailed": "Build failed. Check GitHub Actions for details.",
   "viewOnGitHub": "View on GitHub",
+  "yes": "Yes",
+  "no": "No",
+  "thumbnail_alt": "Thumbnail",
+  "build_phase": {
+    "setup": "Setup",
+    "build_js": "Build JS",
+    "process_data": "Process data",
+    "build_site": "Build site",
+    "iiif_tiles": "IIIF tiles",
+    "deploy": "Deploy"
+  },
   "commitModal.heading_one": "Register this self-hosted object",
   "commitModal.heading_other": "Register these self-hosted objects",
   "commitModal.description": "To register {{count}} new object(s) we need to update your site's objects.csv on GitHub. This will trigger a build and produce the IIIF tiles you need to work with these images in the compositor.",

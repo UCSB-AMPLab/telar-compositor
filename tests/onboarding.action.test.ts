@@ -12,26 +12,23 @@
  * `~/routes/onboarding` that each of the three new `if (intent === ...)`
  * branches delegates to.
  *
- * @version v1.2.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the create-site server module used by the helper.
-vi.mock("~/lib/create-site.server", () => {
-  class RepoNameTakenError extends Error {}
-  class PermissionDeniedError extends Error {}
-  class RepoNotReadyError extends Error {}
-  class GitHubError extends Error {}
+vi.mock("~/lib/create-site.server", async (importOriginal) => {
+  // Spread the real module so humanizeSlug and the error classes stay genuine;
+  // only stub the network-touching helpers.
+  const actual = await importOriginal<typeof import("~/lib/create-site.server")>();
   return {
+    ...actual,
     checkRepoNameAvailable: vi.fn(),
     createSiteFromTemplate: vi.fn(),
     waitForRepoReady: vi.fn(),
     isRepoInInstallation: vi.fn(),
-    RepoNameTakenError,
-    PermissionDeniedError,
-    RepoNotReadyError,
-    GitHubError,
+    commitBornCleanSite: vi.fn(),
   };
 });
 
@@ -51,6 +48,7 @@ import {
   createSiteFromTemplate,
   waitForRepoReady,
   isRepoInInstallation,
+  commitBornCleanSite,
   RepoNameTakenError,
   PermissionDeniedError,
   RepoNotReadyError,
@@ -127,16 +125,21 @@ describe("onboarding action — check-repo-name intent", () => {
 });
 
 describe("onboarding action — create-site intent", () => {
-  it("happy path returns repoUrl, defaultBranch, owner, name", async () => {
+  it("happy path returns repoUrl, defaultBranch, owner, name, bornCleanOk", async () => {
     vi.mocked(createSiteFromTemplate).mockResolvedValue({
       repoUrl: "https://github.com/s/my-site",
       defaultBranch: "main",
     });
     vi.mocked(waitForRepoReady).mockResolvedValue(undefined);
+    vi.mocked(getInstallationToken).mockResolvedValue("install-token");
+    vi.mocked(commitBornCleanSite).mockResolvedValue({
+      ok: true,
+      pagesUrl: "https://s.github.io/my-site",
+    });
 
     const res = await handleCreateSiteIntents(
       "create-site",
-      fd({ owner: "s", name: "my-site" }),
+      fd({ owner: "s", name: "my-site", installation_id: "42" }),
       TOKEN,
       ENV,
     );
@@ -148,8 +151,10 @@ describe("onboarding action — create-site intent", () => {
       defaultBranch: "main",
       owner: "s",
       name: "my-site",
-      // Default userUiLocale=null → no patch attempted,
-      // langPatchFailed:false is part of the success shape.
+      bornCleanOk: true,
+      bornCleanError: undefined,
+      pagesUrl: "https://s.github.io/my-site",
+      // Default userUiLocale=null → en site, no language warning.
       langPatchFailed: false,
     });
     expect(createSiteFromTemplate).toHaveBeenCalledWith(TOKEN, "s", "my-site");

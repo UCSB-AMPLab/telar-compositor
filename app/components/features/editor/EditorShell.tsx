@@ -25,7 +25,7 @@
  * space by growing to `100dvh - 2.75rem` (header only) instead of the default
  * `100dvh - 6rem` (header + tab nav).
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import React, { useState } from "react";
@@ -181,7 +181,7 @@ export function EditorShell({ storyTitle, sidebar, narrative, viewer, hideViewer
 
             {/* Viewer (Image) — fixed height when stacked so it stays usable;
                 fills its column on tablet and up. */}
-            <div className="relative bg-[#1a1a1a] min-h-[60dvh] sm:min-h-0 sm:flex-1">
+            <div className="relative bg-charcoal-deep min-h-[60dvh] sm:min-h-0 sm:flex-1">
               {viewer}
             </div>
           </div>

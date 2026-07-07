@@ -22,6 +22,7 @@ import React from "react";
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
+    i18n: { language: "en" },
   }),
   Trans: ({ i18nKey }: { i18nKey: string }) => <>{i18nKey}</>,
 }));
@@ -91,6 +92,20 @@ describe("CreateSiteForm", () => {
     expect((submit as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("sanitizes the repo name on input — spaces and invalid chars can't be typed", () => {
+    render(<CreateSiteForm {...baseProps} />);
+    const input = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(input, { target: { value: "My Cool Site!" } });
+    });
+    // Lowercased, spaces + '!' stripped; dots/underscores/hyphens are preserved.
+    expect(input.value).toBe("mycoolsite");
+    act(() => {
+      fireEvent.change(input, { target: { value: "my_repo.v2-final name" } });
+    });
+    expect(input.value).toBe("my_repo.v2-finalname");
+  });
+
   it("invalid name shows invalid_format immediately without network call", () => {
     render(<CreateSiteForm {...baseProps} />);
     const input = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
@@ -156,7 +171,7 @@ describe("CreateSiteForm", () => {
     act(() => {
       fireEvent.click(submit);
     });
-    expect(screen.getByText(/create_site\.progress\.creating/i)).toBeDefined();
+    expect(screen.getByText(/create_site\.progress\.heading/i)).toBeDefined();
   });
 
   it("renders inline name_exists error (not raw err.message)", () => {
@@ -221,7 +236,74 @@ describe("CreateSiteForm", () => {
     });
     rerender(<CreateSiteForm {...baseProps} />);
     expect(screen.getByText(/create_site\.progress\.still_setting_up/i)).toBeDefined();
-    expect(screen.getByRole("button", { name: /reload/i })).toBeDefined();
+    // The reload button must use an i18n key, not a hardcoded "Reload" string.
+    expect(
+      screen.getByRole("button", { name: /create_site\.errors\.reload/i }),
+    ).toBeDefined();
+  });
+
+  // Drive the form to a create-site error state for the recovery-copy tests.
+  function driveToCreateError(
+    rerender: (ui: React.ReactElement) => void,
+    error: string,
+  ) {
+    const input = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(input, { target: { value: "valid-name" } });
+      vi.advanceTimersByTime(400);
+    });
+    act(() => {
+      fetcherRegistry[0].data = {
+        ok: true,
+        intent: "check-repo-name",
+        available: true,
+        name: "valid-name",
+      };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.submit/i }));
+    });
+    act(() => {
+      fetcherRegistry[1].data = { ok: false, intent: "create-site", error };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+  }
+
+  it("repo_name_taken recovery button uses a 'choose another name' label, not the form heading", () => {
+    const { rerender } = render(<CreateSiteForm {...baseProps} />);
+    driveToCreateError(rerender, "repo_name_taken");
+    // The recovery button must carry its own retry label, not reuse the section
+    // heading `create_site.form.title` ("Create a new Telar site").
+    expect(
+      screen.getByRole("button", { name: /create_site\.errors\.repo_name_taken_retry/i }),
+    ).toBeDefined();
+    expect(
+      screen.queryByRole("button", { name: /create_site\.form\.title/i }),
+    ).toBeNull();
+  });
+
+  it("repo_name_taken recovery returns focus to the name field", () => {
+    const { rerender } = render(<CreateSiteForm {...baseProps} />);
+    driveToCreateError(rerender, "repo_name_taken");
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: /create_site\.errors\.repo_name_taken_retry/i }),
+      );
+    });
+    const input = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("github_error recovery button uses a generic retry label, not the form heading", () => {
+    const { rerender } = render(<CreateSiteForm {...baseProps} />);
+    driveToCreateError(rerender, "github_error");
+    expect(
+      screen.getByRole("button", { name: /create_site\.errors\.try_again/i }),
+    ).toBeDefined();
+    expect(
+      screen.queryByRole("button", { name: /create_site\.form\.title/i }),
+    ).toBeNull();
   });
 
   it("Back link calls onBack prop", () => {
@@ -229,5 +311,194 @@ describe("CreateSiteForm", () => {
     const back = screen.getByRole("button", { name: /back/i });
     fireEvent.click(back);
     expect(baseProps.onBack).toHaveBeenCalled();
+  });
+
+  // --- Screen 1 identity fields --------------------------------------------
+
+  it("prefills the title from the humanized slug", () => {
+    render(<CreateSiteForm {...baseProps} />);
+    const name = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(name, { target: { value: "my-cool-site" } });
+    });
+    const title = screen.getByLabelText(/create_site\.form\.title_label/i) as HTMLInputElement;
+    expect(title.value).toBe("My Cool Site");
+  });
+
+  it("stops tracking the slug once the title is edited by hand", () => {
+    render(<CreateSiteForm {...baseProps} />);
+    const name = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    const title = screen.getByLabelText(/create_site\.form\.title_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(name, { target: { value: "first-name" } });
+    });
+    act(() => {
+      fireEvent.change(title, { target: { value: "Custom Title" } });
+    });
+    act(() => {
+      fireEvent.change(name, { target: { value: "second-name" } });
+    });
+    expect(title.value).toBe("Custom Title");
+  });
+
+  it("re-tracks the slug after the title is cleared", () => {
+    render(<CreateSiteForm {...baseProps} />);
+    const name = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    const title = screen.getByLabelText(/create_site\.form\.title_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(name, { target: { value: "first-name" } });
+    });
+    act(() => {
+      fireEvent.change(title, { target: { value: "Custom Title" } });
+    });
+    // Clear the title → tracking re-enables.
+    act(() => {
+      fireEvent.change(title, { target: { value: "" } });
+    });
+    act(() => {
+      fireEvent.change(name, { target: { value: "second-name" } });
+    });
+    expect(title.value).toBe("Second Name");
+  });
+
+  it("defaults the language to the UI locale (en)", () => {
+    render(<CreateSiteForm {...baseProps} />);
+    const en = screen.getByRole("button", { name: /create_site\.form\.language_en/i });
+    expect(en.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("shows a degraded note when born-clean did not fully succeed", () => {
+    const { rerender } = render(<CreateSiteForm {...baseProps} />);
+    const input = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(input, { target: { value: "valid-name" } });
+      vi.advanceTimersByTime(400);
+    });
+    const availability = fetcherRegistry[0];
+    act(() => {
+      availability.data = { ok: true, intent: "check-repo-name", available: true, name: "valid-name" };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.submit/i }));
+    });
+    const createFetcher = fetcherRegistry[1];
+    act(() => {
+      createFetcher.data = {
+        ok: true,
+        intent: "create-site",
+        owner: "testuser",
+        name: "valid-name",
+        bornCleanOk: false,
+      };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    // The "Setting up your site" row must not read as a clean success — it
+    // surfaces a degraded note instead of a green check.
+    expect(screen.getByText(/create_site\.progress\.setting_up_degraded/i)).toBeDefined();
+  });
+
+  it("shows a scope-grant message (not the generic degraded note) when born-clean needs repo access", () => {
+    const { rerender } = render(<CreateSiteForm {...baseProps} />);
+    const input = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(input, { target: { value: "valid-name" } });
+      vi.advanceTimersByTime(400);
+    });
+    const availability = fetcherRegistry[0];
+    act(() => {
+      availability.data = { ok: true, intent: "check-repo-name", available: true, name: "valid-name" };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.submit/i }));
+    });
+    const createFetcher = fetcherRegistry[1];
+    act(() => {
+      createFetcher.data = {
+        ok: true,
+        intent: "create-site",
+        owner: "testuser",
+        name: "valid-name",
+        bornCleanOk: false,
+        bornCleanError: "scope",
+      };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    // Out-of-scope is an actionable "grant access" state, not a "we'll finish it
+    // for you" degrade — show the scope message, never the generic degraded note.
+    expect(screen.getByText(/create_site\.progress\.setting_up_scope/i)).toBeDefined();
+    expect(screen.queryByText(/create_site\.progress\.setting_up_degraded/i)).toBeNull();
+  });
+
+  it("fails open to handoff when the scope check errors", () => {
+    const { rerender } = render(<CreateSiteForm {...baseProps} />);
+    const input = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(input, { target: { value: "valid-name" } });
+      vi.advanceTimersByTime(400);
+    });
+    const availability = fetcherRegistry[0];
+    act(() => {
+      availability.data = { ok: true, intent: "check-repo-name", available: true, name: "valid-name" };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.submit/i }));
+    });
+    const createFetcher = fetcherRegistry[1];
+    act(() => {
+      createFetcher.data = {
+        ok: true,
+        intent: "create-site",
+        owner: "testuser",
+        name: "valid-name",
+        bornCleanOk: true,
+      };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    const scopeFetcher = fetcherRegistry[2];
+    act(() => {
+      scopeFetcher.data = { ok: false, intent: "check-installation-scope", error: "github_error" };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    // A transient scope-check error must not dead-end — proceed to handoff,
+    // mirroring WizardShell's fail-open. The downstream repair flow catches
+    // any real scope/config problem.
+    expect(baseProps.onSelect).toHaveBeenCalled();
+  });
+
+  it("submits the collected identity fields", () => {
+    const { rerender } = render(<CreateSiteForm {...baseProps} />);
+    const name = screen.getByLabelText(/create_site\.form\.name_label/i) as HTMLInputElement;
+    act(() => {
+      fireEvent.change(name, { target: { value: "valid-name" } });
+      vi.advanceTimersByTime(400);
+    });
+    const availability = fetcherRegistry[0];
+    act(() => {
+      availability.data = { ok: true, intent: "check-repo-name", available: true, name: "valid-name" };
+    });
+    rerender(<CreateSiteForm {...baseProps} />);
+    // Pick the Santa Barbara theme to prove the selection is submitted.
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Santa Barbara" }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.submit/i }));
+    });
+    const createFetcher = fetcherRegistry[1];
+    expect(createFetcher.submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "create-site",
+        owner: "testuser",
+        name: "valid-name",
+        title: "Valid Name",
+        language: "en",
+        theme: "santa-barbara",
+        author: "testuser",
+      }),
+      expect.anything(),
+    );
   });
 });

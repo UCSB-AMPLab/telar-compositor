@@ -122,6 +122,9 @@
     "terms": "{{N}} terms",
     "pages": "{{N}} pages"
   },
+  "workflow_tile": {
+    "step": "Step"
+  },
   "drawer": {
     "open_on_telar": "Open on telar.org",
     "see_also": "See also",

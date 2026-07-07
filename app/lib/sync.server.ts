@@ -30,7 +30,7 @@
  * actions (currently in `_app.dashboard.tsx`) do the I/O
  * orchestration; this module does the comparison.
  *
- * @version v1.3.2-beta
+ * @version v1.4.0-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -38,6 +38,8 @@ import { objects, steps, layers, stories, project_config, glossary_terms } from 
 import { getFileContent, getRepoTree, getRepoHead } from "~/lib/github.server";
 import { parseTelarCsv, mapObjectsCsv, mapProjectCsv, mapStoryCsv } from "~/lib/import.server";
 import { compareVersions } from "~/lib/upgrade.server";
+import { normalizeVersionTag } from "~/lib/version";
+import { findInYamlBlock } from "~/lib/config-yaml-block.server";
 import type { getDb } from "~/lib/db.server";
 
 // ---------------------------------------------------------------------------
@@ -537,26 +539,6 @@ export async function applySyncChanges(
 // Full Sync Types
 // ---------------------------------------------------------------------------
 
-/**
- * Minimal publish snapshot type — a snapshot of the content state at the time
- * of the last publish. Used to distinguish "both sides changed" (conflict) from
- * "only repo changed" (auto-accept). Defined here to avoid a circular dependency
- * with publish.server.ts. When publish runs, the
- * PublishSnapshot type from publish.server.ts can be used as a drop-in
- * replacement since this interface is structurally compatible.
- */
-export interface PublishSnapshot {
-  stories: Array<{
-    story_id: string;
-    title: string | null;
-    subtitle: string | null;
-    byline: string | null;
-    order: number;
-    isPrivate: boolean;
-  }>;
-  config: Record<string, string | null>;
-}
-
 export interface StorySyncItem {
   story_id: string;
   title: string | null;
@@ -570,8 +552,6 @@ export interface StorySyncChangedItem {
   story_id: string;
   title: string | null;
   changedFields: string[];
-  /** True when both repo and D1 changed this story since the publish baseline */
-  isConflict: boolean;
 }
 
 export interface StorySyncDiff {
@@ -612,7 +592,11 @@ export interface FullSyncDiff {
   stories: StorySyncDiff;
   config: ConfigSyncDiff;
   glossary: GlossarySyncDiff;
-  /** True when at least one story or config field is a conflict (both sides changed) */
+  /**
+   * Always false — the conflict-detection mechanism this flagged (repo AND
+   * D1 both changed since the last publish) had no wired caller and was
+   * retired in v1.4.0-beta. Field kept for the contract's existing consumers.
+   */
   hasConflicts: boolean;
 }
 
@@ -663,9 +647,26 @@ const MANAGED_CONFIG_FIELDS = [
   "description",
   "author",
   "email",
+  "logo",
+  "story_key",
+  "collection_mode",
 ] as const;
 
 type ManagedConfigField = typeof MANAGED_CONFIG_FIELDS[number];
+
+/**
+ * Maps a managed field to its actual _config.yml key when the two differ from
+ * the D1 column name. Only "lang" needs this: the D1 column and the diff/apply
+ * paths below use "lang" throughout, but the real _config.yml key (written by
+ * buildConfigManagedFields in publish.server.ts) is "telar_language" — see that
+ * function's own comment ("config.lang is stored under 'telar_language' in the
+ * managed map but exposed as 'lang' here"). Without this alias, extractConfigFields
+ * matched a literal `^lang:` line that no real config file ever contains, so a
+ * repo-side language edit could never surface in a sync diff.
+ */
+const CONFIG_YAML_KEY_ALIASES: Partial<Record<ManagedConfigField, string>> = {
+  lang: "telar_language",
+};
 
 /**
  * Parse a single YAML scalar value (the text after `key:` on one line) into its
@@ -724,14 +725,15 @@ function parseYamlScalar(raw: string): string | null {
  *
  * Only extracts top-level scalar keys (the managed set). Complex YAML sub-keys
  * (e.g. telar.version) are not touched. Handles double-quoted, single-quoted,
- * and bare scalar values correctly — the previous regex silently returned null
- * for any value containing a quote (e.g. HTML descriptions).
+ * and bare scalar values correctly, including values containing a quote
+ * (e.g. HTML descriptions).
  */
 export function extractConfigFields(yamlContent: string): Record<ManagedConfigField, string | null> {
   const result: Record<string, string | null> = {};
   for (const key of MANAGED_CONFIG_FIELDS) {
+    const yamlKey = CONFIG_YAML_KEY_ALIASES[key] ?? key;
     // Match the key line and capture the raw remainder (top-level keys only).
-    const m = yamlContent.match(new RegExp(`^${key}:[ \\t]*(.*)$`, "m"));
+    const m = yamlContent.match(new RegExp(`^${yamlKey}:[ \\t]*(.*)$`, "m"));
     result[key] = m ? parseYamlScalar(m[1]) : null;
   }
   return result as Record<ManagedConfigField, string | null>;
@@ -739,29 +741,30 @@ export function extractConfigFields(yamlContent: string): Record<ManagedConfigFi
 
 /**
  * Extract the `version:` value from the `telar:` block of a site's
- * _config.yml. Returns null when absent or malformed. Mirrors the
- * line-walker pattern in updateTelarVersionInConfig (upgrade.server.ts)
- * to avoid a full YAML parse — keeps comments/whitespace-tolerance cheap
- * and preserves behaviour on the same exotic inputs.
+ * _config.yml. Returns null when absent or malformed. Delegates the
+ * block-walk to the shared `findInYamlBlock` in config-yaml-block.server.ts
+ * (the same idiom `updateTelarVersionInConfig` in upgrade.server.ts uses on
+ * the write side) to avoid a full YAML parse — keeps comments/whitespace-
+ * tolerance cheap and preserves behaviour on the same exotic inputs.
+ *
+ * `haltAfterBlock: true` preserves this function's original behaviour of
+ * stopping the whole scan once the (first) telar: block ends, rather than
+ * continuing to look for a later duplicate top-level `telar:` key.
  *
  * Exported to enable direct unit testing (see tests/sync.server.test.ts).
  */
 export function extractTelarVersion(yamlContent: string): string | null {
-  const lines = yamlContent.split("\n");
-  let inTelar = false;
-  for (const line of lines) {
-    if (/^telar:/.test(line)) {
-      inTelar = true;
-      continue;
-    }
-    if (inTelar) {
-      // End of telar: block when a non-indented, non-comment, non-empty line appears
-      if (/^[^\s#]/.test(line) && line.trim() !== "") break;
-      const m = line.match(/^\s+version:\s*["']?([^\s"'#]+)/);
-      if (m) return m[1];
-    }
-  }
-  return null;
+  return (
+    findInYamlBlock(
+      yamlContent,
+      "telar",
+      (line) => {
+        const m = line.match(/^\s+version:\s*["']?([^\s"'#]+)/);
+        return m ? m[1] : undefined;
+      },
+      { haltAfterBlock: true },
+    ) ?? null
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -776,13 +779,8 @@ export function extractTelarVersion(yamlContent: string): string | null {
  * - Stories: compares D1 stories table against repo project.csv
  * - Config: compares D1 project_config against repo _config.yml managed fields
  *
- * Conflict detection: when `publishSnapshot` is non-null, a story change is
- * flagged as a conflict only if BOTH the repo value AND the D1 value differ
- * from the snapshot baseline. If `publishSnapshot` is null (never published),
- * all diffs are returned without conflict flags — `hasConflicts` is false.
- *
- * D1 wins by default for conflicts — callers must explicitly add conflicting
- * story_ids to `changes.stories.accept` to apply the repo version.
+ * D1 wins by default when both sides changed — callers must explicitly add
+ * a story_id to `changes.stories.accept` to apply the repo version.
  */
 export async function computeFullSyncDiff(
   projectId: number,
@@ -790,7 +788,6 @@ export async function computeFullSyncDiff(
   owner: string,
   repo: string,
   db: ReturnType<typeof getDb>,
-  publishSnapshot: PublishSnapshot | null,
 ): Promise<FullSyncDiff> {
   // 1. Delegate objects diff to existing function
   const objectsDiff = await computeSyncDiff(projectId, token, owner, repo, db);
@@ -823,12 +820,7 @@ export async function computeFullSyncDiff(
     .where(eq(stories.project_id, projectId));
   const d1StoryMap = new Map(d1StoryRows.map((s) => [s.story_id, s]));
 
-  // 4. Build snapshot baseline maps for conflict detection
-  const snapshotStoryMap = publishSnapshot
-    ? new Map(publishSnapshot.stories.map((s) => [s.story_id, s]))
-    : null;
-
-  // 5. Compute story diffs
+  // 4. Compute story diffs
   //
   // `order` is intentionally excluded: the import pipeline writes a 0-based
   // sequence into `stories.order`, but `project.csv` is 1-based, so every
@@ -868,28 +860,10 @@ export async function computeFullSyncDiff(
       }
 
       if (changedFields.length > 0) {
-        let isConflict = false;
-        if (snapshotStoryMap) {
-          const baseline = snapshotStoryMap.get(storyId);
-          if (baseline) {
-            // Conflict: both repo and D1 changed relative to baseline
-            const repoChangedFromBaseline = changedFields.some((f) => {
-              const key = f as keyof StorySyncItem;
-              return String(repoRow[key] ?? "") !== String(baseline[key] ?? "");
-            });
-            const d1ChangedFromBaseline = changedFields.some((f) => {
-              const key = f as keyof StorySyncItem;
-              return String(d1Item[key] ?? "") !== String(baseline[key] ?? "");
-            });
-            isConflict = repoChangedFromBaseline && d1ChangedFromBaseline;
-          }
-        }
-
         changedStories.push({
           story_id: storyId,
           title: d1Row.title ?? null,
           changedFields,
-          isConflict,
         });
       }
     }
@@ -901,7 +875,7 @@ export async function computeFullSyncDiff(
     }
   }
 
-  // 6. Fetch _config.yml and compare against D1 project_config
+  // 5. Fetch _config.yml and compare against D1 project_config
   const configYmlContent = await getFileContent(token, owner, repo, "_config.yml");
   const repoConfigFields = configYmlContent
     ? extractConfigFields(configYmlContent)
@@ -917,7 +891,17 @@ export async function computeFullSyncDiff(
 
   for (const key of MANAGED_CONFIG_FIELDS) {
     const repoVal = repoConfigFields[key] ?? null;
-    const d1Val = (d1Config[key] as string | null | undefined) ?? null;
+    let d1Val = (d1Config[key] as string | boolean | null | undefined) ?? null;
+
+    // collection_mode is a D1 boolean column (schema.ts project_config.collection_mode,
+    // mode: "boolean"), so drizzle returns a real JS boolean here, but repo _config.yml
+    // stores it as the bare scalar "true"/"false" — extractConfigFields/parseYamlScalar
+    // always returns a string. Normalize D1's boolean to the same string form before
+    // comparing, same approach as storyFields' isPrivate normalization above, so a
+    // logically unchanged collection_mode never false-positives as a sync diff.
+    if (typeof d1Val === "boolean") {
+      d1Val = d1Val ? "true" : "false";
+    }
 
     if (repoVal !== null && repoVal !== d1Val) {
       configChangedFields.push({ key, d1Value: d1Val, repoValue: repoVal });
@@ -942,8 +926,8 @@ export async function computeFullSyncDiff(
         d1Version: null,
       };
     } else {
-      const repoTag = repoTelarVersion.startsWith("v") ? repoTelarVersion : `v${repoTelarVersion}`;
-      const d1Tag = d1TelarVersion.startsWith("v") ? d1TelarVersion : `v${d1TelarVersion}`;
+      const repoTag = normalizeVersionTag(repoTelarVersion);
+      const d1Tag = normalizeVersionTag(d1TelarVersion);
       const cmp = compareVersions(repoTag, d1Tag);
       if (cmp > 0) {
         versionChange = {
@@ -961,11 +945,7 @@ export async function computeFullSyncDiff(
     }
   }
 
-  // 7. Determine if there are any conflicts
-  const hasConflicts =
-    publishSnapshot !== null && changedStories.some((s) => s.isConflict);
-
-  // 8. Compute glossary diff
+  // 6. Compute glossary diff
   const glossaryDiff = await computeGlossarySyncDiff(projectId, token, owner, repo, db);
 
   return {
@@ -973,7 +953,10 @@ export async function computeFullSyncDiff(
     stories: { newStories, changedStories, missingStories },
     config: { changedFields: configChangedFields, versionChange },
     glossary: glossaryDiff,
-    hasConflicts,
+    // Conflict detection (repo AND D1 both changed since last publish) was
+    // never wired to a real publish-snapshot caller — retired v1.4.0-beta.
+    // Field kept for the FullSyncDiff contract consumers depend on.
+    hasConflicts: false,
   };
 }
 

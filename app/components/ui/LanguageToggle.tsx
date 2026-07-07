@@ -17,7 +17,7 @@ export function LanguageToggle({
   className = "",
   variant = "default",
 }: LanguageToggleProps) {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const currentLang = i18n.language?.startsWith("es") ? "es" : "en";
 
   const langs = [
@@ -55,7 +55,7 @@ export function LanguageToggle({
             <button
               type="submit"
               className={`px-3.5 py-1.5 rounded-full border font-body text-sm font-medium transition-all duration-200 cursor-pointer ${inactiveClass}`}
-              aria-label={`Switch to ${label}`}
+              aria-label={t("switch_language", { label })}
             >
               {label}
             </button>

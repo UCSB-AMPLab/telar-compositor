@@ -196,7 +196,7 @@ export function InviteForm({ projectId, isOwner, className }: InviteFormProps) {
             }}
             className="font-body text-xs text-gray-400 hover:text-charcoal transition-colors"
           >
-            ✕ Close
+            ✕ {t("close")}
           </button>
         </div>
       )}

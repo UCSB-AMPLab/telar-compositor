@@ -1,7 +1,9 @@
 /**
  * This file renders the Sync confirmation modal — the multi-step
- * modal launched from the dashboard when the user pulls changes
- * made directly in the GitHub repo back into the compositor.
+ * modal for pulling changes made directly in the GitHub repo back
+ * into the compositor. It mounts on the Objects page (the daily
+ * home) and opens via the `?sync=1` deep-link that the out-of-sync
+ * popover and the publish page's stale-head blocker both point at.
  *
  * Provides a state-machine flow:
  *   1. Confirm — prompt user to check what changed in the repo
@@ -14,7 +16,12 @@
  *
  * All-or-nothing: the apply step accepts every change in the diff.
  *
- * @version v1.3.6-beta
+ * The sync intents live on the /dashboard action (the app's shared
+ * global endpoint), so every fetcher submit here targets it
+ * explicitly — a bare POST would hit the rendering route's own
+ * action, which does not handle them.
+ *
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useState } from "react";
@@ -37,8 +44,8 @@ import { configFieldLabel } from "~/lib/activity-display";
 // ---------------------------------------------------------------------------
 
 /**
- * Shared useFetcher key so the dashboard route can observe the same
- * compute-full-sync-diff response and surface the version-change
+ * Shared useFetcher key so the page hosting the modal can observe the
+ * same compute-full-sync-diff response and surface the version-change
  * toast without duplicating the submission.
  */
 export const SYNC_DIFF_FETCHER_KEY = "dashboard-sync-diff";
@@ -175,9 +182,9 @@ function CategorySection({ label, items }: CategorySectionProps) {
 export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfirmModalProps) {
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
-  // Stable fetcher key so the dashboard route can subscribe to the same
+  // Stable fetcher key so the hosting page can subscribe to the same
   // sync-diff response via useFetcher({ key }) and surface the
-  // version-change toast (see _app.dashboard.tsx / useVersionChangeToast).
+  // version-change toast (see _app.objects.tsx / useVersionChangeToast).
   const diffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
   const applyFetcher = useFetcher();
 
@@ -202,7 +209,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
     if (!diffData) return;
     if (!diffData.ok || diffData.intent !== "compute-full-sync-diff") {
       setErrorMessage(
-        diffData.ok ? "" : (diffData.message ?? diffData.error ?? "Unknown error")
+        diffData.ok ? "" : (diffData.message ?? diffData.error ?? t("unknown_error"))
       );
       setStep("failed");
       return;
@@ -224,7 +231,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
   useEffect(() => {
     if (!applyData) return;
     if (!applyData.ok) {
-      setErrorMessage(applyData.error ?? "Unknown error");
+      setErrorMessage(applyData.error ?? t("unknown_error"));
       setStep("failed");
       return;
     }
@@ -241,7 +248,10 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
 
   function handleCheckChanges() {
     setStep("computing");
-    diffFetcher.submit({ intent: "compute-full-sync-diff" }, { method: "post" });
+    diffFetcher.submit(
+      { intent: "compute-full-sync-diff" },
+      { method: "post", action: "/dashboard" }
+    );
   }
 
   function handleApply() {
@@ -250,7 +260,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
     setStep("applying");
     applyFetcher.submit(
       { intent: "apply-full-sync", changes: JSON.stringify(changes) },
-      { method: "post" }
+      { method: "post", action: "/dashboard" }
     );
   }
 
@@ -258,7 +268,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
     setStep("accepting");
     applyFetcher.submit(
       { intent: "accept-divergence" },
-      { method: "post" }
+      { method: "post", action: "/dashboard" }
     );
   }
 

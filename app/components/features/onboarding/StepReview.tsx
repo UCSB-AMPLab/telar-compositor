@@ -56,25 +56,25 @@ export function StepReview({
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           {typeof configFields.title === "string" && (
             <>
-              <dt className="font-body text-gray-500">Title</dt>
+              <dt className="font-body text-gray-500">{t("create_site.form.title_label")}</dt>
               <dd className="font-body text-charcoal truncate">{configFields.title}</dd>
             </>
           )}
           {typeof configFields.lang === "string" && (
             <>
-              <dt className="font-body text-gray-500">Language</dt>
+              <dt className="font-body text-gray-500">{t("create_site.form.language_label")}</dt>
               <dd className="font-body text-charcoal">{configFields.lang.toUpperCase()}</dd>
             </>
           )}
           {typeof configFields.theme === "string" && (
             <>
-              <dt className="font-body text-gray-500">Theme</dt>
+              <dt className="font-body text-gray-500">{t("create_site.form.theme_label")}</dt>
               <dd className="font-body text-charcoal truncate">{configFields.theme}</dd>
             </>
           )}
           {typeof configFields.telar_version === "string" && (
             <>
-              <dt className="font-body text-gray-500">Telar version</dt>
+              <dt className="font-body text-gray-500">{t("step_review.telar_version")}</dt>
               <dd className="font-body text-charcoal">{configFields.telar_version}</dd>
             </>
           )}
@@ -138,7 +138,7 @@ export function StepReview({
         >
           <summary className="flex items-center justify-between px-4 py-3 bg-amber-50 cursor-pointer list-none">
             <span className="text-sm font-body font-medium text-amber-800">
-              {allWarnings.length} warning{allWarnings.length !== 1 ? "s" : ""}
+              {t("step_review.warnings", { count: allWarnings.length })}
             </span>
             <ChevronDown
               className={`w-4 h-4 text-amber-600 transition-transform ${warningsOpen ? "rotate-180" : ""}`}

@@ -17,7 +17,7 @@
  * from the Y.Array so remote collaborators' changes appear in real
  * time; it falls back to loader data during SSR or pre-connection.
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import { and, asc, count, eq, gt } from "drizzle-orm";
@@ -38,8 +38,7 @@ import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { keyFor } from "~/lib/item-key";
 import { stories, steps, project_members, users } from "~/db/schema";
-import { resolveActiveProject } from "~/lib/membership.server";
-import { createSessionStorage } from "~/lib/session.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { slugify } from "~/lib/slugify";
 import { StoryRow } from "~/components/features/stories/StoryRow";
 import { SortableStoryRow } from "~/components/features/stories/SortableStoryRow";
@@ -49,6 +48,7 @@ import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal
 import { DocsLink } from "~/components/ui/DocsLink";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
+import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { useToast } from "~/hooks/use-toast";
 import { signInternalMarker } from "../../workers/auth";
 
@@ -61,12 +61,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
 
-  // Read activeProjectId from session (same pattern as dashboard)
-  const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-  const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-  const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
     return redirect("/dashboard");
   }
@@ -142,10 +137,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "toggle-draft": {
       const storyDbId = Number(formData.get("storyDbId"));
       const currentValue = formData.get("currentValue") === "true";
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolved) return { ok: false, intent: "toggle-draft", error: "no_project" };
       await db
         .update(stories)
@@ -157,10 +149,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     case "toggle-private": {
       const storyDbId = Number(formData.get("storyDbId"));
       const currentValue = formData.get("currentValue") === "true";
-      const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-      const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-      const sessionActiveId = session.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
       if (!resolved) return { ok: false, intent: "toggle-private", error: "no_project" };
       await db
         .update(stories)
@@ -181,11 +170,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       // do NOT throw. The client still navigates — the story exists in
       // Yjs, and the 30s alarm-driven snapshot is the eventual safety net.
       try {
-        const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-        const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-        const sessionActiveId = session.get("activeProjectId") as number | undefined;
-
-        const resolved = await resolveActiveProject(db, user.id, sessionActiveId);
+        const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
         if (!resolved) {
           return { ok: false, intent: "flush-yjs-snapshot", error: "snapshot_failed" };
         }
@@ -358,26 +343,10 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   // ------------------------------------------------------------------
   // Source of truth: Yjs when available, loader data otherwise
   // ------------------------------------------------------------------
-  const [yjsStories, setYjsStories] = useState<StoryItem[] | null>(null);
-
-  useEffect(() => {
-    if (!ydoc) {
-      setYjsStories(null);
-      return;
-    }
-    const storiesArray = ydoc.getArray<Y.Map<unknown>>("stories");
-
-    const recompute = () => {
-      const next: StoryItem[] = [];
-      for (let i = 0; i < storiesArray.length; i++) {
-        next.push(yMapToStoryItem(storiesArray.get(i), i));
-      }
-      setYjsStories(next);
-    };
-    recompute();
-    storiesArray.observeDeep(recompute);
-    return () => storiesArray.unobserveDeep(recompute);
-  }, [ydoc]);
+  const yjsStories = useYjsArraySync(
+    ydoc ? ydoc.getArray<Y.Map<unknown>>("stories") : null,
+    yMapToStoryItem,
+  );
 
   const useYjs = ydoc !== null && ops !== null && yjsStories !== null;
   const displayStories: StoryItem[] = useYjs
