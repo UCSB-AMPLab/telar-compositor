@@ -9,6 +9,8 @@
  * When `clipStart`/`clipEnd` are provided, the region is initialised to
  * those values. When the user drags region handles, `onClipChange` fires
  * with the new start/end values (in seconds).
+ *
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -32,6 +34,18 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Reads a theme colour token's live value off `:root` so WaveSurfer (which
+ * takes real colour strings, not Tailwind classes) stays in sync with the
+ * `@theme` block in app.css instead of carrying its own hex copy. Falls back
+ * to the literal if the token is missing or this runs outside a browser.
+ */
+function themeColor(cssVar: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
+  return value || fallback;
 }
 
 export function AudioPlayer({
@@ -88,9 +102,9 @@ export function AudioPlayer({
 
         ws = WaveSurfer.create({
           container: containerRef.current!,
-          waveColor: "#FFFFFF",
-          progressColor: "#333333",
-          cursorColor: "#333333",
+          waveColor: themeColor("--color-surface", "#FFFFFF"),
+          progressColor: themeColor("--color-charcoal", "#333333"),
+          cursorColor: themeColor("--color-charcoal", "#333333"),
           url: audioUrl,
           height: 80,
           barWidth: 3,

@@ -130,7 +130,6 @@ export function DonutChart({ members, className }: DonutChartProps) {
           className="font-heading text-lg fill-current text-charcoal"
           fontSize="18"
           fontFamily="var(--font-heading, sans-serif)"
-          fill="#333333"
         >
           {total}
         </text>
@@ -139,9 +138,9 @@ export function DonutChart({ members, className }: DonutChartProps) {
           y={CY + 10}
           textAnchor="middle"
           dominantBaseline="central"
+          className="fill-current text-fg-muted"
           fontSize="9"
           fontFamily="var(--font-body, sans-serif)"
-          fill="#666666"
         >
           {t("collaboration:donut_total_label")}
         </text>
