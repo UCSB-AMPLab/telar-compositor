@@ -1,0 +1,36 @@
+# Checks
+# Runs `tsc --noEmit` and the vitest suite on every push to main and every
+# pull request, so that neither strict TypeScript regressions nor failing
+# tests reach a deploy. Typecheck and tests are separate jobs: each catches
+# a class of error the other can't.
+# Version: v1.4.0-beta
+
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
