@@ -15,7 +15,7 @@
  * in workers/collaboration.ts pushObjectUpdate), with Y.Text for
  * collaboratively-edited text fields and plain values for passthroughs.
  *
- * @version v1.3.2-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect } from "vitest";

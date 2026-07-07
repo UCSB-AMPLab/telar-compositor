@@ -36,7 +36,7 @@ import { slugify } from "~/lib/slugify";
 import { detectMediaType, type MediaType } from "~/lib/media-type";
 import { ACCEPTED_TYPES, MAX_SIZE_BYTES } from "~/lib/upload-constants";
 import type { IiifFetchResult, IiifMetadata } from "~/lib/iiif-types";
-import type { UploadImageConfirmPayload } from "./UploadImageDialog";
+import type { UploadImageConfirmPayload } from "~/lib/upload-types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -487,7 +487,7 @@ export function AddObjectDialog({
                 {iiifThumbnail && (
                   <img
                     src={iiifThumbnail}
-                    alt={title || "Thumbnail"}
+                    alt={title || t("thumbnail_alt")}
                     className="w-24 h-24 object-cover rounded-lg border border-gray-200"
                   />
                 )}
@@ -532,7 +532,7 @@ export function AddObjectDialog({
                         : "bg-gray-100 text-gray-500"
                     }`}
                   >
-                    {iiifHasTiles ? "Yes" : "No"}
+                    {iiifHasTiles ? t("yes") : t("no")}
                   </span>
                 </div>
               </div>

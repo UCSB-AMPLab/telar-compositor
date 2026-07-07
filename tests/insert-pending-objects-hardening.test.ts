@@ -17,7 +17,7 @@
  *     them, and return their canonical ids so the client Y.Array mirror still
  *     works on retry
  *
- * @version v1.3.8-beta
+ * @version v1.3.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

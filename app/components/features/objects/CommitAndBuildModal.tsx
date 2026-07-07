@@ -8,6 +8,8 @@
  * 4. Success dismissal or failure rollback
  *
  * Triggered after sync-apply or add-iiif-object adds new objects.
+ *
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -22,13 +24,18 @@ import { Button } from "~/components/ui/Button";
  * but defined here to avoid importing a server-only module into client code.
  */
 const BUILD_PHASES = [
-  { id: "setup", label: "Setup" },
-  { id: "build-js", label: "Build JS" },
-  { id: "process-data", label: "Process data" },
-  { id: "build-site", label: "Build site" },
-  { id: "iiif", label: "IIIF tiles" },
-  { id: "deploy", label: "Deploy" },
+  { id: "setup", labelKey: "build_phase.setup" },
+  { id: "build-js", labelKey: "build_phase.build_js" },
+  { id: "process-data", labelKey: "build_phase.process_data" },
+  { id: "build-site", labelKey: "build_phase.build_site" },
+  { id: "iiif", labelKey: "build_phase.iiif_tiles" },
+  { id: "deploy", labelKey: "build_phase.deploy" },
 ] as const;
+
+/** Map a build phase id to its i18n label key (works for live + fallback phases). */
+const PHASE_LABEL_KEYS: Record<string, string> = Object.fromEntries(
+  BUILD_PHASES.map((p) => [p.id, p.labelKey])
+);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -332,6 +339,22 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   // Set up polling when building.
   // In the normal flow, polling requires commitSha (for SHA-based run discovery).
   // In the upload flow (skipCommit), polling uses dispatchRunId directly — no SHA needed.
+  //
+  // Cross-reference: PublishingPopover.tsx has a structurally similar 5s
+  // poll-build loop (same immediate-fire-then-setInterval shape, same
+  // double-cleanup-effect pattern) but is NOT extracted into a shared hook
+  // with this one — the bodies diverge materially: (1) this effect gates on
+  // a `step` state machine ("building" + commitSha/skipCommit+runId), while
+  // PublishingPopover gates on awareness booleans (isPublishing/isBuilding);
+  // (2) this effect branches the submit payload into two distinct shapes
+  // (runId-only for the upload flow vs sha+optional-runId for the commit
+  // flow), while PublishingPopover always sends sha and reads runId back out
+  // of the *previous* poll response via a ref, never from a prop; (3) this
+  // effect submits to the ambient route action (no explicit `action`), while
+  // PublishingPopover explicitly targets `action: "/publish"` since it can
+  // render from outside the /publish route. Forcing a shared hook over those
+  // three axes would either lose a real distinction or grow enough
+  // parameters to stop being simpler than two 15-line effects.
   useEffect(() => {
     const canPollBySha = step === "building" && !!commitSha;
     const canPollByRunId = step === "building" && !!skipCommit && !!runId;
@@ -402,7 +425,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
     phases ??
     BUILD_PHASES.map((p) => ({
       id: p.id,
-      label: p.label,
+      label: t(p.labelKey),
       status: "queued" as const,
       conclusion: null,
     }));
@@ -495,7 +518,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
                             : "text-gray-400"
                         }`}
                       >
-                        {phase.label}
+                        {PHASE_LABEL_KEYS[phase.id] ? t(PHASE_LABEL_KEYS[phase.id]) : phase.label}
                       </span>
                     </div>
                     {index < displayPhases.length - 1 && (
