@@ -79,5 +79,7 @@
   },
   "cancel": "Cancelar",
   "sign_out": "Cerrar sesión",
-  "no_image": "Sin imagen"
+  "no_image": "Sin imagen",
+  "dismiss": "Descartar",
+  "switch_language": "Cambiar a {{label}}"
 }

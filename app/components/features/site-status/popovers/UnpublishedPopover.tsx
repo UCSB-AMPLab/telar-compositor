@@ -85,6 +85,7 @@ function fmtTime(iso: string | null | undefined, locale: string): string {
 function buildSections(
   summary: ChangeSummary,
   resolveSetting: (entry: { key: string; label: string; value?: string }) => string,
+  labels: { landingPage: string; navigation: string },
 ): ManifestSection[] {
   const titleOr = (title: string | null, fallback: string) =>
     title && title.trim().length > 0 ? title : fallback;
@@ -154,10 +155,10 @@ function buildSections(
     })),
   ];
   if (summary.landing.changed) {
-    settingItems.push({ key: "setting-landing", title: "Landing page", disposition: "modified" });
+    settingItems.push({ key: "setting-landing", title: labels.landingPage, disposition: "modified" });
   }
   if (summary.navigation.changed) {
-    settingItems.push({ key: "setting-navigation", title: "Navigation", disposition: "modified" });
+    settingItems.push({ key: "setting-navigation", title: labels.navigation, disposition: "modified" });
   }
 
   const all: ManifestSection[] = [
@@ -194,7 +195,10 @@ export function UnpublishedPopover({ summary, lastPublishedAt, className = "" }:
   // gone. Informational only — no server action.
   const isConvenor = useIsConvenor();
 
-  const sections = buildSections(summary, resolveSetting);
+  const sections = buildSections(summary, resolveSetting, {
+    landingPage: t("unpublished.landing_page"),
+    navigation: t("unpublished.navigation"),
+  });
   const total = totalChanges(sections);
   const title =
     total === 1 ? t("unpublished.title_one") : t("unpublished.title_other", { n: total });

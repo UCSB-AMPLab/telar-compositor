@@ -151,6 +151,17 @@
   "objectSavedHint": "La imagen se ha guardado en tu repositorio. Es necesario reconstruir el sitio para generar las teselas IIIF — puedes hacerlo desde la página de detalle del objeto.",
   "buildFailed": "Falló la construcción del sitio. Revisa GitHub Actions para más detalles.",
   "viewOnGitHub": "Ver en GitHub",
+  "yes": "Sí",
+  "no": "No",
+  "thumbnail_alt": "Miniatura",
+  "build_phase": {
+    "setup": "Preparación",
+    "build_js": "Compilar JS",
+    "process_data": "Procesar datos",
+    "build_site": "Construir sitio",
+    "iiif_tiles": "Teselas IIIF",
+    "deploy": "Desplegar"
+  },
   "commitModal.heading_one": "Registrar este objeto autoalojado",
   "commitModal.heading_other": "Registrar estos objetos autoalojados",
   "commitModal.description": "Para registrar {{count}} objeto(s) nuevo(s) necesitamos actualizar el objects.csv de tu sitio en GitHub. Esto iniciará una construcción y generará las teselas IIIF que necesitas para trabajar con estas imágenes en el compositor.",

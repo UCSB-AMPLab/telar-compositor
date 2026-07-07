@@ -11,6 +11,7 @@ import { useNavigate } from "react-router";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import type { AwarenessUser } from "~/hooks/use-collaboration";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 interface FadingCollaborator {
   collaborator: AwarenessUser;
@@ -21,19 +22,19 @@ interface FadingCollaborator {
  * Returns a human-readable label for a route path.
  * e.g. "/stories" -> "Stories", "/stories/my-story" -> "Story: my-story"
  */
-function getRouteLabel(route: string): string {
-  if (!route || route === "/") return "Start";
+function getRouteLabel(route: string, t: TFunction<"collaboration">): string {
+  if (!route || route === "/") return t("route_start");
   const segments = route.replace(/^\//, "").split("/");
   const base = segments[0];
   switch (base) {
     case "dashboard":
-      return "Start";
+      return t("route_start");
     case "stories":
-      return segments[1] ? `Story: ${segments[1]}` : "Stories";
+      return segments[1] ? t("route_story", { name: segments[1] }) : t("route_stories");
     case "objects":
-      return "Objects";
+      return t("route_objects");
     case "config":
-      return "Settings";
+      return t("route_settings");
     default:
       return base.charAt(0).toUpperCase() + base.slice(1);
   }
@@ -105,7 +106,9 @@ export function PresenceBar({ className = "" }: PresenceBarProps) {
     <div className={`flex items-center ${className}`}>
       {otherPeople.map(({ collaborator, fading }) => {
         const { user, location } = collaborator;
-        const routeLabel = location?.route ? getRouteLabel(location.route) : "Start";
+        const routeLabel = location?.route
+          ? getRouteLabel(location.route, t)
+          : t("route_start");
         const tooltipText = location?.fieldKey
           ? t("presence_tooltip_editing", {
               name: user.name,

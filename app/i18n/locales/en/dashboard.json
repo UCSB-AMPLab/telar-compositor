@@ -132,5 +132,6 @@
     "primary_cta": "Restore as drafts",
     "secondary_cta": "Ignore",
     "success_toast": "Restored {{count}} story(ies) as drafts."
-  }
+  },
+  "unknown_error": "Unknown error"
 }

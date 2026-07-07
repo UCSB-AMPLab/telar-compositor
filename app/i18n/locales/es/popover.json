@@ -2,7 +2,7 @@
   "in_sync": {
     "title": "Todo está sincronizado",
     "published": "Última publicación: {{time}}",
-    "commit": "commit {{sha}} — {{msg}}",
+    "commit": "commit {{sha}}",
     "synced": "Sincronizado desde el repositorio {{time}}",
     "view_site": "Ver el sitio publicado"
   },
@@ -17,6 +17,8 @@
       "pages": "Páginas",
       "settings": "Ajustes del sitio"
     },
+    "landing_page": "Página de inicio",
+    "navigation": "Navegación",
     "modified": "modificado",
     "added": "agregado",
     "review": "Revisar todos los cambios",

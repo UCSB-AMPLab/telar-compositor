@@ -54,7 +54,7 @@ export function LinkPopover({ position, selectedText, onInsert, onCancel }: Link
     >
       {selectedText && (
         <p className="font-body text-xs text-gray-500 mb-2 truncate">
-          Link text: <span className="font-medium text-charcoal">{selectedText}</span>
+          {t("link_popover.link_text")}<span className="font-medium text-charcoal">{selectedText}</span>
         </p>
       )}
       <input

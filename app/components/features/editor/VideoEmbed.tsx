@@ -10,6 +10,7 @@
  */
 
 import { useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 
 // ---------------------------------------------------------------------------
 // YouTube IFrame API types (minimal)
@@ -89,6 +90,7 @@ function loadYouTubeApi(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function VideoEmbed({ type, videoId, vimeoHash, getCurrentTimeRef, getDurationRef, playerControlsRef, onTimeUpdate }: VideoEmbedProps) {
+  const { t } = useTranslation("editor");
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Build the embed URL for each platform
@@ -207,7 +209,7 @@ export function VideoEmbed({ type, videoId, vimeoHash, getCurrentTimeRef, getDur
       className="w-full aspect-video rounded-sm video-embed-iframe"
       allow="autoplay; encrypted-media"
       allowFullScreen
-      title={`${type} video player`}
+      title={t("video_player_title", { type })}
     />
   );
 }

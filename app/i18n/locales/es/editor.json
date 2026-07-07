@@ -20,6 +20,7 @@
   },
   "link_popover": {
     "url_placeholder": "Pega o escribe una URL",
+    "link_text": "Texto del enlace: ",
     "insert": "Insertar",
     "cancel": "Cancelar"
   },
@@ -184,5 +185,6 @@
     "generic_title": "Algo salió mal",
     "generic_body": "No pudimos abrir esta historia. Vuelve a tus historias e intenta de nuevo."
   },
-  "preview_clip": "Previsualizar fragmento"
+  "preview_clip": "Previsualizar fragmento",
+  "video_player_title": "Reproductor de video de {{type}}"
 }

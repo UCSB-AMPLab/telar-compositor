@@ -997,9 +997,6 @@ El Compositor verifica qué versión de Telar ejecuta tu sitio. Si hay una versi
   },
 };
 
-/** All DOC ids in declaration order. */
-export const DOC_IDS = Object.keys(DOCS) as DocId[];
-
 /** Type guard: is the given string a known DOC id? */
 export function isDocId(value: string | null | undefined): value is DocId {
   return value != null && Object.prototype.hasOwnProperty.call(DOCS, value);

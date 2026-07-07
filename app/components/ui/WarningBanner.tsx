@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AlertTriangle, X } from "lucide-react";
 
 export interface WarningBannerProps {
@@ -38,9 +39,11 @@ export function WarningBanner({
   cta,
   dismissible = false,
   dismissKey,
-  dismissAriaLabel = "Dismiss",
+  dismissAriaLabel,
 }: WarningBannerProps) {
+  const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
+  const resolvedDismissAriaLabel = dismissAriaLabel ?? t("dismiss");
 
   // Hydrate dismissed state from sessionStorage on mount (SSR-safe).
   useEffect(() => {
@@ -92,7 +95,7 @@ export function WarningBanner({
         <button
           type="button"
           onClick={handleDismiss}
-          aria-label={dismissAriaLabel}
+          aria-label={resolvedDismissAriaLabel}
           className="ml-1 text-amber-700 hover:text-amber-900 transition-colors"
         >
           <X className="w-4 h-4" aria-hidden="true" />

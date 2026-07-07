@@ -19,10 +19,11 @@
  * The consumer is responsible for the `relative` positioning context (the
  * pill wrapper) this `absolute` popover anchors against.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import { useEscapeToClose } from "~/hooks/use-escape-to-close";
 
 interface StatusPopoverShellProps {
   /** Whether the popover is open. When false the shell renders nothing. */
@@ -46,17 +47,10 @@ export function StatusPopoverShell({
   children,
   className = "",
 }: StatusPopoverShellProps) {
-  // Esc closes the open popover — mirrors the document-listener useEffect
-  // pattern from the Header dropdown (there for mousedown; here for keydown).
+  // Esc closes the open popover — mirrors the document-listener pattern
+  // from the Header dropdown (there for mousedown; here for keydown).
   // Attached only while open and cleaned up on close/unmount.
-  useEffect(() => {
-    if (!open) return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
+  useEscapeToClose(() => onClose(), open);
 
   if (!open) return null;
 
