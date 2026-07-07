@@ -17,7 +17,7 @@
  *
  * Tailwind token classes only (no hardcoded hex).
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { AlertCircle, AlertTriangle, Check } from "lucide-react";
@@ -106,7 +106,7 @@ export function ValidationChecks({ validation, className = "" }: ValidationCheck
                   </p>
                   {blocker.code === "stale_head" && (
                     <Link
-                      to="/dashboard?sync=1"
+                      to="/objects?sync=1"
                       className="font-body text-sm text-terracotta underline hover:text-terracotta-deep mt-1 inline-block"
                     >
                       {t("checks.stale_head_action")}

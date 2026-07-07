@@ -2,8 +2,8 @@
  * OutOfSyncPopover — the divergence body of the Site Status pill. Renders three
  * diff chips (+ added / ~ changed / – removed) whose counts come from
  * `aggregateSyncDiff(FullSyncDiff)`, a `Review changes` anil primary action (the
- * recommended path — deep-links to the existing SyncConfirmModal `?sync=1` flow
- * on the dashboard), and a `Keep my version` ghost button.
+ * recommended path — deep-links to the SyncConfirmModal `?sync=1` flow on the
+ * Objects page), and a `Keep my version` ghost button.
  *
  * `Keep my version` reuses the EXISTING `accept-divergence` intent on the
  * dashboard action (requireOwner-gated server-side) via a POST fetcher exactly
@@ -17,7 +17,7 @@
  * `FullSyncDiff` is imported type-only so no `.server` runtime reaches the
  * client bundle.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { Link, useFetcher } from "react-router";
@@ -29,9 +29,9 @@ import { aggregateSyncDiff } from "~/components/features/site-status/site-status
 export interface OutOfSyncPopoverProps {
   diff: FullSyncDiff;
   /**
-   * Deep-link target that opens the existing SyncConfirmModal Review flow on
-   * the dashboard (the `?sync=1` path — SyncConfirmModal.tsx:243). Defaults to
-   * the dashboard sync trigger.
+   * Deep-link target that opens the SyncConfirmModal Review flow on the
+   * Objects page (the `?sync=1` path — see _app.objects.tsx). Defaults to
+   * the Objects-page sync trigger.
    */
   reviewTo?: string;
   className?: string;
@@ -39,7 +39,7 @@ export interface OutOfSyncPopoverProps {
 
 export function OutOfSyncPopover({
   diff,
-  reviewTo = "/dashboard?sync=1",
+  reviewTo = "/objects?sync=1",
   className = "",
 }: OutOfSyncPopoverProps) {
   const { t } = useTranslation("popover");

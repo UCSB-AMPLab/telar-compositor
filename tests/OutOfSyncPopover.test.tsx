@@ -128,12 +128,19 @@ describe("OutOfSyncPopover", () => {
     expect(review?.textContent).toContain("Review changes");
   });
 
-  it("Keep my version submits intent accept-divergence via a POST fetcher", () => {
+  it("Keep my version submits intent accept-divergence via a POST fetcher targeting /dashboard", () => {
     const { getByText } = renderPopover({ diff });
     fireEvent.click(getByText("Keep my version"));
     expect(submitSpy).toHaveBeenCalledTimes(1);
     const [body, opts] = submitSpy.mock.calls[0];
     expect(body).toEqual({ intent: "accept-divergence" });
-    expect(opts).toMatchObject({ method: "post" });
+    expect(opts).toMatchObject({ method: "post", action: "/dashboard" });
+  });
+
+  it("Review changes deep-links to the Objects-page sync flow by default", () => {
+    const { container } = renderPopover({ diff });
+    const review = container.querySelector("a.bg-anil");
+    expect(review).not.toBeNull();
+    expect(review?.getAttribute("href")).toBe("/objects?sync=1");
   });
 });
