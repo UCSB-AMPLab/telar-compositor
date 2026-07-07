@@ -15,7 +15,7 @@
  * once the user edits it. That lets the user create a new page
  * without immediately committing to a URL.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { asc, eq, and } from "drizzle-orm";
@@ -364,7 +364,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
 
   const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
 
-  const { ydoc, remoteCollaborators, isPublishing } = useCollaborationContext();
+  const { ydoc, isPublishing } = useCollaborationContext();
   const ops = useStructuralOps(currentUserId, userRole);
   const { showToast } = useToast();
   const bodyFetcher = useFetcher();
@@ -492,7 +492,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
 
   // Stable dnd-kit identifier — see `app/lib/item-key.ts` for the rationale
   // (key must remain constant across snapshotToD1's `_id` backfill, otherwise
-  // the deletion-detection observer at line ~715 fires a false toast).
+  // the remote-delete observer below fires a false toast).
 
   // ------------------------------------------------------------------
   // Navigation array from Yjs config (for the nav bar preview)
@@ -945,34 +945,33 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   }
 
   // ------------------------------------------------------------------
-  // Remote-delete detection
+  // Remote-delete toast — fires when a page disappears from the
+  // Y.Array. We identify the deleted page by its last known title.
   // ------------------------------------------------------------------
   const prevTitlesRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!useYjs) return;
     const curr = new Map<string, string>();
     for (const p of displayPages) curr.set(keyFor(p), p.title || p.slug);
-    const deleted: Array<{ key: string; title: string }> = [];
+    const deleted: string[] = [];
     prevTitlesRef.current.forEach((title, key) => {
-      if (!curr.has(key)) deleted.push({ key, title });
+      if (!curr.has(key)) deleted.push(title);
     });
     prevTitlesRef.current = curr;
     if (deleted.length === 0) return;
-    const deleterName = remoteCollaborators[0]?.user.name ?? "";
-    for (const { title } of deleted) {
-      const message = deleterName
-        ? tStructural("toast_item_deleted", { label: title, name: deleterName })
-        : tStructural("toast_item_deleted_generic", { label: title });
+    for (const title of deleted) {
+      // Stay generic: a Y.Array delete carries no actor, and awareness only
+      // tells us who is connected — not who deleted. Naming a collaborator
+      // here would misattribute the action. No undo affordance: a
+      // remote delete has no local undo path, so a button would be a no-op —
+      // omit it rather than show dead UI.
       showToast({
-        message,
+        message: tStructural("toast_item_deleted_generic", { label: title }),
         type: "destructive",
-        ...(userRole === "convenor"
-          ? { action: { label: tStructural("toast_item_deleted_undo"), onClick: () => {} } }
-          : {}),
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayPages, useYjs, userRole]);
+  }, [displayPages, useYjs]);
 
   // ------------------------------------------------------------------
   // Handlers
