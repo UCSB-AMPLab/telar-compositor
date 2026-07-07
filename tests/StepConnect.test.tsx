@@ -15,13 +15,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { render, screen, act, fireEvent, within } from "@testing-library/react";
 import React from "react";
 
 // Mock react-i18next: return the key as-is so assertions can match the key string.
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
+    // CreateSiteForm (rendered when the create view opens) reads i18n.language.
+    i18n: { language: "en" },
   }),
   Trans: ({ i18nKey }: { i18nKey: string }) => <>{i18nKey}</>,
 }));
@@ -56,6 +58,8 @@ vi.mock("react-router", () => ({
   Link: ({ to, children }: { to: string; children: React.ReactNode }) => (
     <a href={String(to)}>{children}</a>
   ),
+  // AccountModal (rendered when the account modal opens) uses useRevalidator.
+  useRevalidator: () => ({ revalidate: vi.fn(), state: "idle" }),
 }));
 
 import { StepConnect } from "~/components/features/onboarding/StepConnect";
@@ -86,10 +90,11 @@ const privateRepo: RepoWithInstallation = {
 function makeBaseProps(overrides: Partial<{
   repos: RepoWithInstallation[];
   githubPlan: string | null | undefined;
+  installations: Array<{ id: number; target_type: "User" | "Organization"; account: { login: string; avatar_url: string } }>;
 }> = {}) {
   return {
     repos: overrides.repos ?? [privateRepo],
-    installations: [
+    installations: overrides.installations ?? [
       {
         id: 42,
         target_type: "User" as const,
@@ -167,5 +172,75 @@ describe("StepConnect — private-repo warning", () => {
       name: /step_connect\.continue/i,
     }) as HTMLButtonElement;
     expect(continueBtn.disabled).toBe(false);
+  });
+});
+
+describe("StepConnect — create-in-org install path", () => {
+  beforeEach(() => {
+    resetFetchers();
+  });
+
+  it("always offers the account 'Change' trigger in the create view, even with a single account", () => {
+    // A user with the app installed only on their personal account must still be
+    // able to open the account modal — it's the in-flow path to install on an org.
+    render(<StepConnect {...makeBaseProps({ githubPlan: "pro" })} />);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.title/i }));
+    });
+    expect(screen.getByText(/create_site\.account_picker\.change/)).toBeDefined();
+  });
+
+  it("opening the account modal surfaces the install-on-another-org CTA", () => {
+    render(<StepConnect {...makeBaseProps({ githubPlan: "pro" })} />);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.title/i }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText(/create_site\.account_picker\.change/));
+    });
+    const cta = screen.getByText(/create_site\.account_modal\.install_elsewhere_cta/);
+    const link = cta.closest("a") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("https://github.com/apps/telar-compositor/installations/new");
+  });
+
+  it("selecting an org row re-targets the create flow to that organization", () => {
+    const props = makeBaseProps({
+      githubPlan: "pro",
+      installations: [
+        { id: 42, target_type: "User", account: { login: "octocat", avatar_url: "" } },
+        { id: 77, target_type: "Organization", account: { login: "acme-org", avatar_url: "" } },
+      ],
+    });
+    render(<StepConnect {...props} />);
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.title/i }));
+    });
+    // Defaults to the personal account.
+    expect(screen.getByText("octocat")).toBeDefined();
+    // Open the modal and pick the org.
+    act(() => {
+      fireEvent.click(screen.getByText(/create_site\.account_picker\.change/));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText("acme-org"));
+    });
+    // The account-picker line now targets the org (modal closed, owner switched).
+    expect(screen.queryByText(/create_site\.account_modal\.title/)).toBeNull();
+    const pickerOwners = screen.getAllByText("acme-org");
+    expect(pickerOwners.length).toBeGreaterThan(0);
+    // And the personal-account "(your account)" annotation is no longer shown.
+    expect(screen.queryByText(/create_site\.account_picker\.your_account/)).toBeNull();
+
+    // installationId (not just owner) re-targeted: reopen the modal and confirm
+    // the ACTIVE marker — driven by activeInstallationId === installationId, a
+    // different code path than the owner label — is on the org row, not octocat.
+    act(() => {
+      fireEvent.click(screen.getByText(/create_site\.account_picker\.change/));
+    });
+    const dialog = within(screen.getByRole("dialog"));
+    const orgRow = dialog.getByText("acme-org").closest("button") as HTMLElement;
+    const personalRow = dialog.getByText("octocat").closest("button") as HTMLElement;
+    expect(orgRow.className).toMatch(/border-terracotta/);
+    expect(personalRow.className).not.toMatch(/border-terracotta/);
   });
 });

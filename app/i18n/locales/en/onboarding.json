@@ -61,10 +61,16 @@
     "sheets_url_label": "Published Google Sheet URL",
     "sheets_url_placeholder": "https://docs.google.com/spreadsheets/d/e/.../pubhtml",
     "sheets_retry": "Retry Import",
-    "back": "Choose another repo"
+    "back": "Choose another repo",
+    "count_images": "{{count}} images",
+    "count_audio": "{{count}} audio",
+    "count_videos": "{{count}} videos"
   },
   "step_review": {
     "heading": "Import Complete",
+    "telar_version": "Telar version",
+    "warnings_one": "{{count}} warning",
+    "warnings_other": "{{count}} warnings",
     "site_settings": "Site Settings",
     "objects_title": "Objects",
     "objects_count": "{{count}} imported",
@@ -84,6 +90,8 @@
   "step_done": {
     "heading": "You're All Set!",
     "description": "Your Telar site has been imported successfully.",
+    "created_description": "Your new Telar site is ready. We set everything up for you — no manual configuration needed.",
+    "first_build_note": "The first build is in progress. Your site will be live in a few minutes at:",
     "go_to_dashboard": "Go to Start",
     "go_to_settings": "Go to Site settings"
   },
@@ -94,6 +102,7 @@
     "theme": "Theme",
     "url": "Site URL",
     "baseurl": "Base URL",
+    "baseurl_help": "Path prefix for GitHub Pages project sites (e.g. /my-repo)",
     "save": "Save & Continue"
   },
   "site_config": {
@@ -127,7 +136,23 @@
       "name_placeholder": "my-telar-site",
       "name_hint": "Letters, numbers, dots, hyphens, and underscores. Must not start with a dot or hyphen.",
       "owner_label": "GitHub account",
-      "submit": "Create site"
+      "title_label": "Title",
+      "title_placeholder": "My Archive",
+      "title_hint": "Shown as your site's name. You can change it later.",
+      "language_label": "Language",
+      "language_en": "English",
+      "language_es": "Español",
+      "theme_label": "Theme",
+      "theme_group_general": "General",
+      "theme_group_partner": "Partner themes",
+      "advanced": "Advanced",
+      "description_label": "Description",
+      "description_hint": "A short line shown in search results and link previews.",
+      "author_label": "Author",
+      "author_hint": "Defaults to your GitHub username.",
+      "url_preview_label": "Your site will live at",
+      "submit": "Create site",
+      "back": "Back"
     },
     "errors": {
       "repo_name_taken": "A repository with this name already exists on your account. Choose a different name.",
@@ -135,10 +160,19 @@
       "repo_not_ready": "Your new repository is still being set up. This usually takes a few seconds — reload the page and try again.",
       "github_error": "Something went wrong talking to GitHub. Please try again in a moment.",
       "invalid_name": "This name isn't valid. Use letters, numbers, dots, hyphens, and underscores. It must not start with a dot or hyphen.",
-      "name_exists": "A repository with this name already exists on your account."
+      "name_exists": "A repository with this name already exists on your account.",
+      "repo_name_taken_retry": "Choose a different name",
+      "reload": "Reload",
+      "try_again": "Try again"
     },
     "progress": {
       "creating": "Creating your new site...",
+      "heading": "Setting up your new site",
+      "setting_up": "Setting up your site",
+      "setting_up_detail": "Creating the repository, writing your configuration and starter content, and starting the first build.",
+      "setting_up_degraded": "Your site was created with default settings — we'll finish configuring it in the next step.",
+      "setting_up_scope": "Your site was created — we need access to your new repository on GitHub to finish setting it up.",
+      "checking_access": "Checking access",
       "still_setting_up": "Your site is still being set up. Reload the page to continue.",
       "success": "Your new Telar site is ready."
     },
@@ -155,9 +189,11 @@
     },
     "account_modal": {
       "title": "Choose where to create your site",
-      "description": "Pick the account or organisation where the new repository should live.",
+      "description": "Pick the account or organization where the new repository should live.",
       "your_account_label": "Your personal account",
-      "organization_label": "Organisation",
+      "organization_label": "Organization",
+      "install_elsewhere_hint": "Don't see your organization? The Compositor only lists accounts where it's already installed.",
+      "install_elsewhere_cta": "Install on an organization account",
       "cancel": "Cancel"
     }
   },

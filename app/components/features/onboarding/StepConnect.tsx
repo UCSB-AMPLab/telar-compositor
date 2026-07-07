@@ -7,15 +7,16 @@
  * search filter. Already-connected repos show a "Connected" badge
  * and an "Unlink" button instead of being selectable.
  *
- * @version v1.3.6-beta
+ * @version v1.4.0-beta
  */
 
 import { useMemo, useState } from "react";
 import { useFetcher, Form, Link } from "react-router";
-import { GitBranch, Lock, AlertTriangle, Link2Off, Plus, X, ArrowRight, Play } from "lucide-react";
+import { GitBranch, Lock, AlertTriangle, Link2Off, Plus, ArrowRight, Play } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
 import { CreateSiteForm } from "./CreateSiteForm";
+import { AccountModal, type AccountInstallationOption } from "./AccountModal";
 import { InstallationScopePrompt } from "./InstallationScopePrompt";
 import type { RepoWithInstallation } from "~/routes/onboarding";
 import type { Installation } from "~/lib/github.server";
@@ -49,12 +50,7 @@ interface StepConnectProps {
   className?: string;
 }
 
-interface InstallationOption {
-  installationId: number;
-  owner: string;
-  targetType: "User" | "Organization";
-  isOwnAccount: boolean;
-}
+type InstallationOption = AccountInstallationOption;
 
 export function StepConnect({
   repos,
@@ -141,24 +137,26 @@ export function StepConnect({
       {/* Create-site view — replaces search + repo list when active */}
       {viewMode === "create" && activeInstallation && (
         <>
-          {/* Account picker line. Defaults to the user's personal account; the
-              "Change" link only appears when there is more than one
-              installation. Tapping it opens the account modal. */}
+          {/* Account picker line. Defaults to the user's personal account.
+              "Change" is always shown (even with a single account) because the
+              account modal is also the path to install on a new org. Tapping it
+              opens the account modal. */}
           <div className="mb-4 flex items-center gap-2 text-sm font-body text-charcoal">
             <span className="text-gray-500">{t("create_site.account_picker.creating_in")}:</span>
             <span className="font-semibold">{activeInstallation.owner}</span>
             {activeInstallation.isOwnAccount && (
               <span className="text-gray-500">({t("create_site.account_picker.your_account")})</span>
             )}
-            {installationOptions.length > 1 && (
-              <button
-                type="button"
-                onClick={() => setAccountModalOpen(true)}
-                className="ml-auto font-heading font-semibold text-xs uppercase tracking-wider text-charcoal underline decoration-dotted underline-offset-4 hover:text-terracotta transition-colors"
-              >
-                {t("create_site.account_picker.change")}
-              </button>
-            )}
+            {/* Always available — even with a single account — because the
+                account modal is the in-flow path to install the Compositor on
+                another organisation, not just to switch between existing ones. */}
+            <button
+              type="button"
+              onClick={() => setAccountModalOpen(true)}
+              className="ml-auto font-heading font-semibold text-xs uppercase tracking-wider text-charcoal underline decoration-dotted underline-offset-4 hover:text-terracotta transition-colors"
+            >
+              {t("create_site.account_picker.change")}
+            </button>
           </div>
           <CreateSiteForm
             owner={activeInstallation.owner}
@@ -172,74 +170,18 @@ export function StepConnect({
       {/* Account selection modal — only opens when the user explicitly clicks
           "Change" on the account picker line. Required by smoke-test feedback:
           users must make a deliberate choice to create a site outside their
-          own account. */}
-      {accountModalOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4"
-          onClick={() => setAccountModalOpen(false)}
-          role="presentation"
-        >
-          <div
-            className="bg-cream rounded-2xl shadow-2xl max-w-md w-full p-6"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="account-modal-title"
-          >
-            <div className="flex items-start justify-between mb-2">
-              <h3 id="account-modal-title" className="font-heading font-semibold text-lg text-charcoal">
-                {t("create_site.account_modal.title")}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setAccountModalOpen(false)}
-                className="text-gray-400 hover:text-charcoal transition-colors"
-                aria-label={t("create_site.account_modal.cancel")}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <p className="font-body text-sm text-gray-500 mb-4">
-              {t("create_site.account_modal.description")}
-            </p>
-            <ul className="flex flex-col gap-2 mb-4">
-              {installationOptions.map((opt) => {
-                const isActive = opt.installationId === activeInstallation.installationId;
-                return (
-                  <li key={opt.installationId}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCreateInstallationId(opt.installationId);
-                        setAccountModalOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-left transition-colors ${
-                        isActive
-                          ? "border-terracotta bg-anil/20"
-                          : "border-gray-200 hover:border-charcoal hover:bg-cream-dark"
-                      }`}
-                    >
-                      <div className="flex flex-col">
-                        <span className="font-body font-semibold text-sm text-charcoal">{opt.owner}</span>
-                        <span className="font-body text-xs text-gray-500">
-                          {opt.isOwnAccount
-                            ? t("create_site.account_modal.your_account_label")
-                            : t("create_site.account_modal.organization_label")}
-                        </span>
-                      </div>
-                      {isActive && <span className="w-2 h-2 rounded-full bg-terracotta" aria-hidden="true" />}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="flex justify-end">
-              <Button variant="secondary" onClick={() => setAccountModalOpen(false)}>
-                {t("create_site.account_modal.cancel")}
-              </Button>
-            </div>
-          </div>
-        </div>
+          own account. Also the in-flow path to install on another organisation. */}
+      {accountModalOpen && activeInstallation && (
+        <AccountModal
+          options={installationOptions}
+          activeInstallationId={activeInstallation.installationId}
+          githubAppSlug={githubAppSlug}
+          onSelect={(installationId) => {
+            setCreateInstallationId(installationId);
+            setAccountModalOpen(false);
+          }}
+          onClose={() => setAccountModalOpen(false)}
+        />
       )}
 
       {/* Scope-blocked fallback for the normal connect flow. Copy is

@@ -61,10 +61,16 @@
     "sheets_url_label": "URL de la hoja de Google Sheets publicada",
     "sheets_url_placeholder": "https://docs.google.com/spreadsheets/d/e/.../pubhtml",
     "sheets_retry": "Reintentar importación",
-    "back": "Elegir otro repositorio"
+    "back": "Elegir otro repositorio",
+    "count_images": "{{count}} imágenes",
+    "count_audio": "{{count}} audios",
+    "count_videos": "{{count}} videos"
   },
   "step_review": {
     "heading": "Importación completa",
+    "telar_version": "Versión de Telar",
+    "warnings_one": "{{count}} advertencia",
+    "warnings_other": "{{count}} advertencias",
     "site_settings": "Configuración del sitio",
     "objects_title": "Objetos",
     "objects_count": "{{count}} importados",
@@ -84,6 +90,8 @@
   "step_done": {
     "heading": "¡Todo listo!",
     "description": "Tu sitio Telar se importó correctamente.",
+    "created_description": "Tu nuevo sitio Telar está listo. Nos encargamos de toda la configuración por ti.",
+    "first_build_note": "La primera construcción está en curso. Tu sitio estará disponible en unos minutos en:",
     "go_to_dashboard": "Ir al inicio",
     "go_to_settings": "Ir a Ajustes del sitio"
   },
@@ -94,6 +102,7 @@
     "theme": "Tema",
     "url": "URL del sitio",
     "baseurl": "URL base",
+    "baseurl_help": "Prefijo de ruta para sitios de proyecto en GitHub Pages (por ejemplo, /mi-repo)",
     "save": "Guardar y continuar"
   },
   "site_config": {
@@ -127,7 +136,23 @@
       "name_placeholder": "mi-sitio-telar",
       "name_hint": "Letras, números, puntos, guiones y guiones bajos. No puede empezar con un punto ni con un guion.",
       "owner_label": "Cuenta de GitHub",
-      "submit": "Crear sitio"
+      "title_label": "Título",
+      "title_placeholder": "Mi archivo",
+      "title_hint": "Es el nombre visible de tu sitio. Puedes cambiarlo después.",
+      "language_label": "Idioma",
+      "language_en": "English",
+      "language_es": "Español",
+      "theme_label": "Tema",
+      "theme_group_general": "Generales",
+      "theme_group_partner": "De instituciones aliadas",
+      "advanced": "Opciones avanzadas",
+      "description_label": "Descripción",
+      "description_hint": "Una línea breve que aparece en los buscadores y al compartir tu sitio.",
+      "author_label": "Autor",
+      "author_hint": "Si lo dejas vacío, usamos tu usuario de GitHub.",
+      "url_preview_label": "Tu sitio estará en",
+      "submit": "Crear sitio",
+      "back": "Atrás"
     },
     "errors": {
       "repo_name_taken": "Ya existe un repositorio con este nombre en tu cuenta. Elige otro nombre.",
@@ -135,10 +160,19 @@
       "repo_not_ready": "Tu nuevo repositorio aún se está configurando. Esto suele tardar unos segundos — recarga la página e intenta de nuevo.",
       "github_error": "Algo salió mal al comunicarnos con GitHub. Intenta de nuevo en un momento.",
       "invalid_name": "Este nombre no es válido. Usa letras, números, puntos, guiones y guiones bajos. No puede empezar con un punto ni con un guion.",
-      "name_exists": "Ya existe un repositorio con este nombre en tu cuenta."
+      "name_exists": "Ya existe un repositorio con este nombre en tu cuenta.",
+      "repo_name_taken_retry": "Elige otro nombre",
+      "reload": "Recargar",
+      "try_again": "Intentar de nuevo"
     },
     "progress": {
       "creating": "Creando tu nuevo sitio...",
+      "heading": "Configurando tu nuevo sitio",
+      "setting_up": "Configurando tu sitio",
+      "setting_up_detail": "Creando el repositorio, preparando tu configuración y el contenido inicial, e iniciando la primera construcción.",
+      "setting_up_degraded": "Tu sitio se creó con la configuración predeterminada; lo terminamos de ajustar en el siguiente paso.",
+      "setting_up_scope": "Tu sitio ya se creó. Para terminar de configurarlo, necesitamos acceso a tu nuevo repositorio en GitHub.",
+      "checking_access": "Verificando el acceso",
       "still_setting_up": "Tu sitio aún se está configurando. Recarga la página para continuar.",
       "success": "Tu nuevo sitio Telar está listo."
     },
@@ -158,6 +192,8 @@
       "description": "Elige la cuenta u organización donde se creará el nuevo repositorio.",
       "your_account_label": "Tu cuenta personal",
       "organization_label": "Organización",
+      "install_elsewhere_hint": "¿No ves tu organización? El Compositor solo muestra las cuentas donde ya está instalado.",
+      "install_elsewhere_cta": "Instalar en una cuenta de organización",
       "cancel": "Cancelar"
     }
   },

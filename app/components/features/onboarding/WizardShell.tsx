@@ -12,7 +12,7 @@
  * URL mismatch), a mandatory `configure-site` step fixes them
  * before Done.
  *
- * @version v1.2.0-beta
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -27,6 +27,7 @@ import { StepSync } from "./StepSync";
 import { StepReview } from "./StepReview";
 import { StepDone } from "./StepDone";
 import { SiteConfigConfirmation } from "./SiteConfigConfirmation";
+import { deriveSiteUrl } from "~/lib/site-identity";
 
 type Step = "connect" | "sync" | "review" | "configure-site" | "done";
 
@@ -123,6 +124,9 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     formData.set("intent", "import");
     formData.set("installation_id", String(repo.installationId));
     formData.set("repo_full_name", repo.full_name);
+    // Created sites import their own born-clean content; mark origin so the row
+    // records "created" rather than "imported".
+    if (repo.createdThisRun) formData.set("origin", "created");
     fetcher.submit(formData, { method: "post", action: "/onboarding" });
   };
 
@@ -205,8 +209,16 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   };
 
   const handleDone = () => {
+    // Born-clean created sites are verified at creation — their config was just
+    // written correct (Sheets off, Pages on, URL matched). Skip the post-import
+    // check, both to avoid a redundant round-trip and to dodge the brief
+    // Pages-settling window where GET /pages can 404 and wrongly flag a repair.
+    // Gated on the per-run bornClean flag, never the "created" label alone, so a
+    // partial/failed provisioning still falls through to the repair step.
+    const skipCheck = Boolean(selectedRepo?.createdThisRun && selectedRepo?.bornClean);
+
     // Run config check if not yet done
-    if (!configChecked && projectId != null) {
+    if (!skipCheck && !configChecked && projectId != null) {
       configCheckFetcher.submit(
         { intent: "check-site-config", project_id: String(projectId) },
         { method: "post", action: "/onboarding" }
@@ -215,7 +227,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     }
 
     // If there are issues, show the configure-site step
-    if (sheetsEnabled || pagesNotEnabled || urlMismatch) {
+    if (!skipCheck && (sheetsEnabled || pagesNotEnabled || urlMismatch)) {
       setStep("configure-site");
     } else {
       markOnboardingComplete();
@@ -358,7 +370,15 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
       )}
 
       {step === "done" && (
-        <StepDone onDone={() => {}} />
+        <StepDone
+          onDone={() => {}}
+          created={selectedRepo?.createdThisRun ?? false}
+          siteUrl={
+            selectedRepo?.createdThisRun
+              ? deriveSiteUrl(selectedRepo.owner.login, selectedRepo.name)
+              : undefined
+          }
+        />
       )}
     </div>
   );

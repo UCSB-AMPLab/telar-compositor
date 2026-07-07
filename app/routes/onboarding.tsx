@@ -9,7 +9,7 @@
  * (where the user's first Sheets URL was inaccessible and they enter a
  * corrected one).
  *
- * @version v1.3.2-beta
+ * @version v1.4.0-beta
  */
 
 import { redirect } from "react-router";
@@ -33,6 +33,7 @@ import {
   project_landing,
   project_members,
   project_invites,
+  project_pages,
   objects,
   stories,
   steps,
@@ -53,6 +54,12 @@ export const handle = { i18n: ["onboarding", "common", "account"] };
 
 export interface RepoWithInstallation extends Repository {
   installationId: number;
+  // Set on the synthetic repo handed off by the create flow. `createdThisRun`
+  // marks the import as origin="created"; `bornClean` (born-clean fully
+  // succeeded this run) gates skipping the post-import config check. Absent for
+  // the import flow.
+  createdThisRun?: boolean;
+  bornClean?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,9 +69,14 @@ export interface RepoWithInstallation extends Repository {
 /**
  * Cascade-delete every row that depends on `projectId`, in dependency order:
  * layers → steps → stories → objects → glossary_terms → project_config →
- * project_themes → project_landing → project_members → project_invites →
- * projects. Exported so the unit tests can record the delete-table sequence
- * without bootstrapping the full route action.
+ * project_themes → project_landing → project_pages → project_members →
+ * project_invites → projects. Exported so the unit tests can record the
+ * delete-table sequence without bootstrapping the full route action.
+ *
+ * project_pages must be included: its `project_id` FK to projects has no
+ * ON DELETE CASCADE, so omitting it fails the projects-row delete with a FK
+ * error for any project that has pages. (Kept in sync with
+ * `deleteProjectCascade` in import.server.ts, which already deletes it.)
  *
  * The deletes are issued as a single `db.batch([...])` so D1 executes them
  * atomically; a worker that's evicted mid-cascade can no longer leave behind
@@ -110,6 +122,7 @@ export async function unlinkProjectCascade(
     db.delete(project_config).where(eq(project_config.project_id, projectId)),
     db.delete(project_themes).where(eq(project_themes.project_id, projectId)),
     db.delete(project_landing).where(eq(project_landing.project_id, projectId)),
+    db.delete(project_pages).where(eq(project_pages.project_id, projectId)),
     db.delete(project_members).where(eq(project_members.project_id, projectId)),
     db.delete(project_invites).where(eq(project_invites.project_id, projectId)),
     db.delete(activity_log).where(eq(activity_log.project_id, projectId)),
@@ -247,12 +260,14 @@ export async function action({ request, context }: Route.ActionArgs) {
       return result;
     }
 
+    const origin = formData.get("origin") === "created" ? "created" : "imported";
     const result = await importRepo({
       token,
       installationId,
       repoFullName,
       userId: user.id,
       env,
+      origin,
     });
     if (result.valid && result.telarVersion) {
       const versionCheck = await checkTelarVersion(token, result.telarVersion);
@@ -316,7 +331,13 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     const { isGoogleSheetsEnabled } = await import("~/lib/commit.server");
     const sheetsEnabled = isGoogleSheetsEnabled(configContent);
-    const urlCheck = await verifySiteUrl(token, owner, repo, configContent);
+    // Retry on a transient settling 404: a just-enabled (degraded born-clean)
+    // site's Pages deployment may not have registered yet, and a single read
+    // would wrongly flag "Pages not enabled."
+    const urlCheck = await verifySiteUrl(token, owner, repo, configContent, {
+      attempts: 3,
+      intervalMs: 1500,
+    });
 
     return {
       ok: true,
