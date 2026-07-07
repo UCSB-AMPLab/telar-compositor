@@ -10,7 +10,7 @@
  * disconnects on unmount. Offline edits queue automatically via
  * y-websocket's built-in reconnect/backoff behaviour.
  *
- * @version v1.3.0-beta
+ * @version v1.4.1-beta
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -24,17 +24,60 @@ import { createUndoManager } from "~/lib/undo-manager";
 // Bespoke session-control protocol (mirrors workers/collaboration.ts).
 // Wire format = varuint(2) + uint8(subtype). Server→client only.
 //
-// Note on y-websocket compatibility (verified by y-websocket source
-// inspection 2026-05-10): y-websocket's own dispatch reserves index
-// 2 for `messageAuth` (server-sent auth-deny). Telar's
-// server never sends auth messages on the WS — auth is a one-shot
-// cookie/token check at the upgrade step, after which the socket is
-// either accepted or refused with HTTP 401. Replacing
-// `provider.messageHandlers[2]` is therefore safe in this codebase, and
-// the override is documented at the install site.
+// Note on y-websocket compatibility: y-websocket's own dispatch reserves
+// index 2 for `messageAuth` (server-sent auth-deny). Telar's server never
+// sends auth messages on the WS — auth is a one-shot cookie/token check at
+// the upgrade step, after which the socket is either accepted or refused
+// with HTTP 401. Replacing `provider.messageHandlers[2]` is therefore safe
+// in this codebase; the override is installed by
+// `installSessionControlHandler` below.
+//
+// This was verified against the vendored y-websocket source on 2026-05-10
+// and is now pinned by tests (tests/y-websocket-slot-pin.test.ts, added
+// 2026-07-06): the reserved slot index, the per-instance handler array, and
+// the installed package version are all asserted against the real
+// y-websocket. A future upgrade that renumbers the auth slot or reshapes the
+// handler array therefore fails CI instead of silently dropping eviction
+// notifications — the previous failure mode had no throw and no console line.
 const MSG_SESSION_CONTROL = 2;
 const SUB_PROJECT_DELETED = 0x01;
 const SUB_REMOVED_FROM_PROJECT = 0x02;
+
+/**
+ * Install the session-control handler onto a WebsocketProvider's per-instance
+ * `messageHandlers` array, claiming the reserved `messageAuth` slot (index 2).
+ * See the compatibility notes above for why that is safe in this codebase.
+ *
+ * The install is a deliberate no-op when the array is absent: some test
+ * harnesses mock `WebsocketProvider` without a `messageHandlers` property, and
+ * skipping is preferable to crashing those suites — production always ships the
+ * real provider with its pre-populated handler array.
+ *
+ * Exported so the slot-pin tests can drive this exact code against both a real
+ * provider and a provider-shaped fixture; the assumptions it rests on are
+ * otherwise unguarded and fail silently.
+ */
+export function installSessionControlHandler(
+  provider: Pick<WebsocketProvider, "messageHandlers">,
+  callbacks: { onProjectDeleted: () => void; onRemovedFromProject: () => void },
+): void {
+  const handlers = provider.messageHandlers;
+  if (!Array.isArray(handlers)) return;
+  handlers[MSG_SESSION_CONTROL] = (
+    _encoder,
+    decoder,
+    _provider,
+    _emitSynced,
+    _messageType,
+  ) => {
+    const subtype = decoding.readUint8(decoder);
+    if (subtype === SUB_PROJECT_DELETED) {
+      callbacks.onProjectDeleted();
+    } else if (subtype === SUB_REMOVED_FROM_PROJECT) {
+      callbacks.onRemovedFromProject();
+    }
+  };
+}
 
 /**
  * Identity and location state for a remote collaborator in awareness.
@@ -240,69 +283,43 @@ export function CollaborationProvider({
     // is routed through our handler, not y-websocket's default
     // messageAuth handler. See protocol notes at the top of this file —
     // overriding index 2 is safe because Telar's server never sends
-    // y-websocket auth messages.
-    //
-    // Defensive guard: some test harnesses mock `WebsocketProvider`
-    // without a `messageHandlers` array. Skip the install when the array
-    // is missing rather than crash those suites — production always has
-    // the real provider with its pre-populated handler array.
-    type WsProviderWithHandlers = {
-      messageHandlers?: Array<
-        (
-          encoder: unknown,
-          decoder: ReturnType<typeof decoding.createDecoder>,
-          provider: unknown,
-          emitSynced: boolean,
-          messageType: number,
-        ) => void
-      >;
+    // y-websocket auth messages, and the assumption is pinned by tests.
+    const goToDashboard = () => {
+      if (typeof window !== "undefined") {
+        window.location.assign("/dashboard");
+      }
     };
-    const handlers = (wsProvider as unknown as WsProviderWithHandlers)
-      .messageHandlers;
-    if (Array.isArray(handlers)) {
-      handlers[MSG_SESSION_CONTROL] = (
-        _encoder,
-        decoder,
-        _provider,
-        _emitSynced,
-        _messageType,
-      ) => {
-        const subtype = decoding.readUint8(decoder);
-        const goToDashboard = () => {
-          if (typeof window !== "undefined") {
-            window.location.assign("/dashboard");
-          }
-        };
-        if (subtype === SUB_PROJECT_DELETED) {
-          // Convenor deleted the project. Sticky destructive toast
-          // because the user is being kicked off and must read the
-          // message; critical: true → role="alert" so screen readers
-          // announce immediately. Then redirect to /dashboard so the
-          // user lands somewhere sensible.
-          showToast({
-            message: t("project_deleted_ws_toast", {
-              defaultValue:
-                "This project was deleted by the convenor — your unsaved changes are lost.",
-            }),
-            type: "destructive",
-            autoDismissMs: null,
-            critical: true,
-          });
-          goToDashboard();
-        } else if (subtype === SUB_REMOVED_FROM_PROJECT) {
-          // Single-socket variant: the user left the project from
-          // another tab; this tab disconnects gracefully with the
-          // default 5s info toast.
-          showToast({
-            message: t("removed_from_project_ws_toast", {
-              defaultValue: "You left this project from another tab.",
-            }),
-            type: "info",
-          });
-          goToDashboard();
-        }
-      };
-    }
+    installSessionControlHandler(wsProvider, {
+      onProjectDeleted: () => {
+        // Convenor deleted the project. Sticky destructive toast
+        // because the user is being kicked off and must read the
+        // message; critical: true → role="alert" so screen readers
+        // announce immediately. Then redirect to /dashboard so the
+        // user lands somewhere sensible.
+        showToast({
+          message: t("project_deleted_ws_toast", {
+            defaultValue:
+              "This project was deleted by the convenor — your unsaved changes are lost.",
+          }),
+          type: "destructive",
+          autoDismissMs: null,
+          critical: true,
+        });
+        goToDashboard();
+      },
+      onRemovedFromProject: () => {
+        // Single-socket variant: the user left the project from
+        // another tab; this tab disconnects gracefully with the
+        // default 5s info toast.
+        showToast({
+          message: t("removed_from_project_ws_toast", {
+            defaultValue: "You left this project from another tab.",
+          }),
+          type: "info",
+        });
+        goToDashboard();
+      },
+    });
 
     wsProvider.connect();
     setYdoc(doc);
