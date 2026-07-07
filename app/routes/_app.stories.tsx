@@ -6,9 +6,10 @@
  * Loader fetches the active project's stories ordered by `order` ASC,
  * plus step counts per story, team members (for delete-confirmation
  * contributor warnings), and the viewer's role. Action handles
- * `toggle-draft` and `toggle-private`. Structural ops
- * (`create-story`, `delete-story`, `reorder`) are migrated to Yjs
- * via `useStructuralOps` — see `workers/collaboration.ts`
+ * `toggle-draft`, `toggle-private`, and `flush-yjs-snapshot` (an eager
+ * Durable Object to D1 snapshot before navigating to a freshly-created
+ * story). Structural ops (`create-story`, `delete-story`, `reorder`) are
+ * migrated to Yjs via `useStructuralOps` — see `workers/collaboration.ts`
  * `snapshotToD1`.
  *
  * Renders a vertical dnd-kit list with drag handles, an inline
@@ -17,7 +18,7 @@
  * from the Y.Array so remote collaborators' changes appear in real
  * time; it falls back to loader data during SSR or pre-connection.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { and, asc, count, eq, gt } from "drizzle-orm";
@@ -30,7 +31,6 @@ import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
-  arrayMove,
 } from "@dnd-kit/sortable";
 import { useSortableSensors } from "~/hooks/use-sortable-sensors";
 import type { Route } from "./+types/_app.stories";
@@ -50,9 +50,24 @@ import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { useToast } from "~/hooks/use-toast";
-import { signInternalMarker } from "../../workers/auth";
+import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 
-export const handle = { i18n: ["common", "stories"] };
+export const handle = { i18n: ["common", "stories", "structural"] };
+
+/**
+ * Parse a stored `project_members.contributions` JSON blob, tolerating a
+ * malformed value. A raw SyntaxError here would escape the loader and break
+ * the whole stories-page render, so a bad blob degrades to null (no
+ * contributor warning) rather than a 500.
+ */
+function parseContributions(raw: string | null): Member["contributions"] {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);
@@ -89,15 +104,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const members = memberRows.map((m) => ({
     userId: m.userId,
     name: m.name || m.login,
-    contributions: m.contributions ? JSON.parse(m.contributions) : null,
+    // Guard the stored-JSON parse: a malformed `contributions` value (partial
+    // write, manual edit) must not throw a raw SyntaxError out of the loader
+    // and 500 the whole page. Fall back to null, as the publish loader does.
+    contributions: parseContributions(m.contributions),
   }));
 
   // Step counts per story
-  // Count only content steps (step_number > 0), excluding the title card row
+  // Count only content steps (step_number > 0), excluding the title card row.
+  // `steps` carries no project_id, so scope to the active project by joining
+  // through `stories` — otherwise this aggregates every project's steps.
   const stepCountRows = await db
     .select({ story_id: steps.story_id, count: count() })
     .from(steps)
-    .where(gt(steps.step_number, 0))
+    .innerJoin(stories, eq(steps.story_id, stories.id))
+    .where(and(eq(stories.project_id, activeProject.id), gt(steps.step_number, 0)))
     .groupBy(steps.story_id);
 
   const storyStepCounts: Record<number, number> = {};
@@ -159,12 +180,9 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "flush-yjs-snapshot": {
-      // Eager DO -> D1 snapshot before the client navigates to
-      // a freshly-created story. Closes the race where the editor loader
-      // (`_app.stories.$storyId.tsx:75`) reads D1 before the debounced
-      // `snapshotToD1` has flushed and 404s. Mirrors the marker-signing
-      // dance from `_app.publish.tsx:301-334` (the only other caller of
-      // the DO `/snapshot` endpoint today).
+      // Eager DO -> D1 snapshot before the client navigates to a
+      // freshly-created story. Closes the race where the editor loader reads
+      // D1 before the debounced `snapshotToD1` has flushed and 404s.
       //
       // Soft-error posture: on failure return ok:false but
       // do NOT throw. The client still navigates — the story exists in
@@ -178,18 +196,14 @@ export async function action({ request, context }: Route.ActionArgs) {
 
         const doId = env.COLLABORATION.idFromName(String(activeProject.id));
         const doStub = env.COLLABORATION.get(doId);
-        const { sigHex, timestamp } = await signInternalMarker(
+        const headers = await makeInternalMarkerHeaders(
           activeProject.id,
           env.SESSION_SECRET,
           "snapshot",
         );
         const snapshotReq = new Request(`https://internal/snapshot`, {
           method: "POST",
-          headers: {
-            "X-Internal-Auth": sigHex,
-            "X-Internal-Timestamp": String(timestamp),
-            "X-Internal-Project": String(activeProject.id),
-          },
+          headers,
         });
         const snapshotRes = await doStub.fetch(snapshotReq);
         if (!snapshotRes.ok) {
@@ -356,19 +370,9 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   // Stable dnd-kit identifier for each row — see `app/lib/item-key.ts` for
   // why `_tempId` must win over numeric `id`. Previously inlined here with the
   // `id`-first ordering, which produced a key flip when snapshotToD1
-  // backfilled the row id and tripped the deletion-detection observer at
-  // line ~502, firing a false "story was deleted" toast on new-story
-  // creation. Closed alongside the same fix for pages.
-
-  // ------------------------------------------------------------------
-  // DnD reorder (D1 fallback only — Yjs mode uses ops.reorderStories)
-  // ------------------------------------------------------------------
-  const [d1Items, setD1Items] = useState<number[]>(
-    (loaderStories as StoryItem[]).map((s) => s.id)
-  );
-  useEffect(() => {
-    setD1Items((loaderStories as StoryItem[]).map((s) => s.id));
-  }, [loaderStories]);
+  // backfilled the row id and tripped the remote-delete detection observer,
+  // firing a false "story was deleted" toast on new-story creation. Closed
+  // alongside the same fix for pages.
 
   const [activeId, setActiveId] = useState<string | number | null>(null);
   const [showNewCard, setShowNewCard] = useState(showNewForm);
@@ -427,12 +431,6 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   const [highlightedKeys, setHighlightedKeys] = useState<Record<string, string>>(
     {}
   );
-  // Delete fade state is kept for future enhancement — currently deletes go
-  // straight through the modal without a pre-fade. Remote-delete fade is not
-  // applied on the stories list (the item simply disappears); the story
-  // editor handles the redirect case in Task 2.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [pendingFadeKeys, _setPendingFadeKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!useYjs) return;
@@ -490,35 +488,19 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     if (deletedTitles.length === 0) return;
     // Suppress during reorder — the clone approach triggers a false delete
     if (reorderingRef.current) return;
-    // Deleter name is inferred from awareness — best guess is the first remote
-    // collaborator whose awareness location referenced the deleted story, but
-    // awareness drops location on navigation so this is a soft identification.
-    const deleterName =
-      remoteCollaborators[0]?.user.name ?? "";
+    // Stay generic: a Y.Array delete carries no actor, and awareness only
+    // tells us who is connected — not who deleted. Naming a collaborator here
+    // would misattribute the action. No undo affordance either: a remote
+    // delete has no local undo path, so a button would be a no-op — the TabNav
+    // Undo control is the authoritative path.
     for (const title of deletedTitles) {
-      const message = deleterName
-        ? tStructural("toast_item_deleted", { label: title, name: deleterName })
-        : tStructural("toast_item_deleted_generic", { label: title });
       showToast({
-        message,
+        message: tStructural("toast_item_deleted_generic", { label: title }),
         type: "destructive",
-        ...(userRole === "convenor"
-          ? {
-              action: {
-                label: tStructural("toast_item_deleted_undo"),
-                onClick: () => {
-                  // The shared UndoManager covers Y.Array deletes.
-                  // Pop the top undo stack item — this re-inserts the Y.Map.
-                  // We cannot call undo() here without the context ref; the
-                  // TabNav Undo button is the authoritative path.
-                },
-              },
-            }
-          : {}),
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayStories, useYjs, userRole]);
+  }, [displayStories, useYjs]);
 
   // ------------------------------------------------------------------
   // Handlers
@@ -548,27 +530,20 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
       setTimeout(() => { reorderingRef.current = false; }, 100);
       return;
     }
-    // D1 fallback reorder is no longer supported — Yjs is the canonical path.
-    // Optimistic update kept for visual smoothness during early reconnect.
-    const newOrder = arrayMove(
-      d1Items,
-      d1Items.indexOf(active.id as number),
-      d1Items.indexOf(over.id as number)
-    );
-    setD1Items(newOrder);
+    // Reorder is a Yjs-only operation; before the collaboration socket
+    // connects there is no canonical order to mutate, so the drag is a no-op.
   }
 
-  function handleCreateStory(title: string, _subtitle: string, _byline: string) {
+  function handleCreateStory(title: string, subtitle: string, byline: string) {
     setShowNewCard(false);
     if (useYjs) {
       const baseSlug = slugify(title) || `story-${Date.now()}`;
       // Append a short timestamp suffix to keep story_id unique across clients
       // without a server round-trip (snapshotToD1 does not enforce uniqueness).
       const storyId = `${baseSlug}-${Date.now().toString(36).slice(-4)}`;
-      ops!.addStory(title, storyId);
-      // TODO: subtitle/byline are created as empty Y.Text in addStory and
-      // the user can edit them inline on the story editor page. If desired,
-      // a follow-up enhancement can populate them via getYText().insert().
+      // Seed the subtitle and byline the user typed in the creation form; both
+      // stay editable inline on the story editor afterwards.
+      ops!.addStory(title, storyId, subtitle, byline);
 
       // Trigger an eager DO->D1 snapshot flush, then navigate to
       // the new story's editor. The post-flush navigate fires from the
@@ -658,10 +633,6 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
 
   const hasStories = displayStories.length > 0;
 
-  // Suppress navigate warning until used in Task 2 — keep reference to avoid
-  // unused-import lint in the stories list file.
-  void navigate;
-
   return (
     <div className="max-w-7xl mx-auto">
       {/* Page header */}
@@ -710,7 +681,6 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
               {displayStories.map((story, index) => {
                 const key = String(keyFor(story));
                 const highlightColor = highlightedKeys[key];
-                const isPendingFade = pendingFadeKeys.has(key);
                 const stepCount = useYjs
                   ? story._yStepCount ?? 0
                   : storyStepCounts[story.id] ?? 0;
@@ -733,12 +703,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
                     deleteTooltip={tStructural("tooltip_cannot_delete")}
                     skipInternalConfirm={useYjs}
                     rowClassName={
-                      [
-                        highlightColor ? "structural-highlight" : "",
-                        isPendingFade ? "structural-fade-out" : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" ") || undefined
+                      highlightColor ? "structural-highlight" : undefined
                     }
                     rowStyle={
                       highlightColor

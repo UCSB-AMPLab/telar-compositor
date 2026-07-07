@@ -10,7 +10,7 @@
  *   action returns `{ ok: false, ... }` rather than throwing — the client
  *   decides whether to navigate.
  *
- * @version v1.3.0-beta
+ * @version v1.4.1-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -48,8 +48,9 @@ vi.mock("~/lib/membership.server", () => ({
   })),
 }));
 
-// signInternalMarker lives in workers/auth and the action imports it via
-// the relative path used by _app.publish.tsx.
+// signInternalMarker lives in workers/auth. The action reaches it transitively
+// through makeInternalMarkerHeaders (app/lib/internal-marker.server.ts), which
+// imports the same module — mocking it here covers both import paths.
 vi.mock("../workers/auth", () => ({
   signInternalMarker: vi.fn(async () => ({
     sigHex: "deadbeef",
@@ -126,8 +127,10 @@ describe("_app.stories action: flush-yjs-snapshot intent", () => {
     } as never);
 
     // Marker signed with the active project's id, the session secret, and the
-    // snapshot op so it can't be replayed against a different internal op.
-    expect(signInternalMarker).toHaveBeenCalledWith(42, "sess-secret", "snapshot");
+    // snapshot op so it can't be replayed against a different internal op. The
+    // action routes this through makeInternalMarkerHeaders, which forwards an
+    // undefined userId (snapshot is not a per-user op).
+    expect(signInternalMarker).toHaveBeenCalledWith(42, "sess-secret", "snapshot", undefined);
 
     // DO stub looked up by project id (string-coerced).
     expect(COLLABORATION.idFromName).toHaveBeenCalledWith("42");
