@@ -32,14 +32,24 @@ const ROUTE_SRC = readFileSync(
 
 // The two remote-delete effects live between these anchors. Slicing keeps the
 // assertions scoped to the delete-detection region and away from unrelated
-// toast usage elsewhere in the file.
-const REGION = ROUTE_SRC.slice(
-  ROUTE_SRC.indexOf("Remote-delete detection for steps and parent story"),
-  ROUTE_SRC.indexOf("For step 0, show step 1's object"),
+// toast usage elsewhere in the file. The indices are captured and validated
+// explicitly: a drifted anchor would make indexOf return -1, and slicing with
+// -1 can still yield a non-empty region, letting the scoped not-checks pass
+// vacuously. An invalid anchor instead empties the region and fails the
+// locate test below.
+const REGION_START = ROUTE_SRC.indexOf(
+  "Remote-delete detection for steps and parent story",
 );
+const REGION_END = ROUTE_SRC.indexOf("For step 0, show step 1's object");
+const REGION =
+  REGION_START !== -1 && REGION_END > REGION_START
+    ? ROUTE_SRC.slice(REGION_START, REGION_END)
+    : "";
 
 describe("story editor remote-delete toasts stay generic", () => {
   it("locates the remote-delete region", () => {
+    expect(REGION_START).toBeGreaterThan(-1);
+    expect(REGION_END).toBeGreaterThan(REGION_START);
     expect(REGION.length).toBeGreaterThan(0);
   });
 
