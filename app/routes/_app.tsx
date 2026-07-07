@@ -230,11 +230,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
       // Pending invitations (unused invite rows) so the sidebar can offer
       // convenors the cancel affordance beside where invites are sent.
-      const inviteRows = await db
-        .select({ id: project_invites.id, createdBy: project_invites.created_by })
-        .from(project_invites)
-        .where(and(eq(project_invites.project_id, activeProjectId), isNull(project_invites.used_by)));
-      sidebarPendingInvites = inviteRows;
+      // Convenor-only: non-convenors never render the section, and the rows
+      // must not ride down in their loader payload either — cancel is
+      // convenor-gated server-side, so collaborators have no reason to see
+      // pending-invite ids or their creators.
+      if (userRole === "convenor") {
+        const inviteRows = await db
+          .select({ id: project_invites.id, createdBy: project_invites.created_by })
+          .from(project_invites)
+          .where(and(eq(project_invites.project_id, activeProjectId), isNull(project_invites.used_by)));
+        sidebarPendingInvites = inviteRows;
+      }
 
       // One-time "you've been added" welcome: a collaborator whose membership
       // hasn't been acknowledged yet (welcomed_at null). Convenor name + repo

@@ -177,6 +177,7 @@ describe("/objects denied-toast + empty-state hint", () => {
 // still rejected by these guards.
 
 const structuralOpsSrc = readFileSync(join(APP_DIR, "hooks", "use-structural-ops.ts"), "utf-8");
+const appSrc = readFileSync(join(APP_DIR, "routes", "_app.tsx"), "utf-8");
 
 describe("server gates remain intact (security)", () => {
   it("keeps every requireOwner guard on the gated /dashboard intents", () => {
@@ -200,5 +201,16 @@ describe("server gates remain intact (security)", () => {
   it("keeps the use-structural-ops canDelete role gate (convenor or owner)", () => {
     expect(structuralOpsSrc).toContain('if (role === "convenor") return true;');
     expect(structuralOpsSrc).toContain('return yMap.get("created_by") === currentUserId;');
+  });
+
+  it("gates the sidebar pending-invite loader query to convenors", () => {
+    // Pending-invite rows are a convenor-only affordance; they must not ride
+    // down in a non-convenor's loader payload. The fetch + assignment sit
+    // inside a userRole === "convenor" check (default stays the empty array).
+    const gated =
+      /if \(userRole === "convenor"\) \{[\s\S]*?sidebarPendingInvites = inviteRows;[\s\S]*?\}/.test(
+        appSrc,
+      );
+    expect(gated).toBe(true);
   });
 });

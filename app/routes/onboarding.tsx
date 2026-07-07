@@ -331,11 +331,13 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     const { isGoogleSheetsEnabled } = await import("~/lib/commit.server");
     const sheetsEnabled = isGoogleSheetsEnabled(configContent);
-    // Retry on a transient settling 404: a just-enabled (degraded born-clean)
-    // site's Pages deployment may not have registered yet, and a single read
-    // would wrongly flag "Pages not enabled."
+    // Retry on a transient settling 404 only for born-clean created sites,
+    // whose just-enabled Pages deployment may not have registered yet and
+    // would otherwise be misread as "Pages not enabled." For imported sites
+    // a disabled Pages is a real state, not a settling race, so read once and
+    // report immediately instead of paying ~3s of pointless retries.
     const urlCheck = await verifySiteUrl(token, owner, repo, configContent, {
-      attempts: 3,
+      attempts: project.origin === "created" ? 3 : 1,
       intervalMs: 1500,
     });
 
