@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.4.1-beta (2026-07-06)
+
+A patch release for collaborative editing: phantom deletion notices, deletion notices that guessed at the deleter, and story details silently lost at creation.
+
+### Fixes
+
+- **No more phantom "deleted" notices on the Objects page** — Creating an object could show every editor in the project a false "was deleted" notice about half a minute later, when the object's permanent database id was assigned. The notice now fires only for genuine deletions.
+
+- **Deletion notices no longer guess who deleted** — When another collaborator deleted a story, page, or step, the notice named a connected collaborator as the deleter — but a deletion carries no record of who performed it, so the name shown could be the wrong person. Notices now simply say what was deleted. The notice's Undo button, which did nothing when clicked, was also removed.
+
+- **New stories keep their subtitle and byline** — The subtitle and byline entered in the story-creation form were discarded, leaving both blank on the created story. They are now saved.
+
+### Internal
+
+- The Stories page computes step counts from the active project's stories only, instead of aggregating every project's steps.
+- The collaboration client's compatibility assumptions about its websocket library are now pinned by tests, so a dependency upgrade that would break project-deletion notifications fails in CI instead of silently.
+- Dead code and stale comments removed in the stories route.
+
 ## v1.4.0-beta (2026-07-06)
 
 A creation release: new sites are now born clean and ready to use, set up through a short wizard instead of a repair step; more of the interface is translated; and a batch of collaboration and sync fixes.
@@ -22,7 +40,7 @@ A creation release: new sites are now born clean and ready to use, set up throug
 
 - **Image alt text survives import** — A story image's alt text is now preserved when a story is imported from the repository and republished, instead of being dropped — keeping published sites accessible.
 
-- **Story-deletion notice names the right person** — When a collaborator deletes a story, the notice other editors see now correctly names who deleted it.
+- **Story-deletion notice shows the right story** — Deleting a story could surface a previously-deleted story's title in the notice other editors see; the notice now shows the title of the story that was actually deleted.
 
 ### Interface language
 

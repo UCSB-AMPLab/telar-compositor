@@ -18,7 +18,7 @@
  * anything; collaborators can delete only items they created
  * themselves.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { useMemo } from "react";
@@ -36,7 +36,12 @@ export interface StructuralOps {
   canDelete: (yMap: Y.Map<unknown>) => boolean;
 
   // Stories.
-  addStory: (title: string, storyId: string) => void;
+  addStory: (
+    title: string,
+    storyId: string,
+    subtitle?: string,
+    byline?: string
+  ) => void;
   deleteStory: (id: number | null, tempId: string | null) => void;
   reorderStories: (oldIndex: number, newIndex: number) => void;
 
@@ -243,7 +248,12 @@ export function useStructuralOps(
 
     // ---- Stories ----
 
-    const addStory: StructuralOps["addStory"] = (title, storyId) => {
+    const addStory: StructuralOps["addStory"] = (
+      title,
+      storyId,
+      subtitle,
+      byline
+    ) => {
       ydoc.transact(() => {
         const storiesArray = ydoc.getArray<Y.Map<unknown>>("stories");
         const storyMap = new Y.Map<unknown>();
@@ -252,8 +262,11 @@ export function useStructuralOps(
         storyMap.set("created_by", currentUserId);
         storyMap.set("story_id", storyId);
         storyMap.set("title", new Y.Text(title));
-        storyMap.set("subtitle", new Y.Text(""));
-        storyMap.set("byline", new Y.Text(""));
+        // Seed subtitle/byline from the creation form. Both are collaborative
+        // Y.Text so they stay editable inline on the story editor afterwards;
+        // an omitted value starts empty.
+        storyMap.set("subtitle", new Y.Text(subtitle ?? ""));
+        storyMap.set("byline", new Y.Text(byline ?? ""));
         storyMap.set("order", storiesArray.length);
         storyMap.set("private", false);
         storyMap.set("draft", false);

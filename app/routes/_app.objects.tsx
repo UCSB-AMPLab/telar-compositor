@@ -18,7 +18,7 @@
  * The modal's intents live on the /dashboard action; this page only
  * mounts it and surfaces the version-change toast.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { and, asc, eq, inArray } from "drizzle-orm";
@@ -37,6 +37,7 @@ import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { findYMapById, findYMapByIdOrTempId } from "~/lib/yjs-helpers";
+import { keyFor } from "~/lib/item-key";
 import { useToast } from "~/hooks/use-toast";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { DocsLink } from "~/components/ui/DocsLink";
@@ -1867,10 +1868,12 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     lastInsertedPendingRef.current = null;
   }
 
-  // Stable React key for each row (Y.Array order is the canonical order;
-  // drag-to-reorder was removed, so no sortable id is needed).
-  const keyFor = (o: YjsObjectRow): string | number =>
-    o.id > 0 ? o.id : o._tempId ?? `idx-${o._yIndex ?? 0}`;
+  // Row keys and delete-detection bookkeeping both come from the shared
+  // keyFor helper (see ~/lib/item-key). It keys on _tempId first so a key
+  // stays stable when snapshotToD1 backfills the numeric D1 id after
+  // creation; an id-first key would flip at backfill and read as a remote
+  // deletion. Y.Array order is the canonical order and drag-to-reorder was
+  // removed, so no sortable id is needed.
 
   // --------------------------------------------------------------------
   // Remote-delete toast — fires when an object disappears from the

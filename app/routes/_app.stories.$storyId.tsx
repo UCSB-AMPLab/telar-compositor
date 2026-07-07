@@ -23,7 +23,7 @@
  * on the step-select / layer-open / layer-close handlers — never
  * inside the one-shot `deepLinkConsumedRef` mount read.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -840,16 +840,13 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     ? String(activeStep.id > 0 ? activeStep.id : activeStep._tempId ?? "")
     : null;
 
-  // The remote-delete effect below has deps [sidebarSteps, useYjs,
-  // userRole] (exhaustive-deps disabled) but reads activeStepIndex (for the
-  // toast step number) and remoteCollaborators (for the deleter name). Reading
-  // those directly captures a stale closure — the toast could show the wrong
-  // step number or attribute the deletion to a stale/empty collaborator. Mirror
-  // both into refs written during render so the effect reads current values.
+  // The remote-delete effect below has deps [sidebarSteps, useYjs]
+  // (exhaustive-deps disabled) but reads activeStepIndex for the toast's step
+  // number. Reading it directly would capture a stale closure and the toast
+  // could show the wrong step number, so mirror it into a ref written during
+  // render and let the effect read the current value.
   const activeStepIndexRef = useRef(activeStepIndex);
   activeStepIndexRef.current = activeStepIndex;
-  const remoteCollaboratorsRef = useRef(remoteCollaborators);
-  remoteCollaboratorsRef.current = remoteCollaborators;
 
   useEffect(() => {
     if (!useYjs) return;
@@ -866,52 +863,44 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
     // If the active step was deleted, toast + reset to title card.
     const activeKey = activeStepKeyRef.current;
-    const deleterName = remoteCollaboratorsRef.current[0]?.user.name ?? "";
     if (activeKey && deletedKeys.includes(activeKey)) {
       const stepLabel = tStructural("entity_step", {
         number: activeStepIndexRef.current,
       });
-      const message = deleterName
-        ? tStructural("toast_item_deleted", {
-            label: stepLabel,
-            name: deleterName,
-          })
-        : tStructural("toast_item_deleted_generic", { label: stepLabel });
+      // Stay generic: a Y.Array delete carries no actor, and awareness only
+      // tells us who is connected — not who deleted. Naming a collaborator here
+      // would misattribute the action. No undo affordance either: a remote
+      // delete has no local undo path — the shared UndoManager tracks only
+      // local origins, so a collaborator's delete never enters this client's
+      // undo stack — and a button wired to it would be a no-op, so omit it
+      // rather than show dead UI.
       showToast({
-        message,
+        message: tStructural("toast_item_deleted_generic", { label: stepLabel }),
         type: "destructive",
-        ...(userRole === "convenor"
-          ? {
-              action: {
-                label: tStructural("toast_item_deleted_undo"),
-                onClick: () => {
-                  // The global TabNav Undo button / Ctrl+Z drives
-                  // the shared UndoManager — no direct call here.
-                },
-              },
-            }
-          : {}),
       });
       setActiveStepIndex(0);
       setLayer1Open(false);
       setLayer2Open(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidebarSteps, useYjs, userRole]);
+  }, [sidebarSteps, useYjs]);
 
   // Parent-story delete detection — when the current story is removed from
   // the stories Y.Array, redirect to /stories with a toast.
   useEffect(() => {
     if (!useYjs || !storiesArray) return;
     const handler = () => {
+      // story.id is the loader-provided real D1 id (the route can't load
+      // without a persisted story row), so this lookup key never flips under
+      // the snapshotToD1 id-backfill — there is no false-deletion risk here.
       const gone = findYMapById(storiesArray, story.id) === null;
       if (gone) {
-        const deleterName = remoteCollaboratorsRef.current[0]?.user.name ?? "";
+        // Stay generic: a Y.Array delete carries no actor, and awareness only
+        // tells us who is connected — not who deleted. Naming a collaborator
+        // here would misattribute the action.
         const label = story.title ?? story.story_id;
         showToast({
-          message: deleterName
-            ? tStructural("toast_item_deleted", { label, name: deleterName })
-            : tStructural("toast_item_deleted_generic", { label }),
+          message: tStructural("toast_item_deleted_generic", { label }),
           type: "destructive",
         });
         navigate("/stories");
