@@ -1,38 +1,42 @@
 /**
- * This file is the Dashboard route — the project management hub
- * where convenors and collaborators land after sign-in. Lists owned
- * + shared projects, surfaces the orphan-stories banner, exposes
- * team management for the active project, and serves as the launch
- * point for switching between projects.
+ * This file is the /dashboard route — no longer a page, but the app's
+ * shared global action endpoint. The dashboard was retired as a
+ * destination: its panels were dispersed to the Homepage tab, the
+ * collaboration sidebar, the header's project switcher, and the /start
+ * recovery card, and the loader now redirects any stray GET (a stale
+ * bookmark, an old link) to /objects, the daily home.
  *
- * Loader fetches the user's full project set (via `getUserProjects`),
- * the active project's team members, pending invites, project
- * config, and any orphan story IDs that drive the orphan-stories
- * banner. Action handles switch-project, reorder, autosave-config,
- * sync, and team-management intents (generate-invite, search-users,
- * send-invite, remove-member). The page renders the project status
- * bar, workflow steps, team panel, and orphan-stories banner.
+ * The `action` export is what keeps this route alive. It is the one
+ * endpoint for project-scoped intents that no single page owns, and
+ * components across the app POST here with an explicit
+ * `action: "/dashboard"`:
  *
- * Preview sections (Site Description, Welcome Message, Stories /
- * Objects showcase) live on the Homepage tab in
- * `_app.homepage.tsx` — they were relocated and this route keeps
- * the project-management shell only.
+ * - switch-project — the header's project switcher and the onboarding
+ *   project list
+ * - generate-invite, search-users, send-invite, cancel-invite,
+ *   remove-member — team management in the collaboration sidebar
+ * - compute-full-sync-diff, apply-full-sync, accept-divergence — the
+ *   repo sync review flow and the out-of-sync popover
+ * - restore-orphan-drafts, ignore-orphans — the orphan-story recovery
+ *   card on /start
  *
- * @version v1.3.6-beta
+ * The default export is an unreachable null stub: React Router requires
+ * a component on any route module that client-side navigations target,
+ * so it stays (see the note above it).
+ *
+ * @version v1.4.0-beta
  */
 
-import { asc, count, desc, eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
-import { Trans, useTranslation } from "react-i18next";
-import { Link, redirect, useFetcher, useLoaderData, useNavigate, useSearchParams } from "react-router";
-import React, { useState, useEffect } from "react";
+import { eq, and } from "drizzle-orm";
+import { redirect } from "react-router";
 import type { Route } from "./+types/_app.dashboard";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, stories, steps, layers, project_config, project_members, project_invites, users } from "~/db/schema";
+import { projects, stories, project_config, project_members, project_invites, users } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getFileContent, getRepoHead } from "~/lib/github.server";
-import { getUserProjects, requireOwner, requireProjectMember } from "~/lib/membership.server";
+import { getUserProjects, requireOwner } from "~/lib/membership.server";
 import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 import { recordActivity } from "~/lib/activity.server";
 import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
@@ -45,16 +49,6 @@ import {
   mapStoryCsv,
 } from "~/lib/import.server";
 import { commitFilesToRepo } from "~/lib/commit.server";
-import { ProjectStatusBar } from "~/components/features/dashboard/ProjectStatusBar";
-import {
-  SyncConfirmModal,
-  SYNC_DIFF_FETCHER_KEY,
-} from "~/components/features/dashboard/SyncConfirmModal";
-import { RoleBadge } from "~/components/features/dashboard/RoleBadge";
-import OrphanStoryBanner from "~/components/features/dashboard/OrphanStoryBanner";
-import { useVersionChangeToast } from "~/hooks/use-version-change-toast";
-import { EmptyState } from "~/components/features/dashboard/EmptyState";
-import { Settings, Image, BookOpen, Sparkles, Upload } from "lucide-react";
 
 export const handle = { i18n: ["common", "dashboard", "team", "upgrade", "sync", "config"] };
 
@@ -62,8 +56,8 @@ export async function loader() {
   // The dashboard is retired AS A DESTINATION. A stray nav to /dashboard
   // (stale bookmark, old link) lands on /objects, the daily home. The `action`
   // export below stays fully intact — /dashboard remains the shared global
-  // endpoint for invites, member management, autosave-config, switch-project,
-  // reorder, and the sync intents. Only the page is gone.
+  // endpoint for invites, member management, switch-project, and the sync
+  // intents. Only the page is gone.
   throw redirect("/objects");
 }
 
@@ -90,41 +84,6 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 
   switch (intent) {
-    case "reorder": {
-      const orderJson = formData.get("order") as string;
-      const projectId = Number(formData.get("projectId"));
-      const order: number[] = JSON.parse(orderJson);
-
-      await requireProjectMember(db, projectId, user.id);
-
-      // Security: verify all story IDs belong to an accessible project
-      const projectStories = await db
-        .select({ id: stories.id })
-        .from(stories)
-        .where(
-          and(
-            eq(stories.project_id, projectId),
-            inArray(stories.id, order)
-          )
-        );
-
-      const ownedIds = new Set(projectStories.map((s) => s.id));
-      const now = new Date().toISOString();
-
-      await Promise.all(
-        order
-          .filter((id) => ownedIds.has(id))
-          .map((id, idx) =>
-            db
-              .update(stories)
-              .set({ order: idx, updated_at: now })
-              .where(eq(stories.id, id))
-          )
-      );
-
-      return { ok: true, intent: "reorder" };
-    }
-
     case "switch-project": {
       const projectId = Number(formData.get("projectId"));
 
@@ -145,26 +104,6 @@ export async function action({ request, context }: Route.ActionArgs) {
       return redirect("/objects", {
         headers: { "Set-Cookie": cookie },
       });
-    }
-
-    case "autosave-config": {
-      const field = formData.get("field") as string;
-      const value = formData.get("value") as string;
-      const projectId = Number(formData.get("entityId") ?? formData.get("projectId"));
-      const allowedFields = ["title", "description"];
-      if (!allowedFields.includes(field)) throw new Response("Bad request", { status: 400 });
-
-      if (!Number.isFinite(projectId) || projectId <= 0) {
-        throw new Response("Bad request", { status: 400 });
-      }
-      await requireProjectMember(db, projectId, user.id);
-
-      await db
-        .update(project_config)
-        .set({ [field]: value, updated_at: new Date().toISOString() })
-        .where(eq(project_config.project_id, projectId));
-
-      return { ok: true, intent: "autosave-config" };
     }
 
     case "generate-invite": {
@@ -351,7 +290,6 @@ export async function action({ request, context }: Route.ActionArgs) {
           owner,
           repo,
           db,
-          null,
         );
 
         const hasChanges =
