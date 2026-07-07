@@ -16,7 +16,7 @@
  * Back-compat: existing callers (`<WarningBanner message=... />`)
  * are unchanged. All four extra props are optional.
  *
- * @version v1.2.0-beta
+ * @version v1.4.0-beta
  */
 
 import { useEffect, useState } from "react";

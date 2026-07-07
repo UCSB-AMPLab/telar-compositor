@@ -11,7 +11,7 @@
  *   modal skips build tracking instead of polling a run that never started.
  * - decrypt failures return structured errors instead of uncaught 500s.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

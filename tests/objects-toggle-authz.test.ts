@@ -5,7 +5,7 @@
  * signed-in user could flip featured or overwrite metadata on any object
  * by id.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

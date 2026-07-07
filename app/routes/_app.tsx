@@ -21,7 +21,7 @@
  * fail-closed: a below-minimum convenor on a gated route cannot slip
  * through on a cold isolate.
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

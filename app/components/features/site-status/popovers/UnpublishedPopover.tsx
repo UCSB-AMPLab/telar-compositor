@@ -14,7 +14,7 @@
  * client bundle. The popover is a pure renderer — the pill fetches the summary
  * on open and passes it down.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { Link } from "react-router";

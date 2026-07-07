@@ -13,7 +13,7 @@
  * fetcher in the render path. Tokens are pixel-locked to the design system's
  * colour contract (ok swatch = chilca-pale / chilca-deep).
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { Globe, ArrowUpRight, Check, GitCommit, RefreshCw } from "lucide-react";

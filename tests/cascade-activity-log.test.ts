@@ -3,7 +3,7 @@
  * deletion cascades to avoid FK violations (activity_log.project_id → projects
  * and activity_log.actor_user_id → users are both NOT NULL FKs enforced by D1).
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 import { describe, it, expect, vi } from "vitest";
 

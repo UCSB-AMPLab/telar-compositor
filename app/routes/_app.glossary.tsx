@@ -22,7 +22,7 @@
  * quick-create) are role-gated in the UI; the server-side gates remain
  * the real boundary.
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import { eq } from "drizzle-orm";

@@ -7,7 +7,7 @@
  * Tests: always-visible icon, dropdown open/close, Remove callback,
  * defence-in-depth isConvenor guard, outside-click dismissal.
  *
- * @version v1.0.1-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";

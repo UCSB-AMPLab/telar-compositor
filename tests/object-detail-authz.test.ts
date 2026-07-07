@@ -6,7 +6,7 @@
  * project, closing the cross-project IDOR where any signed-in user could
  * update or permanently delete any object by db id.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

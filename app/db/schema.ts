@@ -3,7 +3,7 @@
  * every table, column, type, and inferred TypeScript model the server
  * code reads or writes flows through here.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { sqliteTable, text, integer, real, unique, blob } from "drizzle-orm/sqlite-core";

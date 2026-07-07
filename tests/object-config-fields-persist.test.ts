@@ -14,7 +14,7 @@
  * stubbed ctx/env and a hand-rolled DB that records every prepare/bind and
  * routes SELECTs by SQL substring.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

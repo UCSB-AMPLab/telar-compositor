@@ -14,7 +14,7 @@
  * denied-toast, the /objects empty-state hint, and the server-gate integrity
  * assertions proving don't-render never replaced the server boundary.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";

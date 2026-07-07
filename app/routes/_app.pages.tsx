@@ -15,7 +15,7 @@
  * once the user edits it. That lets the user create a new page
  * without immediately committing to a URL.
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import { asc, eq, and } from "drizzle-orm";

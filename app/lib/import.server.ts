@@ -19,7 +19,7 @@
  * importing whatever stale rows happen to sit in the repo would
  * desynchronise the user's content without them noticing.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import Papa from "papaparse";

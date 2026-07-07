@@ -17,7 +17,7 @@
  * from the Y.Array so remote collaborators' changes appear in real
  * time; it falls back to loader data during SSR or pre-connection.
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import { and, asc, count, eq, gt } from "drizzle-orm";

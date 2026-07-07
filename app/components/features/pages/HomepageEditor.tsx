@@ -14,7 +14,7 @@
  * The component bundles the live-language observer (config.lang → placeholders),
  * the stories-showcase drag-and-drop, and the featured-objects derivation.
  *
- * @version v1.3.7-beta
+ * @version v1.4.0-beta
  */
 
 import { useTranslation } from "react-i18next";

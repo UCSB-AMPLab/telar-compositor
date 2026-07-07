@@ -14,7 +14,7 @@
  * keys, not the copy. MemoryRouter wraps the render because the stale_head
  * blocker renders a <Link>.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";

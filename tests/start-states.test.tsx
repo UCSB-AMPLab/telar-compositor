@@ -14,7 +14,7 @@
  * tile is locked (no Link, no `disabled` button); empty views render the
  * role-specific checklist instead of the descriptive summary.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import type { ReactElement } from "react";

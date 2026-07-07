@@ -23,7 +23,7 @@
  * on the step-select / layer-open / layer-close handlers — never
  * inside the one-shot `deepLinkConsumedRef` mount read.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";

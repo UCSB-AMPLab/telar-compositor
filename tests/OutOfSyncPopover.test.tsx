@@ -7,7 +7,7 @@
  * that submits the existing `accept-divergence` intent via a POST fetcher —
  * with no new backend intent and no db write introduced in the file.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";

@@ -16,7 +16,7 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { Link } from "react-router";

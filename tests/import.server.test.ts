@@ -10,7 +10,7 @@
  * path, the cascade-aware `deleteProjectCascade`, and the orphan-story
  * detection plus `.compositor-ignored` parsing.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";

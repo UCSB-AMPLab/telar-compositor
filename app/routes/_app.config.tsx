@@ -10,7 +10,7 @@
  * tracked — navigating away with unsaved changes shows a
  * confirmation modal.
  *
- * @version v1.3.6-beta
+ * @version v1.4.0-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";

@@ -11,7 +11,7 @@
  * Mirrors tests/CreateSiteForm.test.tsx fetcher-registry pattern; StepConnect
  * calls useFetcher exactly once (unlinkFetcher), so the modulo is 1.
  *
- * @version v1.2.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

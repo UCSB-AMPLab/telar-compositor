@@ -31,7 +31,7 @@
  *   video     ← 9-5-video-audio.md      (/docs/the-compositor/video-audio/)
  *   sync      ← 9-7-sync-updates.md     (/docs/the-compositor/sync-updates/)
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 /** A single vendored doc slice. */

@@ -5,7 +5,7 @@
  * keeps every navigation fast: GitHub work never blocks the loader, and the
  * pill reconciles the cache in the background.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { projects } from "~/db/schema";

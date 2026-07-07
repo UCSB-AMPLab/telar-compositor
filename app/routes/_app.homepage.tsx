@@ -23,7 +23,7 @@
  * its `autosave-landing` action travels with the editor — a known pitfall
  * is that /dashboard's action does NOT handle autosave-landing.
  *
- * @version v1.3.0-beta
+ * @version v1.4.0-beta
  */
 
 import { and, eq, inArray } from "drizzle-orm";

@@ -12,7 +12,7 @@
  * `~/routes/onboarding` that each of the three new `if (intent === ...)`
  * branches delegates to.
  *
- * @version v1.2.0-beta
+ * @version v1.4.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

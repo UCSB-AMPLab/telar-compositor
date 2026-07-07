@@ -21,7 +21,7 @@
  * slot) is composed in the default export; the rail (activity / recovery)
  * and docs drawer mount into this shell.
  *
- * @version v1.3.6-beta
+ * @version v1.4.0-beta
  */
 
 
