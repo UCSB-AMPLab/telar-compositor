@@ -10,7 +10,7 @@
  * imports, and tests can pull from them directly without touching the
  * route module.
  *
- * @version v1.2.0-beta
+ * @version v1.4.0-beta
  */
 
 import {
@@ -18,7 +18,9 @@ import {
   createSiteFromTemplate,
   waitForRepoReady,
   isRepoInInstallation,
-  patchSiteConfigLanguage,
+  commitBornCleanSite,
+  humanizeSlug,
+  normalizeTheme,
   RepoNameTakenError,
   PermissionDeniedError,
   RepoNotReadyError,
@@ -55,24 +57,78 @@ export async function handleCreateSiteIntents(
   if (intent === "create-site") {
     const owner = formData.get("owner") as string;
     const name = formData.get("name") as string;
+    const installationId = Number(formData.get("installation_id"));
     try {
       const { repoUrl, defaultBranch } = await createSiteFromTemplate(token, owner, name);
       await waitForRepoReady(token, owner, name);
 
-      // Seed telar_language in the new repo's
-      // _config.yml from the user's ui_locale. Soft-fail — if the patch
-      // throws for any reason, the create-site action still returns ok:true
-      // and the UI renders an inline amber warning pointing at /config.
-      let langPatchFailed = false;
-      if (userUiLocale === "es") {
+      // Born-clean provisioning: commit the site's own config + language-matched
+      // starter content (disabling the demo Google Sheet so the first import
+      // seeds D1 from the repo's CSVs, not the live demo), enable Pages, and
+      // dispatch the first build. Best-effort with degrade-to-repair — the repo
+      // exists regardless, so create-site still returns ok:true; any born-clean
+      // step failing flips bornCleanOk so the caller knows NOT to skip the repair
+      // step.
+      //
+      // Identity comes from the wizard fields when present, with safe fallbacks:
+      // language defaults to the UI locale; title to the humanized slug;
+      // description to the title; theme is enum-validated (unknown/`custom` →
+      // `trama`); author defaults to the owner login.
+      const langField = formData.get("language");
+      const locale: "en" | "es" =
+        langField === "es" ? "es" : langField === "en" ? "en" : userUiLocale === "es" ? "es" : "en";
+      const titleField = ((formData.get("title") as string) ?? "").trim();
+      const title = titleField || humanizeSlug(name, locale);
+      const descField = ((formData.get("description") as string) ?? "").trim();
+      const description = descField || title;
+      const theme = normalizeTheme(formData.get("theme"));
+      const authorField = ((formData.get("author") as string) ?? "").trim();
+      const author = authorField || owner;
+      const attemptBornClean = async (): Promise<{
+        ok: boolean;
+        error?: string;
+        pagesUrl?: string;
+      }> => {
         try {
-          await patchSiteConfigLanguage(token, owner, name, "es");
+          const installationToken = await getInstallationToken(
+            env.GITHUB_APP_ID,
+            env.GITHUB_PRIVATE_KEY,
+            installationId,
+          );
+          const result = await commitBornCleanSite({
+            token,
+            installationToken,
+            owner,
+            name,
+            locale,
+            title,
+            description,
+            theme,
+            author,
+          });
+          return { ok: result.ok, error: result.error, pagesUrl: result.pagesUrl };
         } catch (err) {
           // eslint-disable-next-line no-console
-          console.error("[onboarding-create-site] _config.yml patch failed:", err);
-          langPatchFailed = true;
+          console.error("[onboarding-create-site] born-clean provisioning failed:", err);
+          return { ok: false, error: "provisioning" };
         }
+      };
+
+      // A commit/provisioning failure means the born-clean config never landed,
+      // so the import step below would read google_sheets:enabled and seed D1
+      // from the live demo Sheet. The born-clean commit is idempotent (it skips
+      // the re-commit when the config is already clean), so retry once — the
+      // dominant cause is a transient GitHub hiccup that clears immediately, and
+      // a landed-but-reported-failed first attempt is safe to repeat. Bounded to
+      // a single retry; pages/dispatch/scope failures are not retried here (the
+      // config already landed, and the repair flow handles them).
+      let bc = await attemptBornClean();
+      if (!bc.ok && (bc.error === "commit" || bc.error === "provisioning")) {
+        bc = await attemptBornClean();
       }
+      const bornCleanOk = bc.ok;
+      const bornCleanError = bc.error;
+      const pagesUrl = bc.pagesUrl;
 
       return {
         ok: true,
@@ -81,7 +137,17 @@ export async function handleCreateSiteIntents(
         defaultBranch,
         owner,
         name,
-        langPatchFailed,
+        bornCleanOk,
+        bornCleanError,
+        pagesUrl,
+        // Spanish sites where the config commit never landed never got their
+        // telar_language written, so the existing "set it manually" nudge still
+        // applies. That covers both a failed commit step and a provisioning throw
+        // before the commit (e.g. the installation token can't be minted). On a
+        // pages/dispatch failure the language is already committed correctly.
+        langPatchFailed:
+          locale === "es" &&
+          (bornCleanError === "commit" || bornCleanError === "provisioning"),
       };
     } catch (err) {
       if (err instanceof RepoNameTakenError) {

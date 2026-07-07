@@ -708,6 +708,71 @@ title: My Site
     const headers = opts.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe(`Bearer ${TOKEN}`);
   });
+
+  // --- opt-in Pages-settling backoff (#3) ----------------------------------
+  // Right after Pages is enabled, GET /pages returns a transient 404 until the
+  // first deployment registers. The backoff is opt-in (default off) so the
+  // commit-hot-path callers in _app.objects.tsx never eat the latency.
+  const restResponse = (body: unknown, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  });
+
+  it("with the retry opt-in, a transient settling 404 that clears → pagesEnabled:true", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(restResponse({}, 404))
+      .mockResolvedValueOnce(
+        restResponse({ html_url: "https://testuser.github.io/my-telar-site", https_enforced: true }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL, {
+      attempts: 3,
+      intervalMs: 0,
+    });
+
+    expect(result.pagesEnabled).toBe(true);
+    expect(result.match).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("with the retry opt-in, a persistent 404 → false after exactly N attempts (bounded)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(restResponse({}, 404));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL, {
+      attempts: 3,
+      intervalMs: 0,
+    });
+
+    expect(result.pagesEnabled).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("with the retry opt-in, a non-transient failure (403) breaks immediately without burning retries", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(restResponse({}, 403));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL, {
+      attempts: 3,
+      intervalMs: 0,
+    });
+
+    expect(result.pagesEnabled).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("by default (no opts) does NOT retry — a single 404 returns false immediately", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(restResponse({}, 404));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL);
+
+    expect(result.pagesEnabled).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

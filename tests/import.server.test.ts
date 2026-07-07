@@ -767,6 +767,26 @@ describe("mapStoryCsv", () => {
       expect(result.steps).toHaveLength(0);
     });
   });
+
+  // Regression: mapStoryCsv used to drop alt_text on every import/
+  // resync while publish writes it, so the field round-tripped to null. Both
+  // sites named in the finding are covered: the field must survive the row
+  // mapping, and a row that is meaningful ONLY because of alt_text must not
+  // be filtered out as blank.
+  it("preserves step alt_text through the CSV row mapping (round-trip regression)", () => {
+    const rows = [
+      { step: "1", object: "img-001", x: "0.5", y: "0.5", zoom: "1.0", page: "", question: "Q?", answer: "", layer1_button: "", layer1_content: "", layer2_button: "", layer2_content: "", alt_text: "A wide shot of the loom." },
+    ];
+    const result = mapStoryCsv(rows, 1);
+    expect(result.steps[0].alt_text).toBe("A wide shot of the loom.");
+  });
+
+  it("treats alt_text as a meaningful field — a row with only alt_text is not filtered out as blank", () => {
+    const rows = [{ step: "1", object: "", question: "", alt_text: "A wide shot of the loom." }];
+    const result = mapStoryCsv(rows, 1);
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].alt_text).toBe("A wide shot of the loom.");
+  });
 });
 
 // ---------------------------------------------------------------------------
