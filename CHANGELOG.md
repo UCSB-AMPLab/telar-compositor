@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.4.0-beta (2026-07-06)
+
+A creation release: new sites are now born clean and ready to use, set up through a short wizard instead of a repair step; more of the interface is translated; and a batch of collaboration and sync fixes.
+
+### New features
+
+- **Guided site creation** — Creating a new Telar site now opens a short wizard that collects the site's name, title, description, and language up front, instead of a single repository-name field. Those details are written into the new site before its first build.
+
+- **New sites start clean** — A newly created site now comes correctly configured, with a single language-matched starter story and glossary entry and no "repair" step. Previously the create flow handed you a site to fix — turn off Google Sheets, correct the URL — and pre-filled your workspace with demo content pulled from a shared example sheet. New sites are now created empty and correctly set up from the start.
+
+- **Create a site in an organization** — When your GitHub account belongs to organizations, the create flow now lets you choose an organization as the home for the new site's repository, not just your personal account.
+
+- **Cancel a pending invitation** — Convenors can now cancel an invitation that was sent but not yet accepted, from a pending-invitations list in the collaboration sidebar. Previously an invitation could be sent but never withdrawn, so a mistaken or superseded invite held a collaborator seat until it was accepted.
+
+### Fixes
+
+- **Repository edits to the site's language now show up in sync** — Changing the site's language (`telar_language`) — along with the site logo, story key, or homepage collection layout — directly in the GitHub repository was invisible to the compositor's sync review, so the change silently stayed out. These fields are now tracked, so a repository-side edit appears in the sync review like any other change.
+
+- **"Review changes" reopens the sync review** — The "Review changes" action on the out-of-sync status pill, and the matching link on the publish page when the repository has moved ahead, now reliably open the full repository-sync review. They previously led to a dead end.
+
+- **Image alt text survives import** — A story image's alt text is now preserved when a story is imported from the repository and republished, instead of being dropped — keeping published sites accessible.
+
+- **Story-deletion notice names the right person** — When a collaborator deletes a story, the notice other editors see now correctly names who deleted it.
+
+### Interface language
+
+- **More of the interface is translated** — A sweep across the objects, onboarding, collaboration, glossary, editor, status, start, team, and dashboard areas translated the remaining English-only text — build-progress labels, status pills, empty states, and accessibility labels among them — so the interface reads consistently in the selected language.
+
+### Data layer
+
+- A new `origin` field on projects records whether a project was created in the compositor or imported from an existing repository. Existing projects default to "imported", which is correct for every project created before this release. The migration is additive and backwards-compatible — self-hosters can apply it without losing the ability to run the previous version.
+
 ## v1.3.9-beta (2026-06-23)
 
 A navigation labelling fix for Spanish sites.
