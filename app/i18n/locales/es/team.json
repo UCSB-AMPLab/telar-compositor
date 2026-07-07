@@ -50,8 +50,12 @@
   "seats_available": "{{used}} de {{max}} puestos",
   "cancel_invite": "Cancelar invitación",
   "cancel_invite_aria": "Cancelar invitación pendiente",
+  "pending_invites_heading": "Invitaciones pendientes",
+  "pending_invites_empty": "No hay invitaciones pendientes",
   "role_convenor": "Coordinador/a",
   "team_heading": "Equipo",
   "remove_modal_title": "Quitar colaborador/a",
-  "remove_modal_body": "¿Quitar a @{{username}}? Perderá el acceso a este proyecto. Puedes volver a invitarle cuando quieras."
+  "remove_modal_body": "¿Quitar a @{{username}}? Perderá el acceso a este proyecto. Puedes volver a invitarle cuando quieras.",
+  "close": "Cerrar",
+  "row_menu_aria": "Menú de la fila de @{{username}}"
 }

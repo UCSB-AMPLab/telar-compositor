@@ -26,13 +26,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { redirect, Outlet, useFetcher, useLocation, useNavigation, useSearchParams } from "react-router";
-import { eq, and, gt, inArray, sql } from "drizzle-orm";
+import { eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
 import type { Route } from "./+types/_app";
 import { authMiddleware, userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { projects, project_config, project_members, users, stories, objects, project_pages, glossary_terms } from "~/db/schema";
-import { getUserRole, getPresenceColor, getUserProjects, resolveActiveProject } from "~/lib/membership.server";
+import { projects, project_config, project_members, project_invites, users, stories, objects, project_pages, glossary_terms } from "~/db/schema";
+import { getUserRole, getPresenceColor, getUserProjects } from "~/lib/membership.server";
 import { createSessionStorage } from "~/lib/session.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { decrypt } from "~/lib/crypto.server";
 import { deriveHeadDiverged, getCachedLatestTagIfWarm, getCachedLatestTag, deriveWorkflowsApproval, type WorkflowsApproval } from "~/lib/github-status.server";
 import { compareTelarVersion } from "~/lib/upgrade.server";
@@ -105,6 +106,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     contributions: { fields_edited: number; sessions: number; stories_edited: string[]; objects_edited: string[]; last_active: string | null } | null;
   }> = [];
   let sidebarSeats = { used: 0, limit: 5 };
+  let sidebarPendingInvites: Array<{ id: number; createdBy: number }> = [];
   // "You've been added to a project" one-time welcome: true when the active
   // project's membership for THIS user is a collaborator with welcomed_at null.
   let needsWelcome = false;
@@ -120,12 +122,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // to /objects with a ?denied= reason the toast can read. It does NOT replace
     // the server-side action gates on /publish and /upgrade — those stay intact.
     {
-      const sessionStorageForGuard = createSessionStorage(env.SESSION_SECRET);
-      const sessionForGuard = await sessionStorageForGuard.getSession(
-        request.headers.get("Cookie"),
-      );
-      const guardActiveId = sessionForGuard.get("activeProjectId") as number | undefined;
-      const resolved = await resolveActiveProject(db, user.id, guardActiveId);
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
       if (resolved) {
         const guardRole = await getUserRole(db, resolved.project.id, user.id);
         const guardUrl = new URL(request.url);
@@ -230,6 +227,14 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         contributions: m.contributions ? JSON.parse(m.contributions) : null,
       }));
       sidebarSeats = { used: memberRows.length, limit: 5 };
+
+      // Pending invitations (unused invite rows) so the sidebar can offer
+      // convenors the cancel affordance beside where invites are sent.
+      const inviteRows = await db
+        .select({ id: project_invites.id, createdBy: project_invites.created_by })
+        .from(project_invites)
+        .where(and(eq(project_invites.project_id, activeProjectId), isNull(project_invites.used_by)));
+      sidebarPendingInvites = inviteRows;
 
       // One-time "you've been added" welcome: a collaborator whose membership
       // hasn't been acknowledged yet (welcomed_at null). Convenor name + repo
@@ -424,6 +429,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     allProjects,
     environment: env.ENVIRONMENT,
     sidebarMembers,
+    sidebarPendingInvites,
     sidebarSeats,
     needsWelcome,
     needsReleaseNote,
@@ -532,7 +538,7 @@ function LocationAwarenessSync() {
 }
 
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
-  const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarSeats, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor, needsWorkflowsApproval, workflowsApprovalUrl } = loaderData;
+  const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarPendingInvites, sidebarSeats, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor, needsWorkflowsApproval, workflowsApprovalUrl } = loaderData;
   const { t: tCollab } = useTranslation("collaboration");
   const location = useLocation();
   // Story editor route (`/stories/:id`, not the `/stories` list). There the tab
@@ -645,6 +651,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           onClose={() => setSidebarOpen(false)}
           isConvenor={userRole === "convenor"}
           members={sidebarMembers ?? []}
+          pendingInvites={sidebarPendingInvites ?? []}
           seats={sidebarSeats ?? { used: 0, limit: 5 }}
           triggerRef={usersIconRef}
         />

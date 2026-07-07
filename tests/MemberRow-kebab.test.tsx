@@ -38,7 +38,7 @@ describe("MemberRow kebab menu", () => {
   it("renders MoreVertical icon always (no opacity-0 class)", () => {
     const { container } = render(<MemberRow {...defaultProps} isConvenor={true} />);
     // The kebab button must be present in the DOM
-    const btn = screen.getByRole("button", { name: /row menu/i });
+    const btn = screen.getByRole("button", { name: /row_menu_aria/i });
     expect(btn).toBeTruthy();
     // No opacity-0 on any element within the row
     expect(container.innerHTML).not.toContain("opacity-0");
@@ -51,7 +51,7 @@ describe("MemberRow kebab menu", () => {
 
   it("clicking the kebab opens a dropdown with a Remove item", () => {
     render(<MemberRow {...defaultProps} isConvenor={true} />);
-    const btn = screen.getByRole("button", { name: /row menu/i });
+    const btn = screen.getByRole("button", { name: /row_menu_aria/i });
     fireEvent.click(btn);
     // Dropdown must contain a Remove option
     const item = screen.getByRole("menuitem");
@@ -61,13 +61,13 @@ describe("MemberRow kebab menu", () => {
 
   it("kebab is only rendered when isConvenor=true (defence-in-depth for non-convenor accidental clicks)", () => {
     render(<MemberRow {...defaultProps} isConvenor={false} />);
-    expect(screen.queryByRole("button", { name: /row menu/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /row_menu_aria/i })).toBeNull();
   });
 
   it("Remove item triggers onRemove prop", () => {
     const onRemove = vi.fn();
     render(<MemberRow {...defaultProps} isConvenor={true} onRemove={onRemove} />);
-    const btn = screen.getByRole("button", { name: /row menu/i });
+    const btn = screen.getByRole("button", { name: /row_menu_aria/i });
     fireEvent.click(btn);
     const removeItem = screen.getByRole("menuitem");
     fireEvent.click(removeItem);
@@ -81,7 +81,7 @@ describe("MemberRow kebab menu", () => {
         <button data-testid="outside">Outside</button>
       </div>
     );
-    const btn = screen.getByRole("button", { name: /row menu/i });
+    const btn = screen.getByRole("button", { name: /row_menu_aria/i });
     fireEvent.click(btn);
     // dropdown is open
     expect(screen.getByRole("menuitem")).toBeTruthy();

@@ -41,7 +41,7 @@ describe("MemberRow — sidebar Remove button threads userId", () => {
     );
 
     // Open the kebab menu
-    const kebab = screen.getByRole("button", { name: /row menu/i });
+    const kebab = screen.getByRole("button", { name: /row_menu_aria/i });
     fireEvent.click(kebab);
 
     // Click the Remove item

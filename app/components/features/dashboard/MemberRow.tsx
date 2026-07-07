@@ -78,7 +78,7 @@ function MemberRowKebab({
     <div ref={menuRef} className="relative">
       <button
         type="button"
-        aria-label={`Row menu for @${username}`}
+        aria-label={t("row_menu_aria", { username })}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}

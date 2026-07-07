@@ -181,12 +181,15 @@ const structuralOpsSrc = readFileSync(join(APP_DIR, "hooks", "use-structural-ops
 describe("server gates remain intact (security)", () => {
   it("keeps every requireOwner guard on the gated /dashboard intents", () => {
     const guards = dashboardSrc.match(/requireOwner\(db, activeProject\.id, user\.id\)/g) ?? [];
-    // The 9 per-intent guards (autosave-config, generate-invite, search-users,
-    // send-invite, cancel-invite, remove-member, restore-orphan-drafts,
-    // ignore-orphans, + 1 structural intent) are all present.
+    // The 9 per-intent guards (generate-invite, send-invite, cancel-invite,
+    // remove-member, compute-full-sync-diff, apply-full-sync,
+    // accept-divergence, restore-orphan-drafts, ignore-orphans) are all
+    // present. autosave-config and reorder are retired (v1.4.0-beta) and
+    // never contributed to this count — they were requireProjectMember
+    // guards, not requireOwner.
     expect(guards.length).toBe(9);
     expect(dashboardSrc).toContain(
-      'import { getUserProjects, requireOwner, requireProjectMember } from "~/lib/membership.server"',
+      'import { getUserProjects, requireOwner } from "~/lib/membership.server"',
     );
   });
 

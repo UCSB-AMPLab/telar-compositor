@@ -24,9 +24,16 @@ import { RemoveCollaboratorModal } from "~/components/features/collaboration/Rem
 import { MemberRow } from "~/components/features/dashboard/MemberRow";
 import { InviteForm } from "~/components/features/dashboard/InviteForm";
 
-// PRESENCE_PALETTE — 8 colours, assigned by index.
-// Import inline here to avoid a circular dep through PresenceBar.
-const PRESENCE_PALETTE = [
+// AVATAR_FALLBACK_PALETTE — 8 colours, assigned by index, for the DonutChart
+// contribution-avatar fallback when a member has no `presenceColor`.
+// Deliberately distinct from membership.server.ts's own `PRESENCE_PALETTE`
+// (a 6-entry palette assigning each project member's persistent presence
+// colour) — accepted as a separate, intentional data-viz palette rather than
+// unified, since the two serve different lifetimes (per-project persistent
+// assignment vs. per-render chart fallback) and different sizes (6 vs 8).
+// Defined inline here (rather than imported) to avoid a circular dep
+// through PresenceBar.
+const AVATAR_FALLBACK_PALETTE = [
   "#8B5E3C",
   "#4A7C9E",
   "#6B8E23",
@@ -52,11 +59,23 @@ interface Member {
   presenceColor?: string | null;
 }
 
+/**
+ * PendingInvite — an outstanding token-based invitation that has not yet been
+ * accepted. These are anonymous (no invitee identity is stored until the link
+ * is used), so a row shows a generic "pending" label plus a cancel affordance.
+ */
+export interface PendingInvite {
+  id: number;
+  createdBy?: number;
+}
+
 export interface CollaborationSidebarProps {
   open: boolean;
   onClose: () => void;
   isConvenor: boolean;
   members: Member[];
+  /** Outstanding, not-yet-accepted invitations (convenor-only surface). */
+  pendingInvites?: PendingInvite[];
   seats: { used: number; limit: number };
   /** ref to the Users icon button — focus returns here on close (a11y) */
   triggerRef?: React.RefObject<HTMLElement | null>;
@@ -73,6 +92,7 @@ export function CollaborationSidebar({
   onClose,
   isConvenor,
   members,
+  pendingInvites = [],
   seats,
   triggerRef,
   className,
@@ -82,6 +102,16 @@ export function CollaborationSidebar({
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
   const removeFetcher = useFetcher();
+  const cancelInviteFetcher = useFetcher();
+
+  // Optimistic revocation: while a cancel-invite POST is in flight, hide the
+  // targeted row immediately (the loader revalidation removes it for good on
+  // completion). Mirrors the per-fetcher optimistic pattern used elsewhere.
+  const cancellingInviteId =
+    cancelInviteFetcher.state !== "idle"
+      ? Number(cancelInviteFetcher.formData?.get("inviteId"))
+      : null;
+  const visibleInvites = pendingInvites.filter((inv) => inv.id !== cancellingInviteId);
 
   // Auto-close when a freeze starts so the sidebar doesn't sit behind the modal
   useEffect(() => {
@@ -123,11 +153,11 @@ export function CollaborationSidebar({
     (c) => memberUserIds.has(c.user.githubId)
   );
 
-  // Build DonutChart data: join members + contributionsByUser + PRESENCE_PALETTE colour
+  // Build DonutChart data: join members + contributionsByUser + AVATAR_FALLBACK_PALETTE colour
   const donutData: DonutMember[] = members.map((m, i) => ({
     userId: m.userId,
     name: m.username,
-    color: m.presenceColor ?? PRESENCE_PALETTE[i % PRESENCE_PALETTE.length],
+    color: m.presenceColor ?? AVATAR_FALLBACK_PALETTE[i % AVATAR_FALLBACK_PALETTE.length],
     count: contributionsByUser.get(m.userId)?.fields_edited ?? 0,
     isConvenor: m.role === "convenor",
   }));
@@ -144,6 +174,13 @@ export function CollaborationSidebar({
     fd.set("userId", String(userId));
     removeFetcher.submit(fd, { method: "post", action: "/dashboard" });
     setRemoveTarget(null);
+  }
+
+  function handleCancelInvite(inviteId: number) {
+    const fd = new FormData();
+    fd.set("intent", "cancel-invite");
+    fd.set("inviteId", String(inviteId));
+    cancelInviteFetcher.submit(fd, { method: "post", action: "/dashboard" });
   }
 
   return (
@@ -262,6 +299,51 @@ export function CollaborationSidebar({
                 />
               ))}
             </ul>
+
+            {/* Pending invitations — convenor-only. Sits beside the invite
+                controls so a sent-but-unaccepted invite can be revoked before
+                it occupies a seat. Cancels dispatch intent "cancel-invite" to
+                the shared /dashboard action (requireOwner-guarded). */}
+            {isConvenor && (
+              <div className="mt-4">
+                <h4 className="font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  {t("team:pending_invites_heading")}
+                </h4>
+                {visibleInvites.length === 0 ? (
+                  <p className="font-body text-sm text-gray-400">
+                    {t("team:pending_invites_empty")}
+                  </p>
+                ) : (
+                  <ul className="rounded-lg overflow-hidden border border-gray-100">
+                    {visibleInvites.map((inv) => (
+                      <li
+                        key={inv.id}
+                        className="flex items-center gap-3 px-3 py-2.5 bg-white opacity-70 [&:not(:last-child)]:border-b border-gray-100"
+                      >
+                        <div
+                          className="w-8 h-8 rounded-full bg-gray-100 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span className="font-body text-sm text-gray-400 flex-1 min-w-0 truncate">
+                          {t("team:pending_label")}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelInvite(inv.id)}
+                          disabled={cancelInviteFetcher.state !== "idle"}
+                          aria-label={t("team:cancel_invite_aria")}
+                          title={t("team:cancel_invite")}
+                          className="shrink-0 p-1 rounded text-gray-300 hover:text-terracotta transition-colors disabled:opacity-50"
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
             {isConvenor && (
               <InviteForm
                 projectId={projectId}
