@@ -81,6 +81,20 @@ vi.mock("~/lib/membership.server", () => ({
       onboarding_completed: 1,
     },
   ]),
+  // The dashboard action resolves the active project through the shared
+  // resolveActiveProjectFromRequest helper, which delegates here. The
+  // convenor gate under test is requireOwner, not this role — return a
+  // resolvable project so resolution never short-circuits to no_project.
+  resolveActiveProject: vi.fn(async () => ({
+    project: {
+      id: 1,
+      user_id: 7,
+      github_repo_full_name: "owner/repo",
+      userRole: "collaborator",
+      onboarding_completed: 1,
+    },
+    userRole: "collaborator",
+  })),
   requireOwner: vi.fn(async () => undefined),
   requireProjectMember: vi.fn(async () => undefined),
 }));
@@ -110,7 +124,7 @@ vi.mock("~/lib/activity.server", () => ({
 // ---------------------------------------------------------------------------
 
 import { action } from "~/routes/_app.dashboard";
-import { requireOwner } from "~/lib/membership.server";
+import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -195,6 +209,34 @@ describe("dashboard action: restore-orphan-drafts (convenor-only guard)", () => 
       expect.anything(),
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: shared active-project resolution wiring
+//
+// The action resolves the active project through the shared
+// resolveActiveProjectFromRequest helper (which delegates to
+// resolveActiveProject on membership.server). When that resolves null — the
+// caller belongs to no project — repo-facing intents must short-circuit to
+// no_project before any GitHub/DO work, and never reach requireOwner.
+// ---------------------------------------------------------------------------
+
+describe("dashboard action: no resolvable project → no_project", () => {
+  for (const intent of ["restore-orphan-drafts", "ignore-orphans"]) {
+    it(`${intent}: returns no_project and skips requireOwner when resolution is null`, async () => {
+      vi.mocked(resolveActiveProject).mockResolvedValueOnce(null);
+
+      const result = (await action({
+        request: buildRequest({ intent }),
+        context: buildContext(),
+        params: {},
+      } as never)) as { ok: boolean; error?: string };
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("no_project");
+      expect(vi.mocked(requireOwner)).not.toHaveBeenCalled();
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

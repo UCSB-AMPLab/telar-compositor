@@ -10,7 +10,7 @@
  * path, the cascade-aware `deleteProjectCascade`, and the orphan-story
  * detection plus `.compositor-ignored` parsing.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "fs";
@@ -24,6 +24,8 @@ import {
   mapObjectsCsv,
   mapProjectCsv,
   mapStoryCsv,
+  isLayerFileReference,
+  resolveLayerFileReferences,
   mapGlossaryCsv,
   parseIndexMd,
   parsePageMarkdown,
@@ -36,6 +38,8 @@ import {
   isSafeObjectId,
 } from "~/lib/import.server";
 import { parseYaml } from "~/lib/yaml.server";
+import { serializeStory, layerFileContent } from "~/lib/publish.server";
+import type { StepWithLayers } from "~/lib/publish.server";
 import {
   layers,
   steps,
@@ -424,6 +428,41 @@ describe("mapConfigToProjectConfig", () => {
     expect(mapped.google_sheets_enabled).toBe(false);
     expect(mapped.google_sheets_published_url).toBe("");
   });
+
+  // story_key location: publish writes it under `protected:` → `key:` with a
+  // legacy top-level `story_key:` fallback. The reader must prefer protected.key,
+  // fall back to the top-level scalar, and let protected win when both exist.
+  describe("story_key location (protected.key vs top-level)", () => {
+    it("reads story_key from the protected block when only nested", () => {
+      const config = parseYaml("protected:\n  key: s3cret-nested\n");
+      const mapped = mapConfigToProjectConfig(config);
+      expect(mapped.story_key).toBe("s3cret-nested");
+    });
+
+    it("reads story_key from the top-level scalar when only top-level", () => {
+      const config = parseYaml("story_key: s3cret-top\n");
+      const mapped = mapConfigToProjectConfig(config);
+      expect(mapped.story_key).toBe("s3cret-top");
+    });
+
+    it("prefers protected.key over the top-level scalar when both exist", () => {
+      const config = parseYaml("story_key: s3cret-top\nprotected:\n  key: s3cret-nested\n");
+      const mapped = mapConfigToProjectConfig(config);
+      expect(mapped.story_key).toBe("s3cret-nested");
+    });
+
+    it("parses a quoted protected.key value exactly (no quotes retained)", () => {
+      const config = parseYaml('protected:\n  key: "abc 123"\n');
+      const mapped = mapConfigToProjectConfig(config);
+      expect(mapped.story_key).toBe("abc 123");
+    });
+
+    it("is undefined when neither location carries a key", () => {
+      const config = parseYaml("title: No Key Site\n");
+      const mapped = mapConfigToProjectConfig(config);
+      expect(mapped.story_key).toBeUndefined();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -786,6 +825,173 @@ describe("mapStoryCsv", () => {
     const result = mapStoryCsv(rows, 1);
     expect(result.steps).toHaveLength(1);
     expect(result.steps[0].alt_text).toBe("A wide shot of the loom.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer-content file references — isLayerFileReference + resolveLayerFileReferences
+// ---------------------------------------------------------------------------
+// Publish stores only the FILENAME in a `layerN_content` cell and writes the
+// real panel markdown to telar-content/texts/stories/*.md. Import must resolve
+// those filename cells to file content before mapping, or it stores the literal
+// filename string as the panel body. Inline cells must be left untouched.
+
+describe("isLayerFileReference", () => {
+  it("flags a bare .md filename as a file reference", () => {
+    expect(isLayerFileReference("weavers-step1-layer1.md")).toBe(true);
+  });
+
+  it("trims surrounding whitespace before checking the suffix", () => {
+    expect(isLayerFileReference("  panel.md  ")).toBe(true);
+  });
+
+  it("treats inline prose as inline (not a file reference)", () => {
+    expect(isLayerFileReference("A paragraph of author prose.")).toBe(false);
+    expect(isLayerFileReference("See the **bold** loom.")).toBe(false);
+  });
+
+  it("treats an empty or undefined cell as not a reference", () => {
+    expect(isLayerFileReference("")).toBe(false);
+    expect(isLayerFileReference(undefined)).toBe(false);
+  });
+
+  it("rejects path-traversal filenames (mirrors the framework guard)", () => {
+    expect(isLayerFileReference("../secrets.md")).toBe(false);
+    expect(isLayerFileReference("/etc/passwd.md")).toBe(false);
+    expect(isLayerFileReference("sub\\panel.md")).toBe(false);
+  });
+
+  it("is case-sensitive on the .md suffix (matches the framework)", () => {
+    expect(isLayerFileReference("panel.MD")).toBe(false);
+  });
+});
+
+describe("resolveLayerFileReferences", () => {
+  it("substitutes the referenced file's contents for a filename cell", async () => {
+    const rows = [
+      { step: "1", object: "img-1", layer1_content: "weavers-panel.md", layer2_content: "" },
+    ];
+    const fetcher = vi.fn(async (filename: string) =>
+      filename === "weavers-panel.md" ? "---\ntitle: The Loom\n---\n\nReal panel body." : null,
+    );
+    const resolved = await resolveLayerFileReferences(rows, fetcher);
+    expect(fetcher).toHaveBeenCalledWith("weavers-panel.md");
+    expect(resolved[0].layer1_content).toBe("---\ntitle: The Loom\n---\n\nReal panel body.");
+    // Untouched empty cell.
+    expect(resolved[0].layer2_content).toBe("");
+  });
+
+  it("leaves inline cells byte-for-byte and never fetches", async () => {
+    const rows = [
+      { step: "1", object: "img-1", layer1_content: "Inline **markdown** body.", layer2_content: "" },
+    ];
+    const fetcher = vi.fn(async () => "should not be used");
+    const resolved = await resolveLayerFileReferences(rows, fetcher);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(resolved[0].layer1_content).toBe("Inline **markdown** body.");
+  });
+
+  it("degrades to leaving the cell untouched when the referenced file is missing", async () => {
+    const rows = [
+      { step: "1", object: "img-1", layer1_content: "gone.md", layer2_content: "" },
+    ];
+    const fetcher = vi.fn(async () => null);
+    const resolved = await resolveLayerFileReferences(rows, fetcher);
+    expect(fetcher).toHaveBeenCalledWith("gone.md");
+    // Cell left as-is — mapStoryCsv then treats it as inline, exactly the
+    // framework's missing-file degradation.
+    expect(resolved[0].layer1_content).toBe("gone.md");
+  });
+});
+
+describe("mapStoryCsv after layer-file resolution", () => {
+  it("stores the file body as layer content and the frontmatter title (not the filename)", async () => {
+    const rows = [
+      { step: "1", object: "img-1", question: "Q?", answer: "", layer1_button: "More", layer1_content: "weavers-panel.md", layer2_button: "", layer2_content: "" },
+    ];
+    const resolved = await resolveLayerFileReferences(rows, async (f) =>
+      f === "weavers-panel.md" ? "---\ntitle: The Loom\n---\n\nReal panel body." : null,
+    );
+    const { layers: mapped } = mapStoryCsv(resolved, 1);
+    const layer1 = mapped.find((l) => l.layer_number === 1)!;
+    expect(layer1.content).toBe("Real panel body.");
+    expect(layer1.title).toBe("The Loom");
+    // The literal filename must NOT survive as content — that was the bug.
+    expect(layer1.content).not.toBe("weavers-panel.md");
+  });
+
+  it("keeps inline content unchanged through the map (no regression)", async () => {
+    const rows = [
+      { step: "1", object: "img-1", question: "Q?", answer: "", layer1_button: "More", layer1_content: "Just inline prose.", layer2_button: "", layer2_content: "" },
+    ];
+    const resolved = await resolveLayerFileReferences(rows, async () => "unused");
+    const { layers: mapped } = mapStoryCsv(resolved, 1);
+    const layer1 = mapped.find((l) => l.layer_number === 1)!;
+    expect(layer1.content).toBe("Just inline prose.");
+    expect(layer1.title).toBeUndefined();
+  });
+
+  it("restore-orphans composition: the DO layer payload carries the fetched body for a .md cell and leaves an inline cell untouched", async () => {
+    // Mirrors the /dashboard restore-orphan-drafts path exactly: resolve layer
+    // file references against the repo, map the CSV, then project layer rows to
+    // the DO payload shape. Pins that a restored draft's layer content is the
+    // real file body (not the literal filename) while inline content is kept.
+    const rows = [
+      { step: "1", object: "img-a", question: "Q1", answer: "", layer1_button: "More", layer1_content: "weavers-panel.md", layer2_button: "", layer2_content: "" },
+      { step: "2", object: "img-b", question: "Q2", answer: "", layer1_button: "Read", layer1_content: "Inline prose kept verbatim.", layer2_button: "", layer2_content: "" },
+    ];
+    const fileMap = new Map([["weavers-panel.md", "---\ntitle: The Loom\n---\n\nFetched file body."]]);
+    const resolved = await resolveLayerFileReferences(rows, async (f) => fileMap.get(f) ?? null);
+    const { layers: layerRows } = mapStoryCsv(resolved, 0);
+    // The route projects layer.step_id (the negative placeholder) to step_index
+    // and passes title/button_label/content straight through.
+    const doLayers = layerRows.map((l) => ({
+      step_index: Math.abs(l.step_id as number) - 1,
+      layer_number: l.layer_number,
+      title: (l.title ?? "") as string,
+      button_label: (l.button_label ?? "") as string,
+      content: (l.content ?? "") as string,
+    }));
+
+    const fromFile = doLayers.find((l) => l.step_index === 0 && l.layer_number === 1)!;
+    expect(fromFile.content).toBe("Fetched file body.");
+    expect(fromFile.title).toBe("The Loom");
+    expect(fromFile.content).not.toBe("weavers-panel.md");
+
+    const inline = doLayers.find((l) => l.step_index === 1 && l.layer_number === 1)!;
+    expect(inline.content).toBe("Inline prose kept verbatim.");
+  });
+
+  it("round-trips publish → import: filename cell resolves back to the original body + title", async () => {
+    // Simulate a compositor-published story: serializeStory writes a filename
+    // into the CSV cell and emits the layer .md file separately. On re-import,
+    // resolving that filename to the file's on-disk content must reproduce the
+    // original layer body and title.
+    const step: StepWithLayers = {
+      step_number: 1,
+      kind: "media",
+      object_id: "img-1",
+      x: 0.5, y: 0.5, zoom: 1,
+      page: null,
+      question: "What is this?",
+      answer: null,
+      alt_text: null,
+      clip_start: null, clip_end: null, loop: null,
+      layers: [
+        { layer_number: 1, title: "The Loom", button_label: "More", content: "The original **body** prose." },
+      ],
+    };
+    const { csv, layerFiles } = serializeStory([step], "weavers");
+    // Build the repo file map exactly as publish would write it to disk.
+    const fileMap = new Map(
+      layerFiles.map((lf) => [lf.filename, layerFileContent(lf.title, lf.content)]),
+    );
+    const rows = parseTelarCsv(csv);
+    const resolved = await resolveLayerFileReferences(rows, async (f) => fileMap.get(f) ?? null);
+    const { layers: mapped } = mapStoryCsv(resolved, 1);
+    const layer1 = mapped.find((l) => l.layer_number === 1)!;
+    expect(layer1.content).toBe("The original **body** prose.");
+    expect(layer1.title).toBe("The Loom");
   });
 });
 

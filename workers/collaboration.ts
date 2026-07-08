@@ -24,7 +24,7 @@
  * makes the DO durable against forced eviction without any state
  * loss beyond the in-flight edit window.
  *
- * @version v1.4.0-beta
+ * @version v1.4.2-beta
  */
 
 import * as Y from "yjs";
@@ -189,6 +189,118 @@ interface LandingRow {
   objects_intro: string | null;
   welcome_body: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Ingest wire shapes (shared by /restore-orphans and /ingest-sync)
+// ---------------------------------------------------------------------------
+//
+// The route action owns all CSV/YAML parsing and sends fully resolved, typed
+// values; the DO stays parser-free. Step and layer shapes are shared verbatim
+// between the two endpoints.
+
+interface IngestStep {
+  step_number?: number;
+  kind?: string;
+  object_id?: string;
+  x?: number | null;
+  y?: number | null;
+  zoom?: number | null;
+  page?: string;
+  question?: string;
+  answer?: string;
+  alt_text?: string;
+  clip_start?: string;
+  clip_end?: string;
+  loop?: string;
+}
+
+interface IngestLayer {
+  step_index: number;
+  layer_number: number;
+  title?: string;
+  button_label?: string;
+  content?: string;
+}
+
+/** Object insert row — mirrors the objects Y.Map shape buildFromD1Rows builds. */
+interface IngestObjectInsert {
+  object_id: string;
+  title?: string | null;
+  featured?: boolean;
+  creator?: string | null;
+  description?: string | null;
+  source_url?: string | null;
+  period?: string | null;
+  year?: string | null;
+  object_type?: string | null;
+  subjects?: string | null;
+  source?: string | null;
+  credit?: string | null;
+  thumbnail?: string | null;
+  alt_text?: string | null;
+  dimensions?: string | null;
+  extra_columns?: string | null;
+  image_available?: boolean;
+}
+
+/** Object update field keys the DO recognises (subset of objects.csv columns). */
+type IngestObjectField =
+  | "title" | "creator" | "description" | "period" | "year" | "object_type"
+  | "dimensions" | "subjects" | "source" | "credit" | "featured" | "alt_text"
+  | "source_url" | "thumbnail" | "extra_columns";
+
+interface SyncIngestPayload {
+  /** Managed config fields, keyed by D1 column name (identical to the Y keys). */
+  config: Array<{ key: string; value: string | boolean | number }>;
+  /** Present only on an "ahead" version heal — keeps the Y config aligned with
+   *  the D1 heal (snapshotConfig deliberately omits telar_version). */
+  telarVersion?: string;
+  stories: {
+    update: Array<{
+      storyId: string; title: string; subtitle: string; byline: string;
+      isPrivate: boolean; showSections: boolean;
+    }>;
+    insert: Array<{
+      storyId: string; title: string; subtitle: string; byline: string;
+      isPrivate: boolean; showSections: boolean;
+      steps: IngestStep[]; layers: IngestLayer[];
+    }>;
+  };
+  objects: {
+    update: Array<{ objectId: string; fields: Partial<Record<IngestObjectField, string | boolean | null>> }>;
+    insert: IngestObjectInsert[];
+    remove: string[];
+  };
+  glossary: {
+    update: Array<{ termId: string; title: string; definition: string }>;
+    insert: Array<{ termId: string; title: string; definition: string }>;
+  };
+}
+
+// Config keys carried as Y.Text (character-level merge); the rest are plain
+// scalars/booleans/number. Object fields split the same way. Both mirror
+// buildFromD1Rows so an ingested value round-trips through the snapshot.
+const CONFIG_YTEXT_KEYS: ReadonlySet<string> = new Set(["title", "description", "author", "email"]);
+// Plain config keys the ingest may set. Together with CONFIG_YTEXT_KEYS this
+// is the full set of managed config fields; an unlisted key is REFUSED rather
+// than set — a stray key like "navigation" or "landing" would replace a
+// Y.Array/Y.Map with a scalar and break every future snapshotConfig read.
+const CONFIG_PLAIN_KEYS: ReadonlySet<string> = new Set([
+  "lang", "baseurl", "url", "theme", "logo", "story_key",
+  "collection_mode", "include_demo_content", "show_on_homepage",
+  "show_story_steps", "show_object_credits", "browse_and_search",
+  "show_link_on_homepage", "show_sample_on_homepage", "featured_count",
+]);
+const OBJECT_YTEXT_FIELDS: ReadonlySet<string> = new Set([
+  "title", "creator", "description", "alt_text", "period", "year",
+  "object_type", "subjects", "source", "credit",
+]);
+const OBJECT_BOOL_FIELDS: ReadonlySet<string> = new Set(["featured"]);
+// Plain-string object fields the ingest may set; anything not in one of the
+// three object sets is ignored (e.g. "_id", "object_id", or an unknown key).
+const OBJECT_PLAIN_FIELDS: ReadonlySet<string> = new Set([
+  "source_url", "thumbnail", "dimensions", "extra_columns",
+]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -432,7 +544,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     //
     // Body: { stories: Array<{ storyId, steps[], layers[] }> }
     //   step:  { step_number, kind, object_id, x, y, zoom, page,
-    //            question, answer, clip_start, clip_end, loop }
+    //            question, answer, alt_text, clip_start, clip_end, loop }
     //   layer: { step_index, layer_number, title, button_label, content }
     // Title defaults to storyId; subtitle/byline default to empty
     // (per-story CSVs do not carry these fields). draft is always true
@@ -441,31 +553,14 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     if (url.pathname.endsWith("/restore-orphans") && request.method === "POST") {
       const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET, "restore-orphans");
       if (markerError) return markerError;
+      const bindError = this.bindProjectIdFromMarker(request);
+      if (bindError) return bindError;
 
       let payload: {
         stories: Array<{
           storyId: string;
-          steps: Array<{
-            step_number?: number;
-            kind?: string;
-            object_id?: string;
-            x?: number | null;
-            y?: number | null;
-            zoom?: number | null;
-            page?: string;
-            question?: string;
-            answer?: string;
-            clip_start?: string;
-            clip_end?: string;
-            loop?: string;
-          }>;
-          layers: Array<{
-            step_index: number;
-            layer_number: number;
-            title?: string;
-            button_label?: string;
-            content?: string;
-          }>;
+          steps: IngestStep[];
+          layers: IngestLayer[];
         }>;
       };
       try {
@@ -482,6 +577,17 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       if (payload.stories.length === 0) {
         return Response.json({ restored: 0 });
       }
+
+      // Drain any in-flight alarm snapshot BEFORE entering the gate. This must
+      // sit OUTSIDE blockConcurrencyWhile: the gate blocks delivery of every
+      // event not initiated inside its callback — including the in-flight
+      // snapshot's own D1 responses — so a drain inside the gate would spin
+      // until the runtime resets the DO. Out here the snapshot's awaits still
+      // complete. No new snapshot can start between the loop observing false
+      // and the gate closing: snapshot starters (alarm, last-disconnect,
+      // forced) set isSnapshotting synchronously on delivery, and the
+      // check-to-gate transition below has no await for them to interleave in.
+      while (this.isSnapshotting) await new Promise((r) => setTimeout(r, 25));
 
       // Load the Y.doc and mutate inside blockConcurrencyWhile so the
       // snapshot writeback and broadcast happen atomically w.r.t. other
@@ -503,78 +609,21 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
 
         this.ydoc.transact(() => {
           for (const story of payload.stories) {
-            // Remove any pre-existing Y.Map(s) with the same story_id.
-            // A stale entry with an invalid _id (pointing at a deleted
-            // D1 row) would otherwise win the deduplicateYArray pass
-            // in snapshotToD1 and our fresh _id=null Y.Map would be
-            // discarded, leaving D1 without the row. Walk the array in
-            // reverse so deletions don't shift indices we still need.
-            for (let i = storiesArray.length - 1; i >= 0; i--) {
-              const existing = storiesArray.get(i);
-              if (existing.get("story_id") === story.storyId) {
-                storiesArray.delete(i, 1);
-              }
-            }
-
-            const storyMap = new Y.Map<unknown>();
-            storyMap.set("_id", null);
-            storyMap.set("story_id", story.storyId);
-            // title default = storyId (the per-story CSV has no title
-            // column; user can rename in /stories). subtitle/byline are
-            // not in the per-story CSV either — default to empty Y.Text.
-            storyMap.set("title", new Y.Text(story.storyId));
-            storyMap.set("subtitle", new Y.Text(""));
-            storyMap.set("byline", new Y.Text(""));
-            storyMap.set("order", nextOrder++);
-            storyMap.set("private", false);
-            storyMap.set("draft", true);
-            storyMap.set("show_sections", false);
-
-            // Pre-allocate one Y.Array<layer Y.Map> per step (indexed by
-            // the step's position in the input array) so we can thread
-            // layers without a second pass.
-            const stepsArray = new Y.Array<Y.Map<unknown>>();
-            const stepLayerArrays: Array<Y.Array<Y.Map<unknown>>> = [];
-            for (const step of story.steps ?? []) {
-              const stepMap = new Y.Map<unknown>();
-              stepMap.set("_id", null);
-              stepMap.set("step_number", step.step_number ?? 0);
-              stepMap.set("kind", step.kind ?? "media");
-              stepMap.set("object_id", step.object_id ?? "");
-              stepMap.set("x", step.x ?? null);
-              stepMap.set("y", step.y ?? null);
-              stepMap.set("zoom", step.zoom ?? null);
-              stepMap.set("page", step.page ?? "");
-              stepMap.set("question", new Y.Text(step.question ?? ""));
-              stepMap.set("answer", new Y.Text(step.answer ?? ""));
-              // alt_text is not in the per-story CSV schema (mapStoryCsv
-              // does not populate it); restore with empty Y.Text so the
-              // Y.Map shape matches buildFromD1Rows exactly.
-              stepMap.set("alt_text", new Y.Text(""));
-              stepMap.set("clip_start", step.clip_start ?? "");
-              stepMap.set("clip_end", step.clip_end ?? "");
-              stepMap.set("loop", step.loop ?? "");
-              const layersArr = new Y.Array<Y.Map<unknown>>();
-              stepLayerArrays.push(layersArr);
-              stepMap.set("layers", layersArr);
-              stepsArray.push([stepMap]);
-            }
-
-            // Thread layers under their parent step by step_index.
-            for (const layer of story.layers ?? []) {
-              const targetArr = stepLayerArrays[layer.step_index];
-              if (!targetArr) continue; // out-of-range step_index — skip silently
-              const layerMap = new Y.Map<unknown>();
-              layerMap.set("_id", null);
-              layerMap.set("layer_number", layer.layer_number);
-              layerMap.set("title", new Y.Text(layer.title ?? ""));
-              layerMap.set("button_label", new Y.Text(layer.button_label ?? ""));
-              layerMap.set("content", new Y.Text(layer.content ?? ""));
-              targetArr.push([layerMap]);
-            }
-
-            storyMap.set("steps", stepsArray);
-            storiesArray.push([storyMap]);
+            // Restore defaults: title = storyId (the per-story CSV has no title
+            // column; user can rename in /stories), subtitle/byline empty (not
+            // in the per-story CSV), draft = true (a restored orphan is a draft).
+            this.buildStoryYMap(storiesArray, {
+              storyId: story.storyId,
+              title: story.storyId,
+              subtitle: "",
+              byline: "",
+              order: nextOrder++,
+              isPrivate: false,
+              draft: true,
+              showSections: false,
+              steps: story.steps ?? [],
+              layers: story.layers ?? [],
+            });
             restored += 1;
           }
         });
@@ -600,6 +649,216 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       }
 
       return Response.json({ restored });
+    }
+
+    // POST /ingest-sync — apply an accepted full-sync diff THROUGH the Y.Doc.
+    // The action resolves every repo value (CSV/YAML parse, type coercion) and
+    // sends fully typed values; the DO mutates the doc, snapshots to D1 in the
+    // same call, and broadcasts the new state to connected editors. Routing the
+    // writes through the doc means the snapshot pipeline itself persists them,
+    // so the next reconciliation cannot revert them. Marker-gated identically
+    // to /snapshot, /reset, and /restore-orphans.
+    //
+    // All mutations run in ONE ydoc.transact inside blockConcurrencyWhile, with
+    // an in-flight-snapshot drain first (same reason as /restore-orphans). Y
+    // types match buildFromD1Rows exactly: Y.Text fields are replaced in place
+    // (delete + insert) so bound editors update live; scalars/booleans/number
+    // are plain sets. Updates skip a missing entity, inserts skip a present one
+    // (idempotent retry), and both counts land in the JSON response.
+    if (url.pathname.endsWith("/ingest-sync") && request.method === "POST") {
+      const markerError = await verifyInternalMarker(request, this.env.SESSION_SECRET, "ingest-sync");
+      if (markerError) return markerError;
+      const bindError = this.bindProjectIdFromMarker(request);
+      if (bindError) return bindError;
+
+      let payload: SyncIngestPayload;
+      try {
+        payload = await request.json();
+      } catch {
+        return new Response("Invalid JSON body", { status: 400 });
+      }
+      if (!payload || typeof payload !== "object") {
+        return new Response("Missing payload", { status: 400 });
+      }
+      const configEntries = Array.isArray(payload.config) ? payload.config : [];
+      const storyUpdates = payload.stories?.update ?? [];
+      const storyInserts = payload.stories?.insert ?? [];
+      const objectUpdates = payload.objects?.update ?? [];
+      const objectInserts = payload.objects?.insert ?? [];
+      const objectRemoves = payload.objects?.remove ?? [];
+      const glossaryUpdates = payload.glossary?.update ?? [];
+      const glossaryInserts = payload.glossary?.insert ?? [];
+
+      const applied = {
+        config: 0, storyUpdate: 0, storyInsert: 0, objectUpdate: 0,
+        objectInsert: 0, objectRemove: 0, glossaryUpdate: 0, glossaryInsert: 0,
+      };
+      const skipped = {
+        config: [] as string[],
+        storyUpdate: [] as string[], objectUpdate: [] as string[],
+        objectInsert: [] as string[], objectRemove: [] as string[],
+        glossaryUpdate: [] as string[], glossaryInsert: [] as string[],
+      };
+
+      // Drain any in-flight alarm snapshot BEFORE entering the gate — see the
+      // same wait (and the gate-semantics constraint it documents) in
+      // /restore-orphans. Draining out here lets the in-flight snapshot's D1
+      // responses deliver; inside the gate they would be blocked and the loop
+      // could never observe the flag clearing.
+      while (this.isSnapshotting) await new Promise((r) => setTimeout(r, 25));
+
+      await this.ctx.blockConcurrencyWhile(async () => {
+        await this.ensureDocLoaded();
+
+        const configMap = this.ydoc.getMap<unknown>("config");
+        const storiesArray = this.ydoc.getArray<Y.Map<unknown>>("stories");
+        const objectsArray = this.ydoc.getArray<Y.Map<unknown>>("objects");
+        const glossaryArray = this.ydoc.getArray<Y.Map<unknown>>("glossary");
+
+        // New stories append at the end so their Y.Array index (which the
+        // snapshot writes as D1 "order") sorts them last.
+        let maxOrder = -1;
+        for (let i = 0; i < storiesArray.length; i++) {
+          const order = storiesArray.get(i).get("order");
+          if (typeof order === "number" && order > maxOrder) maxOrder = order;
+        }
+        let nextOrder = maxOrder + 1;
+
+        this.ydoc.transact(() => {
+          // --- config fields (allowlisted — unknown keys are refused) ---
+          for (const { key, value } of configEntries) {
+            if (CONFIG_YTEXT_KEYS.has(key)) {
+              this.replaceYText(configMap, key, String(value ?? ""));
+            } else if (CONFIG_PLAIN_KEYS.has(key)) {
+              configMap.set(key, value);
+            } else {
+              skipped.config.push(key);
+              continue;
+            }
+            applied.config += 1;
+          }
+          // telar_version rides here so the doc agrees with the D1 heal the
+          // action performs directly (snapshotConfig omits the column).
+          if (typeof payload.telarVersion === "string") {
+            configMap.set("telar_version", payload.telarVersion);
+          }
+
+          // --- story updates ---
+          for (const upd of storyUpdates) {
+            const m = this.findByKey(storiesArray, "story_id", upd.storyId);
+            if (!m) { skipped.storyUpdate.push(upd.storyId); continue; }
+            this.replaceYText(m, "title", upd.title);
+            this.replaceYText(m, "subtitle", upd.subtitle);
+            this.replaceYText(m, "byline", upd.byline);
+            m.set("private", upd.isPrivate);
+            m.set("show_sections", upd.showSections);
+            // order is deliberately untouched — sync excludes it and D1 order
+            // comes from the Y.Array index at snapshot time.
+            applied.storyUpdate += 1;
+          }
+
+          // --- story inserts (dedup-before-insert, draft=false) ---
+          for (const ins of storyInserts) {
+            this.buildStoryYMap(storiesArray, {
+              storyId: ins.storyId,
+              title: ins.title,
+              subtitle: ins.subtitle,
+              byline: ins.byline,
+              order: nextOrder++,
+              isPrivate: ins.isPrivate,
+              // Presence in project.csv is the not-a-draft encoding.
+              draft: false,
+              showSections: ins.showSections,
+              steps: ins.steps ?? [],
+              layers: ins.layers ?? [],
+              carryExistingId: true,
+            });
+            applied.storyInsert += 1;
+          }
+
+          // --- object updates ---
+          for (const upd of objectUpdates) {
+            const m = this.findByKey(objectsArray, "object_id", upd.objectId);
+            if (!m) { skipped.objectUpdate.push(upd.objectId); continue; }
+            for (const [field, value] of Object.entries(upd.fields ?? {})) {
+              if (OBJECT_YTEXT_FIELDS.has(field)) {
+                this.replaceYText(m, field, String(value ?? ""));
+              } else if (OBJECT_BOOL_FIELDS.has(field)) {
+                m.set(field, Boolean(value));
+              } else if (OBJECT_PLAIN_FIELDS.has(field)) {
+                m.set(field, String(value ?? ""));
+              }
+              // Unlisted field keys are ignored — never set from the wire.
+            }
+            applied.objectUpdate += 1;
+          }
+
+          // --- object inserts (skip-if-present) ---
+          for (const ins of objectInserts) {
+            if (this.findByKey(objectsArray, "object_id", ins.object_id)) {
+              skipped.objectInsert.push(ins.object_id);
+              continue;
+            }
+            objectsArray.push([this.buildObjectYMap(ins)]);
+            applied.objectInsert += 1;
+          }
+
+          // --- object removes ---
+          for (const objectId of objectRemoves) {
+            const idx = this.indexByKey(objectsArray, "object_id", objectId);
+            if (idx < 0) { skipped.objectRemove.push(objectId); continue; }
+            objectsArray.delete(idx, 1);
+            applied.objectRemove += 1;
+          }
+
+          // --- glossary updates ---
+          for (const upd of glossaryUpdates) {
+            const m = this.findByKey(glossaryArray, "term_id", upd.termId);
+            if (!m) { skipped.glossaryUpdate.push(upd.termId); continue; }
+            this.replaceYText(m, "title", upd.title);
+            this.replaceYText(m, "definition", upd.definition);
+            applied.glossaryUpdate += 1;
+          }
+
+          // --- glossary inserts (skip-if-present) ---
+          for (const ins of glossaryInserts) {
+            if (this.findByKey(glossaryArray, "term_id", ins.termId)) {
+              skipped.glossaryInsert.push(ins.termId);
+              continue;
+            }
+            const termMap = new Y.Map<unknown>();
+            termMap.set("_id", null);
+            // insertGlossaryRow keeps an existing term_id verbatim, so the
+            // repo id survives the snapshot INSERT.
+            termMap.set("term_id", ins.termId);
+            termMap.set("title", new Y.Text(ins.title ?? ""));
+            termMap.set("definition", new Y.Text(ins.definition ?? ""));
+            termMap.set("created_by", null);
+            glossaryArray.push([termMap]);
+            applied.glossaryInsert += 1;
+          }
+        });
+
+        // Persist through the snapshot pipeline — still inside the block so no
+        // alarm can race between the mutation and the write.
+        await this.snapshotToD1();
+      });
+
+      // Broadcast the full state to connected editors (verbatim /restore-orphans
+      // tail) so they see the accepted changes live.
+      const updateEncoder = encoding.createEncoder();
+      encoding.writeVarUint(updateEncoder, messageSync);
+      syncProtocol.writeSyncStep2(updateEncoder, this.ydoc);
+      const updateMsg = encoding.toUint8Array(updateEncoder);
+      for (const client of this.ctx.getWebSockets()) {
+        try {
+          client.send(updateMsg);
+        } catch {
+          // Client may have disconnected; ignore.
+        }
+      }
+
+      return Response.json({ applied, skipped });
     }
 
     // Only accept WebSocket upgrades for all other paths
@@ -690,6 +949,204 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     }
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // -------------------------------------------------------------------------
+  // Ingest helpers (shared by /restore-orphans and /ingest-sync)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Bind this.projectId from the HMAC-verified X-Internal-Project header when
+   * the DO woke with no live sockets (the constructor only restores projectId
+   * from socket attachments). Without this, ensureDocLoaded and snapshotToD1
+   * both early-return on the null projectId and an ingest would mutate an
+   * UNLOADED doc, report success, and persist nothing — while polluting the
+   * in-memory doc with entries the next blob load would merge on top of.
+   * Must be called AFTER verifyInternalMarker (the header is signed).
+   * Returns an error Response on a malformed or mismatched header, else null.
+   */
+  private bindProjectIdFromMarker(request: Request): Response | null {
+    const markerProjectId = Number(request.headers.get("X-Internal-Project"));
+    if (!Number.isInteger(markerProjectId) || markerProjectId <= 0) {
+      return new Response("Invalid project marker", { status: 400 });
+    }
+    if (this.projectId === null) {
+      this.projectId = markerProjectId;
+    } else if (this.projectId !== markerProjectId) {
+      // idFromName(projectId) makes this unreachable in practice; refuse
+      // rather than write one project's data under another's id.
+      return new Response("Project marker mismatch", { status: 409 });
+    }
+    return null;
+  }
+
+  /**
+   * Replace a Y.Text value in place (delete + insert) so bound editors merge
+   * the new value live and instance identity is preserved. Defensive: when the
+   * key is absent or not a Y.Text (an older blob predating the field), set a
+   * fresh Y.Text — matching the buildFromD1Rows type for these keys.
+   */
+  private replaceYText(map: Y.Map<unknown>, key: string, value: string): void {
+    const cur = map.get(key);
+    if (cur instanceof Y.Text) {
+      cur.delete(0, cur.length);
+      if (value.length > 0) cur.insert(0, value);
+    } else {
+      map.set(key, new Y.Text(value));
+    }
+  }
+
+  /** Index of the first Y.Map in `array` whose `key` equals `value`; -1 if none. */
+  private indexByKey(array: Y.Array<Y.Map<unknown>>, key: string, value: string): number {
+    for (let i = 0; i < array.length; i++) {
+      if (array.get(i).get(key) === value) return i;
+    }
+    return -1;
+  }
+
+  /** The first Y.Map in `array` whose `key` equals `value`, or null. */
+  private findByKey(
+    array: Y.Array<Y.Map<unknown>>,
+    key: string,
+    value: string,
+  ): Y.Map<unknown> | null {
+    const idx = this.indexByKey(array, key, value);
+    return idx < 0 ? null : array.get(idx);
+  }
+
+  /**
+   * Build one object Y.Map (_id = null) mirroring the buildFromD1Rows object
+   * shape — Y.Text for the editable text fields, plain strings for the import
+   * passthroughs, booleans for featured/image_available. origin is D1-only
+   * (never on the Y.Map): the snapshot INSERT defaults it and the action then
+   * patches origin = "repo" directly to D1.
+   */
+  private buildObjectYMap(p: IngestObjectInsert): Y.Map<unknown> {
+    const m = new Y.Map<unknown>();
+    m.set("_id", null);
+    m.set("object_id", p.object_id);
+    m.set("title", new Y.Text(p.title ?? ""));
+    m.set("creator", new Y.Text(p.creator ?? ""));
+    m.set("description", new Y.Text(p.description ?? ""));
+    m.set("alt_text", new Y.Text(p.alt_text ?? ""));
+    m.set("source_url", p.source_url ?? "");
+    m.set("period", new Y.Text(p.period ?? ""));
+    m.set("year", new Y.Text(p.year ?? ""));
+    m.set("object_type", new Y.Text(p.object_type ?? ""));
+    m.set("subjects", new Y.Text(p.subjects ?? ""));
+    m.set("source", new Y.Text(p.source ?? ""));
+    m.set("credit", new Y.Text(p.credit ?? ""));
+    m.set("thumbnail", p.thumbnail ?? "");
+    m.set("dimensions", p.dimensions ?? "");
+    m.set("extra_columns", p.extra_columns ?? "");
+    m.set("featured", Boolean(p.featured));
+    m.set("image_available", Boolean(p.image_available));
+    m.set("created_by", null);
+    return m;
+  }
+
+  /**
+   * Construct one story Y.Map (with nested steps and layers) and push it onto
+   * the stories Y.Array, first removing any pre-existing entry with the same
+   * story_id. Shared by /restore-orphans and /ingest-sync — they differ only in
+   * the scalar defaults passed via `spec`. Must be called inside a
+   * ydoc.transact; mutates the array in place.
+   *
+   * The same-story_id dedup runs first so a stale entry with an invalid _id
+   * (pointing at a deleted D1 row) cannot win the snapshot's deduplicate pass
+   * and strand the fresh _id = null Y.Map. Y.Text is used for the text fields to
+   * match buildFromD1Rows, so bound editors merge live.
+   */
+  private buildStoryYMap(
+    storiesArray: Y.Array<Y.Map<unknown>>,
+    spec: {
+      storyId: string;
+      title: string;
+      subtitle: string;
+      byline: string;
+      order: number;
+      isPrivate: boolean;
+      draft: boolean;
+      showSections: boolean;
+      steps: IngestStep[];
+      layers: IngestLayer[];
+      /**
+       * Carry a replaced same-story_id entry's numeric _id onto the fresh map
+       * (sync ingest). With _id = null the snapshot would INSERT while the old
+       * row still exists — stories(project_id, story_id) is UNIQUE, so the
+       * INSERT is rejected-and-swallowed and the batched orphan-DELETE then
+       * removes the old row: the story vanishes from D1 until a later snapshot
+       * re-inserts it. Carrying the id routes the snapshot onto its UPDATE
+       * branch instead (row preserved, steps/layers replaced). Restore-orphans
+       * must NOT carry: there the old _id points at a known-deleted D1 row.
+       */
+      carryExistingId?: boolean;
+    },
+  ): void {
+    // Walk in reverse so deletions don't shift indices we still need.
+    let carriedId: number | null = null;
+    for (let i = storiesArray.length - 1; i >= 0; i--) {
+      const existing = storiesArray.get(i);
+      if (existing.get("story_id") === spec.storyId) {
+        if (spec.carryExistingId) {
+          const existingId = existing.get("_id");
+          if (typeof existingId === "number") carriedId = existingId;
+        }
+        storiesArray.delete(i, 1);
+      }
+    }
+
+    const storyMap = new Y.Map<unknown>();
+    storyMap.set("_id", carriedId);
+    storyMap.set("story_id", spec.storyId);
+    storyMap.set("title", new Y.Text(spec.title));
+    storyMap.set("subtitle", new Y.Text(spec.subtitle));
+    storyMap.set("byline", new Y.Text(spec.byline));
+    storyMap.set("order", spec.order);
+    storyMap.set("private", spec.isPrivate);
+    storyMap.set("draft", spec.draft);
+    storyMap.set("show_sections", spec.showSections);
+
+    // Pre-allocate one layer Y.Array per step (indexed by the step's position)
+    // so layers thread onto their parent without a second pass.
+    const stepsArray = new Y.Array<Y.Map<unknown>>();
+    const stepLayerArrays: Array<Y.Array<Y.Map<unknown>>> = [];
+    for (const step of spec.steps) {
+      const stepMap = new Y.Map<unknown>();
+      stepMap.set("_id", null);
+      stepMap.set("step_number", step.step_number ?? 0);
+      stepMap.set("kind", step.kind ?? "media");
+      stepMap.set("object_id", step.object_id ?? "");
+      stepMap.set("x", step.x ?? null);
+      stepMap.set("y", step.y ?? null);
+      stepMap.set("zoom", step.zoom ?? null);
+      stepMap.set("page", step.page ?? "");
+      stepMap.set("question", new Y.Text(step.question ?? ""));
+      stepMap.set("answer", new Y.Text(step.answer ?? ""));
+      stepMap.set("alt_text", new Y.Text(step.alt_text ?? ""));
+      stepMap.set("clip_start", step.clip_start ?? "");
+      stepMap.set("clip_end", step.clip_end ?? "");
+      stepMap.set("loop", step.loop ?? "");
+      const layersArr = new Y.Array<Y.Map<unknown>>();
+      stepLayerArrays.push(layersArr);
+      stepMap.set("layers", layersArr);
+      stepsArray.push([stepMap]);
+    }
+
+    for (const layer of spec.layers) {
+      const targetArr = stepLayerArrays[layer.step_index];
+      if (!targetArr) continue; // out-of-range step_index — skip silently
+      const layerMap = new Y.Map<unknown>();
+      layerMap.set("_id", null);
+      layerMap.set("layer_number", layer.layer_number);
+      layerMap.set("title", new Y.Text(layer.title ?? ""));
+      layerMap.set("button_label", new Y.Text(layer.button_label ?? ""));
+      layerMap.set("content", new Y.Text(layer.content ?? ""));
+      targetArr.push([layerMap]);
+    }
+
+    storyMap.set("steps", stepsArray);
+    storiesArray.push([storyMap]);
   }
 
   // -------------------------------------------------------------------------
@@ -1956,6 +2413,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     objMap: Y.Map<unknown>,
     now: string,
     explicitId?: number,
+    preserved?: Record<string, unknown>,
   ): Promise<{ id: number; backfilled: boolean }> {
     const slug = String(objMap.get("object_id") ?? "");
     const columns = [
@@ -1983,7 +2441,10 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       String(objMap.get("extra_columns") ?? ""),
       objMap.get("featured") ? 1 : 0,
       objMap.get("image_available") ? 1 : 0,
-      String(objMap.get("origin") ?? "iiif"),
+      // origin is D1-only (the cold build never loads it onto the Y.Map). On a
+      // stale-id re-INSERT, `preserved` carries the surviving row's origin so a
+      // repo/compositor object is not silently reclassified as "iiif".
+      String(preserved?.origin ?? objMap.get("origin") ?? "iiif"),
       0, // missing_from_repo = false on insert
       (objMap.get("created_by") as number | null) ?? null,
       now,
@@ -2031,10 +2492,16 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       keyField: string;
       skip?: (m: Y.Map<unknown>) => boolean;
       pushUpdate: (m: Y.Map<unknown>, index: number, targetId: number) => void;
+      // D1-only columns that the Y.Map never carries (object.origin,
+      // glossary.related_terms). On a stale-`_id` re-INSERT they must be read
+      // back from D1 so the recreated row keeps them instead of resetting to
+      // the insert default — see the re-INSERT branch below.
+      preserveColumns?: string[];
       insert: (
         m: Y.Map<unknown>,
         index: number,
         explicitId?: number,
+        preserved?: Record<string, unknown>,
       ) => Promise<{ id: number; backfilled: boolean }>;
     },
   ): Promise<boolean> {
@@ -2080,7 +2547,23 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           didBackfill = true;
           d1Ids.delete(liveId);
         } else {
-          const r = await cfg.insert(m, i, id);
+          // Re-INSERT under the stale id. The Y.Map does not carry every D1
+          // column — object.origin and glossary.related_terms live only in D1 —
+          // so rebuilding the row from the Y.Map alone would reset them to their
+          // INSERT defaults. When a row for this id still survives, read those
+          // columns back and hand them to the insert so the recreation stays
+          // faithful; otherwise the insert falls back to its default.
+          let preserved: Record<string, unknown> | undefined;
+          if (cfg.preserveColumns?.length) {
+            const oldRow = await this.env.DB
+              .prepare(
+                `SELECT ${cfg.preserveColumns.join(", ")} FROM ${cfg.table} WHERE id = ? AND project_id = ?`,
+              )
+              .bind(id, this.projectId)
+              .first<Record<string, unknown>>();
+            if (oldRow) preserved = oldRow;
+          }
+          const r = await cfg.insert(m, i, id, preserved);
           if (r.backfilled) didBackfill = true;
         }
       }
@@ -2142,7 +2625,12 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             ),
         );
       },
-      insert: (m, _index, explicitId) => this.insertObjectRow(m, now, explicitId),
+      // origin is D1-only; carry it across a stale-id re-INSERT (missing_from_repo
+      // is likewise D1-only but is re-derived by the next repo sync, so it is
+      // left to default here).
+      preserveColumns: ["origin"],
+      insert: (m, _index, explicitId, preserved) =>
+        this.insertObjectRow(m, now, explicitId, preserved),
     });
   }
 
@@ -2159,6 +2647,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     termMap: Y.Map<unknown>,
     now: string,
     explicitId?: number,
+    preserved?: Record<string, unknown>,
   ): Promise<{ id: number; backfilled: boolean }> {
     const existingTermId = termMap.get("term_id") as string | undefined;
     const tempId = termMap.get("_temp_id") as string | undefined;
@@ -2170,12 +2659,17 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
         ? `${slugBase}-${(tempId ?? crypto.randomUUID()).slice(0, 8)}`
         : (tempId ?? crypto.randomUUID());
 
-    const columns = ["project_id", "term_id", "title", "definition", "created_by", "updated_at"];
+    // related_terms is a D1-only passthrough column — it is not part of the
+    // Y.Doc glossary shape, so the compositor never edits it. On a stale-id
+    // re-INSERT, `preserved` carries the surviving row's value so it is not
+    // dropped; a brand-new term has none, binding NULL (schema-nullable).
+    const columns = ["project_id", "term_id", "title", "definition", "related_terms", "created_by", "updated_at"];
     const binds = [
       this.projectId,
       resolvedTermId,
       titleStr,
       yTextToString(termMap.get("definition")),
+      (preserved?.related_terms as string | null) ?? null,
       (termMap.get("created_by") as number | null) ?? null,
       now,
     ];
@@ -2225,7 +2719,11 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             ),
         );
       },
-      insert: (m, _index, explicitId) => this.insertGlossaryRow(m, now, explicitId),
+      // related_terms is a D1-only passthrough; carry it across a stale-id
+      // re-INSERT so the recreated term keeps it (the Y.Doc never holds it).
+      preserveColumns: ["related_terms"],
+      insert: (m, _index, explicitId, preserved) =>
+        this.insertGlossaryRow(m, now, explicitId, preserved),
     });
   }
 

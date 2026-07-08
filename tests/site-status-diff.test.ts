@@ -38,6 +38,8 @@ function emptyDiff(): FullSyncDiff {
       removed: [],
     },
     hasConflicts: false,
+    classification: "two-way",
+    suppressedEditorOnly: 0,
   };
 }
 

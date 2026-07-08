@@ -81,6 +81,8 @@ const diff: FullSyncDiff = {
     removed: [{ term_id: "g1" } as never],
   } as never,
   hasConflicts: false,
+  classification: "two-way",
+  suppressedEditorOnly: 0,
 };
 
 function renderPopover(props: Parameters<typeof OutOfSyncPopover>[0]) {

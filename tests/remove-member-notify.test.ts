@@ -53,12 +53,18 @@ vi.mock("~/lib/session.server", () => ({
   })),
 }));
 
-// getUserProjects returns a single project so getActiveProject resolves
-// to { id: 99, github_repo_full_name: "owner/repo" }.
+// The dashboard action resolves the active project through the shared
+// resolveActiveProjectFromRequest helper, which delegates to
+// resolveActiveProject on this module. Return the convenor's single project
+// so remove-member targets { id: 99, github_repo_full_name: "owner/repo" }.
 vi.mock("~/lib/membership.server", () => ({
   getUserProjects: vi.fn(async () => [
     { id: 99, github_repo_full_name: "owner/repo" },
   ]),
+  resolveActiveProject: vi.fn(async () => ({
+    project: { id: 99, github_repo_full_name: "owner/repo" },
+    userRole: "convenor",
+  })),
   requireOwner: vi.fn(async () => undefined),
   requireProjectMember: vi.fn(async () => undefined),
 }));

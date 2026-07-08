@@ -125,7 +125,21 @@
     "config_setting": "configuración",
     "item_new": "{{name}} (nuevo)",
     "item_changed": "{{name}} (modificado)",
-    "item_removed": "{{name}} (eliminado)"
+    "item_removed": "{{name}} (eliminado)",
+    "conflicts_heading": "Cambios en ambos lados",
+    "conflicts_intro": "Estos elementos cambiaron en GitHub y también en el compositor. Escoge qué versión conservar; los demás cambios se aplican igual.",
+    "conflict_use_repo": "Usar la versión de GitHub",
+    "conflict_keep_mine": "Mantener mi versión",
+    "conflict_value_repo": "GitHub",
+    "conflict_value_mine": "Compositor",
+    "conflict_deleted_here": "Eliminado en el compositor, editado en GitHub",
+    "conflict_deleted_in_repo": "Eliminado en GitHub, editado en el compositor",
+    "conflict_restore": "Restaurar la versión de GitHub",
+    "conflict_keep_deleted": "Dejarlo eliminado",
+    "conflict_delete": "Eliminarlo",
+    "glossary_category": "Glosario",
+    "editor_only_note": "Esta sincronización no toca {{count}} cambio(s) sin publicar del compositor; saldrán en la próxima publicación.",
+    "conflict_also_applying": "Estos campos también toman la versión de GitHub:"
   },
   "orphan_banner": {
     "count_text": "Hay {{count}} archivo(s) de historia sin referencia en GitHub.",

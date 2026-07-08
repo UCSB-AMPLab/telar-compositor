@@ -158,15 +158,24 @@ export async function getRepoTree(
  * Returns the decoded UTF-8 string, or null if the file is not found (404).
  * GitHub returns content as Base64 with embedded newlines — decodeGitHubContent
  * handles the decoding correctly.
+ *
+ * `ref` (optional) pins the read to a branch, tag, or commit SHA via the
+ * Contents API's `?ref=` query. Omitting it reads the repository's default
+ * branch, so existing callers keep their behaviour unchanged. Base-commit reads
+ * for the three-way sync diff go through getFileAtRef instead, which keeps
+ * "absent" (404) distinct from "error" (transient) rather than collapsing both
+ * to null.
  */
 export async function getFileContent(
   token: string,
   owner: string,
   repo: string,
   path: string,
+  ref?: string,
 ): Promise<string | null> {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
   const res = await fetch(
-    `${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`,
+    `${GITHUB_API}/repos/${owner}/${repo}/contents/${path}${query}`,
     { headers: githubHeaders(token) },
   );
   if (!res.ok) {
@@ -177,6 +186,53 @@ export async function getFileContent(
     return decodeGitHubContent(data.content);
   }
   return null;
+}
+
+/**
+ * Result of a base-commit file read for the three-way sync diff.
+ *   - "ok": the file exists at the ref; `content` is its decoded UTF-8 body.
+ *   - "absent": the file returned 404 — it legitimately did not exist at that
+ *     commit (a domain whose base is empty, not a failure).
+ *   - "error": any other non-ok status (5xx, 429, 403) or a thrown fetch — the
+ *     read is unreliable, so the caller must not treat the base as known.
+ */
+export type FileAtRef =
+  | { status: "ok"; content: string }
+  | { status: "absent" }
+  | { status: "error" };
+
+/**
+ * Reads a file at a specific commit/ref, distinguishing the three outcomes the
+ * three-way sync diff must tell apart. Unlike getFileContent (which collapses
+ * every non-ok status to null), this keeps "absent" (404 → empty base) apart
+ * from "error" (transient failure → base unknown), so computeFullSyncDiff can
+ * decide the whole diff's mode once instead of silently degrading one
+ * sub-domain to two-way while the rest stay three-way.
+ */
+export async function getFileAtRef(
+  token: string,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+): Promise<FileAtRef> {
+  try {
+    const res = await fetch(
+      `${GITHUB_API}/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+      { headers: githubHeaders(token) },
+    );
+    if (res.status === 404) return { status: "absent" };
+    if (!res.ok) return { status: "error" };
+    const data = (await res.json()) as { content?: string; encoding?: string };
+    if (data.encoding === "base64" && typeof data.content === "string") {
+      return { status: "ok", content: decodeGitHubContent(data.content) };
+    }
+    // 200 with no base64 body (unexpected shape) — treat as an empty base
+    // rather than an error; there is nothing to diff against.
+    return { status: "absent" };
+  } catch {
+    return { status: "error" };
+  }
 }
 
 // ---------------------------------------------------------------------------

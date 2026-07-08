@@ -326,4 +326,6 @@ const EMPTY_DIFF: FullSyncDiff = {
   config: { changedFields: [], versionChange: null },
   glossary: { added: [], removed: [], changed: [] },
   hasConflicts: false,
+  classification: "two-way",
+  suppressedEditorOnly: 0,
 };

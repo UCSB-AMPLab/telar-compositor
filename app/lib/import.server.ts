@@ -19,7 +19,7 @@
  * importing whatever stale rows happen to sit in the repo would
  * desynchronise the user's content without them noticing.
  *
- * @version v1.4.0-beta
+ * @version v1.4.2-beta
  */
 
 import Papa from "papaparse";
@@ -58,7 +58,7 @@ import {
  * lowercased; lookup lowercases the trimmed header. Identity entries for the
  * canonical English names normalise Google-Sheets capitalisation.
  */
-const COLUMN_NAME_MAPPING: Record<string, string> = {
+export const COLUMN_NAME_MAPPING: Record<string, string> = {
   // Story steps
   paso: "step", objeto: "object", pregunta: "question", respuesta: "answer",
   boton_capa1: "layer1_button", boton1: "layer1_button",
@@ -520,6 +520,17 @@ export function mapConfigToProjectConfig(
   const collectionInterface = (config.collection_interface ?? {}) as Record<string, unknown>;
   const googleSheets = (config.google_sheets ?? {}) as Record<string, unknown>;
   const telarBlock = (config.telar ?? {}) as Record<string, unknown>;
+  const protectedBlock = (config.protected ?? {}) as Record<string, unknown>;
+
+  // story_key lives in two possible places. Publish writes it under the
+  // `protected:` → `key:` block, keeping a legacy top-level `story_key:` line
+  // only as a fallback for pre-protected-block repos. Read protected.key first
+  // and let it win whenever it is present (including an empty quoted value);
+  // fall back to the top-level scalar so older hand-authored repos still
+  // round-trip their key rather than importing as null.
+  const storyKey =
+    (protectedBlock.key as string | undefined) ??
+    (config.story_key as string | undefined);
 
   return {
     title: config.title as string | undefined,
@@ -542,8 +553,8 @@ export function mapConfigToProjectConfig(
     show_link_on_homepage: collectionInterface.show_link_on_homepage as boolean | undefined,
     show_sample_on_homepage: collectionInterface.show_sample_on_homepage as boolean | undefined,
     featured_count: collectionInterface.featured_count as number | undefined,
-    // story_key
-    story_key: config.story_key as string | undefined,
+    // story_key — protected.key with top-level fallback (see above)
+    story_key: storyKey,
     // google_sheets
     google_sheets_enabled: googleSheets.enabled as boolean | undefined,
     google_sheets_published_url: googleSheets.published_url as string | undefined,
@@ -560,7 +571,7 @@ export function mapConfigToProjectConfig(
 // preserved verbatim in `extra_columns` (custom-column passthrough).
 // `object_type` is included because the mapper still reads it as a legacy
 // fallback for medium_genre.
-const KNOWN_OBJECT_KEYS = new Set([
+export const KNOWN_OBJECT_KEYS = new Set([
   "object_id", "title", "featured", "creator", "description", "source_url",
   "period", "year", "medium_genre", "object_type", "subjects", "source",
   "credit", "thumbnail", "alt_text", "dimensions",
@@ -682,6 +693,89 @@ function extractFrontmatterTitle(
     title: titleMatch ? titleMatch[1] : undefined,
     body: body.trim() || undefined,
   };
+}
+
+// Layer-content columns whose cell MAY be a filename reference rather than
+// inline prose. `layerN_file` is the legacy alias the framework still accepts.
+const LAYER_FILE_REFERENCE_COLUMNS = [
+  "layer1_content",
+  "layer2_content",
+  "layer1_file",
+  "layer2_file",
+];
+
+/**
+ * Decide whether a layer-content cell names an on-disk markdown file.
+ *
+ * Framework rule: Telar's story-CSV processor treats a `layerN_content` /
+ * `layerN_file` cell as a FILENAME when its trimmed value ends in `.md`
+ * (case-sensitive), and as inline markdown otherwise. A filename that tries to
+ * escape the texts directory — containing `..`, starting with `/`, or holding a
+ * backslash — is rejected and handled as inline content instead, so a crafted
+ * cell can never read an arbitrary repo path. The detection is deliberately
+ * conservative: only a `.md` suffix flips a cell to file mode, so hand-authored
+ * inline prose is never misread as a filename.
+ */
+export function isLayerFileReference(cell: string | undefined): boolean {
+  if (!cell) return false;
+  const trimmed = cell.trim();
+  if (!trimmed.endsWith(".md")) return false;
+  if (trimmed.includes("..") || trimmed.startsWith("/") || trimmed.includes("\\")) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Resolve filename-referencing layer-content cells to the referenced file's
+ * contents, in place, before the rows reach {@link mapStoryCsv}.
+ *
+ * Compositor publish writes the layer markdown to
+ * `telar-content/texts/stories/{filename}.md` and stores only the FILENAME in
+ * the `layerN_content` CSV cell. Without this pass, `mapStoryCsv` would treat
+ * that filename string as inline content and store the literal filename as the
+ * panel body — corrupting any compositor-published or file-based hand-authored
+ * site on re-import. Here we mirror the framework: for each cell that names a
+ * file, fetch it and substitute its contents (frontmatter + body) so the
+ * downstream frontmatter split sees the real panel markdown.
+ *
+ * Error posture: a missing referenced file degrades exactly as the framework
+ * degrades — the cell is left untouched and handled as inline content (yielding
+ * the filename string, same as before this fix) rather than aborting the
+ * import. This matches the importer's other missing-file paths, which skip a
+ * file and continue rather than throwing the whole import away.
+ *
+ * Returns a shallow-cloned row array; only file-reference cells are rewritten,
+ * so inline cells pass through byte-for-byte.
+ *
+ * Fetches run sequentially, one cell at a time: a burst of parallel requests
+ * on a large import risks GitHub's secondary rate limit, and a rate-limited
+ * fetch is indistinguishable from a missing file (both surface as null) — so
+ * parallelism could silently degrade VALID references to literal filenames,
+ * the exact corruption this pass exists to prevent. Two known limits: any
+ * null is treated as missing, and the repo fetch is exact-case while the
+ * framework resolves filenames case-insensitively, so a casing-mismatched
+ * reference degrades here even though the framework would still build it.
+ */
+export async function resolveLayerFileReferences(
+  rows: Record<string, string>[],
+  fetchStoryText: (filename: string) => Promise<string | null>,
+): Promise<Record<string, string>[]> {
+  const out: Record<string, string>[] = [];
+  for (const row of rows) {
+    let resolved: Record<string, string> | null = null;
+    for (const col of LAYER_FILE_REFERENCE_COLUMNS) {
+      const cell = row[col];
+      if (!isLayerFileReference(cell)) continue;
+      const fileContent = await fetchStoryText(cell.trim());
+      // Missing file → leave the cell as-is, degrading to inline handling.
+      if (fileContent === null) continue;
+      if (resolved === null) resolved = { ...row };
+      resolved[col] = fileContent;
+    }
+    out.push(resolved ?? row);
+  }
+  return out;
 }
 
 export function mapStoryCsv(
@@ -1066,11 +1160,20 @@ export async function importRepo({
         if (storyIds.has(tab.name.toLowerCase())) {
           const csvText = await fetchSheetCsv(publishedId, tab.gid);
           const rows = parseTelarCsv(csvText);
+          // Sheets cells are normally inline prose, but the framework's
+          // filename rule is source-agnostic: a `.md`-suffixed cell references
+          // a repo file. Resolve those against the repo too (missing files
+          // degrade to inline), keeping both import branches framework-faithful.
+          const resolvedRows = await resolveLayerFileReferences(
+            rows,
+            (filename) =>
+              getFileContent(token, owner, repo, `telar-content/texts/stories/${filename}`),
+          );
           const storyIndex = storyRows.findIndex(
             (r) => (r.story_id as string).toLowerCase() === tab.name.toLowerCase(),
           );
           const { steps: mappedSteps, layers: mappedLayers } = mapStoryCsv(
-            rows,
+            resolvedRows,
             -(storyIndex + 1), // placeholder — updated after D1 insert
           );
           stepRows.push(...mappedSteps);
@@ -1123,9 +1226,18 @@ export async function importRepo({
 
         if (storyContent) {
           const storyStepRows = parseTelarCsv(storyContent);
+          // Resolve any `layerN_content` cell that references a
+          // texts/stories/*.md file to the file's contents before mapping,
+          // so compositor-published (filename-in-cell) stories import their
+          // real panel markdown rather than the literal filename string.
+          const resolvedRows = await resolveLayerFileReferences(
+            storyStepRows,
+            (filename) =>
+              getFileContent(token, owner, repo, `telar-content/texts/stories/${filename}`),
+          );
           const storyIndex = storyRows.indexOf(storyRow);
           const { steps: mappedSteps, layers: mappedLayers } = mapStoryCsv(
-            storyStepRows,
+            resolvedRows,
             -(storyIndex + 1), // placeholder — updated after D1 insert
           );
           stepRows.push(...mappedSteps);

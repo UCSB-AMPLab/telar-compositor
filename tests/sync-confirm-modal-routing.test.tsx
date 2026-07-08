@@ -58,6 +58,8 @@ const diffWithChanges: FullSyncDiff = {
   config: { changedFields: [{ key: "title" } as never], versionChange: null } as never,
   glossary: { added: [], changed: [], removed: [] } as never,
   hasConflicts: false,
+  classification: "two-way",
+  suppressedEditorOnly: 0,
 };
 
 function renderModal() {
@@ -88,6 +90,9 @@ describe("SyncConfirmModal fetcher routing", () => {
       diff: diffWithChanges,
     };
     const { getByText } = renderModal();
+    // Drive through the computing step so the diff-result effect fires (it only
+    // acts while step === "computing").
+    fireEvent.click(getByText("sync_modal.check_changes"));
     fireEvent.click(getByText("sync_modal.apply_sync"));
     const applyCall = submitSpy.mock.calls.find(
       ([body]) => (body as { intent?: string }).intent === "apply-full-sync",
@@ -103,6 +108,9 @@ describe("SyncConfirmModal fetcher routing", () => {
       diff: diffWithChanges,
     };
     const { getByText } = renderModal();
+    // Drive through the computing step so the diff-result effect fires (it only
+    // acts while step === "computing").
+    fireEvent.click(getByText("sync_modal.check_changes"));
     fireEvent.click(getByText("sync_modal.use_compositor_version"));
     const acceptCall = submitSpy.mock.calls.find(
       ([body]) => (body as { intent?: string }).intent === "accept-divergence",

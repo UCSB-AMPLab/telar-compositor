@@ -234,7 +234,11 @@
     "subjects": "Temas",
     "source": "Fuente",
     "credit": "Crédito",
-    "featured": "Destacado"
+    "featured": "Destacado",
+    "alt_text": "Descripción para accesibilidad",
+    "source_url": "URL de la fuente",
+    "thumbnail": "URL de la miniatura",
+    "extra_columns": "Columnas personalizadas"
   },
   "sync_use_repo": "Usar el repositorio",
   "sync_keep_mine": "Conservar lo mío",

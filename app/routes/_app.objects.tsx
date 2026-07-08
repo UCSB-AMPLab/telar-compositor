@@ -38,6 +38,7 @@ import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { findYMapById, findYMapByIdOrTempId } from "~/lib/yjs-helpers";
 import { keyFor } from "~/lib/item-key";
+import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
 import { useToast } from "~/hooks/use-toast";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { DocsLink } from "~/components/ui/DocsLink";
@@ -1868,42 +1869,19 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     lastInsertedPendingRef.current = null;
   }
 
-  // Row keys and delete-detection bookkeeping both come from the shared
-  // keyFor helper (see ~/lib/item-key). It keys on _tempId first so a key
-  // stays stable when snapshotToD1 backfills the numeric D1 id after
-  // creation; an id-first key would flip at backfill and read as a remote
-  // deletion. Y.Array order is the canonical order and drag-to-reorder was
-  // removed, so no sortable id is needed.
+  // Row keys come from the shared keyFor helper (see ~/lib/item-key). It keys
+  // on _tempId first so a key stays stable when snapshotToD1 backfills the
+  // numeric D1 id after creation; an id-first key would flip at backfill.
+  // Y.Array order is the canonical order and drag-to-reorder was removed, so
+  // no sortable id is needed.
 
-  // --------------------------------------------------------------------
-  // Remote-delete toast — fires when an object disappears from the
-  // Y.Array. We identify the deleted object by its last known title.
-  // --------------------------------------------------------------------
-  const prevTitlesRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => {
-    if (!useYjs) return;
-    const list = yjsObjects ?? [];
-    const curr = new Map<string, string>();
-    for (const o of list) curr.set(String(keyFor(o)), o.title ?? o.object_id);
-    const deleted: string[] = [];
-    prevTitlesRef.current.forEach((title, key) => {
-      if (!curr.has(key)) deleted.push(title);
-    });
-    prevTitlesRef.current = curr;
-    if (deleted.length === 0) return;
-    for (const title of deleted) {
-      // Stay generic: a Y.Array delete carries no actor, and awareness only
-      // tells us who is connected — not who deleted. Naming a collaborator
-      // here would misattribute the action. No undo affordance: a
-      // remote delete has no local undo path, so a button would be a no-op —
-      // omit it rather than show dead UI.
-      showToast({
-        message: tStructural("toast_item_deleted_generic", { label: title }),
-        type: "destructive",
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [yjsObjects, useYjs]);
+  // Remote-delete toast — fires when an object disappears from the Y.Array
+  // because a peer removed it. Shared logic in useRemoteDeleteToast.
+  useRemoteDeleteToast({
+    items: yjsObjects ?? [],
+    enabled: useYjs,
+    getLabel: (o) => o.title ?? o.object_id,
+  });
 
   // --------------------------------------------------------------------
   // Default order + substring filter. The sort and status

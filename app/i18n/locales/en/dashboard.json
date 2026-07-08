@@ -125,7 +125,21 @@
     "config_setting": "settings",
     "item_new": "{{name}} (new)",
     "item_changed": "{{name}} (changed)",
-    "item_removed": "{{name}} (removed)"
+    "item_removed": "{{name}} (removed)",
+    "conflicts_heading": "Changed in both places",
+    "conflicts_intro": "These changed in GitHub and in the Compositor. Choose which version to keep — everything else applies either way.",
+    "conflict_use_repo": "Use GitHub version",
+    "conflict_keep_mine": "Keep my version",
+    "conflict_value_repo": "GitHub",
+    "conflict_value_mine": "Compositor",
+    "conflict_deleted_here": "Deleted in the Compositor, edited in GitHub",
+    "conflict_deleted_in_repo": "Deleted in GitHub, edited in the Compositor",
+    "conflict_restore": "Restore GitHub version",
+    "conflict_keep_deleted": "Keep it deleted",
+    "conflict_delete": "Delete it",
+    "glossary_category": "Glossary",
+    "editor_only_note": "This sync leaves {{count}} unpublished Compositor change(s) untouched; they will go out with your next publish.",
+    "conflict_also_applying": "These also change to the GitHub version:"
   },
   "orphan_banner": {
     "count_text": "Found {{count}} unreferenced story file(s) on GitHub.",

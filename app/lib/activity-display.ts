@@ -37,6 +37,9 @@ export const CONFIG_FIELD_I18N_PATH: Record<string, string> = {
   author: "config:sections.site_settings.field_author",
   email: "config:sections.site_settings.field_email",
   demo_content: "config:sections.site_settings.field_demo_content",
+  // The sync diff names this field by its D1 column; the Config tab's
+  // activity feed historically used the short key above. Same label.
+  include_demo_content: "config:sections.site_settings.field_demo_content",
   theme: "config:sections.site_settings.field_theme",
   logo: "config:sections.site_settings.field_logo",
   language: "config:sections.site_settings.field_language",

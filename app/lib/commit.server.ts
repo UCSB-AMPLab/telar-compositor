@@ -11,10 +11,16 @@
  *   - StaleHeadError: distinguishable error for stale expectedHeadOid failures
  *   - dispatchWorkflow: trigger a workflow_dispatch event for a specific workflow
  *   - getLatestWorkflowRun: fetch the most recently created run for a named workflow
+ *
+ * @version v1.4.1-beta
  */
 
 import { graphqlGitHub, githubHeaders } from "~/lib/github.server";
-import { findInYamlBlock, mutateYamlBlock } from "~/lib/config-yaml-block.server";
+import {
+  findInYamlBlock,
+  mutateYamlBlock,
+  readConfigScalar,
+} from "~/lib/config-yaml-block.server";
 
 // ---------------------------------------------------------------------------
 // GraphQL query strings
@@ -206,10 +212,13 @@ export async function verifySiteUrl(
   configYmlContent: string,
   opts: { attempts?: number; intervalMs?: number } = {},
 ): Promise<SiteUrlCheck> {
-  // Extract url and baseurl from _config.yml
-  const urlMatch = configYmlContent.match(/^url:\s*"?([^"\n]+)"?\s*$/m);
-  const baseurlMatch = configYmlContent.match(/^baseurl:\s*"?([^"\n]*)"?\s*$/m);
-  const configUrl = (urlMatch?.[1]?.trim() ?? "") + (baseurlMatch?.[1]?.trim() ?? "");
+  // Extract url and baseurl from _config.yml via the shared scalar reader, so a
+  // line carrying an inline `# comment` reads its value cleanly (the previous
+  // anchored regex either failed the match outright on a quoted+commented line,
+  // or folded the comment text into a bare value).
+  const configUrl =
+    (readConfigScalar(configYmlContent, "url") ?? "") +
+    (readConfigScalar(configYmlContent, "baseurl") ?? "");
 
   // Opt-in Pages-settling backoff. Right after Pages is enabled, GET /pages
   // returns a transient 404 until the first deployment registers; a single read

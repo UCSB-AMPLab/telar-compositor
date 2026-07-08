@@ -222,7 +222,7 @@ function buildStepYMap(
   return stepMap;
 }
 
-export const __test__ = { reorderInPlace };
+export const __test__ = { reorderInPlace, buildStepYMap };
 
 /**
  * useStructuralOps — returns the mutation API for structural Y.Array

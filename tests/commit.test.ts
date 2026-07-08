@@ -773,6 +773,44 @@ title: My Site
     expect(result.pagesEnabled).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("reads url+baseurl correctly when their lines carry inline comments", async () => {
+    // Before the shared scalar reader, a quoted+commented `url:` line failed the
+    // anchored regex outright, so configUrl silently dropped the url segment.
+    const CONFIG_WITH_COMMENTS = `
+url: "https://testuser.github.io" # managed by Telar Compositor
+baseurl: "/my-telar-site" # base path
+title: My Site
+`.trim();
+
+    globalThis.fetch = makeRestFetch({
+      html_url: "https://testuser.github.io/my-telar-site",
+      https_enforced: true,
+    });
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_COMMENTS);
+
+    expect(result.configUrl).toBe("https://testuser.github.io/my-telar-site");
+    expect(result.match).toBe(true);
+  });
+
+  it("reads a bare url value without folding a trailing comment into it", async () => {
+    const CONFIG_BARE_COMMENTED = `
+url: https://testuser.github.io # deploy target
+baseurl: /my-telar-site # base path
+title: My Site
+`.trim();
+
+    globalThis.fetch = makeRestFetch({
+      html_url: "https://testuser.github.io/my-telar-site",
+      https_enforced: true,
+    });
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_BARE_COMMENTED);
+
+    expect(result.configUrl).toBe("https://testuser.github.io/my-telar-site");
+    expect(result.match).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

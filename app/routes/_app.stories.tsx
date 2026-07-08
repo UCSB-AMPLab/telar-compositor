@@ -18,7 +18,7 @@
  * from the Y.Array so remote collaborators' changes appear in real
  * time; it falls back to loader data during SSR or pre-connection.
  *
- * @version v1.4.1-beta
+ * @version v1.4.2-beta
  */
 
 import { and, asc, count, eq, gt } from "drizzle-orm";
@@ -46,10 +46,11 @@ import { NewStoryForm } from "~/components/features/stories/NewStoryForm";
 import { StoriesEmptyState } from "~/components/features/stories/StoriesEmptyState";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { DocsLink } from "~/components/ui/DocsLink";
-import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { useCollaborationContext, FALLBACK_HIGHLIGHT_COLOR } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
+import { makeUniqueSlug } from "~/lib/slug";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
-import { useToast } from "~/hooks/use-toast";
+import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
 import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 
 export const handle = { i18n: ["common", "stories", "structural"] };
@@ -352,7 +353,6 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
 
   const { ydoc, remoteCollaborators } = useCollaborationContext();
   const ops = useStructuralOps(currentUserId, userRole);
-  const { showToast } = useToast();
 
   // ------------------------------------------------------------------
   // Source of truth: Yjs when available, loader data otherwise
@@ -449,9 +449,10 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     seenKeysRef.current = next;
     if (newly.length === 0) return;
 
-    // Pick a colour from the first remote collaborator present, fallback to anil.
+    // Pick a colour from the first remote collaborator present, fallback to
+    // the shared lavender highlight token.
     const colour =
-      remoteCollaborators[0]?.user.color ?? "rgba(198, 208, 248, 0.9)";
+      remoteCollaborators[0]?.user.color ?? FALLBACK_HIGHLIGHT_COLOR;
     setHighlightedKeys((prev) => {
       const merged = { ...prev };
       for (const k of newly) merged[k] = colour;
@@ -468,46 +469,29 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayStories, useYjs]);
 
-  // Remote-delete detection for cascade toast: fires when an id disappears
-  // from the Yjs array that was previously in the seen set. The
-  // stories-list page is the parent list, so no redirect is needed —
-  // the story editor handles the nested redirect case.
-  const prevTitlesRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => {
-    if (!useYjs) return;
-    const curr = new Map<string, string>();
-    for (const s of displayStories) {
-      curr.set(String(keyFor(s)), s.title ?? s.story_id);
-    }
-    // Compare with previous — any key that was present but is now absent is a delete.
-    const deletedTitles: string[] = [];
-    prevTitlesRef.current.forEach((title, key) => {
-      if (!curr.has(key)) deletedTitles.push(title);
-    });
-    prevTitlesRef.current = curr;
-    if (deletedTitles.length === 0) return;
-    // Suppress during reorder — the clone approach triggers a false delete
-    if (reorderingRef.current) return;
-    // Stay generic: a Y.Array delete carries no actor, and awareness only
-    // tells us who is connected — not who deleted. Naming a collaborator here
-    // would misattribute the action. No undo affordance either: a remote
-    // delete has no local undo path, so a button would be a no-op — the TabNav
-    // Undo control is the authoritative path.
-    for (const title of deletedTitles) {
-      showToast({
-        message: tStructural("toast_item_deleted_generic", { label: title }),
-        type: "destructive",
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayStories, useYjs]);
+  // Belt-and-braces guard for the remote-delete toast during a reorder. The
+  // reorder replaces the moved item with a fresh Y.Map (cloneYMap in
+  // use-structural-ops), but that clone copies every entry — including
+  // `_temp_id` and `_id` — so keyFor still resolves to the same key and the
+  // swap reads as a move, never a deletion. This flag predates the shared
+  // tempId-first keying, back when the reorder DID churn the key and fire a
+  // false toast; it is retained as a cheap safety net, not because the
+  // detection would misfire under the current keying.
+  const reorderingRef = useRef(false);
+
+  // Remote-delete toast — fires when a story disappears from the Y.Array
+  // because a peer removed it. Shared logic in useRemoteDeleteToast. The
+  // stories-list page is the parent list, so no redirect is needed; the story
+  // editor handles the nested redirect case.
+  useRemoteDeleteToast({
+    items: displayStories,
+    enabled: useYjs,
+    getLabel: (s) => s.title ?? s.story_id,
+    suppressRef: reorderingRef,
+  });
 
   // ------------------------------------------------------------------
   // Handlers
-  // Guard: suppress remote-delete toast during reorder (clone creates a new
-  // Y.Map identity, so the old key disappears and the effect would fire).
-  const reorderingRef = useRef(false);
-
   // ------------------------------------------------------------------
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string | number);
@@ -537,10 +521,27 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   function handleCreateStory(title: string, subtitle: string, byline: string) {
     setShowNewCard(false);
     if (useYjs) {
-      const baseSlug = slugify(title) || `story-${Date.now()}`;
-      // Append a short timestamp suffix to keep story_id unique across clients
-      // without a server round-trip (snapshotToD1 does not enforce uniqueness).
-      const storyId = `${baseSlug}-${Date.now().toString(36).slice(-4)}`;
+      // Prefer a clean, suffix-free story_id (e.g. "the-river") so the story's
+      // editor and published URLs stay readable for the story's whole life. A
+      // numeric -2/-3 suffix is appended only on an actual collision with an
+      // existing story_id, matching how pages, objects, and glossary terms
+      // dedupe. `displayStories` is the authoritative Y.Array-backed list in
+      // this branch and carries every story's story_id, so it is the live
+      // collision set; makeUniqueSlug probes `${base}-2`, `-3`, … against that
+      // same set, so the fallback can't itself collide.
+      //
+      // Accepted race: two clients creating the same title simultaneously —
+      // before Yjs has synced the first one's row into the other's Y.Array —
+      // can both land on the same clean story_id, because each probe only sees
+      // its own local view and snapshotToD1 enforces no uniqueness on write.
+      // This rare collision was deliberately accepted in exchange for clean
+      // URLs; the previous scheme spent a permanent 4-char suffix on every URL
+      // to guard against a case that essentially never happens.
+      const existingIds = new Set(
+        displayStories.map((s) => s.story_id).filter(Boolean),
+      );
+      const baseSlug = slugify(title) || "story";
+      const { slug: storyId } = makeUniqueSlug(baseSlug, existingIds);
       // Seed the subtitle and byline the user typed in the creation form; both
       // stay editable inline on the story editor afterwards.
       ops!.addStory(title, storyId, subtitle, byline);
