@@ -52,7 +52,7 @@ export const OBJECTS_CSV_COLUMNS = [
  * Bilingual header row mapping each English column name to its Spanish equivalent.
  * Required by Telar's CSV parser — the second row is the Spanish label row.
  */
-const BILINGUAL_ROW: Record<string, string> = {
+export const BILINGUAL_ROW: Record<string, string> = {
   object_id: "id_objeto",
   title: "titulo",
   featured: "destacado",
