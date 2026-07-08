@@ -19,7 +19,7 @@
  * Style mirrors `app/lib/github.server.ts`: raw fetch against
  * `https://api.github.com`, pinned API version header, throws on non-2xx.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import Papa from "papaparse";
@@ -30,6 +30,7 @@ import {
   enableGitHubPages,
   dispatchWorkflow,
 } from "~/lib/commit.server";
+import { configLineRegex } from "~/lib/config-yaml-block.server";
 
 // Constants
 export const TEMPLATE_OWNER = "ucsb-amplab";
@@ -347,20 +348,6 @@ export interface BornCleanConfigOptions {
   /** Site author byline. Written to the `author:` line when set; if the template
    *  has no such line, it's skipped silently (author is cosmetic, never fatal). */
   author?: string;
-}
-
-/**
- * Regex for a top-level `key: value` line in `_config.yml`, capturing the
- * prefix ($1) and any trailing whitespace + inline comment ($2) so a rewrite can
- * preserve the comment. Matches quoted, single-quoted, or bare values. Shared by
- * `buildBornCleanConfig` and `rewriteConfigUrl` so the two never disagree about
- * line shape (a mismatch silently half-rewrites a config).
- */
-function configLineRegex(key: string): RegExp {
-  return new RegExp(
-    `^(${key}:\\s*)(?:"[^"\\n]*"|'[^'\\n]*'|[^\\n#]*?)?(\\s*(?:#.*)?)$`,
-    "m",
-  );
 }
 
 /**

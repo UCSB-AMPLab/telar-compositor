@@ -9,7 +9,7 @@
  * (where the user's first Sheets URL was inaccessible and they enter a
  * corrected one).
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { redirect } from "react-router";
@@ -24,6 +24,7 @@ import { importRepo } from "~/lib/import.server";
 import { commitFilesToRepo, disableGoogleSheetsInConfig, verifySiteUrl, enableGitHubPages } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
 import { handleCreateSiteIntents } from "~/lib/onboarding-create-site.server";
+import { configLineRegex } from "~/lib/config-yaml-block.server";
 import { getDb } from "~/lib/db.server";
 import { resetCollabDocIfBlobExists } from "~/lib/collab-reset.server";
 import {
@@ -399,13 +400,15 @@ export async function action({ request, context }: Route.ActionArgs) {
       const parsed = new URL(pagesUrl);
       const newUrl = `${parsed.protocol}//${parsed.host}`;
       const newBaseurl = parsed.pathname.replace(/\/+$/, "");
+      // Rewrite url/baseurl through the shared line matcher so any inline
+      // `# comment` on those lines survives the fix (re-emitted via $2).
       configContent = configContent.replace(
-        /^(url:\s*)"?[^"\n]*"?\s*$/m,
-        `$1"${newUrl}"`
+        configLineRegex("url"),
+        `$1"${newUrl}"$2`
       );
       configContent = configContent.replace(
-        /^(baseurl:\s*)"?[^"\n]*"?\s*$/m,
-        `$1"${newBaseurl}"`
+        configLineRegex("baseurl"),
+        `$1"${newBaseurl}"$2`
       );
       commitParts.push(enablePages ? "enable GitHub Pages and set site URL" : "fix site URL");
 

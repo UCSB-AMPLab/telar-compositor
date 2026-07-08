@@ -14,13 +14,20 @@
  * path (imports from `create-site.server`) rather than reimplementing the parse, so
  * it cannot pass while the shipped transform breaks.
  *
+ * The second block is a related tripwire: it checks that KNOWN_CONFIG_KEYS in
+ * `publish.server.ts` (the allowlist the config sweep uses to tell real
+ * top-level `_config.yml` keys from swept prose) still covers every top-level
+ * key the live template actually ships. That maintenance rule — every framework
+ * release that adds a top-level config key must extend the allowlist — lives
+ * only in prose otherwise, and a miss corrupts published configs silently.
+ *
  * Gated behind `LIVE_TEMPLATE_CHECK` so the normal offline suite (`npm test`) skips
  * it — it makes a network call to api.github.com. Run it at the release gate:
  *   LIVE_TEMPLATE_CHECK=1 npx vitest run tests/template-coupling.live.test.ts
  * It hits the public template unauthenticated; set `GITHUB_TOKEN` to dodge the
  * unauthenticated rate limit if needed.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -36,6 +43,7 @@ import {
   STORIES_TEXTS_DIR,
 } from "~/lib/create-site.server";
 import { isGoogleSheetsEnabled } from "~/lib/commit.server";
+import { KNOWN_CONFIG_KEYS } from "~/lib/publish.server";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -141,6 +149,89 @@ describe.runIf(process.env.LIVE_TEMPLATE_CHECK)(
       const dirs = await listTemplateDir(STORIES_TEXTS_DIR);
       expect(dirs).toContain(storySlugForLocale("en"));
       expect(dirs).toContain(storySlugForLocale("es"));
+    });
+  },
+);
+
+/**
+ * Top-level keys of a `_config.yml` string: column-0, lowercase-initial `key:`
+ * lines. This is deliberately the SAME shape publish.server.ts's
+ * isStructuralConfigLine uses to decide whether a line is a real key or swept
+ * prose, so what we enumerate here is exactly what the sweep would test against
+ * KNOWN_CONFIG_KEYS. Indented block contents and multi-line scalar
+ * continuations sit past column 0 and are correctly excluded.
+ */
+function topLevelConfigKeys(yaml: string): string[] {
+  const keys: string[] = [];
+  for (const line of yaml.split("\n")) {
+    const m = line.match(/^([a-z][a-z0-9_-]*):(\s|$)/);
+    if (m) keys.push(m[1]);
+  }
+  return keys;
+}
+
+// Skipped in the offline suite; runs only when LIVE_TEMPLATE_CHECK is set.
+describe.runIf(process.env.LIVE_TEMPLATE_CHECK)(
+  "the config-sweep allowlist covers every top-level key in the live template",
+  () => {
+    // FAILURE MODE THIS GUARDS
+    // ------------------------
+    // publish.server.ts sweeps _config.yml one line at a time and only treats a
+    // line as a real, structural config key when that line's key is in
+    // KNOWN_CONFIG_KEYS (see isStructuralConfigLine). Anything else is treated
+    // as prose the sweep may replace. So when a future Telar framework release
+    // adds a NEW top-level key to the template's _config.yml, the sweep silently
+    // classifies that key's line as prose: a repo-side edit to that key can then
+    // be clobbered (or its continuation lines swept away) at publish time, with
+    // no error — the corruption only surfaces later in a published site.
+    //
+    // This test fetches the live template and fails loud, BEFORE a release, the
+    // moment the template grows a top-level key the allowlist doesn't cover. The
+    // fix at that point is to extend KNOWN_CONFIG_KEYS in publish.server.ts and,
+    // if the new key is a managed field, teach the config sync differ about it.
+
+    // Keys the sweep DELIBERATELY does not manage. A live top-level key belongs
+    // here only when the sweep is meant to ignore it and leave it as unmanaged
+    // prose. It is EMPTY today: every top-level key the live ucsb-amplab/telar
+    // template ships is already in KNOWN_CONFIG_KEYS. Add a key here (with a
+    // one-line justification) only after confirming against isStructuralConfigLine
+    // and updateConfigFields that the sweep truly should not manage it.
+    const DELIBERATELY_UNMANAGED = new Set<string>([]);
+
+    let liveKeys: string[];
+    // Imported directly from publish.server.ts — the exact Set the shipped
+    // config sweep tests against, so this check can't pass while the allowlist
+    // has drifted.
+    const knownKeys = KNOWN_CONFIG_KEYS;
+
+    beforeAll(async () => {
+      const config = await fetchTemplateFile("_config.yml");
+      liveKeys = topLevelConfigKeys(config);
+    }, 30_000);
+
+    it("has no live top-level key the allowlist fails to account for", () => {
+      // Sanity: if we parsed nothing, the fetch or the key regex broke — a
+      // silently-empty list would make the real assertion vacuously pass.
+      expect(liveKeys.length).toBeGreaterThan(0);
+
+      const unaccounted = liveKeys.filter(
+        (k) => !knownKeys.has(k) && !DELIBERATELY_UNMANAGED.has(k),
+      );
+
+      const guidance =
+        unaccounted.length === 0
+          ? ""
+          : `The live ucsb-amplab/telar _config.yml has top-level key(s) ` +
+            `[${unaccounted.join(", ")}] that KNOWN_CONFIG_KEYS in ` +
+            `app/lib/publish.server.ts does not list. The config sweep will treat ` +
+            `${unaccounted.length === 1 ? "it" : "them"} as prose and can clobber ` +
+            `repo-side edits at publish time. Before releasing: add ` +
+            `${unaccounted.map((k) => `"${k}"`).join(", ")} to KNOWN_CONFIG_KEYS ` +
+            `(and, if it is a managed field, extend the config sync differ to ` +
+            `match). If the sweep should deliberately ignore a new key, add it to ` +
+            `DELIBERATELY_UNMANAGED in this test with a justification instead.`;
+
+      expect(unaccounted, guidance).toEqual([]);
     });
   },
 );
