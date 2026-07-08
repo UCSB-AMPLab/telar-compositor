@@ -23,7 +23,7 @@
  * fails open: it returns the stored timestamps without the commit message
  * rather than erroring (mirrors the `_app` loader's fail-open posture).
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import type { Route } from "./+types/api.site-status";
@@ -130,6 +130,8 @@ const EMPTY_FULL_SYNC_DIFF = {
   config: { changedFields: [], versionChange: null },
   glossary: { added: [], removed: [], changed: [] },
   hasConflicts: false,
+  classification: "two-way",
+  suppressedEditorOnly: 0,
 } satisfies FullSyncDiff;
 
 /** The four payloads this route can serve. */
@@ -200,6 +202,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           owner,
           repo,
           db,
+          activeProject.head_sha ?? null,
         );
         return Response.json(diff);
       } catch {

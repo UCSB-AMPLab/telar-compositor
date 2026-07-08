@@ -234,7 +234,11 @@
     "subjects": "Subjects",
     "source": "Source",
     "credit": "Credit",
-    "featured": "Featured"
+    "featured": "Featured",
+    "alt_text": "Description for accessibility",
+    "source_url": "Source URL",
+    "thumbnail": "Thumbnail URL",
+    "extra_columns": "Custom columns"
   },
   "sync_use_repo": "Use repo",
   "sync_keep_mine": "Keep mine",

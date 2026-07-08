@@ -24,7 +24,7 @@
  * a component on any route module that client-side navigations target,
  * so it stays (see the note above it).
  *
- * @version v1.4.0-beta
+ * @version v1.4.2-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -37,6 +37,7 @@ import { createSessionStorage } from "~/lib/session.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getFileContent, getRepoHead } from "~/lib/github.server";
 import { getUserProjects, requireOwner } from "~/lib/membership.server";
+import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 import { recordActivity } from "~/lib/activity.server";
 import { computeFullSyncDiff, applyFullSyncChanges } from "~/lib/sync.server";
@@ -46,6 +47,7 @@ import {
   scanRepoOrphanStoryIds,
   parseCompositorIgnored,
   parseTelarCsv,
+  resolveLayerFileReferences,
   mapStoryCsv,
 } from "~/lib/import.server";
 import { commitFilesToRepo } from "~/lib/commit.server";
@@ -64,24 +66,11 @@ export async function loader() {
 export async function action({ request, context }: Route.ActionArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
-  // Rebind narrowed user.id as a primitive const so inner async closures
-  // (getActiveProject) can capture it without losing the null-guard narrowing.
-  const userId = user.id;
 
   const env = context.cloudflare.env as Env;
   const db = getDb(env.DB);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
-
-  // Helper to get active project from session
-  async function getActiveProject() {
-    const sessionStorage = createSessionStorage(env.SESSION_SECRET);
-    const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-    const sessionActiveId = session.get("activeProjectId") as number | undefined;
-    const allProjects = await getUserProjects(db, userId);
-    if (allProjects.length === 0) return null;
-    return allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-  }
 
   switch (intent) {
     case "switch-project": {
@@ -107,8 +96,9 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "generate-invite": {
-      const activeProject = await getActiveProject();
-      if (!activeProject) return { ok: false, intent: "generate-invite", error: "no_project" };
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) return { ok: false, intent: "generate-invite", error: "no_project" };
+      const activeProject = resolved.project;
 
       await requireOwner(db, activeProject.id, user.id);
 
@@ -132,8 +122,9 @@ export async function action({ request, context }: Route.ActionArgs) {
         return { ok: true, intent: "search-users", users: [] };
       }
 
-      const activeProject = await getActiveProject();
-      if (!activeProject) return { ok: false, intent: "search-users", error: "no_project" };
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) return { ok: false, intent: "search-users", error: "no_project" };
+      const activeProject = resolved.project;
 
       try {
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
@@ -149,8 +140,9 @@ export async function action({ request, context }: Route.ActionArgs) {
       const username = formData.get("username") as string;
       if (!username) return { ok: false, intent: "send-invite", error: "missing_username" };
 
-      const activeProject = await getActiveProject();
-      if (!activeProject) return { ok: false, intent: "send-invite", error: "no_project" };
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) return { ok: false, intent: "send-invite", error: "no_project" };
+      const activeProject = resolved.project;
 
       await requireOwner(db, activeProject.id, user.id);
 
@@ -194,8 +186,9 @@ export async function action({ request, context }: Route.ActionArgs) {
       const inviteId = Number(formData.get("inviteId"));
       if (!inviteId) return { ok: false, intent: "cancel-invite", error: "missing_invite_id" };
 
-      const activeProject = await getActiveProject();
-      if (!activeProject) return { ok: false, intent: "cancel-invite", error: "no_project" };
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) return { ok: false, intent: "cancel-invite", error: "no_project" };
+      const activeProject = resolved.project;
 
       await requireOwner(db, activeProject.id, user.id);
 
@@ -216,8 +209,9 @@ export async function action({ request, context }: Route.ActionArgs) {
       const targetUserId = Number(formData.get("userId"));
       if (!targetUserId) return { ok: false, intent: "remove-member", error: "missing_user_id" };
 
-      const activeProject = await getActiveProject();
-      if (!activeProject) return { ok: false, intent: "remove-member", error: "no_project" };
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) return { ok: false, intent: "remove-member", error: "no_project" };
+      const activeProject = resolved.project;
 
       await requireOwner(db, activeProject.id, user.id);
 
@@ -273,10 +267,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "compute-full-sync-diff": {
-      const activeProject = await getActiveProject();
-      if (!activeProject) {
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) {
         return { ok: false, intent: "compute-full-sync-diff", error: "no_project" };
       }
+      const activeProject = resolved.project;
 
       // Guard: only owners may sync
       await requireOwner(db, activeProject.id, user.id);
@@ -284,12 +279,37 @@ export async function action({ request, context }: Route.ActionArgs) {
       try {
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const [owner, repo] = activeProject.github_repo_full_name.split("/");
+
+        // Snapshot the DO to D1 first so the diff compares the repo against a
+        // current D1 — D1 lags the live doc by up to the snapshot interval, so
+        // without this an active editor's seconds-old change could misreport as
+        // (un)changed. Best-effort: a DO outage degrades to today's behaviour.
+        try {
+          const snapshotHeaders = await makeInternalMarkerHeaders(
+            activeProject.id,
+            env.SESSION_SECRET,
+            "snapshot",
+          );
+          const stub = env.COLLABORATION.get(
+            env.COLLABORATION.idFromName(String(activeProject.id)),
+          );
+          await stub.fetch(
+            new Request("https://internal/snapshot", { method: "POST", headers: snapshotHeaders }),
+          );
+        } catch {
+          // DO unreachable — fall through to the diff against existing D1.
+        }
+
         const diff = await computeFullSyncDiff(
           activeProject.id,
           token,
           owner,
           repo,
           db,
+          // Three-way base: the repo state D1 was last reconciled with. Lets the
+          // diff suppress the user's own unpublished edits and surface genuine
+          // repo↔editor conflicts precisely.
+          activeProject.head_sha ?? null,
         );
 
         const hasChanges =
@@ -299,7 +319,10 @@ export async function action({ request, context }: Route.ActionArgs) {
           (diff.stories?.newStories?.length ?? 0) > 0 ||
           (diff.stories?.changedStories?.length ?? 0) > 0 ||
           (diff.stories?.missingStories?.length ?? 0) > 0 ||
-          (diff.config?.changedFields?.length ?? 0) > 0;
+          (diff.config?.changedFields?.length ?? 0) > 0 ||
+          (diff.glossary?.added?.length ?? 0) > 0 ||
+          (diff.glossary?.changed?.length ?? 0) > 0 ||
+          (diff.glossary?.removed?.length ?? 0) > 0;
 
         if (!hasChanges) {
           const currentHead = await getRepoHead(token, owner, repo);
@@ -321,10 +344,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     }
 
     case "apply-full-sync": {
-      const activeProject = await getActiveProject();
-      if (!activeProject) {
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) {
         return { ok: false, intent: "apply-full-sync", error: "no_project" };
       }
+      const activeProject = resolved.project;
 
       // Guard: only owners may apply sync
       await requireOwner(db, activeProject.id, user.id);
@@ -351,6 +375,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           owner,
           repo,
           db,
+          env,
         );
 
         // Activity feed: one site-level row per sync, labelled with the site
@@ -384,10 +409,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       // Bump head_sha to current GitHub HEAD without
       // re-importing. Single UPDATE; no entity changes. Uses freshly-fetched
       // HEAD (NOT the cached banner-check value).
-      const activeProject = await getActiveProject();
-      if (!activeProject) {
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) {
         return { ok: false, intent: "accept-divergence", error: "no_project" };
       }
+      const activeProject = resolved.project;
       await requireOwner(db, activeProject.id, user.id);
       try {
         const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
@@ -429,10 +455,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       // Y.doc via the DO's new POST /restore-orphans endpoint. The
       // existing snapshotToD1 INSERT path then handles D1 writeback
       // normally.
-      const activeProject = await getActiveProject();
-      if (!activeProject) {
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) {
         return { ok: false, intent: "restore-orphan-drafts", error: "no_project" };
       }
+      const activeProject = resolved.project;
       await requireOwner(db, activeProject.id, user.id);
 
       try {
@@ -474,13 +501,24 @@ export async function action({ request, context }: Route.ActionArgs) {
           if (!csvText) continue;
 
           const parsedRows = parseTelarCsv(csvText);
+          // A published layerN_content cell holds the FILENAME of a
+          // telar-content/texts/stories/*.md file, not inline prose. Resolve
+          // those references to the file bodies before mapping so a restored
+          // draft keeps its real layer content instead of literal filenames;
+          // inline cells pass through untouched and a missing file degrades to
+          // the literal cell.
+          const resolvedRows = await resolveLayerFileReferences(
+            parsedRows,
+            (filename) =>
+              getFileContent(token, owner, repo, `telar-content/texts/stories/${filename}`),
+          );
           // mapStoryCsv expects a numeric storyDbId for the step.story_id
           // foreign key; for the DO payload we throw it away (the DO
           // re-derives _id via snapshotToD1's INSERT path). Negative
           // placeholder on layer.step_id is converted to a positive
           // step_index here so the DO can thread layers without
           // re-implementing the placeholder convention.
-          const { steps: stepRows, layers: layerRows } = mapStoryCsv(parsedRows, 0);
+          const { steps: stepRows, layers: layerRows } = mapStoryCsv(resolvedRows, 0);
           // mapStoryCsv emits rows in the same order as the input nonBlankRows
           // and stamps step.story_id = 0 (the dbId we passed). We only need
           // the per-step fields the DO writes onto each Y.Map.
@@ -494,6 +532,7 @@ export async function action({ request, context }: Route.ActionArgs) {
             page: s.page ?? "",
             question: s.question ?? "",
             answer: s.answer ?? "",
+            alt_text: s.alt_text ?? "",
             clip_start: s.clip_start ?? "",
             clip_end: s.clip_end ?? "",
             loop: s.loop ?? "",
@@ -565,10 +604,11 @@ export async function action({ request, context }: Route.ActionArgs) {
       // orphan set to .compositor-ignored on GitHub. Same server-side
       // recomputation as restore-orphan-drafts — form payload carries
       // no IDs.
-      const activeProject = await getActiveProject();
-      if (!activeProject) {
+      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+      if (!resolved) {
         return { ok: false, intent: "ignore-orphans", error: "no_project" };
       }
+      const activeProject = resolved.project;
       await requireOwner(db, activeProject.id, user.id);
 
       try {

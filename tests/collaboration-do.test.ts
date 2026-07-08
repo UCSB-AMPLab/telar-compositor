@@ -20,7 +20,7 @@
  * `cloudflare:workers` so DurableObject is a plain class and the DO
  * receives the test ctx/env via super().
  *
- * @version v1.3.0-beta
+ * @version v1.4.1-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -529,6 +529,41 @@ describe("collaboration DO — POST /restore-orphans (hotfix)", () => {
     // layers Y.Array exists and is empty for steps with no layer data.
     const layersArr = stepMap.get("layers") as Y.Array<Y.Map<unknown>>;
     expect(layersArr.length).toBe(0);
+  });
+
+  it("carries the step's alt_text through the restore payload onto the Y.Map", async () => {
+    // A restored orphan draft must keep its steps' alt text: the per-story CSV
+    // has an alt_text column, mapStoryCsv populates it, and the payload now
+    // threads it end-to-end (regression: the payload once dropped it and every
+    // restored step reset to empty alt text).
+    const { doInstance } = makeDoWithStubs();
+    const req = await makeRequest("/restore-orphans", "POST", {
+      body: {
+        stories: [
+          {
+            storyId: "draft-alt",
+            steps: [
+              {
+                step_number: 1,
+                kind: "media",
+                object_id: "image-1",
+                page: "1",
+                question: "",
+                answer: "",
+                alt_text: "A weaver at a backstrap loom",
+              },
+            ],
+            layers: [],
+          },
+        ],
+      },
+    });
+    const res = await doInstance.fetch(req);
+    expect(res.status).toBe(200);
+
+    const ydoc = (doInstance as unknown as { ydoc: Y.Doc }).ydoc;
+    const stepsArr = (ydoc.getArray<Y.Map<unknown>>("stories").get(0).get("steps")) as Y.Array<Y.Map<unknown>>;
+    expect((stepsArr.get(0).get("alt_text") as Y.Text).toString()).toBe("A weaver at a backstrap loom");
   });
 
   it("threads layers under their parent step via step_index", async () => {

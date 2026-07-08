@@ -5,7 +5,7 @@
  * keeps every navigation fast: GitHub work never blocks the loader, and the
  * pill reconciles the cache in the background.
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { projects } from "~/db/schema";
@@ -213,7 +213,7 @@ export async function refreshGithubStatus(
     let divergedAgainst: string | null = localHead;
     if (remoteHead !== localHead) {
       try {
-        const diff = await computeFullSyncDiff(project.id, token, owner, repo, db);
+        const diff = await computeFullSyncDiff(project.id, token, owner, repo, db, localHead);
         if (hasDivergentChanges(diff)) {
           diverged = 1;
         } else {

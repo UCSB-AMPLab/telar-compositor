@@ -24,8 +24,7 @@ vi.mock("~/lib/github.server", () => ({
 }));
 
 import * as githubServer from "~/lib/github.server";
-import { applyFullSyncChanges } from "~/lib/sync.server";
-import { layers, steps } from "~/db/schema";
+import { resolveFullSyncPayload } from "~/lib/sync.server";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -149,14 +148,27 @@ const TOKEN = "test-token";
 const OWNER = "test-owner";
 const REPO = "test-repo";
 
-describe("applyFullSyncChanges — new-story branch inserts layers", () => {
+// New-story import now resolves into an ingest payload whose story insert
+// carries steps/layers by step_index (the DO threads layers onto their parent
+// step and the snapshot assigns real step ids). These tests pin the resolution
+// layer: the layer bodies/buttons land on the payload under the right
+// step_index. The old direct-D1 step-id backfill moved into the DO snapshot and
+// is covered by the DO-probe suite.
+describe("resolveFullSyncPayload — new-story insert carries layers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
     vi.mocked(githubServer.getRepoHead).mockResolvedValue("sha-abc");
   });
 
-  it("inserts zero layer rows when the story CSV has no layer content (sanity check)", async () => {
+  const changes = {
+    objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+    stories: { accept: [], reject: [], insertNew: ["my-story"] },
+    config: { accept: [], reject: [] },
+    glossary: { accept: [], reject: [], insertNew: [] },
+  };
+
+  it("emits no layers when the story CSV has no layer content (sanity check)", async () => {
     const storyCsvNoLayers = `step,object,x,y,zoom
 1,obj-a,0.5,0.5,1.0
 2,obj-b,0.3,0.3,1.2`;
@@ -169,60 +181,15 @@ describe("applyFullSyncChanges — new-story branch inserts layers", () => {
       return null;
     });
 
-    /** Inserted story row returned from the DB after insert */
-    const insertedStoryRow = {
-      id: 42,
-      project_id: PROJECT_ID,
-      story_id: "my-story",
-      title: "My Story",
-      subtitle: "A subtitle",
-      byline: "An author",
-      order: 1,
-      private: false,
-    };
+    const mockDb = createTrackedMockDb({ responses: [[], []] });
+    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
 
-    /**
-     * Inserted step rows returned by the post-insert SELECT in the layers
-     * back-fill block.
-     */
-    const insertedStepRows = [
-      { id: 100, story_id: 42, step_number: 1 },
-      { id: 101, story_id: 42, step_number: 2 },
-    ];
-
-    const layerInserts: Array<unknown[]> = [];
-
-    const mockDb = createTrackedMockDb({
-      responses: [
-        // applySyncChanges (objects) — no objects in repo
-        [],   // d1Objects
-        [],   // allD1Objects
-        // applyFullSyncChanges new-story block:
-        [insertedStoryRow],  // SELECT after story insert → storyDbId=42
-        [],                  // INSERT steps (no steps in this CSV? actually 2 blank-valued rows)
-        insertedStepRows,    // SELECT steps back for layers (no layers path)
-        [],                  // project_config UPDATE (head_sha)
-      ],
-      onInsert: (table, vals) => {
-        if (table === layers) {
-          layerInserts.push(vals as unknown[]);
-        }
-      },
-    });
-
-    const changes = {
-      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
-      stories: { accept: [], reject: [], insertNew: ["my-story"] },
-      config: { accept: [], reject: [] },
-      glossary: { accept: [], reject: [], insertNew: [] },
-    };
-
-    await applyFullSyncChanges(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
-
-    expect(layerInserts).toHaveLength(0);
+    const ins = payload.stories.insert.find((s) => s.storyId === "my-story");
+    expect(ins?.layers ?? []).toHaveLength(0);
+    expect(ins?.steps ?? []).toHaveLength(2);
   });
 
-  it("inserts layer rows with correct step_id mapping when story CSV contains layer content", async () => {
+  it("emits layers with correct step_index mapping when the story CSV has layer content", async () => {
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
       if (path === "telar-content/spreadsheets/objects.csv") return "";
       if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_NEW_STORY;
@@ -231,80 +198,25 @@ describe("applyFullSyncChanges — new-story branch inserts layers", () => {
       return null;
     });
 
-    const insertedStoryRow = {
-      id: 42,
-      project_id: PROJECT_ID,
-      story_id: "my-story",
-      title: "My Story",
-      subtitle: "A subtitle",
-      byline: "An author",
-      order: 1,
-      private: false,
-    };
+    const mockDb = createTrackedMockDb({ responses: [[], []] });
+    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
 
-    // After steps are inserted the fix SELECTs them back by id (insertion order)
-    // to resolve placeholders. step_number is no longer fetched.
-    // step index 0 → id 100 (insertion order 0)
-    // step index 1 → id 101 (insertion order 1)
-    const insertedStepRows = [
-      { id: 100 },
-      { id: 101 },
-    ];
+    const ins = payload.stories.insert.find((s) => s.storyId === "my-story");
+    expect(ins?.layers).toHaveLength(2);
 
-    const layerInserts: Array<unknown> = [];
-
-    const mockDb = createTrackedMockDb({
-      responses: [
-        [],               // applySyncChanges: d1Objects
-        [],               // applySyncChanges: allD1Objects
-        [insertedStoryRow], // SELECT after story insert → storyDbId=42
-        [],               // INSERT steps chunk
-        insertedStepRows, // SELECT steps back for layer back-fill
-        [],               // project_config UPDATE (head_sha)
-      ],
-      onInsert: (table, vals) => {
-        if (table === layers) {
-          // vals may be an array (chunk) or a single object
-          if (Array.isArray(vals)) {
-            layerInserts.push(...vals);
-          } else {
-            layerInserts.push(vals);
-          }
-        }
-      },
-    });
-
-    const changes = {
-      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
-      stories: { accept: [], reject: [], insertNew: ["my-story"] },
-      config: { accept: [], reject: [] },
-      glossary: { accept: [], reject: [], insertNew: [] },
-    };
-
-    await applyFullSyncChanges(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
-
-    // Two layer rows expected:
-    //   step index 0 (placeholder -1) → real step id 100 → layer_number 1, button "Open Layer"
-    //   step index 1 (placeholder -2) → real step id 101 → layer_number 1, no button
-    expect(layerInserts).toHaveLength(2);
-
-    const first = layerInserts[0] as Record<string, unknown>;
-    expect(first.step_id).toBe(100);
+    const first = ins!.layers[0];
+    expect(first.step_index).toBe(0);
     expect(first.layer_number).toBe(1);
     expect(first.button_label).toBe("Open Layer");
     expect(first.content).toBe("Layer one content");
 
-    const second = layerInserts[1] as Record<string, unknown>;
-    expect(second.step_id).toBe(101);
+    const second = ins!.layers[1];
+    expect(second.step_index).toBe(1);
     expect(second.layer_number).toBe(1);
     expect(second.content).toBe("Second layer content");
   });
 
-  it("maps layers to steps by insertion order (id ASC) even when step column is non-sequential", async () => {
-    // Regression: if the back-fill sorts by step_number rather than id, a CSV
-    // with gaps in the explicit `step` column (e.g. 10, 20) can silently attach
-    // layer content to the wrong step when the DB autoincrement order does not
-    // match step_number order.
+  it("assigns step_index by filtered-row order even when the step column is non-sequential", async () => {
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
       if (path === "telar-content/spreadsheets/objects.csv") return "";
       if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_NEW_STORY;
@@ -313,80 +225,19 @@ describe("applyFullSyncChanges — new-story branch inserts layers", () => {
       return null;
     });
 
-    const insertedStoryRow = {
-      id: 42,
-      project_id: PROJECT_ID,
-      story_id: "my-story",
-      title: "My Story",
-      subtitle: "A subtitle",
-      byline: "An author",
-      order: 1,
-      private: false,
-    };
+    const mockDb = createTrackedMockDb({ responses: [[], []] });
+    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
 
-    // The mock returns steps sorted by id ascending (200, 201), matching
-    // filtered-row insertion order. step_number values are 10 and 20 — if
-    // sorting by step_number, the result would still be the same ordering
-    // here, but only because the numbers happen to be ascending. The test
-    // confirms that the code uses id-sort (insertion order), not step_number.
-    // To make this adversarial, the ids returned are deliberately out of
-    // natural insertion order to expose a step_number-sort regression:
-    // we return id=201 before id=200 in the mock result; correct id-sort
-    // must reorder them to [200, 201] and map placeholders accordingly.
-    const insertedStepRowsOutOfOrder = [
-      { id: 201 }, // second inserted step (step_number=20)
-      { id: 200 }, // first inserted step (step_number=10)
-    ];
+    const ins = payload.stories.insert.find((s) => s.storyId === "my-story");
+    expect(ins?.layers).toHaveLength(2);
 
-    const layerInserts: Array<unknown> = [];
-
-    const mockDb = createTrackedMockDb({
-      responses: [
-        [],                          // applySyncChanges: d1Objects
-        [],                          // applySyncChanges: allD1Objects
-        [insertedStoryRow],          // SELECT after story insert → storyDbId=42
-        [],                          // INSERT steps chunk
-        insertedStepRowsOutOfOrder,  // SELECT steps back — returned out of id order
-        [],                          // project_config UPDATE (head_sha)
-      ],
-      onInsert: (table, vals) => {
-        if (table === layers) {
-          if (Array.isArray(vals)) {
-            layerInserts.push(...vals);
-          } else {
-            layerInserts.push(vals);
-          }
-        }
-      },
-    });
-
-    const changes = {
-      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
-      stories: { accept: [], reject: [], insertNew: ["my-story"] },
-      config: { accept: [], reject: [] },
-      glossary: { accept: [], reject: [], insertNew: [] },
-    };
-
-    await applyFullSyncChanges(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
-
-    // With id-sort: orderedStepIds = [200, 201]
-    //   placeholder -1 (CSV row 0, step_number=10) → id 200 → "Alpha layer content"
-    //   placeholder -2 (CSV row 1, step_number=20) → id 201 → "Beta layer content"
-    //
-    // With a broken step_number-sort (if the mock also had step_number):
-    //   that would only work coincidentally — this test's out-of-id-order
-    //   mock result proves the id-sort path is actually taken.
-    expect(layerInserts).toHaveLength(2);
-
-    const alpha = layerInserts[0] as Record<string, unknown>;
-    expect(alpha.step_id).toBe(200);  // first row (step_number=10) → id 200
-    expect(alpha.layer_number).toBe(1);
+    const alpha = ins!.layers[0];
+    expect(alpha.step_index).toBe(0); // first CSV row (step_number=10)
     expect(alpha.button_label).toBe("Alpha Button");
     expect(alpha.content).toBe("Alpha layer content");
 
-    const beta = layerInserts[1] as Record<string, unknown>;
-    expect(beta.step_id).toBe(201);   // second row (step_number=20) → id 201
-    expect(beta.layer_number).toBe(1);
+    const beta = ins!.layers[1];
+    expect(beta.step_index).toBe(1); // second CSV row (step_number=20)
     expect(beta.content).toBe("Beta layer content");
   });
 });

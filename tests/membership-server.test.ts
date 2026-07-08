@@ -11,7 +11,11 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { getUserProjects, getUserProjectsWithStats } from "~/lib/membership.server";
+import {
+  getUserProjects,
+  getUserProjectsWithStats,
+  resolveActiveProject,
+} from "~/lib/membership.server";
 
 /**
  * Build a mock D1 db whose `select(...).from(...).where(...)` chain
@@ -171,5 +175,89 @@ describe("getUserProjectsWithStats", () => {
     });
     await getUserProjectsWithStats(db, 1);
     expect(db.all).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveActiveProject — membership-scoped active-project resolution
+//
+// This is the resolution the /dashboard shared action endpoint (and the
+// fourteen other adopters, via resolveActiveProjectFromRequest) now delegate
+// to. The candidate set is always getUserProjects(userId), so a session's
+// activeProjectId can only ever select one of the caller's OWN projects or
+// fall back to their first one — it can never surface a project the caller
+// has no membership in.
+// ---------------------------------------------------------------------------
+
+/**
+ * Two-project user. getUserProjects issues two selects internally: first the
+ * membership rows (project_id + role), then the project rows by id. Mirror
+ * that order so the real function runs unmodified.
+ */
+function buildTwoProjectDb(): any {
+  let callCount = 0;
+  return {
+    select: vi.fn(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          from: vi.fn(() => ({
+            where: vi.fn().mockResolvedValue([
+              { project_id: 1, role: "convenor" },
+              { project_id: 2, role: "collaborator" },
+            ]),
+          })),
+        };
+      }
+      return {
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([
+            { id: 1, github_repo_full_name: "u/r1" },
+            { id: 2, github_repo_full_name: "u/r2" },
+          ]),
+        })),
+      };
+    }),
+  };
+}
+
+describe("resolveActiveProject", () => {
+  it("returns the session's project + role when the id belongs to the user", async () => {
+    const result = await resolveActiveProject(buildTwoProjectDb(), 7, 2);
+    expect(result?.project.id).toBe(2);
+    expect(result?.userRole).toBe("collaborator");
+  });
+
+  it("falls back to the first project when the session id is stale (not a project the user belongs to)", async () => {
+    const result = await resolveActiveProject(buildTwoProjectDb(), 7, 999);
+    expect(result?.project.id).toBe(1);
+    expect(result?.userRole).toBe("convenor");
+  });
+
+  it("falls back to the first project when the session id is absent", async () => {
+    const result = await resolveActiveProject(buildTwoProjectDb(), 7, undefined);
+    expect(result?.project.id).toBe(1);
+    expect(result?.userRole).toBe("convenor");
+  });
+
+  it("never resolves a non-member id to another user's project — resolution stays within the caller's own projects", async () => {
+    // 42 is a real project id elsewhere in the system but NOT one this user
+    // belongs to. The membership-scoped candidate set means the only possible
+    // outcomes are project 1 or 2; 42 can never be returned.
+    const result = await resolveActiveProject(buildTwoProjectDb(), 7, 42);
+    expect([1, 2]).toContain(result?.project.id);
+    expect(result?.project.id).not.toBe(42);
+  });
+
+  it("returns null when the user has no memberships at all", async () => {
+    const db: any = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([]),
+        })),
+      })),
+    };
+    const result = await resolveActiveProject(db, 999, 5);
+    expect(result).toBeNull();
   });
 });

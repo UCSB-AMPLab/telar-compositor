@@ -151,10 +151,11 @@ exports[`doSnapshot characterization — Scenario 2: new entities (INSERT + back
       "Term",
       "Def",
       null,
+      null,
       "2026-01-01T00:00:00.000Z",
     ],
     "op": "run",
-    "sql": "INSERT INTO glossary_terms (project_id, term_id, title, definition, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    "sql": "INSERT INTO glossary_terms (project_id, term_id, title, definition, related_terms, created_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   },
   {
     "binds": [
