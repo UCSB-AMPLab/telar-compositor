@@ -23,7 +23,7 @@
  * on the step-select / layer-open / layer-close handlers — never
  * inside the one-shot `deepLinkConsumedRef` mount read.
  *
- * @version v1.4.1-beta
+ * @version v1.4.2-beta
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -47,11 +47,12 @@ import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal
 import { useTranslation } from "react-i18next";
 import { detectMediaType } from "~/lib/media-type";
 import type { MediaType } from "~/lib/media-type";
-import { useCollaborationContext, useSetAwarenessLocation } from "~/hooks/use-collaboration";
+import { useCollaborationContext, useSetAwarenessLocation, FALLBACK_HIGHLIGHT_COLOR } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { useToast } from "~/hooks/use-toast";
 import { findYMapById, getYText } from "~/lib/yjs-helpers";
+import { keyFor } from "~/lib/item-key";
 import { recordError } from "~/lib/error-capture";
 import * as Y from "yjs";
 
@@ -364,6 +365,9 @@ interface EditorStep {
   _createdBy: number | null;
   _yMap: Y.Map<unknown> | null;
   _yLayerCount: number;
+  // Position within the observed Y.Array, used only as the last-resort key
+  // for a step that somehow carries neither a D1 id nor a `_tempId`.
+  _yIndex?: number;
 }
 
 interface EditorLayer {
@@ -397,7 +401,7 @@ function readScalarText(yMap: Y.Map<unknown>, key: string): string | null {
   return typeof val === "string" ? (val.length === 0 ? null : val) : null;
 }
 
-function stepFromYMap(s: Y.Map<unknown>): EditorStep {
+function stepFromYMap(s: Y.Map<unknown>, index: number): EditorStep {
   const layersArr = s.get("layers");
   return {
     id: (s.get("_id") as number | null) ?? 0,
@@ -421,6 +425,7 @@ function stepFromYMap(s: Y.Map<unknown>): EditorStep {
     _yMap: s,
     _yLayerCount:
       layersArr instanceof Y.Array ? (layersArr as Y.Array<unknown>).length : 0,
+    _yIndex: index,
   };
 }
 
@@ -636,7 +641,9 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
   // Per-step layer summaries for the sidebar's nested L1/L2 sub-rows.
   // Computed here (plain data) so SortableStepItem never reads `_yMap`. Keyed by
-  // the step's stable key (id > 0 ? id : _tempId) — matching StepSidebar.keyFor.
+  // the shared tempId-first `keyFor` so these summaries land on the same sidebar
+  // rows the highlight, capture, and delete paths already key with — and stay
+  // put across the snapshotToD1 id backfill.
   // In Yjs mode every step Y.Map carries a `layers` Y.Array; in the D1 fallback
   // the flat `storyLayers` list is grouped by step_id. Reactive because it
   // derives from sidebarSteps (recomputed by the stepsArray observeDeep) and
@@ -645,8 +652,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     const map: Record<string, SidebarLayerSummary[]> = {};
     for (const s of sidebarSteps) {
       if (s.kind === "section") continue;
-      const key = String(s.id > 0 ? s.id : s._tempId ?? "");
-      if (!key) continue;
+      const key = keyFor(s);
       let summaries: SidebarLayerSummary[] = [];
       const layersArr = s._yMap?.get("layers");
       if (s._yMap && layersArr instanceof Y.Array) {
@@ -835,10 +841,35 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
   // Remote-delete detection for steps and parent story
   // ---------------------------------------------------------------------------
   const prevStepKeysRef = useRef<Set<string>>(new Set());
+
+  // The key of the step the user is actually viewing, captured when the
+  // SELECTION changes rather than re-derived from the current list on every
+  // render. This distinction is the whole fix for detecting a remote delete of
+  // the active step: `activeStep` is `sidebarSteps[activeStepIndex - 1]`, so the
+  // same render that shrinks `sidebarSteps` when a step vanishes also re-points
+  // `activeStep` at whichever step slid into that index. If we read the active
+  // key off that survivor, the deleted step's key is never equal to it and the
+  // toast can't fire. Freezing the key at selection time keeps the key of the
+  // step that was genuinely active, so it still matches the deleted key when the
+  // diff below runs. Keyed with the shared tempId-first `keyFor` so the capture
+  // survives the snapshotToD1 id backfill (id 0 -> real id) — a backfill leaves
+  // the key unchanged and is never mistaken for a deletion.
   const activeStepKeyRef = useRef<string | null>(null);
-  activeStepKeyRef.current = activeStep
-    ? String(activeStep.id > 0 ? activeStep.id : activeStep._tempId ?? "")
-    : null;
+  const capturedKeyIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    // Re-capture only when the user's selection (the index) moves, or when we
+    // don't yet hold a key for the current selection — the latter covers the
+    // deep-link mount and the async Y.Array populate, where the index is set
+    // before the step list has hydrated. We deliberately do NOT re-capture
+    // merely because the list changed under a stable index; that is exactly the
+    // deletion (or backfill) render that must not overwrite the captured key.
+    const indexMoved = capturedKeyIndexRef.current !== activeStepIndex;
+    const missingKey = activeStepKeyRef.current === null && activeStep !== null;
+    if (indexMoved || missingKey) {
+      activeStepKeyRef.current = activeStep ? keyFor(activeStep) : null;
+      capturedKeyIndexRef.current = activeStepIndex;
+    }
+  }, [activeStepIndex, activeStep]);
 
   // The remote-delete effect below has deps [sidebarSteps, useYjs]
   // (exhaustive-deps disabled) but reads activeStepIndex for the toast's step
@@ -850,9 +881,11 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
 
   useEffect(() => {
     if (!useYjs) return;
+    // Key with the shared tempId-first `keyFor` so this set agrees with the
+    // captured active key above and stays stable across the id backfill.
     const curr = new Set<string>();
     for (const s of sidebarSteps) {
-      curr.add(String(s.id > 0 ? s.id : s._tempId ?? ""));
+      curr.add(keyFor(s));
     }
     const deletedKeys: string[] = [];
     prevStepKeysRef.current.forEach((k) => {
@@ -861,7 +894,9 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     prevStepKeysRef.current = curr;
     if (deletedKeys.length === 0) return;
 
-    // If the active step was deleted, toast + reset to title card.
+    // If the active step was deleted, toast + reset to title card. `activeKey`
+    // was frozen at selection time, so it still holds the deleted step's key
+    // even though `activeStep` has already re-pointed at a survivor.
     const activeKey = activeStepKeyRef.current;
     if (activeKey && deletedKeys.includes(activeKey)) {
       const stepLabel = tStructural("entity_step", {
@@ -1003,7 +1038,10 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     const next = new Set<string>();
     const newly: string[] = [];
     for (const s of sidebarSteps) {
-      const k = String(s.id > 0 ? s.id : s._tempId ?? "");
+      // Shared tempId-first key: a freshly-created step keeps the same key when
+      // snapshotToD1 backfills its real id, so the backfill render is never
+      // mistaken for a newly-arrived step and can't fire a false highlight.
+      const k = keyFor(s);
       next.add(k);
       if (!seenStepKeysRef.current.has(k)) newly.push(k);
     }
@@ -1014,7 +1052,7 @@ export default function StoryEditorPage({ loaderData }: Route.ComponentProps) {
     seenStepKeysRef.current = next;
     if (newly.length === 0) return;
     const colour =
-      remoteCollaborators[0]?.user.color ?? "rgba(198, 208, 248, 0.9)";
+      remoteCollaborators[0]?.user.color ?? FALLBACK_HIGHLIGHT_COLOR;
     setHighlightedStepKeys((prev) => {
       const merged = { ...prev };
       for (const k of newly) merged[k] = colour;

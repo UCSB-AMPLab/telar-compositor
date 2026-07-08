@@ -88,6 +88,16 @@ export interface AwarenessUser {
   location: { route: string | null; storyId: string | null; fieldKey: string | null } | null;
 }
 
+/**
+ * Fallback colour for the structural-highlight flash when a freshly-arrived
+ * item can't be attributed to a specific remote collaborator's assigned
+ * colour (`AwarenessUser.user.color`). This is the Trama lavender identity
+ * token (`#C6D0F8`) at 0.9 alpha, matching the `--structural-highlight-color`
+ * default baked into the keyframes in `app/styles/app.css`. Lives here beside
+ * the awareness colour it stands in for, so the two stay in sync.
+ */
+export const FALLBACK_HIGHLIGHT_COLOR = "rgba(198, 208, 248, 0.9)";
+
 export interface CollaborationContextValue {
   ydoc: Y.Doc | null;
   provider: WebsocketProvider | null;

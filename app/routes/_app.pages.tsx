@@ -51,6 +51,7 @@ import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { useToast } from "~/hooks/use-toast";
 import { keyFor } from "~/lib/item-key";
+import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
 import { mergeNavItemsWithPages } from "~/lib/nav-merge";
 import { findYMapByIdOrTempId, getYText, reorderNavArray, sanitizeNavArray } from "~/lib/yjs-helpers";
 import { HomepageEditor } from "~/components/features/pages/HomepageEditor";
@@ -349,7 +350,6 @@ function computeContributors(
 
 export default function PagesPage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("pages");
-  const { t: tStructural } = useTranslation("structural");
   const { t: tCommon } = useTranslation("common");
   const {
     project,
@@ -944,34 +944,13 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     setDeleteTarget(null);
   }
 
-  // ------------------------------------------------------------------
-  // Remote-delete toast — fires when a page disappears from the
-  // Y.Array. We identify the deleted page by its last known title.
-  // ------------------------------------------------------------------
-  const prevTitlesRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => {
-    if (!useYjs) return;
-    const curr = new Map<string, string>();
-    for (const p of displayPages) curr.set(keyFor(p), p.title || p.slug);
-    const deleted: string[] = [];
-    prevTitlesRef.current.forEach((title, key) => {
-      if (!curr.has(key)) deleted.push(title);
-    });
-    prevTitlesRef.current = curr;
-    if (deleted.length === 0) return;
-    for (const title of deleted) {
-      // Stay generic: a Y.Array delete carries no actor, and awareness only
-      // tells us who is connected — not who deleted. Naming a collaborator
-      // here would misattribute the action. No undo affordance: a
-      // remote delete has no local undo path, so a button would be a no-op —
-      // omit it rather than show dead UI.
-      showToast({
-        message: tStructural("toast_item_deleted_generic", { label: title }),
-        type: "destructive",
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayPages, useYjs]);
+  // Remote-delete toast — fires when a page disappears from the Y.Array
+  // because a peer removed it. Shared logic in useRemoteDeleteToast.
+  useRemoteDeleteToast({
+    items: displayPages,
+    enabled: useYjs,
+    getLabel: (p) => p.title || p.slug,
+  });
 
   // ------------------------------------------------------------------
   // Handlers

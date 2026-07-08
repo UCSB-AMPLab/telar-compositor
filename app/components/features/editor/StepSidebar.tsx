@@ -12,7 +12,7 @@
  * When `objectsByType` is provided, `SortableStepItem` shows a
  * media-type badge (Video/Music/Text icon) for non-image steps.
  *
- * @version v1.3.7-beta
+ * @version v1.4.1-beta
  */
 
 import { useTranslation } from "react-i18next";
@@ -25,6 +25,7 @@ import {
 } from "@dnd-kit/sortable";
 import { useSortableSensors } from "~/hooks/use-sortable-sensors";
 import { SortableStepItem } from "~/components/features/editor/SortableStepItem";
+import { keyFor } from "~/lib/item-key";
 import type { MediaType } from "~/lib/media-type";
 
 /**
@@ -44,6 +45,8 @@ interface SidebarStep {
   _tempId?: string | null;
   _createdBy?: number | null;
   _yMap?: unknown;
+  /** Position in the observed list — the shared `keyFor` last-resort fallback. */
+  _yIndex?: number;
 }
 
 /**
@@ -78,7 +81,7 @@ interface StepSidebarProps {
   fadingKeys?: Set<string>;
   /**
    * Per-step layer summaries for the nested L1/L2 sub-rows, keyed by the
-   * step's stable key (`id` when > 0, else `_tempId`). Computed in the route;
+   * step's stable key (the shared tempId-first `keyFor`). Computed in the route;
    * the row renders plain data, never reading `_yMap`.
    */
   layersByStep?: Record<string, SidebarLayerSummary[]>;
@@ -108,10 +111,6 @@ export function StepSidebar({
 }: StepSidebarProps) {
   const { t } = useTranslation("editor");
   const sensors = useSortableSensors();
-
-  // Stable dnd-kit id per step: D1 id when available, `_temp_id` otherwise.
-  const keyFor = (s: SidebarStep): string | number =>
-    s.id > 0 ? s.id : s._tempId ?? `idx-${steps.indexOf(s)}`;
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -156,7 +155,7 @@ export function StepSidebar({
             strategy={verticalListSortingStrategy}
           >
             {steps.map((step, idx) => {
-              const key = String(keyFor(step));
+              const key = keyFor(step);
               const highlightColor = highlightColorByKey?.[key];
               const isFading = fadingKeys?.has(key) ?? false;
               const canDelete = canDeleteStep ? canDeleteStep(step) : true;
