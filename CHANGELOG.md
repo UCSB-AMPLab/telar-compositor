@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.4.2-beta (2026-07-08)
+
+Syncing repository changes back into the compositor is the focus of this release: it now works on sites with active editing sessions, surfaces genuine conflicts for you to resolve, and no longer overwrites unpublished work.
+
+### New features
+
+- **Sync review surfaces conflicts** — When a field changed in both GitHub and the compositor since the last sync, the review now shows both versions with a keep-mine / use-GitHub choice per field, instead of silently applying one. Anything that changed on only one side still applies automatically.
+
+### Fixes
+
+- **Accepting repository changes now sticks on active sites** — On a site with a live editing session (nearly any site in use), accepting changes from GitHub was saved to the database but not to the live collaborative document, so the next background save reverted it within about half a minute — the sync appeared to succeed, then quietly undid itself. Accepted changes now flow through the collaborative document and persist.
+
+- **Syncing no longer discards unpublished work** — Accepting repository changes could overwrite fields you had edited in the compositor but not yet published. Sync now leaves your unpublished edits untouched unless you explicitly choose the GitHub version, and tells you what it left alone.
+
+- **New objects and stories from the repository sync in** — Objects and stories added directly in the repository were listed in the sync review but not created when you accepted; they are now inserted.
+
+- **Objects deleted in the compositor stay deleted** — A deleted object could reappear after a sync. Deletions now hold.
+
+- **Repository edits to more published fields show in sync** — Edits made directly in the repository to an object's alt text, source URL, thumbnail, and custom columns, to a story's "show sections" setting, to glossary titles, and to the site theme now appear in sync review instead of silently staying out.
+
+- **Story layers that reference a content file import correctly** — A story step whose layer content lives in a separate file now imports that file's content, instead of storing the filename as the content.
+
+- **Warning before publishing a private story with no access key** — A private story without a site-wide access key produces a build that fails on newer Telar versions; the publish page now warns before you publish.
+
+- **A remote deletion of the step you are viewing is now detected** — When a collaborator deleted the step you had open, the change was not always registered locally; it now is.
+
+- **The editor background image loads** — A missing asset left the editor's textured background blank; it is now included.
+
+### Internal
+
+- New stories get cleaner, collision-free URL slugs.
+- Configuration writers share a single YAML block-and-scalar parser, fixing a commented-out URL line that read as empty.
+- A field registry declares where every content field lives across the database, collaborative document, publishing, import, sync, and hashing, with a generated test suite that catches a field wired into some subsystems but not others.
+
 ## v1.4.1-beta (2026-07-06)
 
 A patch release for collaborative editing: phantom deletion notices, deletion notices that guessed at the deleter, and story details silently lost at creation.
