@@ -18,10 +18,11 @@
  *
  * Called by the Publish route — no UI logic lives here.
  *
- * @version v1.3.9-beta
+ * @version v1.4.2-beta
  */
 
 import Papa from "papaparse";
+import { canonicalExtraColumns } from "~/lib/extra-columns.server";
 import { eq, max } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { getFileContent } from "~/lib/github.server";
@@ -30,6 +31,7 @@ import { slugify } from "~/lib/slugify";
 import { extractCommentRows, serializeObjectsCsv } from "~/lib/csv-export.server";
 import type { CommitFile } from "~/lib/commit.server";
 import { sanitiseInlineHtml } from "~/lib/sanitise-html";
+import { mutateYamlBlock, findYamlBlockRegions } from "~/lib/config-yaml-block.server";
 import {
   V121_BODIES,
   V121_FRONTMATTER_DEFAULTS,
@@ -329,7 +331,7 @@ export interface CurrentPublishState {
 // Project CSV serialiser
 // ---------------------------------------------------------------------------
 
-const PROJECT_CSV_COLUMNS = [
+export const PROJECT_CSV_COLUMNS = [
   "order",
   "story_id",
   "title",
@@ -339,7 +341,7 @@ const PROJECT_CSV_COLUMNS = [
   "show_sections",
 ] as const;
 
-const PROJECT_BILINGUAL_ROW: Record<string, string> = {
+export const PROJECT_BILINGUAL_ROW: Record<string, string> = {
   order: "orden",
   story_id: "id_historia",
   title: "titulo",
@@ -414,7 +416,7 @@ export function serializeProjectCsv(storyRows: StoryRow[], existingCsv?: string)
 // Story CSV serialiser
 // ---------------------------------------------------------------------------
 
-const STORY_CSV_COLUMNS = [
+export const STORY_CSV_COLUMNS = [
   "step",
   "object",
   "x",
@@ -433,7 +435,7 @@ const STORY_CSV_COLUMNS = [
   "loop",
 ] as const;
 
-const STORY_BILINGUAL_ROW: Record<string, string> = {
+export const STORY_BILINGUAL_ROW: Record<string, string> = {
   step: "paso",
   object: "objeto",
   x: "x",
@@ -727,7 +729,7 @@ export function layerFileContent(
  * real key (`url:`, `plugins:`) stops the sweep. Far more robust than matching
  * any `key:`-shaped line.
  */
-const KNOWN_CONFIG_KEYS = new Set([
+export const KNOWN_CONFIG_KEYS = new Set([
   "title",
   "description",
   "url",
@@ -808,12 +810,32 @@ function opensUnterminatedQuotedScalar(line: string): boolean {
  * repairing _config.yml files broken by the pre-fix bare-newline serializer.
  */
 export function updateConfigFields(yaml: string, fields: Record<string, string>): string {
+  // Heal the legacy v-prefix on telar.version up front, via the shared config
+  // block walker. This is the one part of this function whose block tracking is
+  // cleanly separable: the heal touches only indented `version:` lines inside
+  // the `telar:` block, it never interacts with the top-level field sweep below
+  // (both `telar` and `protected` are structural keys that terminate a sweep, so
+  // the sweep can never reach inside either block), and telar.version is not a
+  // managed field, so nothing in the field/append logic reads or writes it.
+  // Delegating it to mutateYamlBlock retires this file's private copy of the
+  // telar block enter/exit idiom. The heal is idempotent — it only rewrites a
+  // line that still carries the `v` prefix, so a once-healed repo is a no-op.
+  // The `protected:` story_key handling below stays local: its single-pass
+  // ordering against a top-level `story_key:` line is load-bearing (a top-level
+  // key seen first suppresses the protected write), which independent block
+  // passes cannot reproduce.
+  yaml = mutateYamlBlock(yaml, "telar", (line) => {
+    if (/^\s+version:\s*['"]?v/.test(line)) {
+      return line.replace(/(version:\s*['"]?)v/, "$1");
+    }
+    return null;
+  });
+
   const lines = yaml.split("\n");
   const result: string[] = [];
   const fieldsToAppend = new Set(Object.keys(fields));
 
   let inProtected = false;
-  let inTelar = false;
   const storyKeyValue = fields["story_key"];
   let storyKeyUpdated = false;
   // Self-heal: when set, drop orphaned continuation lines of a multi-line
@@ -839,21 +861,9 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
       continue;
     }
 
-    // Track telar: block (host for the v-prefix heal on telar.version)
-    if (/^telar:/.test(line)) {
-      inTelar = true;
-      result.push(line);
-      continue;
-    }
-
     // Exiting protected block (non-indented, non-empty, non-comment line)
     if (inProtected && /^[^\s#]/.test(line) && line.trim() !== "") {
       inProtected = false;
-    }
-
-    // Exiting telar block (non-indented, non-empty, non-comment line)
-    if (inTelar && /^[^\s#]/.test(line) && line.trim() !== "") {
-      inTelar = false;
     }
 
     // Handle story_key inside protected block
@@ -861,15 +871,6 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
       result.push(`  key: ${storyKeyValue}`);
       fieldsToAppend.delete("story_key");
       storyKeyUpdated = true;
-      continue;
-    }
-
-    // Heal legacy v-prefix on telar.version. Idempotent: only fires when prefix present.
-    // This is a one-off in-place rewrite of whatever the repo contains, NOT a managed-field write —
-    // telar.version is intentionally NOT in buildConfigManagedFields.
-    if (inTelar && /^\s+version:\s*['"]?v/.test(line)) {
-      const healed = line.replace(/(version:\s*['"]?)v/, "$1");
-      result.push(healed);
       continue;
     }
 
@@ -940,11 +941,13 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
  *
  * Per block: replace each managed key's value in place (preserving the line's
  * indent + trailing comment); insert managed keys not present at the end of the
- * block's child region; append the whole block at EOF if absent. Hardening:
- * flow-style blocks (`key: {...}`) are refused (left untouched — line-based
- * editing would corrupt them; the publish parse-gate keeps the build valid and
- * the toggle simply doesn't apply); duplicate top-level block keys operate on
- * the LAST occurrence (js-yaml + the framework read the last); line endings are
+ * block's child region; append the whole block at EOF if absent. Block
+ * boundaries and child indent come from the shared `findYamlBlockRegions`
+ * primitive (config-yaml-block.server.ts). Hardening: flow-style blocks
+ * (`key: {...}`) are refused (left untouched — line-based editing would
+ * corrupt them; the publish parse-gate keeps the build valid and the toggle
+ * simply doesn't apply); duplicate top-level block keys operate on the LAST
+ * occurrence (js-yaml + the framework read the last); line endings are
  * normalised to the file's dominant EOL to avoid mixed \r\n / \n.
  */
 export function updateConfigBlocks(
@@ -957,14 +960,10 @@ export function updateConfigBlocks(
 
   for (const [blockKey, fields] of Object.entries(blocks)) {
     if (Object.keys(fields).length === 0) continue;
-    const headerRe = new RegExp(`^${blockKey}:(.*)$`);
 
-    const occurrences: number[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (headerRe.test(lines[i])) occurrences.push(i);
-    }
+    const regions = findYamlBlockRegions(lines, blockKey);
 
-    if (occurrences.length === 0) {
+    if (regions.length === 0) {
       let end = lines.length;
       while (end > 0 && lines[end - 1].trim() === "") end--;
       const appended = [`${blockKey}:`, ...Object.entries(fields).map(([k, v]) => `  ${k}: ${v}`)];
@@ -972,23 +971,10 @@ export function updateConfigBlocks(
       continue;
     }
 
-    const headerIdx = occurrences[occurrences.length - 1]; // LAST occurrence
+    // LAST occurrence: js-yaml and the framework both read the last block.
+    const { headerIdx, regionEnd, childIndent } = regions[regions.length - 1];
     const afterColon = lines[headerIdx].slice(blockKey.length + 1).trim();
     if (afterColon !== "" && !afterColon.startsWith("#")) continue; // flow/inline → refuse
-
-    let regionEnd = headerIdx + 1;
-    while (regionEnd < lines.length) {
-      const line = lines[regionEnd];
-      if (line.trim() === "" || /^\s*#/.test(line) || /^\s/.test(line)) { regionEnd++; continue; }
-      break;
-    }
-
-    let childIndent = "  ";
-    for (let i = headerIdx + 1; i < regionEnd; i++) {
-      if (/^\s*#/.test(lines[i])) continue;
-      const m = lines[i].match(/^(\s+)\S/);
-      if (m) { childIndent = m[1]; break; }
-    }
 
     const written = new Set<string>();
     for (let i = headerIdx + 1; i < regionEnd; i++) {
@@ -1019,7 +1005,7 @@ export function updateConfigBlocks(
  * Managed free-text string fields — the only source of _config.yml scalar
  * corruption. Kept in sync with the string fields in buildConfigManagedFields.
  */
-const MANAGED_STRING_FIELD_KEYS = new Set([
+export const MANAGED_STRING_FIELD_KEYS = new Set([
   "title",
   "url",
   "baseurl",
@@ -1497,6 +1483,19 @@ export async function findEntityMaxUpdatedAt(
 export interface StoryForValidation {
   story_id: string;
   title: string | null;
+  /**
+   * Whether the story is marked private. Drives the private_story_no_key
+   * warning: a published Telar >=1.6 site with a private story but no site-wide
+   * story key hard-fails its build (the framework's encryption interlock).
+   */
+  private?: boolean | null;
+  /**
+   * Whether the story is a draft. Drafts are excluded from the published
+   * stories index (the orphans-are-drafts rule), so a private draft never
+   * reaches the framework's encryption interlock and must not trigger the
+   * private_story_no_key warning.
+   */
+  draft?: boolean | null;
 }
 
 export interface StepForValidation {
@@ -1533,6 +1532,8 @@ export interface PageForValidation {
  * Warnings:
  *   - Objects missing a title (still emitted, just imperfect)
  *   - Steps that have an object but no position (x/y/zoom all null)
+ *   - Private stories present but no site-wide story key set (the build will
+ *     fail on Telar >=1.6 until a key is set — advisory, never a blocker)
  *   - Fully empty steps are excluded from all checks
  */
 export function runPrePublishValidation(params: {
@@ -1542,6 +1543,7 @@ export function runPrePublishValidation(params: {
   steps: StepForValidation[];
   objects: ObjectForValidation[];
   pages: PageForValidation[];
+  storyKey?: string | null;
 }): ValidationResult {
   const blockers: ValidationResult["blockers"] = [];
   const warnings: ValidationResult["warnings"] = [];
@@ -1611,6 +1613,31 @@ export function runPrePublishValidation(params: {
     }
   }
 
+  // Warning: private stories present but no site-wide story key set. On
+  // Telar >=1.6 the framework encrypts private stories at build time and
+  // refuses to build when a story is private but no key exists — so the
+  // published site build would hard-fail. We warn rather than block: the user
+  // may still be mid-setup, and blocking would trap otherwise-valid publishes.
+  // The message names the affected stories (title when present, story_id as a
+  // fallback) so the user knows exactly which ones force the requirement.
+  const storyKeySet =
+    params.storyKey != null && params.storyKey.trim() !== "";
+  if (!storyKeySet) {
+    // Drafts are skipped: a draft story is absent from the published stories
+    // index (the orphans-are-drafts rule), so the framework's interlock never
+    // sees its private flag and the build cannot fail on its account.
+    const privateStoryNames = params.stories
+      .filter((s) => s.private && !s.draft)
+      .map((s) => (s.title && s.title.trim() !== "" ? s.title.trim() : s.story_id));
+    if (privateStoryNames.length > 0) {
+      warnings.push({
+        code: "private_story_no_key",
+        message: "private_story_no_key",
+        params: { stories: privateStoryNames.join(", ") },
+      });
+    }
+  }
+
   return { blockers, warnings };
 }
 
@@ -1656,7 +1683,14 @@ export function buildConfigManagedFields(
   if (config.email != null) fields["email"] = yamlQuote(config.email);
   if (config.logo != null) fields["logo"] = yamlQuote(config.logo);
   if (config.theme != null) fields["telar_theme"] = yamlQuote(config.theme);
-  if (config.story_key != null) fields["story_key"] = config.story_key;
+  // story_key is a free-text secret that users may set to anything, including
+  // characters YAML treats specially — a `#` starts a comment and a `:` opens a
+  // mapping, so an unquoted key like `a#b` or `a: b` parses back truncated or
+  // absent, silently losing the key on the next read. Quote it exactly like the
+  // other managed string fields; the readers (sync's parseYamlScalar, import's
+  // js-yaml) strip the quotes on the way back, so this is transparent on
+  // round-trip for keys that never needed quoting.
+  if (config.story_key != null) fields["story_key"] = yamlQuote(config.story_key);
   if (config.lang != null) fields["telar_language"] = config.lang;
   if (config.collection_mode != null) {
     fields["collection_mode"] = config.collection_mode ? "true" : "false";
@@ -1811,21 +1845,6 @@ export function buildPageContentHashes(
  *   - Empty/whitespace-slug pages are excluded for the same reason — they
  *     never land in the commit (`pageRowsToCommitFiles` skips them).
  */
-// Canonicalise the passthrough blob so equivalent custom-column data hashes
-// identically regardless of stored key order. Corrupt/absent → "".
-function canonicalExtraColumns(raw: string | null | undefined): string {
-  if (!raw) return "";
-  try {
-    const o = JSON.parse(raw);
-    if (!o || typeof o !== "object" || Array.isArray(o)) return "";
-    const sorted: Record<string, unknown> = {};
-    for (const k of Object.keys(o).sort()) sorted[k] = o[k];
-    return JSON.stringify(sorted);
-  } catch {
-    return "";
-  }
-}
-
 export async function buildEntityHashes(
   db: ReturnType<typeof getDb>,
   projectId: number,
@@ -1874,7 +1893,8 @@ export async function buildEntityHashes(
   const landing = landingRow[0] ?? null;
 
   // Pages — share canonical hash inputs with buildPageContentHashes
-  // (title + body + slug + order), keyed by trimmed slug.
+  // (title + body + slug; order is deliberately excluded — a reorder
+  // surfaces once, as the navigation change), keyed by trimmed slug.
   const pages = buildPageContentHashes(pageRows);
 
   // Objects — every D1 field that serializeObjectsCsv reads, including
@@ -2507,6 +2527,20 @@ export function buildNavigationYml(navItems: NavItem[]): string {
 // Glossary CSV serializer
 // ---------------------------------------------------------------------------
 
+export const GLOSSARY_CSV_COLUMNS = ["term_id", "title", "definition", "related_terms"] as const;
+
+/**
+ * Spanish bilingual second-row values for glossary.csv. These are
+ * framework-recognised header tokens (KNOWN_BILINGUAL_VALUES), so a re-import
+ * skips the row via isHeaderRow rather than ingesting it as a phantom term.
+ */
+export const GLOSSARY_BILINGUAL_ROW: Record<string, string> = {
+  term_id: "id_término",
+  title: "titulo",
+  definition: "definición",
+  related_terms: "términos_relacionados",
+};
+
 /**
  * Serialises glossary terms to a CSV string suitable for glossary.csv.
  *
@@ -2534,7 +2568,7 @@ export function serializeGlossaryCsv(
   }>,
   existingCsv?: string,
 ): string {
-  const columns = ["term_id", "title", "definition", "related_terms"];
+  const columns = GLOSSARY_CSV_COLUMNS as unknown as string[];
   const normalise = (s: string) => s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
   // Header line only (PapaParse always adds a header when unparsing objects)
@@ -2546,7 +2580,7 @@ export function serializeGlossaryCsv(
   // términos_relacionados.
   const bilingualRow = normalise(
     Papa.unparse(
-      [["id_término", "titulo", "definición", "términos_relacionados"]],
+      [GLOSSARY_CSV_COLUMNS.map((col) => GLOSSARY_BILINGUAL_ROW[col] ?? col)],
       { header: false },
     ),
   );

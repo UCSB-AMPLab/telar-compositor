@@ -32,7 +32,7 @@
  * is NEVER keyed off `isPublishing` (which flips false on commit return, before
  * the build runs — the landmine).
  *
- * @version v1.4.0-beta
+ * @version v1.4.1-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -442,8 +442,11 @@ export async function action({ request, context }: Route.ActionArgs) {
           .from(objects)
           .where(eq(objects.project_id, activeProject.id));
 
-        // Fetch stories for this project
-        const storyRows = await db.select({ id: stories.id, story_id: stories.story_id, title: stories.title })
+        // Fetch stories for this project. `private` and `draft` feed the
+        // private_story_no_key warning (a private, non-draft story with no
+        // site-wide key fails the published build on Telar >=1.6; drafts never
+        // reach the published index, so they are exempt).
+        const storyRows = await db.select({ id: stories.id, story_id: stories.story_id, title: stories.title, private: stories.private, draft: stories.draft })
           .from(stories)
           .where(eq(stories.project_id, activeProject.id));
 
@@ -470,13 +473,20 @@ export async function action({ request, context }: Route.ActionArgs) {
           .from(project_pages)
           .where(eq(project_pages.project_id, activeProject.id));
 
+        // Fetch the site-wide story key to check against private stories.
+        const configRow = await db.select({ story_key: project_config.story_key })
+          .from(project_config)
+          .where(eq(project_config.project_id, activeProject.id))
+          .limit(1);
+
         const validation = runPrePublishValidation({
           headSha: activeProject.head_sha ?? "",
           currentRepoHead,
-          stories: storyRows.map((s) => ({ story_id: s.story_id, title: s.title })),
+          stories: storyRows.map((s) => ({ story_id: s.story_id, title: s.title, private: s.private, draft: s.draft })),
           steps: allSteps,
           objects: objectRows,
           pages: pageRows,
+          storyKey: configRow[0]?.story_key ?? null,
         });
 
         return { ok: true, intent: "run-validation", validation };

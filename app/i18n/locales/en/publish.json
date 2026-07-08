@@ -92,7 +92,8 @@
     "stale_head_action": "Resolve sync",
     "object_no_title": "Object \"{{id}}\" has no title",
     "page_no_title": "A page has no title — open Pages to give it a title, or delete it.",
-    "step_no_position": "Step {{number}} has no viewer position — the published site will show 100% of the image."
+    "step_no_position": "Step {{number}} has no viewer position — the published site will show 100% of the image.",
+    "private_story_no_key": "These stories are private, but no story key is set: {{stories}}. The published site build will fail until you set a story key in Site settings."
   },
   "auto_commit": {
     "add_stories_one": "add {{count}} story",

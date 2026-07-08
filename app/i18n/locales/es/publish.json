@@ -92,7 +92,8 @@
     "stale_head_action": "Resolver sincronización",
     "object_no_title": "El objeto \"{{id}}\" no tiene título",
     "page_no_title": "Una página no tiene título — abre Páginas para ponerle un título, o elimínala.",
-    "step_no_position": "El paso {{number}} no tiene posición de vista — el sitio publicado mostrará el 100% de la imagen."
+    "step_no_position": "El paso {{number}} no tiene posición de vista — el sitio publicado mostrará el 100% de la imagen.",
+    "private_story_no_key": "Estas historias son privadas, pero no hay una clave de acceso configurada: {{stories}}. La construcción del sitio fallará hasta que configures una clave de acceso en Ajustes del sitio."
   },
   "auto_commit": {
     "add_stories_one": "agregar {{count}} historia",

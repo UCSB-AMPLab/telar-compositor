@@ -928,6 +928,36 @@ custom_field: keep-this
     expect(result).toContain("new_field: new_value");
   });
 
+  // The story_key write's single-pass ordering is load-bearing and must never
+  // be restructured into independent block passes: whichever location appears
+  // FIRST in the file receives the write, and the other is suppressed. These
+  // two tests pin both orderings so any future refactor that breaks the
+  // ordering (e.g. an independent protected-block pass) fails here.
+  it("story_key ordering: a top-level line seen before protected: wins and suppresses the protected write", () => {
+    const topFirst = [
+      "story_key: OLDTOP",
+      "protected:",
+      "  key: OLDPROT",
+      "url: https://example.com",
+    ].join("\n");
+    const result = updateConfigFields(topFirst, { story_key: '"newkey"' });
+    expect(result).toContain('story_key: "newkey"');
+    // The protected key is left as it was — deliberately stale.
+    expect(result).toContain("  key: OLDPROT");
+  });
+
+  it("story_key ordering: a protected: block seen first wins and suppresses the top-level line", () => {
+    const protectedFirst = [
+      "protected:",
+      "  key: OLDPROT",
+      "story_key: OLDTOP",
+      "url: https://example.com",
+    ].join("\n");
+    const result = updateConfigFields(protectedFirst, { story_key: '"newkey"' });
+    expect(result).toContain('  key: "newkey"');
+    expect(result).not.toContain("OLDTOP");
+  });
+
   it("handles story_key under protected block", () => {
     const result = updateConfigFields(yaml, { story_key: "newkey" });
     expect(result).toContain("  key: newkey");
@@ -1240,9 +1270,34 @@ describe("buildConfigManagedFields", () => {
     );
   });
 
-  it("emits story_key unquoted", () => {
+  it("wraps story_key in double quotes", () => {
+    // story_key is user-supplied free text and may contain YAML metacharacters
+    // (# opens a comment, : opens a mapping), so it must be quoted like the
+    // other managed string fields — otherwise the value round-trips truncated.
     const fields = buildConfigManagedFields(makeConfig({ story_key: "secret-key-value" }));
-    expect(fields.story_key).toBe("secret-key-value");
+    expect(fields.story_key).toBe('"secret-key-value"');
+  });
+
+  it("escapes YAML metacharacters in story_key so it survives a write round-trip", () => {
+    // A key containing `#` and `:` would, if written unquoted, parse back
+    // truncated (at the #) or malformed (the : opens a mapping). Quoting makes
+    // the exact value survive a js-yaml round-trip.
+    const key = "ab#cd: ef";
+    const fields = buildConfigManagedFields(makeConfig({ story_key: key }));
+    const yaml = updateConfigFields("title: \"Site\"\n", fields);
+    const parsed = loadYaml(yaml) as Record<string, unknown>;
+    expect(parsed.story_key).toBe(key);
+  });
+
+  it("preserves a #-containing story_key written into a protected block", () => {
+    // The real config stores story_key under `protected:` as `  key:`. Quoting
+    // must keep the value intact there too, not just at the top-level fallback.
+    const key = "p@ss#word";
+    const fields = buildConfigManagedFields(makeConfig({ story_key: key }));
+    const input = ["title: \"Site\"", "protected:", "  key: old"].join("\n");
+    const out = updateConfigFields(input, fields);
+    const parsed = loadYaml(out) as Record<string, unknown>;
+    expect((parsed.protected as Record<string, unknown>).key).toBe(key);
   });
 
   it("omits null string fields", () => {
@@ -2367,6 +2422,89 @@ describe("runPrePublishValidation", () => {
       ],
     });
     expect(result.blockers.filter((b) => b.code === "page_no_title")).toHaveLength(2);
+  });
+
+  // private_story_no_key is a WARNING (never a blocker): a private story with no
+  // site-wide story key would fail the published build on Telar >=1.6, but we
+  // let the publish proceed and name the offending stories.
+  it("warns when a private story has no story key, naming the story", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      stories: [{ story_id: "weavers", title: "The Weavers", private: true }],
+      storyKey: null,
+    });
+    const warning = result.warnings.find((w) => w.code === "private_story_no_key");
+    expect(warning).toBeDefined();
+    expect(warning?.params?.stories).toBe("The Weavers");
+    // Advisory only — must never gate the publish.
+    expect(result.blockers.map((b) => b.code)).not.toContain("private_story_no_key");
+  });
+
+  it("names all private stories, falling back to story_id when title is missing", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      stories: [
+        { story_id: "weavers", title: "The Weavers", private: true },
+        { story_id: "untitled-priv", title: null, private: true },
+        { story_id: "public-one", title: "Public", private: false },
+      ],
+      storyKey: "",
+    });
+    const warning = result.warnings.find((w) => w.code === "private_story_no_key");
+    expect(warning?.params?.stories).toBe("The Weavers, untitled-priv");
+  });
+
+  it("does not warn when a story key is set, even with private stories", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      stories: [{ story_id: "weavers", title: "The Weavers", private: true }],
+      storyKey: "s3cret",
+    });
+    expect(result.warnings.map((w) => w.code)).not.toContain("private_story_no_key");
+  });
+
+  it("does not warn when there are no private stories, even with no key", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      stories: [{ story_id: "weavers", title: "The Weavers", private: false }],
+      storyKey: null,
+    });
+    expect(result.warnings.map((w) => w.code)).not.toContain("private_story_no_key");
+  });
+
+  it("does not warn for a private story that is a draft", () => {
+    // Drafts never reach the published stories index (orphans-are-drafts), so
+    // the framework's interlock cannot fail the build on their account.
+    const result = runPrePublishValidation({
+      ...validParams,
+      stories: [
+        { story_id: "wip", title: "Work in Progress", private: true, draft: true },
+      ],
+      storyKey: null,
+    });
+    expect(result.warnings.map((w) => w.code)).not.toContain("private_story_no_key");
+  });
+
+  it("still warns when private stories mix drafts and non-drafts, naming only the non-drafts", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      stories: [
+        { story_id: "wip", title: "Work in Progress", private: true, draft: true },
+        { story_id: "weavers", title: "The Weavers", private: true, draft: false },
+      ],
+      storyKey: null,
+    });
+    const warning = result.warnings.find((w) => w.code === "private_story_no_key");
+    expect(warning?.params?.stories).toBe("The Weavers");
+  });
+
+  it("treats a whitespace-only story key as unset", () => {
+    const result = runPrePublishValidation({
+      ...validParams,
+      stories: [{ story_id: "weavers", title: "The Weavers", private: true }],
+      storyKey: "   ",
+    });
+    expect(result.warnings.map((w) => w.code)).toContain("private_story_no_key");
   });
 });
 
