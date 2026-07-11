@@ -10,8 +10,12 @@
  *   post-commit dispatch failure returns ok:true + dispatchFailed so the
  *   modal skips build tracking instead of polling a run that never started.
  * - decrypt failures return structured errors instead of uncaught 500s.
+ * - the disableSheets path must reset the collaboration doc after its direct
+ *   D1 write — the DO is the sole reconciling writer for config columns, so a
+ *   warm Y.Doc still holding google_sheets_enabled=true would clobber the
+ *   write back on its next snapshot and strand the settings-page warning.
  *
- * @version v1.4.0-beta
+ * @version v1.4.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -53,6 +57,9 @@ vi.mock("~/lib/commit.server", () => ({
 vi.mock("~/lib/github-app.server", () => ({
   getInstallationToken: vi.fn(async () => "install-token"),
 }));
+vi.mock("~/lib/collab-reset.server", () => ({
+  resetCollabDocIfBlobExists: vi.fn(async () => {}),
+}));
 vi.mock("~/lib/csv-export.server", () => ({
   serializeObjectsCsv: vi.fn(() => "csv-content"),
   dbObjectToCsvRow: vi.fn((o: unknown) => o),
@@ -80,6 +87,7 @@ import { resolveActiveProject } from "~/lib/membership.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getInstallationToken } from "~/lib/github-app.server";
 import { dispatchWorkflow, commitFilesToRepo, StaleHeadError } from "~/lib/commit.server";
+import { resetCollabDocIfBlobExists } from "~/lib/collab-reset.server";
 
 function buildRequest(intent: string, extra: Record<string, string> = {}): Request {
   const form = new URLSearchParams();
@@ -254,6 +262,74 @@ describe("commit-objects post-commit dispatch semantics", () => {
 
     expect(res.ok).toBe(false);
     expect(res.error).toBe("stale_head");
+  });
+});
+
+describe("commit-objects disableSheets collab-doc reset", () => {
+  it("resets the collaboration doc after the D1 flag write when disableSheets is true", async () => {
+    const { context } = buildContext();
+    const res = (await action({
+      request: buildRequest("commit-objects", { pendingObjects: "[]", disableSheets: "true" }),
+      context,
+      params: {},
+    } as never)) as { ok: boolean };
+
+    expect(res.ok).toBe(true);
+    expect(vi.mocked(resetCollabDocIfBlobExists)).toHaveBeenCalledTimes(1);
+    // Project id from the resolved membership, not anything client-supplied.
+    expect(vi.mocked(resetCollabDocIfBlobExists)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      42,
+    );
+  });
+
+  it("still returns ok:true when the collab-doc reset fails after a successful commit", async () => {
+    // The repo commit and head bump have already landed by the time the
+    // sheets-flag repair runs — a DO/D1 hiccup there must not misreport the
+    // commit as failed (the client's failure path discards pending objects,
+    // stranding rows already committed to the repo).
+    vi.mocked(resetCollabDocIfBlobExists).mockRejectedValue(new Error("DO unavailable"));
+
+    const { context } = buildContext();
+    const res = (await action({
+      request: buildRequest("commit-objects", { pendingObjects: "[]", disableSheets: "true" }),
+      context,
+      params: {},
+    } as never)) as { ok: boolean; newHeadSha?: string };
+
+    expect(res.ok).toBe(true);
+    expect(res.newHeadSha).toBe("new-sha");
+  });
+
+  it("still returns ok:true when the sheets-flag D1 write fails after a successful commit", async () => {
+    const failingDb = makeDbMock();
+    failingDb.update = vi.fn(() => {
+      throw new Error("D1 unavailable");
+    });
+    vi.mocked(getDb).mockReturnValue(failingDb as never);
+
+    const { context } = buildContext();
+    const res = (await action({
+      request: buildRequest("commit-objects", { pendingObjects: "[]", disableSheets: "true" }),
+      context,
+      params: {},
+    } as never)) as { ok: boolean; newHeadSha?: string };
+
+    expect(res.ok).toBe(true);
+    expect(res.newHeadSha).toBe("new-sha");
+  });
+
+  it("does not touch the collaboration doc when disableSheets is false", async () => {
+    const { context } = buildContext();
+    const res = (await action({
+      request: buildRequest("commit-objects", { pendingObjects: "[]", disableSheets: "false" }),
+      context,
+      params: {},
+    } as never)) as { ok: boolean };
+
+    expect(res.ok).toBe(true);
+    expect(vi.mocked(resetCollabDocIfBlobExists)).not.toHaveBeenCalled();
   });
 });
 

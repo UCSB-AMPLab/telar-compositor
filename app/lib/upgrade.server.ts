@@ -27,7 +27,7 @@
  * alphabetically, so they will be present even in a truncated tree. Revisit
  * if truncation is ever detected in practice.
  *
- * @version v1.4.0-beta
+ * @version v1.4.3-beta
  */
 
 import { githubHeaders, decodeGitHubContent, getRepoTree, getFileContent } from "~/lib/github.server";
@@ -81,6 +81,11 @@ export const FRAMEWORK_PREFIXES = [
  */
 export const FRAMEWORK_FILES = [
   "_data/navigation.yml",
+  // Framework-owned KaTeX config. Its consumers (_includes/katex.html, both
+  // layouts, assets/js/katex-loader.js) are prefix-delivered, but _data/ is
+  // only covered via languages/ and themes/, so this file must be listed here
+  // explicitly.
+  "_data/katex.yml",
   "CHANGELOG.md",
   // README.md is the only v1.3.0 framework file not covered by FRAMEWORK_PREFIXES.
   "README.md",
@@ -457,6 +462,7 @@ export function categorizeFrameworkPath(path: string): keyof UpgradeSummary {
     path.startsWith("_data/languages/") ||
     path.startsWith("_data/themes/") ||
     path === "_data/navigation.yml" ||
+    path === "_data/katex.yml" ||
     path === "CHANGELOG.md" ||
     path === "README.md"
   ) {

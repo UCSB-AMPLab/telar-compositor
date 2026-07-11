@@ -18,7 +18,7 @@
  * The modal's intents live on the /dashboard action; this page only
  * mounts it and surfaces the version-change toast.
  *
- * @version v1.4.1-beta
+ * @version v1.4.3-beta
  */
 
 import { and, asc, eq, inArray } from "drizzle-orm";
@@ -32,6 +32,7 @@ import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { projects, objects, project_config, project_members, users } from "~/db/schema";
 import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
+import { resetCollabDocIfBlobExists } from "~/lib/collab-reset.server";
 import { getObjectStepCounts } from "~/lib/objects.server";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
@@ -804,14 +805,6 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       // Update projects.head_sha (also invalidates GitHub status cache)
       await bumpProjectHead(db, activeProject.id, commitResult.newHeadSha);
-
-      // If sheets were disabled, update project_config
-      if (disableSheets) {
-        await db
-          .update(project_config)
-          .set({ google_sheets_enabled: false, updated_at: new Date().toISOString() })
-          .where(eq(project_config.project_id, activeProject.id));
-      }
       } catch (err) {
         if (err instanceof StaleHeadError) {
           return { ok: false, intent: "commit-objects", error: "stale_head" };
@@ -822,6 +815,27 @@ export async function action({ request, context }: Route.ActionArgs) {
           error: "commit_failed",
           message: err instanceof Error ? err.message : "Unknown error",
         };
+      }
+
+      // Post-commit: the sheets-flag repair is best-effort and must NOT flip
+      // the result — the repo commit already landed and head_sha is bumped, so
+      // a D1/DO hiccup here misreporting commit_failed would send the client
+      // down its discard path and strand rows already committed to the repo
+      // (same isolation as the dispatch block below). The D1 write flips the
+      // cached flag; the collab-doc reset keeps a warm Y.Doc still holding
+      // google_sheets_enabled=true from clobbering it back on its next
+      // snapshot (the same guard onboarding's fix-site-config uses). If either
+      // fails, the settings-page reconcile repairs the flag on its next load.
+      if (disableSheets) {
+        try {
+          await db
+            .update(project_config)
+            .set({ google_sheets_enabled: false, updated_at: new Date().toISOString() })
+            .where(eq(project_config.project_id, activeProject.id));
+          await resetCollabDocIfBlobExists(db, env as never, activeProject.id);
+        } catch {
+          // Best-effort — see above.
+        }
       }
 
       // Post-commit: dispatch is best-effort and must NOT flip the result —

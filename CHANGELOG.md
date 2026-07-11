@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.4.3-beta (2026-07-10)
+
+A patch release: a Google Sheets warning that would not go away, and the KaTeX configuration file missing from framework upgrades.
+
+### Fixes
+
+- **Stale "Google Sheets is enabled" warning clears** — On a site that had
+  switched from Google Sheets to the compositor, the settings page could keep
+  warning that Google Sheets was the content source even though the site's
+  configuration had it disabled and builds were already using compositor
+  content. The settings page now checks the repository configuration before
+  warning, corrects its records, and shows the actual state — an affected site
+  rights itself the next time its settings page is opened.
+
+- **Disabling Google Sheets can no longer be undone by a background save** —
+  Turning off Google Sheets during a publish could be silently reverted in the
+  compositor's records by a background save from an open editing session, which
+  is how the stale warning above came about. The disable now propagates to the
+  live collaborative document as well.
+
+- **Framework upgrades now deliver the KaTeX configuration file** — Upgrading a
+  site to Telar v1.6.0 or later through the compositor shipped the layouts and
+  scripts that read the new `_data/katex.yml` configuration file, but not the
+  file itself, breaking LaTeX rendering on the upgraded site. The file is now
+  delivered with upgrades and restored at publish if missing. Note that
+  `_data/katex.yml` is framework-owned: local edits to it are replaced on
+  upgrade, matching the framework's own upgrade behaviour.
+
 ## v1.4.2-beta (2026-07-08)
 
 Syncing repository changes back into the compositor is the focus of this release: it now works on sites with active editing sessions, surfaces genuine conflicts for you to resolve, and no longer overwrites unpublished work.

@@ -5,6 +5,8 @@
  * findMissingFrameworkFiles, buildYmlUsesNpmCi, updateTelarVersionInConfig,
  * categorizeFrameworkPath, buildUpgradeSummary, computeUpgradeDiff, and
  * healMissingFrameworkFiles (via mocked GitHub API).
+ *
+ * @version v1.4.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -239,6 +241,10 @@ describe("constants", () => {
     expect(FRAMEWORK_FILES).toContain("Gemfile.lock");
     expect(FRAMEWORK_FILES).toContain("requirements.txt");
   });
+
+  it("FRAMEWORK_FILES includes _data/katex.yml (framework-owned KaTeX config, v1.6.0)", () => {
+    expect(FRAMEWORK_FILES).toContain("_data/katex.yml");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -268,6 +274,10 @@ describe("categorizeFrameworkPath", () => {
 
   it("Test 40: _data/languages/en.yml categorizes as 'dataFiles'", () => {
     expect(categorizeFrameworkPath("_data/languages/en.yml")).toBe("dataFiles");
+  });
+
+  it("_data/katex.yml categorizes as 'dataFiles'", () => {
+    expect(categorizeFrameworkPath("_data/katex.yml")).toBe("dataFiles");
   });
 });
 
@@ -609,6 +619,25 @@ describe("fetchFrameworkFilesAtVersion", () => {
       TOKEN, ["package-lock.json", "Gemfile.lock"], TAG,
     );
     expect(files).toEqual([{ path: "package-lock.json", content: "LOCK" }]);
+  });
+
+  // A site pinned to an old framework tag has no _data/katex.yml in the
+  // framework repo at that tag, so the fetch 404s and getFrameworkFileContent
+  // resolves null for it. fetchFrameworkFilesAtVersion must drop that path
+  // while still returning a sibling _data file that does resolve — no throw,
+  // no dropped sibling.
+  it("drops _data/katex.yml when absent at an old tag (404 → null), keeping a resolving sibling", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/contents/_data/navigation.yml")) {
+        return { ok: true, json: async () => ({ content: b64("NAV"), encoding: "base64" }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    const files = await fetchFrameworkFilesAtVersion(
+      TOKEN, ["_data/katex.yml", "_data/navigation.yml"], "v1.5.0",
+    );
+    expect(files).toEqual([{ path: "_data/navigation.yml", content: "NAV" }]);
   });
 
   it("returns [] for empty input without calling fetch", async () => {
