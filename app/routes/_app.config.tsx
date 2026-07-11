@@ -10,7 +10,7 @@
  * tracked — navigating away with unsaved changes shows a
  * confirmation modal.
  *
- * @version v1.4.0-beta
+ * @version v1.4.3-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -24,6 +24,7 @@ import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { project_config, project_themes } from "~/db/schema";
 import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
+import { reconcileSheetsFlagFromRepo } from "~/lib/sheets-reconcile.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getRepoTree, getFileContent } from "~/lib/github.server";
 import { parseYaml } from "~/lib/yaml.server";
@@ -69,7 +70,32 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       .where(eq(project_themes.project_id, project.id)),
   ]);
 
-  return { hasProject: true as const, config: configRows[0] ?? null, themes };
+  let config = configRows[0] ?? null;
+
+  // The D1 flag is a cached copy of the repo's google_sheets.enabled and can
+  // strand at true (a warm collab Y.Doc clobbers the disable-path's direct D1
+  // write on its next snapshot; once the repo reads false, no push re-fires
+  // the repair). Reconcile against the repo before rendering the warning —
+  // costs nothing in the common already-disabled case, and fails open to the
+  // D1 value whenever the repo is unreadable.
+  if (config?.google_sheets_enabled) {
+    try {
+      const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+      const [owner, repo] = project.github_repo_full_name.split("/");
+      const enabled = await reconcileSheetsFlagFromRepo(db, env as never, {
+        token,
+        owner,
+        repo,
+        projectId: project.id,
+        d1Enabled: true,
+      });
+      if (!enabled) config = { ...config, google_sheets_enabled: false };
+    } catch {
+      // decrypt failure — render the D1 value unchanged
+    }
+  }
+
+  return { hasProject: true as const, config, themes };
 }
 
 export async function action({ request, context }: Route.ActionArgs) {
