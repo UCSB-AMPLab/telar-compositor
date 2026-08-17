@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.4-beta (2026-08-17)
+
+A patch release: an upgrade interrupted by a transient GitHub error could not be retried.
+
+### Fixes
+
+- **An interrupted upgrade can now be retried** — An upgrade that stopped after its first commit had landed left the site stranded between versions, and every retry failed the same way: it replayed instructions to remove files the earlier attempt had already removed, which GitHub refuses. Retrying now skips removals that have already taken effect, so an interrupted upgrade finishes on the next attempt.
+
 ## v1.4.3-beta (2026-07-10)
 
 A patch release: a Google Sheets warning that would not go away, and the KaTeX configuration file missing from framework upgrades.
