@@ -42,6 +42,18 @@ function makeGraphqlFetch(responses: unknown[]) {
   }));
 }
 
+/**
+ * Builds a CheckPaths response for `paths`, treating everything in `absent`
+ * as missing from the tree at the expected head.
+ */
+function makePathExistenceResponse(paths: string[], absent: string[] = []) {
+  const repository: Record<string, { __typename: string } | null> = {};
+  paths.forEach((path, i) => {
+    repository[`p${i}`] = absent.includes(path) ? null : { __typename: "Blob" };
+  });
+  return { data: { repository } };
+}
+
 // ---------------------------------------------------------------------------
 // graphqlGitHub tests
 // ---------------------------------------------------------------------------
@@ -217,18 +229,23 @@ describe("commitFilesToRepo", () => {
   });
 
   it("Test 9a: mutation input includes fileChanges.deletions when deletions parameter is provided", async () => {
-    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
+    const dels = ["_layouts/deprecated.html", "_includes/old-nav.html"];
+    globalThis.fetch = makeGraphqlFetch([
+      HEAD_OID_RESPONSE,
+      makePathExistenceResponse(dels),
+      COMMIT_RESPONSE,
+    ]);
 
     await commitFilesToRepo(
       TOKEN, OWNER, REPO, BRANCH,
       [{ path: "objects.csv", content: "object_id\nobj-001" }],
       "upgrade: remove deprecated layout",
       undefined,
-      ["_layouts/deprecated.html", "_includes/old-nav.html"],
+      dels,
     );
 
     const secondBody = JSON.parse(
-      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2][1].body
     );
     const fileChanges = secondBody.variables.input.fileChanges;
     expect(fileChanges.deletions).toBeDefined();
@@ -257,13 +274,17 @@ describe("commitFilesToRepo", () => {
     // Regression for the _app.objects.$objectId.tsx delete intent, which used
     // to pass the deletions array into the messageBody slot (slot 7), leaving
     // fileChanges.deletions empty. Orphan image files stayed in the repo.
-    globalThis.fetch = makeGraphqlFetch([HEAD_OID_RESPONSE, COMMIT_RESPONSE]);
-
     const orphanFiles = [
       "telar-content/objects/obj-001/obj-001.jpg",
       "telar-content/objects/obj-001/iiif/info.json",
       "telar-content/objects/obj-001/iiif/full/full/0/default.jpg",
     ];
+
+    globalThis.fetch = makeGraphqlFetch([
+      HEAD_OID_RESPONSE,
+      makePathExistenceResponse(orphanFiles),
+      COMMIT_RESPONSE,
+    ]);
 
     await commitFilesToRepo(
       TOKEN, OWNER, REPO, BRANCH,
@@ -274,7 +295,7 @@ describe("commitFilesToRepo", () => {
     );
 
     const secondBody = JSON.parse(
-      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2][1].body
     );
     const input = secondBody.variables.input;
     // Orphan image paths travel through as deletions, not as a mis-placed body
@@ -283,6 +304,79 @@ describe("commitFilesToRepo", () => {
     // No stray body — message is just headline
     expect(input.message.body).toBeUndefined();
     expect(input.message.headline).toBe("Remove obj-001 via Telar Compositor");
+  });
+
+  it("Test 9d: deletion paths already absent at the expected head are dropped", async () => {
+    // createCommitOnBranch rejects the entire commit when a deletion targets a
+    // path that is not in the tree, so a replayed migration whose deletion has
+    // already landed must not be sent again.
+    const dels = [".github/dependabot.yml", "_layouts/deprecated.html"];
+    globalThis.fetch = makeGraphqlFetch([
+      HEAD_OID_RESPONSE,
+      makePathExistenceResponse(dels, [".github/dependabot.yml"]),
+      COMMIT_RESPONSE,
+    ]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "_config.yml", content: "telar:\n  version: 1.6.2" }],
+      "Upgrade Telar from 1.5.3 to 1.6.2",
+      undefined,
+      dels,
+    );
+
+    const mutationBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2][1].body
+    );
+    const fileChanges = mutationBody.variables.input.fileChanges;
+    expect(fileChanges.deletions).toHaveLength(1);
+    expect(fileChanges.deletions[0]).toEqual({ path: "_layouts/deprecated.html" });
+  });
+
+  it("Test 9e: when every deletion path is absent, fileChanges.deletions is omitted", async () => {
+    const dels = [".github/dependabot.yml"];
+    globalThis.fetch = makeGraphqlFetch([
+      HEAD_OID_RESPONSE,
+      makePathExistenceResponse(dels, dels),
+      COMMIT_RESPONSE,
+    ]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "_config.yml", content: "telar:\n  version: 1.6.2" }],
+      "Upgrade Telar from 1.5.3 to 1.6.2",
+      undefined,
+      dels,
+    );
+
+    const mutationBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2][1].body
+    );
+    expect(mutationBody.variables.input.fileChanges.deletions).toBeUndefined();
+  });
+
+  it("Test 9f: existence probe queries each path at the expected head OID", async () => {
+    const dels = [".github/dependabot.yml", "_layouts/deprecated.html"];
+    globalThis.fetch = makeGraphqlFetch([
+      HEAD_OID_RESPONSE,
+      makePathExistenceResponse(dels),
+      COMMIT_RESPONSE,
+    ]);
+
+    await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "_config.yml", content: "telar:\n  version: 1.6.2" }],
+      "Upgrade Telar from 1.5.3 to 1.6.2",
+      undefined,
+      dels,
+    );
+
+    const probeBody = JSON.parse(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][1].body
+    );
+    expect(probeBody.query).toContain("CheckPaths");
+    expect(probeBody.variables.p0).toBe("abc123deadbeef:.github/dependabot.yml");
+    expect(probeBody.variables.p1).toBe("abc123deadbeef:_layouts/deprecated.html");
   });
 
   it("Test 9: supports multiple files in a single commit (2 files in additions array)", async () => {

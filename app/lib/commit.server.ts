@@ -2,7 +2,8 @@
  * GitHub commit and Actions polling utilities for the Telar Compositor.
  *
  * Provides:
- *   - commitFilesToRepo: multi-file atomic commit via GraphQL createCommitOnBranch
+ *   - commitFilesToRepo: multi-file atomic commit via GraphQL createCommitOnBranch,
+ *     with deletions narrowed to paths present at the expected head
  *   - disableGoogleSheetsInConfig / isGoogleSheetsEnabled: safe _config.yml mutation
  *   - listWorkflowRunsBySha: Actions run status by commit SHA
  *   - getJobSteps: per-step status from an Actions run job
@@ -12,7 +13,7 @@
  *   - dispatchWorkflow: trigger a workflow_dispatch event for a specific workflow
  *   - getLatestWorkflowRun: fetch the most recently created run for a named workflow
  *
- * @version v1.4.1-beta
+ * @version v1.4.4-beta
  */
 
 import { graphqlGitHub, githubHeaders } from "~/lib/github.server";
@@ -48,6 +49,59 @@ const CREATE_COMMIT = `
     }
   }
 `;
+
+/**
+ * Upper bound on paths probed per existence query. GraphQL aliases are cheap
+ * but the query string grows with each one, so long deletion lists are split.
+ */
+const PATH_EXISTENCE_BATCH = 100;
+
+interface PathExistenceData {
+  repository: Record<string, { __typename: string } | null> | null;
+}
+
+/**
+ * Returns the subset of `paths` that exist in the tree at `oid`.
+ *
+ * Probes each path as `<oid>:<path>` through aliased `object` fields, so one
+ * round trip covers a whole batch. A path that resolves to null is absent.
+ */
+async function filterExistingPaths(
+  token: string,
+  owner: string,
+  repo: string,
+  oid: string,
+  paths: string[],
+): Promise<string[]> {
+  const present: string[] = [];
+
+  for (let start = 0; start < paths.length; start += PATH_EXISTENCE_BATCH) {
+    const batch = paths.slice(start, start + PATH_EXISTENCE_BATCH);
+    const varDefs = batch.map((_, i) => `$p${i}: String!`).join(", ");
+    const fields = batch
+      .map((_, i) => `p${i}: object(expression: $p${i}) { __typename }`)
+      .join("\n          ");
+    const query = `
+      query CheckPaths($owner: String!, $repo: String!, ${varDefs}) {
+        repository(owner: $owner, name: $repo) {
+          ${fields}
+        }
+      }
+    `;
+
+    const variables: Record<string, string> = { owner, repo };
+    batch.forEach((path, i) => {
+      variables[`p${i}`] = `${oid}:${path}`;
+    });
+
+    const data = await graphqlGitHub<PathExistenceData>(token, query, variables);
+    batch.forEach((path, i) => {
+      if (data.repository?.[`p${i}`]) present.push(path);
+    });
+  }
+
+  return present;
+}
 
 // ---------------------------------------------------------------------------
 // StaleHeadError
@@ -121,13 +175,35 @@ export async function commitFilesToRepo(
     expectedHeadOid = headData.repository.ref.target.oid;
   }
 
-  // 2. Base64-encode each file's content (UTF-8 safe)
+  // 2. Narrow deletions to paths that are actually present at expectedHeadOid.
+  //    createCommitOnBranch rejects the WHOLE commit if any deletion targets a
+  //    path that is already absent, so an unfiltered list makes a commit
+  //    un-retryable once part of it has landed.
+  let presentDeletions: string[] | undefined = deletions;
+  if (deletions && deletions.length > 0) {
+    presentDeletions = await filterExistingPaths(
+      token,
+      owner,
+      repo,
+      expectedHeadOid,
+      deletions,
+    );
+    if (presentDeletions.length < deletions.length) {
+      const absent = deletions.filter((p) => !presentDeletions!.includes(p));
+      console.warn(
+        `[commitFilesToRepo] ${absent.length} deletion path(s) absent at ` +
+          `${expectedHeadOid}, skipping: ${absent.join(", ")}`,
+      );
+    }
+  }
+
+  // 3. Base64-encode each file's content (UTF-8 safe)
   const additions = files.map((f) => ({
     path: f.path,
     contents: btoa(unescape(encodeURIComponent(f.content))),
   }));
 
-  // 3. Create the commit
+  // 4. Create the commit
   const headline = skipCi ? `${message} [skip ci]` : message;
 
   try {
@@ -139,8 +215,8 @@ export async function commitFilesToRepo(
           : { headline },
         fileChanges: {
           additions,
-          ...(deletions && deletions.length > 0
-            ? { deletions: deletions.map((path) => ({ path })) }
+          ...(presentDeletions && presentDeletions.length > 0
+            ? { deletions: presentDeletions.map((path) => ({ path })) }
             : {}),
         },
         expectedHeadOid,

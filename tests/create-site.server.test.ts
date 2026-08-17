@@ -879,6 +879,15 @@ describe("commitBornCleanSite", () => {
         if (String(body.query).includes("GetHeadOid")) {
           return jsonRes({ data: { repository: { ref: { target: { oid: "head-oid" } } } } });
         }
+        // Deletion existence probe — report every requested path as present so
+        // the deletion list reaches the mutation unchanged.
+        if (String(body.query).includes("CheckPaths")) {
+          const repository: Record<string, { __typename: string }> = {};
+          for (const key of Object.keys(body.variables ?? {})) {
+            if (/^p\d+$/.test(key)) repository[key] = { __typename: "Blob" };
+          }
+          return jsonRes({ data: { repository } });
+        }
         if (opts.commitErrors) return jsonRes({ errors: [{ message: "boom" }] });
         commitCalls++;
         if (opts.failCommitOnCall && commitCalls === opts.failCommitOnCall) {
