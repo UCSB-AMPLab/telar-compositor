@@ -9,7 +9,7 @@
  * (where the user's first Sheets URL was inaccessible and they enter a
  * corrected one).
  *
- * @version v1.4.1-beta
+ * @version v1.4.5-beta
  */
 
 import { redirect } from "react-router";
@@ -43,6 +43,7 @@ import {
   activity_log,
 } from "~/db/schema";
 import { eq, inArray } from "drizzle-orm";
+import { getUserRole } from "~/lib/membership.server";
 import { Header } from "~/components/layout/Header";
 import { WizardShell } from "~/components/features/onboarding/WizardShell";
 
@@ -488,14 +489,26 @@ export async function action({ request, context }: Route.ActionArgs) {
     const projectId = Number(formData.get("project_id"));
     const db = getDb(env.DB);
 
-    // Verify this project belongs to the user
-    const project = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .get();
+    // Same `Number.isFinite` id validation the other destructive project
+    // actions apply before any DB call (`delete-project`, _app.account.tsx).
+    // A missing or non-numeric project_id would fail closed at the role
+    // check anyway; validating here keeps the guard explicit and spends no
+    // query on garbage input. Reported as "not_found" rather than the
+    // account route's "invalid_project_id" so every refusal on this intent
+    // is one indistinguishable payload.
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      return { ok: false, intent: "unlink-project", error: "not_found" };
+    }
 
-    if (!project) {
+    // Convenor-only: unlink cascade-deletes the project and every dependent
+    // row, so it takes the same predicate as the other destructive project
+    // actions (`delete-project` in _app.account.tsx, via requireOwner) — a
+    // project_members row for this caller with role 'convenor'. Collaborators
+    // and non-members are refused. The refusal is the same "not_found" a
+    // nonexistent project gets, so the response cannot be used to probe which
+    // project ids exist; getUserRole returns null for both cases.
+    const role = await getUserRole(db, projectId, user.id);
+    if (role !== "convenor") {
       return { ok: false, intent: "unlink-project", error: "not_found" };
     }
 

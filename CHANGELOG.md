@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.5-beta (2026-08-27)
+
+A security patch: one onboarding action did not check project ownership.
+
+### Fixes
+
+- **Project unlinking now requires ownership** — The onboarding flow's unlink action, used to discard a partially created site and start over, checked only that the named project existed — not that it belonged to the signed-in user. Any signed-in user who knew or guessed a project's internal id could delete that project. The action now requires the caller to be the project's convenor, refuses everyone else, and the refusal does not reveal whether a project exists.
+
 ## v1.4.4-beta (2026-08-17)
 
 A patch release: an upgrade interrupted by a transient GitHub error could not be retried.
