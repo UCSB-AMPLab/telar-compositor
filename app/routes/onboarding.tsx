@@ -489,6 +489,17 @@ export async function action({ request, context }: Route.ActionArgs) {
     const projectId = Number(formData.get("project_id"));
     const db = getDb(env.DB);
 
+    // Same `Number.isFinite` id validation the other destructive project
+    // actions apply before any DB call (`delete-project`, _app.account.tsx).
+    // A missing or non-numeric project_id would fail closed at the role
+    // check anyway; validating here keeps the guard explicit and spends no
+    // query on garbage input. Reported as "not_found" rather than the
+    // account route's "invalid_project_id" so every refusal on this intent
+    // is one indistinguishable payload.
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      return { ok: false, intent: "unlink-project", error: "not_found" };
+    }
+
     // Convenor-only: unlink cascade-deletes the project and every dependent
     // row, so it takes the same predicate as the other destructive project
     // actions (`delete-project` in _app.account.tsx, via requireOwner) — a
