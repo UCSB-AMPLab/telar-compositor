@@ -1,0 +1,11 @@
+-- Custom-column passthrough for story step CSVs, matching objects (0031) and
+-- the glossary (0054).
+--
+-- @version v1.5.0-beta
+--
+-- extra_columns: JSON object of the step's cells in the story CSV columns the
+-- Compositor has no first-class column for, keyed by header in file order;
+-- NULL when none. Without it, a column an author adds to a story sheet by hand
+-- is absent from D1 and so deleted by the next publish, which writes the file
+-- from the fixed column list alone.
+ALTER TABLE steps ADD COLUMN extra_columns text;
