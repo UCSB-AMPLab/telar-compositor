@@ -11,6 +11,10 @@
     "stay": "Quedarme",
     "leave": "Salir"
   },
+  "read_only": {
+    "title": "Solo consulta",
+    "body": "Esta configuración solo la cambia el coordinador/a del sitio."
+  },
   "sections": {
     "site_settings": {
       "title": "Configuración general",
@@ -25,6 +29,7 @@
       "field_theme": "Tema",
       "field_theme_help": "Elige un tema de color para tu sitio.",
       "refresh_themes": "Actualizar temas desde el repositorio",
+      "refresh_themes_failed": "No pudimos actualizar los temas desde el repositorio. Intenta de nuevo en un momento.",
       "theme_alert": {
         "title_unrecognised": "No reconocemos este tema",
         "body_unrecognised": "La configuración de tu sitio tiene el tema {{value}}, pero no encontramos un tema con ese nombre entre los del repositorio. Elige uno de los temas de abajo para actualizar el ajuste.",
@@ -59,7 +64,9 @@
       "field_collection_mode": "Mostrar objetos primero en la página de inicio (modo colección)",
       "field_collection_mode_help": "Cuando está activo, tu página de inicio muestra los objetos primero con miniaturas grandes y las historias debajo. Cuando está inactivo (predeterminado), aparecen primero las historias.",
       "field_featured_count": "Cantidad de destacados",
-      "field_featured_count_help": "Cantidad de objetos destacados a mostrar."
+      "field_featured_count_help": "Cantidad de objetos destacados a mostrar.",
+      "field_skip_stories": "Quitar la sección de historias de la página de inicio",
+      "field_skip_stories_help": "Quita por completo la sección de historias y deja solo la colección; lo habitual en una galería de curso."
     },
     "story_protection": {
       "title": "Protección de historias",
@@ -68,7 +75,7 @@
     },
     "google_sheets": {
       "title": "Integración con Google Sheets",
-      "disabled_notice": "Google Sheets ha sido desactivado. El compositor gestiona tu contenido directamente.",
+      "disabled_notice": "Google Sheets ha sido desactivado. El Compositor gestiona tu contenido directamente.",
       "enabled_notice": "Google Sheets es la fuente de contenido actual. Los cambios hechos aquí se sobrescribirán en la próxima sincronización."
     }
   },
@@ -86,5 +93,22 @@
   "remove_link_aria": "Eliminar enlace",
   "themes_none": "No se encontraron temas en este repositorio.",
   "empty_no_project": "Conecta un proyecto primero para configurar tu sitio.",
-  "connect_repo_cta": "Conectar un repositorio"
+  "connect_repo_cta": "Conectar un repositorio",
+  "course": {
+    "section_title": "Curso",
+    "join_label": "Unirse a un curso",
+    "join_placeholder": "Código de la clase",
+    "join_button": "Unirse",
+    "join_hint": "Escribe el código que te dio tu docente para unir este sitio a su curso.",
+    "current": "Este sitio hace parte de {{course}}.",
+    "leave_button": "Salir del curso",
+    "leave_title": "¿Salir de {{course}}?",
+    "leave_body": "El sitio conserva los objetos que recibió del curso: quedan como objetos normales que puedes editar o eliminar. Los docentes del curso salen del equipo.",
+    "leave_confirm": "Salir del curso",
+    "leave_cancel": "Quedarse",
+    "convenor_only": "Solo el coordinador/a del sitio puede unirlo a un curso o sacarlo de uno.",
+    "left": "Este sitio ya no hace parte de un curso.",
+    "join_failed": "El sitio no qued\u00f3 unido al curso. Escribe el c\u00f3digo otra vez; repetirlo no duplica nada.",
+    "leave_failed": "El sitio sigue en el curso. Intenta salir otra vez."
+  }
 }

@@ -22,5 +22,7 @@
   "redo": "Rehacer",
   "validation_pending": "Validando…",
   "validation_error": "Manifiesto IIIF no válido",
-  "validation_valid": "Válido"
+  "validation_valid": "Válido",
+  "type_to_confirm_label": "Escribe <0>{{value}}</0> para confirmar.",
+  "type_to_confirm_aria": "Escribe {{value}} para confirmar"
 }

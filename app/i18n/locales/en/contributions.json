@@ -1,0 +1,53 @@
+{
+  "nav": "Contribution record",
+  "meta_one": "Contribution record · {{date}} · {{count}} person with access",
+  "meta_other": "Contribution record · {{date}} · {{count}} people with access",
+  "intro": "Below are different measures of each group member's participation in this Telar site. Each measures something different, and none capture the full complexity of working on a Telar project as a team. None of these numbers should be taken as a score or ranking. And please note that work done outside of the Compositor — reading, thinking, planning, and drafting — is not reflected here at all.",
+  "made": {
+    "heading": "What was made",
+    "subhead": "Three measures of the content itself, counted for each kind of thing in the site."
+  },
+  "measures": {
+    "added": "added",
+    "edited": "edited",
+    "words": "words"
+  },
+  "definitions": {
+    "added": "How many things each person made.",
+    "edited": "How many things each person wrote in. On a team these are often different people. Something added and left empty does not count here.",
+    "words": "Length, not quality. Counted separately for each kind of writing, because writing a step answer is not the same work as writing a panel, an object record, a page or a glossary definition. Rewriting a passage adds those words again."
+  },
+  "legend": "bars show each person's share of the group's; the table has the counts",
+  "predatesCollection": "This project existed before these measures were collected. Steps added and edited have been counted; words and time are recorded as the work happens from now on, and start at zero.",
+  "kinds": {
+    "steps": "Steps",
+    "panels": "Panels",
+    "objects": "Object records",
+    "pages": "Pages",
+    "glossary": "Glossary"
+  },
+  "uncounted": "—",
+  "time": {
+    "heading": "Time in the Compositor",
+    "caveat": "How long each person has spent working inside the Compositor. Editing counts any change to the site: writing, framing an image, adding a step, reordering, filling in a record. Writing is the part of that time spent typing text. The clock starts on a change and stops after a minute, unless a new change is detected.",
+    "row": "Time",
+    "editing": "editing",
+    "writing": "writing",
+    "writingShare": "writing share",
+    "writingLegend": "writing · {{total}}",
+    "otherEditing": "other editing"
+  },
+  "sidebar": {
+    "yours": "Your contributions",
+    "yourTime": "Your time in the Compositor",
+    "timeEditing": "time editing",
+    "ofWhichWriting": "of which writing",
+    "barCaption": "bar · writing within your editing time",
+    "lineCaption": "lines · your share of the group's",
+    "fullRecord": "Full contribution record →"
+  },
+  "export": {
+    "csv": "Download CSV"
+  },
+  "former_member": "Former member"
+}

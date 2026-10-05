@@ -10,15 +10,16 @@
   },
   "role_chip": {
     "convenor": "Tú · Coordinador/a",
-    "collaborator": "Tú · Colaborador/a"
+    "collaborator": "Tú · Colaborador/a",
+    "instructor": "Tú · Docente"
   },
   "orientation": {
-    "what_is_compositor": "¿Qué es el compositor?",
+    "what_is_compositor": "¿Qué es el Compositor?",
     "plan_narrative": "Planea tu narrativa",
     "add_collaborators": "Invitar colaboradores"
   },
   "section": {
-    "workflow_map": "Cómo funciona el compositor",
+    "workflow_map": "Cómo funciona el Compositor",
     "activity": "Actividad · lo más reciente",
     "from_the_docs": "De la documentación",
     "other_projects": "Tus otros proyectos · {{N}}"
@@ -33,7 +34,7 @@
     "stories": "Las historias son el corazón de los sitios de Telar: combinan una serie de preguntas y respuestas breves con una vista encuadrada de un objeto y hasta dos paneles de capa para ampliar la información.",
     "glossary": "Puedes agregar paneles adicionales con definiciones de términos clave, conceptos, personas, lugares o lo que quieras. Adminístralos aquí y úsalos en tus historias y páginas.",
     "pages": "Tu sitio de Telar tiene una página de inicio y puede incluir otras páginas, como las de Acerca de, Créditos o Bibliografía. Edítalas aquí.",
-    "publish_collaborator": "Solo quien coordina puede publicar el sitio. Cuando tus cambios estén listos, avísale.",
+    "publish_collaborator": "Publicar el sitio le corresponde al equipo del proyecto. Cuando tus cambios estén listos, avísale al equipo.",
     "publish_convenor": "Cuando todo esté listo, reúne tus cambios en un commit a GitHub, donde tu sitio se reconstruye en unos dos minutos."
   },
   "activity": {
@@ -60,15 +61,24 @@
   },
   "recovery": {
     "eyebrow": "Necesita tu atención",
-    "body": "Hay {{N}} archivos de historia en tu repositorio de GitHub que no están en el compositor. Probablemente vienen de una edición a mano en GitHub o de alguien que trabajó por fuera del editor. Restáuralos aquí como borradores o ignóralos.",
+    "body_one": "Hay 1 archivo de historia en tu repositorio de GitHub que no está en el Compositor. Restáuralo aquí como borrador o ignóralo.",
+    "body_other": "Hay {{count}} archivos de historia en tu repositorio de GitHub que no están en el Compositor. Restáuralos aquí como borradores o ignóralos.",
     "primary_cta": "Restaurar como borradores",
     "secondary_cta": "Ignorar",
-    "ignore_aria": "Ignorar las historias huérfanas"
+    "ignore_aria": "Ignorar las historias huérfanas",
+    "warnings_heading": "Tus historias quedaron restauradas como borradores. Telar encontró estas advertencias en las hojas:",
+    "nothing_restored": "No quedaba nada por restaurar: los archivos de las historias ya no están en tu repositorio de GitHub.",
+    "colliding_columns": "La hoja \"{{sheet}}\" tiene columnas que Telar lee como una sola ({{columns}}) y todas tienen datos. Telar no puede construir el sitio con una hoja así, por lo que no se restauró nada. Deja solo la columna que quieras y quita las demás de la hoja, en GitHub o en Google Sheets, y luego vuelve a restaurar.",
+    "sheet_unreadable": "No pudimos leer la hoja \"{{sheet}}\" en GitHub, así que no se restauró nada. Intenta de nuevo en un momento.",
+    "file_unreadable": "No pudimos leer el archivo \"{{file}}\" en GitHub, así que no se restauró nada. Intenta de nuevo en un momento.",
+    "ignore_list_unreadable": "No pudimos leer en GitHub la lista de historias que decidiste ignorar, así que no cambió nada. Intenta de nuevo en un momento.",
+    "action_failed": "No se pudo completar. Intenta de nuevo en un momento.",
+    "site_not_found": "No encontramos este sitio. Vuelve a cargar la página e intenta de nuevo."
   },
   "from_docs": {
-    "hint": "Extractos breves de las guías, para leer sin salir del compositor. La documentación completa está en <docsLink>telar.org/docs</docsLink>.",
+    "hint": "Extractos breves de las guías, para leer sin salir del Compositor. La documentación completa está en <docsLink>telar.org/docs</docsLink>.",
     "desc_start": "Inicia sesión, conecta un repositorio y haz tus primeras ediciones.",
-    "desc_intro": "Qué es el compositor y cómo funciona.",
+    "desc_intro": "Qué es el Compositor y cómo funciona.",
     "desc_configure": "Define el nombre, el tema, el idioma y la descripción del sitio.",
     "desc_narrative": "Cómo encajan historias, pasos y paneles.",
     "desc_markdown": "Da formato al texto de los paneles — énfasis, enlaces, listas.",
@@ -83,7 +93,6 @@
     "desc_pages": "Crea tu página de inicio y otras páginas, como Acerca de, Créditos o Bibliografía."
   },
   "other_projects": {
-    "pill_unpublished": "{{N}} sin publicar",
     "pill_unpublished_some": "Sin publicar",
     "pill_in_sync": "Al día",
     "pill_draft": "Borrador",
@@ -91,13 +100,17 @@
   },
   "checklist": {
     "convenor_heading": "Configura tu proyecto — primero tres cosas",
-    "convenor_step1": "Confirma el título y el tema en Ajustes del sitio — define el idioma, el tema y lo que verán las visitas en la página de inicio publicada.",
+    "convenor_step1": "Confirma el título y el tema en Configuración del sitio — define el idioma, el tema y lo que verán las visitas en la página de inicio publicada.",
     "convenor_step2": "Agrega tu primer objeto — sube una imagen, pega un manifiesto IIIF o enlaza un medio externo. Los objetos son aquello a lo que apuntan las historias.",
     "convenor_step3": "Invita a tu equipo y escribe una primera historia — una historia es una secuencia de pasos que acercan y recorren los objetos con tu análisis.",
     "collaborator_heading": "Hoy, tres cosas para empezar",
-    "collaborator_step1": "Empieza por «¿Qué es el compositor?» — mira cómo encajan las páginas, los objetos, las historias y el glosario de Telar.",
+    "collaborator_step1": "Empieza por «¿Qué es el Compositor?» — mira cómo encajan las páginas, los objetos, las historias y el glosario de Telar.",
     "collaborator_step2": "Explora la pestaña de Objetos — mira lo que ha preparado quien coordina. Elige uno para leerlo con detenimiento.",
-    "collaborator_step3": "Abre el paso de una historia y empieza a escribir — tus cambios se guardan solos. Nada se publica hasta que quien coordina lo publique."
+    "collaborator_step3": "Abre un paso de una historia y empieza a escribir — tus cambios se guardan solos. Nada aparece en el sitio hasta que alguien del equipo lo publique.",
+    "instructor_heading": "Tu curso: tres cosas para empezar",
+    "instructor_step1": "Abre la pestaña Curso — mira los sitios del curso y quiénes forman cada equipo. Haz clic en el nombre de un sitio para abrirlo.",
+    "instructor_step2": "Comparte el código de la clase — créalo en la pestaña Curso. Tus estudiantes lo ingresan para unir sus sitios al curso.",
+    "instructor_step3": "Abre un sitio y lee sus historias — puedes editarlo junto con el grupo, y tus cambios se guardan solos. También puedes publicarlo."
   },
   "tile": {
     "configure": "Configurar",
@@ -113,8 +126,9 @@
     "empty": "Vacío",
     "none_yet": "Aún ninguna",
     "landing_only": "Solo la página de inicio",
-    "convenor_only": "Solo coordinación",
+    "convenor_only": "A cargo del equipo",
     "nothing_to_publish": "Nada que publicar aún",
+    "to_ship_pending": "Cambios por publicar",
     "to_ship_one": "{{N}} cambio por publicar",
     "to_ship_other": "{{N}} cambios por publicar",
     "objects_unused": "{{N}} · {{U}} sin usar",

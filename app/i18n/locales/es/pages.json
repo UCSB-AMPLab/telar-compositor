@@ -1,13 +1,8 @@
 {
   "page_title": "Páginas",
   "new_page_button": "+ Nueva página",
-  "new_page": "Nueva página",
   "delete_page": "Eliminar página",
-  "no_pages": "Aún no hay páginas",
   "delete_confirm_title": "¿Eliminar página?",
-  "delete_confirm_body": "¿Eliminar \"{{title}}\"? Esta página se eliminará permanentemente.",
-  "delete_page_confirm": "¿Eliminar esta página? Se retirará de la navegación de tu sitio.",
-  "delete_confirm_button": "Eliminar página",
   "delete_cancel": "Conservar página",
   "empty_state": "Construye las páginas de tu sitio",
   "empty_state_description": "Agrega páginas a tu sitio — Acerca de, Equipo y más. Cada página aparece como una pestaña en el menú.",
@@ -37,5 +32,7 @@
   "repo_pages_description": "Impórtalas al editor para gestionar su contenido desde aquí.",
   "import_all_button": "Importar todas",
   "import_one_button": "Importar",
-  "import_in_progress": "Importando…"
+  "import_in_progress": "Importando…",
+  "scan_not_made": "No pudimos buscar en GitHub páginas que puedas importar. Seguiremos intentándolo; si prefieres, intenta de nuevo ahora.",
+  "scan_retry": "Intentar de nuevo"
 }

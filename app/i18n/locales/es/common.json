@@ -1,53 +1,38 @@
 {
   "app_name": "Compositor de Telar",
-  "language_toggle": "EN",
   "loading": "Cargando...",
   "error": "Algo salió mal",
   "learn_more": "Conoce más",
-  "coming_soon": "Esta sección estará disponible en una próxima actualización.",
-  "autosave": {
-    "saving": "Guardando...",
-    "saved": "Guardado",
-    "all_saved": "Todos los cambios guardados"
-  },
   "footer": {
     "attribution": "El Compositor de Telar es un proyecto de <neo>Neogranadina</neo> y el <ampl>Laboratorio de Archivos, Memoria y Preservación</ampl> de UC Santa Barbara"
   },
   "nav": {
-    "dashboard": "Inicio",
     "start": "Inicio",
     "docs": "Docs",
-    "config": "Ajustes del sitio",
-    "homepage": "Inicio del sitio",
+    "config": "Configuración del sitio",
     "objects": "Objetos",
     "stories": "Historias",
     "pages": "Inicio y páginas",
     "glossary": "Glosario",
     "publish": "Publicar",
+    "course": "Curso",
     "site": "Sitio",
     "site_aria": "Abrir el sitio publicado en una pestaña nueva"
   },
   "role": {
     "convenor": "Coordinador/a",
     "collaborator": "Colaborador/a",
-    "denied_publish": "Solo quien coordina puede publicar.",
-    "denied_upgrade": "Solo quien coordina puede actualizar Telar.",
-    "ask_convenor_publish": "Pídele a quien coordina que publique"
+    "instructor": "Docente",
+    "denied_publish": "No puedes publicar este sitio porque tu cuenta no tiene ningún rol en este proyecto.",
+    "denied_upgrade": "No puedes actualizar Telar en este sitio porque tu cuenta no tiene ningún rol en este proyecto."
   },
   "user_menu": {
     "report_problem": "Reportar un problema"
   },
   "objects": {
-    "empty_heading": "Aún no hay objetos",
-    "empty_body": "Agrega tu primer objeto para empezar a crear historias. ¿Apenas empiezas? Termina la configuración en Ajustes del sitio."
+    "empty_body": "Agrega tu primer objeto para empezar a crear historias. ¿Apenas empiezas? Termina de prepararlo todo en Configuración del sitio."
   },
-  "onboarding": {
-    "next_add_object": "Sigue: agrega tu primer objeto"
-  },
-  "sync_banner": {
-    "message": "Tu repositorio en GitHub ha cambiado desde la última sincronización. Revisa los cambios para mantener actualizada la copia de trabajo del compositor.",
-    "action": "Revisar cambios"
-  },
+  "upgrade_awaits_convenor": "Este sitio usa una versión anterior de Telar, así que por ahora no se pueden subir imágenes ni publicar. La actualización necesita un permiso para la App de GitHub, y solo quien coordina puede aceptarlo. Pídele que actualice el sitio.",
   "dialog": {
     "dismiss_cancel": "Volver",
     "dismiss_confirm": "Cerrar"
@@ -55,6 +40,7 @@
   "user_menu_aria": "Menú de usuario",
   "status": {
     "in_sync": "Sincronizado",
+    "unpublished": "Cambios sin publicar",
     "unpublished_one": "{{n}} cambio sin publicar",
     "unpublished_other": "{{n}} cambios sin publicar",
     "publish_cta": "Publicar",
@@ -64,7 +50,10 @@
     "upgrade": "Telar {{version}} disponible",
     "upgrade_cta": "Actualizar",
     "saving": "Guardando…",
-    "repo_unavailable": "Sin acceso al repositorio"
+    "repo_unavailable": "Sin acceso al repositorio",
+    "halted": "No se está guardando",
+    "halted_action": "Restaurar",
+    "repo_invitation": "Invitación al repositorio"
   },
   "untitled": "Sin título",
   "a11y": {
@@ -72,14 +61,70 @@
     "close_notification": "Cerrar notificación",
     "main_navigation": "Navegación principal",
     "edit_slug": "Editar el identificador de la URL",
-    "orphan_story_files": "Archivos de historias huérfanos",
     "onboarding_progress": "Progreso de la configuración inicial",
     "import_progress": "Progreso de la importación",
     "activity_rail": "Panel de actividad y recuperación"
   },
   "cancel": "Cancelar",
+  "close": "Cerrar",
   "sign_out": "Cerrar sesión",
   "no_image": "Sin imagen",
   "dismiss": "Descartar",
-  "switch_language": "Cambiar a {{label}}"
+  "switch_language": "Cambiar a {{label}}",
+  "course_label": "Curso",
+  "sheet_warnings": {
+    "summary_one": "{{count}} advertencia en tus hojas",
+    "summary_other": "{{count}} advertencias en tus hojas",
+    "summary_files_one": "{{count}} advertencia en los archivos de tu sitio",
+    "summary_files_other": "{{count}} advertencias en los archivos de tu sitio",
+    "ragged_row": {
+      "named": "La fila \"{{row}}\" de la hoja \"{{sheet}}\" tiene valores en columnas sin encabezado, así que Telar los dejó por fuera. Para conservarlos, ponle un encabezado a cada una de esas columnas en la hoja.",
+      "numbered": "La fila {{row}} de la hoja \"{{sheet}}\" tiene valores en columnas sin encabezado, así que Telar los dejó por fuera. Para conservarlos, ponle un encabezado a cada una de esas columnas en la hoja."
+    },
+    "bilingual_header_row": {
+      "named": "Telar omitió la fila \"{{row}}\" de la hoja \"{{sheet}}\" porque parece una segunda fila de encabezados. Si en realidad tiene contenido, revísala en la hoja.",
+      "numbered": "Telar omitió la fila {{row}} de la hoja \"{{sheet}}\" porque parece una segunda fila de encabezados. Si en realidad tiene contenido, revísala en la hoja."
+    },
+    "blank_header": "La columna {{column}} de la hoja \"{{sheet}}\" no tiene encabezado, así que Telar dejó por fuera sus valores. Para conservarlos, ponle un encabezado en la hoja.",
+    "column_collision_only_filled": "La hoja \"{{sheet}}\" tiene más de una columna para \"{{name}}\": {{headers}}. Solo \"{{kept}}\" (columna {{column}}) tiene datos, así que Telar usó esa y no tuvo en cuenta las vacías. Borra de la hoja las columnas vacías.",
+    "column_collision_last": "La hoja \"{{sheet}}\" tiene más de una columna para \"{{name}}\" ({{headers}}) y varias tienen datos. Telar usó la última (columna {{column}}) y dejó por fuera las otras. Deja solo la columna que quieras y quita las demás de la hoja.",
+    "reserved_column_one": "La hoja \"{{sheet}}\" tiene una columna con un encabezado que Telar reserva para su propio uso: {{columns}}. No podrás publicar hasta que la quites. Puedes quitarla en la pestaña Publicar o cambiarle el encabezado en la hoja.",
+    "reserved_column_other": "La hoja \"{{sheet}}\" tiene columnas con encabezados que Telar reserva para su propio uso: {{columns}}. No podrás publicar hasta que las quites. Puedes quitar cada una en la pestaña Publicar o cambiarles los encabezados en la hoja.",
+    "header_spelling_one": "En la hoja \"{{sheet}}\", tu sitio no reconoce el encabezado {{headers}}. Espera {{names}}, así que el contenido de esa columna no aparece en el sitio. Publica el sitio desde la pestaña Publicar para corregir el encabezado.",
+    "header_spelling_other": "En la hoja \"{{sheet}}\", tu sitio no reconoce los encabezados {{headers}}. Espera {{names}}, en el mismo orden, así que el contenido de esas columnas no aparece en el sitio. Publica el sitio desde la pestaña Publicar para corregir los encabezados.",
+    "header_spelling_object_id": "En la hoja \"{{sheet}}\", tu sitio no reconoce el encabezado {{headers}}. Espera {{names}}, así que no puede leer ninguno de los objetos. Publica el sitio desde la pestaña Publicar para corregir el encabezado.",
+    "header_spelling_sheets_one": "Tu sitio lee la pestaña \"{{sheet}}\" desde Google Sheets, y es posible que Telar no reconozca el encabezado {{headers}}. Telar espera {{names}}. En Google Sheets, cambia el encabezado en esa pestaña para que el contenido de la columna aparezca en el sitio. Si tu sitio deja de leer desde Google Sheets, la próxima vez que publiques, Telar corregirá el encabezado por ti.",
+    "header_spelling_sheets_other": "Tu sitio lee la pestaña \"{{sheet}}\" desde Google Sheets, y es posible que Telar no reconozca los encabezados {{headers}}. Telar espera {{names}}, en el mismo orden. En Google Sheets, cambia los encabezados en esa pestaña para que el contenido de esas columnas aparezca en el sitio. Si tu sitio deja de leer desde Google Sheets, la próxima vez que publiques, Telar corregirá los encabezados por ti.",
+    "instruction_column_one": "La hoja \"{{sheet}}\" tiene una columna cuyo encabezado empieza por \"#\": {{columns}}. Telar toma esas columnas como notas para ti, así que su contenido no aparece en tu sitio. Si quieres que aparezca, quítale el \"#\" al encabezado.",
+    "instruction_column_other": "La hoja \"{{sheet}}\" tiene columnas cuyos encabezados empiezan por \"#\": {{columns}}. Telar toma esas columnas como notas para ti, así que su contenido no aparece en tu sitio. Si quieres que aparezca, quítales el \"#\" a los encabezados.",
+    "folded_columns": "La hoja \"{{sheet}}\" tiene columnas que Telar lee como una sola: {{groups}}. No podrás publicar hasta que dejes solo una columna de cada grupo y quites las demás de la hoja.",
+    "coordinate_invalid": "En la hoja \"{{sheet}}\", el paso {{step}} tiene el valor \"{{value}}\" en {{column}}. Como no es un número, Telar lo dejó por fuera y el paso usa el valor predeterminado. Escribe un número para ese valor en el editor de la historia, o en tu hoja de Google Sheets si tu sitio lee desde Google Sheets.",
+    "page_below_one": "En la hoja \"{{sheet}}\", el paso {{step}} tiene la página \"{{value}}\", que es menor que 1, así que tu sitio no la usará. Escribe un número de página de 1 o más en el editor de la historia, o en tu hoja de Google Sheets si tu sitio lee desde Google Sheets.",
+    "page_truncated": "En la hoja \"{{sheet}}\", el paso {{step}} tiene la página \"{{value}}\", que tu sitio leerá como la página {{readAs}}. Si querías otra página, escríbela como un número entero en el editor de la historia, o en tu hoja de Google Sheets si tu sitio lee desde Google Sheets.",
+    "object_id_repeated": "En la hoja \"{{sheet}}\", {{id}} aparece en más de una fila. Tu sitio usa la última, y la próxima vez que publiques solo quedará esa fila.",
+    "object_id_repeated_split": "En la hoja \"{{sheet}}\", {{id}} aparece en más de una fila, y tu sitio no muestra la misma fila en todas partes. La próxima vez que publiques solo quedará la última, y desde entonces el sitio la usará en todas partes.",
+    "tree_truncated": "Tu repositorio tiene más archivos de los que GitHub muestra de una vez, así que es posible que Telar no haya encontrado algunas de tus imágenes. Si la imagen de un objeto no aparece, revisa en GitHub que el archivo esté en la carpeta telar-content/objects.",
+    "unreadable_characters": {
+      "build_stops": "El archivo \"{{file}}\" tiene caracteres que tu sitio no puede leer, así que el sitio no se puede actualizar.",
+      "left_out": "El archivo \"{{file}}\" tiene caracteres que tu sitio no puede leer, así que el sitio lo deja por fuera.",
+      "name_shown": "El archivo \"{{file}}\" tiene caracteres que tu sitio no puede leer, así que el sitio muestra el nombre del archivo en lugar de su texto.",
+      "from_sheets": "En GitHub, el archivo \"{{file}}\" tiene caracteres que no son texto válido. Tu sitio lee esta hoja desde Google Sheets, así que esto no lo afecta.",
+      "not_used": "El archivo \"{{file}}\" tiene caracteres que no son texto válido. Tu sitio no usa este archivo, así que esto no lo afecta.",
+      "repair": {
+        "publish": "La próxima vez que publiques un cambio, el archivo se reemplazará en el sitio por una versión con � en lugar de esos caracteres.",
+        "title_then_publish": "Ponle un título a esta página en la pestaña de Páginas y, la próxima vez que publiques, se reemplazarán por �.",
+        "import_then_publish": "Si importas esta página, la próxima vez que publiques se reemplazarán por �.",
+        "remove_old_copy": "Es una copia antigua de una de tus historias, y se borrará del sitio la próxima vez que publiques un cambio."
+      }
+    },
+    "object_site_id_shared": "En la hoja \"{{sheet}}\", tu sitio lee {{ids}} como un solo objeto y muestra {{shown}}. En la pestaña de Objetos, cambia el ID de uno de ellos o elimina el que no quieras conservar.",
+    "object_site_id_shared_split": "En la hoja \"{{sheet}}\", tu sitio lee {{ids}} como un solo objeto, pero no muestra la misma fila en todas partes. En la pestaña de Objetos, cambia el ID de uno de ellos o elimina el que no quieras conservar."
+  },
+  "site_changed": {
+    "title": "Esta pestaña quedó desactualizada",
+    "body_stopped": "En otra pestaña abriste el sitio {{other}}, y esta mostraba el sitio {{site}}. Por eso el Compositor detuvo lo que acabas de hacer aquí, para que no se aplicara al sitio {{other}}.",
+    "body_stale": "En otra pestaña abriste el sitio {{other}} mientras esta mostraba el sitio {{site}}. Recarga esta pestaña antes de seguir haciendo cambios.",
+    "next": "Recarga esta pestaña para trabajar en el sitio {{other}}. Para volver al sitio {{site}}, recarga, haz clic en el nombre del sitio (arriba a la izquierda, junto al logo de Telar) y elige {{site}} en la lista.",
+    "reload": "Recargar"
+  }
 }

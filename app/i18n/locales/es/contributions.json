@@ -1,0 +1,53 @@
+{
+  "nav": "Registro de participación",
+  "meta_one": "Registro de participación · {{date}} · {{count}} persona con acceso",
+  "meta_other": "Registro de participación · {{date}} · {{count}} personas con acceso",
+  "intro": "Aquí verás varias medidas de la participación de cada integrante del grupo en este sitio de Telar. Cada una mide algo distinto y ninguna alcanza a mostrar todo lo que implica trabajar en equipo en un proyecto de Telar. Ninguno de estos números es una nota ni un escalafón. Y ten en cuenta que el trabajo que se hace por fuera del Compositor — leer, pensar, planear y escribir borradores — no queda registrado aquí.",
+  "made": {
+    "heading": "Lo que se ha hecho",
+    "subhead": "Tres medidas del contenido, contadas para cada tipo de elemento del sitio."
+  },
+  "measures": {
+    "added": "adiciones",
+    "edited": "ediciones",
+    "words": "palabras"
+  },
+  "definitions": {
+    "added": "Cuántos elementos creó cada persona.",
+    "edited": "En cuántos elementos escribió cada persona. Crear algo y escribir en ello suelen ser tareas de personas distintas. Lo que se agregó y quedó vacío no cuenta aquí.",
+    "words": "Extensión, no calidad. Se cuentan por separado para cada tipo de escritura, porque escribir la respuesta de un paso no es lo mismo que escribir un panel, la ficha de un objeto, una página o una definición del glosario. Reescribir un pasaje vuelve a sumar esas palabras."
+  },
+  "legend": "las barras muestran qué parte del total del grupo hizo cada persona; los números están en la tabla",
+  "predatesCollection": "Este proyecto ya existía cuando se empezaron a recoger estas medidas. Los pasos agregados y editados sí se contaron; las palabras y el tiempo se registran a medida que ocurre el trabajo, de ahora en adelante, y empiezan en cero.",
+  "kinds": {
+    "steps": "Pasos",
+    "panels": "Paneles",
+    "objects": "Fichas de objetos",
+    "pages": "Páginas",
+    "glossary": "Glosario"
+  },
+  "uncounted": "—",
+  "time": {
+    "heading": "Tiempo en el Compositor",
+    "caveat": "Cuánto tiempo le ha dedicado cada persona a trabajar dentro del Compositor. La edición cuenta cualquier cambio: escribir, encuadrar una imagen, agregar un paso, reordenar, llenar una ficha. La escritura es la parte de ese tiempo que se pasa escribiendo texto. El reloj arranca con un cambio y se detiene un minuto después, salvo que llegue otro cambio.",
+    "row": "Tiempo",
+    "editing": "edición",
+    "writing": "escritura",
+    "writingShare": "% de escritura",
+    "writingLegend": "escritura · {{total}}",
+    "otherEditing": "resto de la edición"
+  },
+  "sidebar": {
+    "yours": "Tu participación",
+    "yourTime": "Tu tiempo en el Compositor",
+    "timeEditing": "editando",
+    "ofWhichWriting": "escribiendo",
+    "barCaption": "barra · cuánto de tu tiempo fue escritura",
+    "lineCaption": "líneas · tu parte dentro del total del grupo",
+    "fullRecord": "Ver el registro completo →"
+  },
+  "export": {
+    "csv": "Descargar CSV"
+  },
+  "former_member": "Exintegrante"
+}

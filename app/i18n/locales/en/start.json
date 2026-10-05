@@ -10,15 +10,16 @@
   },
   "role_chip": {
     "convenor": "You · Convenor",
-    "collaborator": "You · Collaborator"
+    "collaborator": "You · Collaborator",
+    "instructor": "You · Instructor"
   },
   "orientation": {
-    "what_is_compositor": "What is the compositor?",
+    "what_is_compositor": "What is the Compositor?",
     "plan_narrative": "Plan your narrative",
     "add_collaborators": "Add collaborators"
   },
   "section": {
-    "workflow_map": "How the compositor works",
+    "workflow_map": "How the Compositor works",
     "activity": "Activity · latest",
     "from_the_docs": "From the docs",
     "other_projects": "Your other projects · {{N}}"
@@ -33,7 +34,7 @@
     "stories": "Stories are the core of Telar sites, pairing a series of questions and short answers with a framed view of an object, plus up to two layer panels for further information.",
     "glossary": "You can add additional panels with definitions of key terms, concepts, people, places, or anything else you like. Manage them here and use them in your stories and pages.",
     "pages": "Your Telar site has a homepage and can include additional pages, such as an About, Credits, or Bibliography page. Edit them here.",
-    "publish_collaborator": "Only the convenor can publish the site. When your changes are ready, let them know.",
+    "publish_collaborator": "Publishing the site is the project team's to do. When your changes are ready, let them know.",
     "publish_convenor": "When you're ready, bundle your edits into a commit to GitHub, where your site rebuilds in about two minutes."
   },
   "activity": {
@@ -60,13 +61,22 @@
   },
   "recovery": {
     "eyebrow": "Needs your attention",
-    "body": "{{N}} story files exist in your GitHub repo but aren't in the compositor. They likely came from a hand-edit on GitHub or a teammate working outside the editor. Restore them here as drafts, or ignore.",
+    "body_one": "1 story file exists in your GitHub repository but isn't in the Compositor. Restore it here as a draft, or ignore it.",
+    "body_other": "{{count}} story files exist in your GitHub repository but aren't in the Compositor. Restore them here as drafts, or ignore them.",
     "primary_cta": "Restore as drafts",
     "secondary_cta": "Ignore",
-    "ignore_aria": "Ignore orphaned stories"
+    "ignore_aria": "Ignore orphaned stories",
+    "warnings_heading": "Your stories were restored as drafts. Telar found these warnings in their sheets:",
+    "nothing_restored": "There was nothing left to restore: the story files are no longer in your GitHub repository.",
+    "colliding_columns": "The sheet \"{{sheet}}\" has columns Telar reads as one ({{columns}}), and each of them has values. Telar can't build the site from a sheet like this, so nothing was restored. Keep only the column you want, delete the others from the sheet on GitHub or in Google Sheets, and then restore again.",
+    "sheet_unreadable": "We couldn't read the sheet \"{{sheet}}\" from GitHub, so nothing was restored. Try again in a moment.",
+    "file_unreadable": "We couldn't read the file \"{{file}}\" from GitHub, so nothing was restored. Try again in a moment.",
+    "ignore_list_unreadable": "We couldn't read the list of stories you chose to ignore from GitHub, so nothing changed. Try again in a moment.",
+    "action_failed": "That didn't go through. Try again in a moment.",
+    "site_not_found": "Telar couldn't find this site. Reload the page and try again."
   },
   "from_docs": {
-    "hint": "Short excerpts from the guides, to read without leaving the compositor. The full documentation lives at <docsLink>telar.org/docs</docsLink>.",
+    "hint": "Short excerpts from the guides, to read without leaving the Compositor. The full documentation lives at <docsLink>telar.org/docs</docsLink>.",
     "desc_start": "Sign in, connect a repo, and make your first edits.",
     "desc_intro": "What the Compositor is and how it works.",
     "desc_configure": "Set your site's name, theme, language, and description.",
@@ -83,7 +93,6 @@
     "desc_pages": "Build your homepage and standalone pages like About, Credits, or Bibliography."
   },
   "other_projects": {
-    "pill_unpublished": "{{N}} unpublished",
     "pill_unpublished_some": "Unpublished",
     "pill_in_sync": "In sync",
     "pill_draft": "Draft",
@@ -95,9 +104,13 @@
     "convenor_step2": "Add your first object — Upload an image, paste an IIIF manifest, or link external media. Objects are what stories point at.",
     "convenor_step3": "Invite your team and write a first story — A story is a sequence of steps that zoom and pan around objects with your analysis.",
     "collaborator_heading": "Today, three things to get started",
-    "collaborator_step1": "Start with “What is the compositor?” — See how Telar pages, objects, stories, and the glossary fit together.",
+    "collaborator_step1": "Start with “What is the Compositor?” — See how Telar pages, objects, stories, and the glossary fit together.",
     "collaborator_step2": "Browse the Objects tab — See what the convenor has set up so far. Pick one to read closely.",
-    "collaborator_step3": "Open a story step and start writing — Your edits save automatically. Nothing goes live until the convenor publishes."
+    "collaborator_step3": "Open a story step and start writing — Your edits save automatically. Nothing goes live until someone on the team publishes the site.",
+    "instructor_heading": "Your course: three things to get started",
+    "instructor_step1": "Open the Course tab — See the sites in your course and who is on each team. Click a site’s name to open it.",
+    "instructor_step2": "Share a class code — Create one on the Course tab. Your students enter it to attach their sites to your course.",
+    "instructor_step3": "Open a site and read its stories — You can edit alongside the group and your edits save automatically. You can publish the site too."
   },
   "tile": {
     "configure": "Configure",
@@ -113,8 +126,9 @@
     "empty": "Empty",
     "none_yet": "None yet",
     "landing_only": "Landing only",
-    "convenor_only": "Convenor-only",
+    "convenor_only": "Team only",
     "nothing_to_publish": "Nothing to publish yet",
+    "to_ship_pending": "Changes to push",
     "to_ship_one": "{{N}} change to push",
     "to_ship_other": "{{N}} changes to push",
     "objects_unused": "{{N}} · {{U}} unused",
