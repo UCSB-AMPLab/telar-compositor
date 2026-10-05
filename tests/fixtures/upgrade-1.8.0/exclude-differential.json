@@ -1,0 +1,2290 @@
+{
+ "entries": [
+  "tests/",
+  "pytest.ini",
+  "vitest.config.js",
+  "telar-content/texts/"
+ ],
+ "cases": [
+  {
+   "name": "seed-603 0 block-at-key",
+   "text": "﻿  sass:\n    exclude: nested\n  exclude:\n  - Gemfile\n  - vendor\n\n  other: 1\n",
+   "written": "﻿  sass:\n    exclude: nested\n  exclude:\n  - Gemfile\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 1 flow-comment",
+   "text": "--- # site\n# My site\ntitle: \"x: y\" # a title\nexclude: [Gemfile] # built\n\nother: 1",
+   "written": "--- # site\n# My site\ntitle: \"x: y\" # a title\nexclude: [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n\nother: 1"
+  },
+  {
+   "name": "seed-603 2 NULL",
+   "text": "﻿  title: \"x: y\" # a title\n  exclude: NULL\n\n  other: 1\n",
+   "written": "﻿  title: \"x: y\" # a title\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 3 flow-comment",
+   "text": "  title: \"x: y\" # a title\n  'exclude': [Gemfile] # built\n\n  other: 1\n",
+   "written": "  title: \"x: y\" # a title\n  'exclude': [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 4 double-quoted-hash",
+   "text": "﻿    sass:\r\n      exclude: nested\r\n    \"exclu\\x64e\": \"a #b\" # note\r\n--- # two\r\ntitle: y\r\n",
+   "written": "﻿    sass:\r\n      exclude: nested\r\n    \"exclu\\x64e\": # note\r\n      - \"a #b\"\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 5 map",
+   "text": "﻿title: \"x: y\" # a title\n\"exclu\\x64e\":\n  vendor: true\n\nother: 1",
+   "written": null
+  },
+  {
+   "name": "seed-603 6 bare",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude :\n--- # two\ntitle: y\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 7 absent",
+   "text": "﻿--- # site\nsass:\n  exclude: nested\n# the end",
+   "written": "﻿--- # site\nsass:\n  exclude: nested\n# the end\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 8 block",
+   "text": "  title: \"x: y\" # a title\n  'exclude'  :\n    - Gemfile\n    # vendored\n    - \"vendor\"\n",
+   "written": "  title: \"x: y\" # a title\n  'exclude'  :\n    - Gemfile\n    # vendored\n    - \"vendor\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 9 number",
+   "text": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  : 3\n\nother: 1\n",
+   "written": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  :\n  - 3\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 10 block-at-key",
+   "text": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\":\n  - Gemfile\n  - vendor\n\n  other: 1\n",
+   "written": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\":\n  - Gemfile\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 11 continued",
+   "text": "  # indented comment\r\ntitle: \"x: y\" # a title\r\n\"exclude\": two\r\n  lines\r\n\r\nother: 1",
+   "written": "  # indented comment\r\ntitle: \"x: y\" # a title\r\n\"exclude\":\r\n  - \"two lines\"\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1"
+  },
+  {
+   "name": "seed-603 12 NULL",
+   "text": "  # indented comment\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: NULL\n\nother: 1\n---\nexclude: other\n",
+   "written": "  # indented comment\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 13 flow-map",
+   "text": "# My site\n    sass:\n      exclude: nested\n    \"exclude\": {vendor: true}\n\n    other: 1\n    # the end\n...\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 14 plain",
+   "text": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n'exclude': vendor\r\n# the end\r\n...\r\n",
+   "written": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n'exclude':\r\n  - vendor\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n# the end\r\n...\r\n"
+  },
+  {
+   "name": "seed-603 15 single-quoted",
+   "text": "  title: \"x: y\" # a title\n  exclude: 'vendor'\n\n  other: 1\n",
+   "written": "  title: \"x: y\" # a title\n  exclude:\n    - 'vendor'\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 16 double-quoted-hash",
+   "text": "﻿# My site\r\n  exclude: \"a #b\" # note\r\n\r\n  other: 1\r\n",
+   "written": "﻿# My site\r\n  exclude: # note\r\n    - \"a #b\"\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n\r\n  other: 1\r\n"
+  },
+  {
+   "name": "seed-603 17 folded",
+   "text": "# My site\r\n    sass:\r\n      exclude: nested\r\n    exclude: >\r\n      vendor\r\n    # the end\r\n",
+   "written": "# My site\r\n    sass:\r\n      exclude: nested\r\n    exclude:\r\n      - \"vendor\\n\"\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n    # the end\r\n"
+  },
+  {
+   "name": "seed-603 18 continued",
+   "text": "﻿  sass:\n    exclude: nested\n  exclude: two\n    lines\n--- # two\ntitle: y\n",
+   "written": "﻿  sass:\n    exclude: nested\n  exclude:\n    - \"two lines\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 19 folded",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude': >\n  vendor\n\nother: 1",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude':\n  - \"vendor\\n\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1"
+  },
+  {
+   "name": "seed-603 20 folded",
+   "text": "---  \n\"exclude\": >\n  vendor\n\nother: 1\n# the end",
+   "written": "---  \n\"exclude\":\n  - \"vendor\\n\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end"
+  },
+  {
+   "name": "seed-603 21 null-word",
+   "text": "﻿exclude : null # none yet\n\nother: 1\n...\n",
+   "written": "﻿exclude : # none yet\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n...\n"
+  },
+  {
+   "name": "seed-603 22 map",
+   "text": "---\n# My site\n  sass:\n    exclude: nested\n  'exclude'  :\n    vendor: true\n  # the end\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 23 null-word",
+   "text": "﻿title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n\"exclude\": null # none yet\r\n",
+   "written": "﻿title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n\"exclude\": # none yet\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 24 map",
+   "text": "---  \n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude':\n      vendor: true\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 25 flow-map",
+   "text": "---\n  sass:\n    exclude: nested\n  'exclude'  : {vendor: true}\n\n  other: 1\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 26 flow-lines",
+   "text": "    \"exclude\": [\n      Gemfile,\n      vendor  # last\n    ]\n\n    other: 1\n",
+   "written": "    \"exclude\": [\n      Gemfile,\n      vendor,  # last\n      tests/, pytest.ini, vitest.config.js, telar-content/texts/\n    ]\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 27 absent",
+   "text": "# My site\n\n    other: 1\n    # the end\n",
+   "written": "# My site\n\n    other: 1\n    # the end\n\n    exclude:\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 28 bare",
+   "text": "﻿  \"exclu\\x64e\":\n... # end\n# after\n",
+   "written": "﻿  \"exclu\\x64e\":\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 29 map",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n  vendor: true\n... # end\n# after\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 30 flow-comment",
+   "text": "# My site\n    sass:\n      exclude: nested\n    'exclude'  : [Gemfile] # built\n\n    other: 1\n",
+   "written": "# My site\n    sass:\n      exclude: nested\n    'exclude'  : [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 31 block",
+   "text": "  # indented comment\n'exclude'  :\n  - Gemfile\n  # vendored\n  - \"vendor\"\n\nother: 1\n",
+   "written": "  # indented comment\n'exclude'  :\n  - Gemfile\n  # vendored\n  - \"vendor\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 32 block-at-key",
+   "text": "  sass:\n    exclude: nested\n  exclude:\n  - Gemfile\n  - vendor\n  # the end\n",
+   "written": "  sass:\n    exclude: nested\n  exclude:\n  - Gemfile\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n  # the end\n"
+  },
+  {
+   "name": "seed-603 33 flow-comment",
+   "text": "# My site\r\n    sass:\r\n      exclude: nested\r\n    'exclude'  : [Gemfile] # built\r\n...\r\n",
+   "written": "# My site\r\n    sass:\r\n      exclude: nested\r\n    'exclude'  : [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\r\n...\r\n"
+  },
+  {
+   "name": "seed-603 34 flow-empty",
+   "text": "---\r\ntitle: \"x: y\" # a title\r\n'exclude': []\r\n# the end\r\n",
+   "written": "---\r\ntitle: \"x: y\" # a title\r\n'exclude': [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n# the end\r\n"
+  },
+  {
+   "name": "seed-603 35 NULL",
+   "text": "sass:\n  exclude: nested\n'exclude'  : NULL\n\nother: 1\n---\nexclude: other\n",
+   "written": "sass:\n  exclude: nested\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 36 bare",
+   "text": "--- # site\r\n  title: \"x: y\" # a title\r\n  \"exclude\":\r\n\r\n  other: 1\r\n",
+   "written": "--- # site\r\n  title: \"x: y\" # a title\r\n  \"exclude\":\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n\r\n  other: 1\r\n"
+  },
+  {
+   "name": "seed-603 37 block-at-key",
+   "text": "title: \"x: y\" # a title\n\"exclude\":\n- Gemfile\n- vendor\n\nother: 1\n",
+   "written": "title: \"x: y\" # a title\n\"exclude\":\n- Gemfile\n- vendor\n- tests/\n- pytest.ini\n- vitest.config.js\n- telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 38 number",
+   "text": "\"exclude\": 3\n...\n",
+   "written": "\"exclude\":\n  - 3\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "seed-603 39 number",
+   "text": "  title: \"x: y\" # a title\n  exclude: 3\n\n  other: 1\n",
+   "written": "  title: \"x: y\" # a title\n  exclude:\n    - 3\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 40 flow-comment",
+   "text": "title: \"x: y\" # a title\n\"exclude\": [Gemfile] # built\n\nother: 1\n",
+   "written": "title: \"x: y\" # a title\n\"exclude\": [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 41 entry",
+   "text": "---\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    'exclude': telar-content/texts\r\n... # end\r\n# after\r\n",
+   "written": "---\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    'exclude':\r\n      - telar-content/texts\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n... # end\r\n# after\r\n"
+  },
+  {
+   "name": "seed-603 42 entry",
+   "text": "# My site\nsass:\n  exclude: nested\nexclude : telar-content/texts\n\nother: 1\n# the end\n...\n",
+   "written": "# My site\nsass:\n  exclude: nested\nexclude :\n  - telar-content/texts\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n\nother: 1\n# the end\n...\n"
+  },
+  {
+   "name": "seed-603 43 tagged-null",
+   "text": "---  \n# My site\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude: !!null",
+   "written": null
+  },
+  {
+   "name": "seed-603 44 flow-comment",
+   "text": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude': [Gemfile] # built\n\n  other: 1\n",
+   "written": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude': [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 45 NULL",
+   "text": "﻿    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    exclude: NULL\r\n\r\n    other: 1",
+   "written": "﻿    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    exclude:\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n\r\n    other: 1"
+  },
+  {
+   "name": "seed-603 46 flow-map",
+   "text": "title: \"x: y\" # a title\r\nexclude: {vendor: true}\r\n# the end",
+   "written": null
+  },
+  {
+   "name": "seed-603 47 flow-lines",
+   "text": "exclude: [\n  Gemfile,\n  vendor  # last\n]\n---\nexclude: other\n",
+   "written": "exclude: [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 48 flow-comment",
+   "text": "title: \"x: y\" # a title\r\nexclude: [Gemfile] # built\r\n# the end\r\n--- # two\r\ntitle: y\r\n",
+   "written": "title: \"x: y\" # a title\r\nexclude: [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\r\n# the end\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 49 flow-map",
+   "text": "    title: \"x: y\" # a title\r\n    exclude: {vendor: true}\r\n\r\n    other: 1\r\n... # end\r\n# after\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 50 flow",
+   "text": "﻿  'exclude': [Gemfile, \"vendor\"]\n\n  other: 1\n... # end\n# after\n",
+   "written": "﻿  'exclude': [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n  other: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 51 tagged-null",
+   "text": "title: \"x: y\" # a title\n'exclude': !!null\n\nother: 1\n... # end\n# after\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 52 tagged-null",
+   "text": "---\r\n  # indented comment\r\n    sass:\r\n      exclude: nested\r\n    \"exclu\\x64e\": !!null\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 53 block",
+   "text": "--- # site\n  # indented comment\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude':\n    - Gemfile\n    # vendored\n    - \"vendor\"\n  # the end\n",
+   "written": "--- # site\n  # indented comment\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude':\n    - Gemfile\n    # vendored\n    - \"vendor\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  # the end\n"
+  },
+  {
+   "name": "seed-603 54 entry",
+   "text": "  # indented comment\n    sass:\n      exclude: nested\n    \"exclude\": telar-content/texts\n\n    other: 1\n--- # two\ntitle: y\n",
+   "written": "  # indented comment\n    sass:\n      exclude: nested\n    \"exclude\":\n      - telar-content/texts\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n\n    other: 1\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 55 flow-lines",
+   "text": "exclude: [\r\n  Gemfile,\r\n  vendor  # last\r\n]\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n",
+   "written": "exclude: [\r\n  Gemfile,\r\n  vendor,  # last\r\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\r\n]\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 56 double-quoted-hash",
+   "text": "---  \nexclude: \"a #b\" # note\n---\nexclude: other\n",
+   "written": "---  \nexclude: # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 57 flow-map",
+   "text": "﻿  # indented comment\n  \"exclude\": {vendor: true}\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 58 block",
+   "text": "# My site\n    \"exclude\":\n      - Gemfile\n      # vendored\n      - \"vendor\"\n\n    other: 1\n    # the end",
+   "written": "# My site\n    \"exclude\":\n      - Gemfile\n      # vendored\n      - \"vendor\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n    # the end"
+  },
+  {
+   "name": "seed-603 59 folded",
+   "text": "# My site\r\n  title: \"x: y\" # a title\r\n  \"exclu\\x64e\": >\r\n    vendor\r\n  # the end\r\n--- # two\r\ntitle: y\r\n",
+   "written": "# My site\r\n  title: \"x: y\" # a title\r\n  \"exclu\\x64e\":\r\n    - \"vendor\\n\"\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n  # the end\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 60 flow",
+   "text": "--- # site\n# My site\n  title: \"x: y\" # a title\n  'exclude': [Gemfile, \"vendor\"]\n",
+   "written": "--- # site\n# My site\n  title: \"x: y\" # a title\n  'exclude': [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n"
+  },
+  {
+   "name": "seed-603 61 NULL",
+   "text": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  : NULL\n\nother: 1\n",
+   "written": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 62 NULL",
+   "text": "---  \n    \"exclude\": NULL\n",
+   "written": "---  \n    \"exclude\":\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 63 flow-map",
+   "text": "﻿  exclude : {vendor: true}\n--- # two\ntitle: y\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 64 tagged-null",
+   "text": "---  \n    title: \"x: y\" # a title\n    \"exclude\": !!null\n\n    other: 1\n--- # two\ntitle: y\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 65 double-quoted-hash",
+   "text": "  # indented comment\r\n    sass:\r\n      exclude: nested\r\n    'exclude': \"a #b\" # note\r\n\r\n    other: 1\r\n    # the end\r\n",
+   "written": "  # indented comment\r\n    sass:\r\n      exclude: nested\r\n    'exclude': # note\r\n      - \"a #b\"\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n\r\n    other: 1\r\n    # the end\r\n"
+  },
+  {
+   "name": "seed-603 66 flow-map",
+   "text": "---  \n  # indented comment\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude : {vendor: true}\n\nother: 1",
+   "written": null
+  },
+  {
+   "name": "seed-603 67 bare",
+   "text": "    title: \"x: y\" # a title\n    exclude :\n---\nexclude: other\n",
+   "written": "    title: \"x: y\" # a title\n    exclude :\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 68 double-quoted-hash",
+   "text": "    \"exclu\\x64e\": \"a #b\" # note\n",
+   "written": "    \"exclu\\x64e\": # note\n      - \"a #b\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 69 flow-lines",
+   "text": "  exclude: [\n    Gemfile,\n    vendor  # last\n  ]\n\n  other: 1\n--- # two\ntitle: y\n",
+   "written": "  exclude: [\n    Gemfile,\n    vendor,  # last\n    tests/, pytest.ini, vitest.config.js, telar-content/texts/\n  ]\n\n  other: 1\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 70 number",
+   "text": "﻿---  \r\n  title: \"x: y\" # a title\r\n  exclude: 3\r\n",
+   "written": "﻿---  \r\n  title: \"x: y\" # a title\r\n  exclude:\r\n    - 3\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 71 plain-comment",
+   "text": "  # indented comment\nsass:\n  exclude: nested\n\"exclu\\x64e\": vendor  # gems\n# the end\n--- # two\ntitle: y\n",
+   "written": "  # indented comment\nsass:\n  exclude: nested\n\"exclu\\x64e\": # gems\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 72 number",
+   "text": "title: \"x: y\" # a title\nexclude: 3\n# the end\n",
+   "written": "title: \"x: y\" # a title\nexclude:\n  - 3\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n"
+  },
+  {
+   "name": "seed-603 73 NULL",
+   "text": "\"exclude\": NULL\n\nother: 1\n...\n",
+   "written": "\"exclude\":\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n...\n"
+  },
+  {
+   "name": "seed-603 74 bare",
+   "text": "  # indented comment\r\n  'exclude':\r\n  # the end",
+   "written": "  # indented comment\r\n  'exclude':\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n  # the end"
+  },
+  {
+   "name": "seed-603 75 single-quoted",
+   "text": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude : 'vendor'\n\nother: 1\n",
+   "written": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude :\n  - 'vendor'\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 76 NULL",
+   "text": "  exclude: NULL\r\n",
+   "written": "  exclude:\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 77 block-at-key",
+   "text": "﻿--- # site\n  # indented comment\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude'  :\n    - Gemfile\n    - vendor\n    # the end\n",
+   "written": "﻿--- # site\n  # indented comment\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude'  :\n    - Gemfile\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 78 number",
+   "text": "﻿--- # site\nexclude: 3\n\nother: 1",
+   "written": "﻿--- # site\nexclude:\n  - 3\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1"
+  },
+  {
+   "name": "seed-603 79 block-all",
+   "text": "'exclude'  :\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n",
+   "written": "'exclude'  :\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 80 flow",
+   "text": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude'  : [Gemfile, \"vendor\"]",
+   "written": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude'  : [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]"
+  },
+  {
+   "name": "seed-603 81 tagged-null",
+   "text": "﻿---  \n# My site\n  sass:\n    exclude: nested\n  \"exclude\": !!null\n--- # two\ntitle: y\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 82 flow-empty",
+   "text": "\"exclu\\x64e\": []\r\n# the end\r\n",
+   "written": "\"exclu\\x64e\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n# the end\r\n"
+  },
+  {
+   "name": "seed-603 83 tagged-null",
+   "text": "--- # site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: !!null\n\nother: 1",
+   "written": null
+  },
+  {
+   "name": "seed-603 84 flow-comment",
+   "text": "'exclude'  : [Gemfile] # built",
+   "written": "'exclude'  : [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built"
+  },
+  {
+   "name": "seed-603 85 null-word",
+   "text": "﻿'exclude': null # none yet\n",
+   "written": "﻿'exclude': # none yet\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 86 single-quoted",
+   "text": "---\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    \"exclude\": 'vendor'\r\n\r\n    other: 1\r\n",
+   "written": "---\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    \"exclude\":\r\n      - 'vendor'\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n\r\n    other: 1\r\n"
+  },
+  {
+   "name": "seed-603 87 number",
+   "text": "﻿  # indented comment\r\ntitle: \"x: y\" # a title\r\n\"exclu\\x64e\": 3\r\n... # end\r\n# after\r\n",
+   "written": "﻿  # indented comment\r\ntitle: \"x: y\" # a title\r\n\"exclu\\x64e\":\r\n  - 3\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n... # end\r\n# after\r\n"
+  },
+  {
+   "name": "seed-603 88 block-at-key",
+   "text": "  title: \"x: y\" # a title\n  exclude :\n  - Gemfile\n  - vendor\n",
+   "written": "  title: \"x: y\" # a title\n  exclude :\n  - Gemfile\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 89 null-word",
+   "text": "sass:\r\n  exclude: nested\r\n'exclude'  : null # none yet\r\n\r\nother: 1\r\n",
+   "written": "sass:\r\n  exclude: nested\r\n'exclude'  : # none yet\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n"
+  },
+  {
+   "name": "seed-603 90 block-at-key",
+   "text": "    'exclude'  :\n    - Gemfile\n    - vendor\n",
+   "written": "    'exclude'  :\n    - Gemfile\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 91 single-quoted",
+   "text": "  exclude: 'vendor'\n  # the end\n",
+   "written": "  exclude:\n    - 'vendor'\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  # the end\n"
+  },
+  {
+   "name": "seed-603 92 flow-empty",
+   "text": "exclude: []\n... # end\n# after\n",
+   "written": "exclude: [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 93 map",
+   "text": "sass:\r\n  exclude: nested\r\n'exclude'  :\r\n  vendor: true\r\n\r\nother: 1\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 94 flow-empty",
+   "text": "--- # site\n  # indented comment\ntitle: \"x: y\" # a title\nexclude : []\n# the end",
+   "written": "--- # site\n  # indented comment\ntitle: \"x: y\" # a title\nexclude : [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n# the end"
+  },
+  {
+   "name": "seed-603 95 block-all",
+   "text": "﻿exclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n",
+   "written": "﻿exclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 96 NULL",
+   "text": "  # indented comment\r\n  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  \"exclude\": NULL\r\n  # the end\r\n...\r\n",
+   "written": "  # indented comment\r\n  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  \"exclude\":\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n  # the end\r\n...\r\n"
+  },
+  {
+   "name": "seed-603 97 flow",
+   "text": "--- # site\r\ntitle: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\nexclude: [Gemfile, \"vendor\"]\r\n---\r\nexclude: other\r\n",
+   "written": "--- # site\r\ntitle: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\nexclude: [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n---\r\nexclude: other\r\n"
+  },
+  {
+   "name": "seed-603 98 flow",
+   "text": "﻿exclude : [Gemfile, \"vendor\"]\n\nother: 1\n--- # two\ntitle: y\n",
+   "written": "﻿exclude : [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\nother: 1\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 99 flow-lines",
+   "text": "---  \r\n  title: \"x: y\" # a title\r\n  exclude: [\r\n    Gemfile,\r\n    vendor  # last\r\n  ]",
+   "written": "---  \r\n  title: \"x: y\" # a title\r\n  exclude: [\r\n    Gemfile,\r\n    vendor,  # last\r\n    tests/, pytest.ini, vitest.config.js, telar-content/texts/\r\n  ]"
+  },
+  {
+   "name": "seed-603 100 flow-empty",
+   "text": "﻿title: \"x: y\" # a title\nexclude: []\n\nother: 1\n---\nexclude: other\n",
+   "written": "﻿title: \"x: y\" # a title\nexclude: [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\nother: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 101 flow-comment",
+   "text": "  \"exclude\": [Gemfile] # built\n\n  other: 1\n---\nexclude: other\n",
+   "written": "  \"exclude\": [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n\n  other: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 102 entry",
+   "text": "  title: \"x: y\" # a title\n  'exclude'  : telar-content/texts\n",
+   "written": "  title: \"x: y\" # a title\n  'exclude'  :\n    - telar-content/texts\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n"
+  },
+  {
+   "name": "seed-603 103 single-quoted",
+   "text": "﻿title: \"x: y\" # a title\n\"exclude\": 'vendor'\n\nother: 1\n# the end\n",
+   "written": "﻿title: \"x: y\" # a title\n\"exclude\":\n  - 'vendor'\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 104 flow-comment",
+   "text": "---  \nsass:\n  exclude: nested\nexclude : [Gemfile] # built\n# the end\n...\n",
+   "written": "---  \nsass:\n  exclude: nested\nexclude : [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n# the end\n...\n"
+  },
+  {
+   "name": "seed-603 105 flow-lines",
+   "text": "  title: \"x: y\" # a title\n  'exclude'  : [\n    Gemfile,\n    vendor  # last\n  ]\n\n  other: 1\n",
+   "written": "  title: \"x: y\" # a title\n  'exclude'  : [\n    Gemfile,\n    vendor,  # last\n    tests/, pytest.ini, vitest.config.js, telar-content/texts/\n  ]\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 106 flow-empty",
+   "text": "sass:\n  exclude: nested\n'exclude': []\n\nother: 1\n",
+   "written": "sass:\n  exclude: nested\n'exclude': [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 107 map",
+   "text": "﻿    \"exclude\":\n      vendor: true\n\n    other: 1\n... # end\n# after\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 108 flow",
+   "text": "﻿    title: \"x: y\" # a title\r\n    exclude: [Gemfile, \"vendor\"]\r\n\r\n    other: 1\r\n    # the end\r\n... # end\r\n# after\r\n",
+   "written": "﻿    title: \"x: y\" # a title\r\n    exclude: [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n\r\n    other: 1\r\n    # the end\r\n... # end\r\n# after\r\n"
+  },
+  {
+   "name": "seed-603 109 flow-map",
+   "text": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\nexclude: {vendor: true}\r\n\r\nother: 1",
+   "written": null
+  },
+  {
+   "name": "seed-603 110 flow-empty",
+   "text": "# My site\n    \"exclu\\x64e\": []\n...\n",
+   "written": "# My site\n    \"exclu\\x64e\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n...\n"
+  },
+  {
+   "name": "seed-603 111 flow-map",
+   "text": "﻿---\ntitle: \"x: y\" # a title\n\"exclude\": {vendor: true}\n\nother: 1\n# the end\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 112 null-word",
+   "text": "--- # site\n# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\": null # none yet\n  # the end\n... # end\n# after\n",
+   "written": "--- # site\n# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\": # none yet\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  # the end\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 113 entry",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\": telar-content/texts\n...\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\":\n  - telar-content/texts\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n...\n"
+  },
+  {
+   "name": "seed-603 114 null",
+   "text": "﻿title: \"x: y\" # a title\r\nexclude : ~\r\n# the end\r\n",
+   "written": "﻿title: \"x: y\" # a title\r\nexclude :\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n# the end\r\n"
+  },
+  {
+   "name": "seed-603 115 NULL",
+   "text": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclu\\x64e\": NULL\n...\n",
+   "written": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclu\\x64e\":\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "seed-603 116 plain",
+   "text": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  exclude: vendor\n...\n",
+   "written": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  exclude:\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "seed-603 117 flow-map",
+   "text": "# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude': {vendor: true}\n\n  other: 1\n  # the end\n...\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 118 absent",
+   "text": "﻿# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\nother: 1\n# the end\n",
+   "written": "﻿# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\nother: 1\n# the end\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 119 number",
+   "text": "---  \n# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude': 3\n--- # two\ntitle: y\n",
+   "written": "---  \n# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude':\n    - 3\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 120 flow-map",
+   "text": "# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\": {vendor: true}\n\n  other: 1\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 121 plain-comment",
+   "text": "# My site\n  \"exclu\\x64e\": vendor  # gems\n  # the end\n",
+   "written": "# My site\n  \"exclu\\x64e\": # gems\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  # the end\n"
+  },
+  {
+   "name": "seed-603 122 tagged-null",
+   "text": "    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    'exclude': !!null\r\n\r\n    other: 1\r\n    # the end\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 123 bare",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\":\n\nother: 1\n# the end\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\":\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 124 NULL",
+   "text": "---  \n# My site\ntitle: \"x: y\" # a title\nexclude : NULL\n\nother: 1\n# the end\n---\nexclude: other\n",
+   "written": "---  \n# My site\ntitle: \"x: y\" # a title\nexclude :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 125 flow-comment",
+   "text": "﻿sass:\n  exclude: nested\n'exclude': [Gemfile] # built\n",
+   "written": "﻿sass:\n  exclude: nested\n'exclude': [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n"
+  },
+  {
+   "name": "seed-603 126 flow-empty",
+   "text": "    sass:\r\n      exclude: nested\r\n    \"exclu\\x64e\": []\r\n\r\n    other: 1\r\n    # the end\r\n",
+   "written": "    sass:\r\n      exclude: nested\r\n    \"exclu\\x64e\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n\r\n    other: 1\r\n    # the end\r\n"
+  },
+  {
+   "name": "seed-603 127 flow-map",
+   "text": "﻿  # indented comment\n  title: \"x: y\" # a title\n  exclude : {vendor: true}\n--- # two\ntitle: y\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 128 flow-empty",
+   "text": "'exclude': []\n\nother: 1\n# the end\n",
+   "written": "'exclude': [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 129 number",
+   "text": "﻿    sass:\n      exclude: nested\n    \"exclude\": 3\n\n    other: 1\n",
+   "written": "﻿    sass:\n      exclude: nested\n    \"exclude\":\n      - 3\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 130 flow-map",
+   "text": "---\nsass:\n  exclude: nested\n'exclude'  : {vendor: true}\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 131 plain",
+   "text": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\": vendor\n\n  other: 1\n---\nexclude: other\n",
+   "written": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\":\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 132 null",
+   "text": "exclude: ~\r\n\r\nother: 1\r\n# the end\r\n--- # two\r\ntitle: y\r\n",
+   "written": "exclude:\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n# the end\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 133 bare",
+   "text": "# My site\nsass:\n  exclude: nested\nexclude :\n\nother: 1\n...\n",
+   "written": "# My site\nsass:\n  exclude: nested\nexclude :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n...\n"
+  },
+  {
+   "name": "seed-603 134 entry",
+   "text": "    'exclude': telar-content/texts\n\n    other: 1",
+   "written": "    'exclude':\n      - telar-content/texts\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n\n    other: 1"
+  },
+  {
+   "name": "seed-603 135 NULL",
+   "text": "  # indented comment\n  title: \"x: y\" # a title\n  exclude : NULL\n\n  other: 1\n",
+   "written": "  # indented comment\n  title: \"x: y\" # a title\n  exclude :\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 136 flow",
+   "text": "---\n    title: \"x: y\" # a title\n    \"exclu\\x64e\": [Gemfile, \"vendor\"]\n\n    other: 1\n    # the end\n--- # two\ntitle: y\n",
+   "written": "---\n    title: \"x: y\" # a title\n    \"exclu\\x64e\": [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n    other: 1\n    # the end\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 137 block",
+   "text": "    title: \"x: y\" # a title\n    exclude:\n      - Gemfile\n      # vendored\n      - \"vendor\"\n---\nexclude: other\n",
+   "written": "    title: \"x: y\" # a title\n    exclude:\n      - Gemfile\n      # vendored\n      - \"vendor\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 138 flow-map",
+   "text": "# My site\nsass:\n  exclude: nested\n'exclude': {vendor: true}\n\nother: 1\n--- # two\ntitle: y\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 139 null",
+   "text": "\"exclu\\x64e\": ~\r\n",
+   "written": "\"exclu\\x64e\":\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 140 plain-comment",
+   "text": "exclude: vendor  # gems\n\nother: 1",
+   "written": "exclude: # gems\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1"
+  },
+  {
+   "name": "seed-603 141 plain",
+   "text": "---  \r\ntitle: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n\"exclu\\x64e\": vendor\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n",
+   "written": "---  \r\ntitle: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n\"exclu\\x64e\":\r\n  - vendor\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 142 flow",
+   "text": "--- # site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclu\\x64e\": [Gemfile, \"vendor\"]\n# the end",
+   "written": "--- # site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclu\\x64e\": [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n# the end"
+  },
+  {
+   "name": "seed-603 143 single-quoted",
+   "text": "﻿  sass:\n    exclude: nested\n  \"exclu\\x64e\": 'vendor'\n\n  other: 1\n",
+   "written": "﻿  sass:\n    exclude: nested\n  \"exclu\\x64e\":\n    - 'vendor'\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 144 flow-empty",
+   "text": "﻿  sass:\r\n    exclude: nested\r\n  \"exclu\\x64e\": []\r\n",
+   "written": "﻿  sass:\r\n    exclude: nested\r\n  \"exclu\\x64e\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n"
+  },
+  {
+   "name": "seed-603 145 entry",
+   "text": "--- # site\n  # indented comment\n    title: \"x: y\" # a title\n    exclude: telar-content/texts\n\n    other: 1\n    # the end",
+   "written": "--- # site\n  # indented comment\n    title: \"x: y\" # a title\n    exclude:\n      - telar-content/texts\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n\n    other: 1\n    # the end"
+  },
+  {
+   "name": "seed-603 146 double-quoted-hash",
+   "text": "﻿---\n# My site\nsass:\n  exclude: nested\n\"exclude\": \"a #b\" # note\n\nother: 1\n",
+   "written": "﻿---\n# My site\nsass:\n  exclude: nested\n\"exclude\": # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 147 block-all",
+   "text": "    sass:\n      exclude: nested\n    \"exclude\":\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n",
+   "written": "    sass:\n      exclude: nested\n    \"exclude\":\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 148 absent",
+   "text": "﻿\r\n",
+   "written": "﻿\r\n\r\nexclude:\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 149 plain",
+   "text": "title: \"x: y\" # a title\nexclude : vendor\n# the end\n",
+   "written": "title: \"x: y\" # a title\nexclude :\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n"
+  },
+  {
+   "name": "seed-603 150 null",
+   "text": "sass:\n  exclude: nested\n'exclude': ~\n\nother: 1\n",
+   "written": "sass:\n  exclude: nested\n'exclude':\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 151 folded",
+   "text": "'exclude'  : >\n  vendor\n\nother: 1\n# the end\n... # end\n# after\n",
+   "written": "'exclude'  :\n  - \"vendor\\n\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 152 tagged-null",
+   "text": "﻿---  \n  sass:\n    exclude: nested\n  exclude: !!null\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 153 plain",
+   "text": "--- # site\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    exclude: vendor\r\n    # the end\r\n",
+   "written": "--- # site\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    exclude:\r\n      - vendor\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n    # the end\r\n"
+  },
+  {
+   "name": "seed-603 154 block",
+   "text": "exclude :\n  - Gemfile\n  # vendored\n  - \"vendor\"\n",
+   "written": "exclude :\n  - Gemfile\n  # vendored\n  - \"vendor\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 155 number",
+   "text": "---\n  \"exclu\\x64e\": 3\n\n  other: 1\n  # the end\n",
+   "written": "---\n  \"exclu\\x64e\":\n    - 3\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n  # the end\n"
+  },
+  {
+   "name": "seed-603 156 flow-empty",
+   "text": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclu\\x64e\": []\n\n  other: 1\n",
+   "written": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclu\\x64e\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 157 entry",
+   "text": "--- # site\ntitle: \"x: y\" # a title\n\"exclu\\x64e\": telar-content/texts\n",
+   "written": "--- # site\ntitle: \"x: y\" # a title\n\"exclu\\x64e\":\n  - telar-content/texts\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n"
+  },
+  {
+   "name": "seed-603 158 map",
+   "text": "  \"exclu\\x64e\":\n    vendor: true\n\n  other: 1\n--- # two\ntitle: y\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 159 double-quoted-hash",
+   "text": "title: \"x: y\" # a title\n'exclude'  : \"a #b\" # note\n",
+   "written": "title: \"x: y\" # a title\n'exclude'  : # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 160 flow-map",
+   "text": "  # indented comment\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    \"exclude\": {vendor: true}\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 161 block-at-key",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude':\n- Gemfile\n- vendor\n# the end\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude':\n- Gemfile\n- vendor\n- tests/\n- pytest.ini\n- vitest.config.js\n- telar-content/texts/\n# the end\n"
+  },
+  {
+   "name": "seed-603 162 flow-lines",
+   "text": "# My site\n    exclude: [\n      Gemfile,\n      vendor  # last\n    ]",
+   "written": "# My site\n    exclude: [\n      Gemfile,\n      vendor,  # last\n      tests/, pytest.ini, vitest.config.js, telar-content/texts/\n    ]"
+  },
+  {
+   "name": "seed-603 163 absent",
+   "text": "---\n  sass:\n    exclude: nested\n--- # two\ntitle: y\n",
+   "written": "---\n  sass:\n    exclude: nested\n\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 164 plain-comment",
+   "text": "---  \n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude'  : vendor  # gems\n\n    other: 1\n...\n",
+   "written": "---  \n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude'  : # gems\n      - vendor\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n...\n"
+  },
+  {
+   "name": "seed-603 165 map",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n  vendor: true\n\nother: 1",
+   "written": null
+  },
+  {
+   "name": "seed-603 166 flow-empty",
+   "text": "    sass:\n      exclude: nested\n    exclude: []\n\n    other: 1\n    # the end\n--- # two\ntitle: y\n",
+   "written": "    sass:\n      exclude: nested\n    exclude: [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n    other: 1\n    # the end\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 167 map",
+   "text": "﻿--- # site\r\n    sass:\r\n      exclude: nested\r\n    exclude:\r\n      vendor: true\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 168 plain-comment",
+   "text": "  \"exclu\\x64e\": vendor  # gems\n\n  other: 1\n  # the end",
+   "written": "  \"exclu\\x64e\": # gems\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n  # the end"
+  },
+  {
+   "name": "seed-603 169 NULL",
+   "text": "  title: \"x: y\" # a title\n  'exclude': NULL\n--- # two\ntitle: y\n",
+   "written": "  title: \"x: y\" # a title\n  'exclude':\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 170 block-at-key",
+   "text": "---  \r\n  # indented comment\r\n    exclude :\r\n    - Gemfile\r\n    - vendor\r\n\r\n    other: 1\r\n... # end\r\n# after\r\n",
+   "written": "---  \r\n  # indented comment\r\n    exclude :\r\n    - Gemfile\r\n    - vendor\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n\r\n    other: 1\r\n... # end\r\n# after\r\n"
+  },
+  {
+   "name": "seed-603 171 folded",
+   "text": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude : >\n      vendor\n    # the end\n",
+   "written": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude :\n      - \"vendor\\n\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 172 NULL",
+   "text": "﻿---\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  : NULL\n# the end",
+   "written": "﻿---\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end"
+  },
+  {
+   "name": "seed-603 173 block",
+   "text": "--- # site\nsass:\n  exclude: nested\n'exclude'  :\n  - Gemfile\n  # vendored\n  - \"vendor\"\n",
+   "written": "--- # site\nsass:\n  exclude: nested\n'exclude'  :\n  - Gemfile\n  # vendored\n  - \"vendor\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 174 tagged-null",
+   "text": "  # indented comment\ntitle: \"x: y\" # a title\nexclude: !!null\n...\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 175 plain-comment",
+   "text": "﻿title: \"x: y\" # a title\nexclude: vendor  # gems\n\nother: 1\n",
+   "written": "﻿title: \"x: y\" # a title\nexclude: # gems\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 176 block-at-key",
+   "text": "﻿'exclude'  :\n- Gemfile\n- vendor\n",
+   "written": "﻿'exclude'  :\n- Gemfile\n- vendor\n- tests/\n- pytest.ini\n- vitest.config.js\n- telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 177 single-quoted",
+   "text": "  # indented comment\n    title: \"x: y\" # a title\n    \"exclude\": 'vendor'\n--- # two\ntitle: y\n",
+   "written": "  # indented comment\n    title: \"x: y\" # a title\n    \"exclude\":\n      - 'vendor'\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 178 double-quoted-hash",
+   "text": "---  \n# My site\n  exclude: \"a #b\" # note",
+   "written": "---  \n# My site\n  exclude: # note\n    - \"a #b\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 179 absent",
+   "text": "﻿\n    other: 1\n",
+   "written": "﻿\n    other: 1\n\n    exclude:\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 180 flow-comment",
+   "text": "﻿  exclude : [Gemfile] # built\r\n\r\n  other: 1\r\n  # the end\r\n--- # two\r\ntitle: y\r\n",
+   "written": "﻿  exclude : [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\r\n\r\n  other: 1\r\n  # the end\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 181 bare",
+   "text": "--- # site\n# My site\n  title: \"x: y\" # a title\n  'exclude':\n  # the end",
+   "written": "--- # site\n# My site\n  title: \"x: y\" # a title\n  'exclude':\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  # the end"
+  },
+  {
+   "name": "seed-603 182 flow",
+   "text": "    'exclude'  : [Gemfile, \"vendor\"]\n\n    other: 1\n    # the end",
+   "written": "    'exclude'  : [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n    other: 1\n    # the end"
+  },
+  {
+   "name": "seed-603 183 plain",
+   "text": "# My site\ntitle: \"x: y\" # a title\nexclude: vendor\n",
+   "written": "# My site\ntitle: \"x: y\" # a title\nexclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 184 block-all",
+   "text": "---\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n",
+   "written": "---\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n"
+  },
+  {
+   "name": "seed-603 185 plain",
+   "text": "---  \n    \"exclude\": vendor\n...\n",
+   "written": "---  \n    \"exclude\":\n      - vendor\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "seed-603 186 flow-map",
+   "text": "﻿  # indented comment\r\ntitle: \"x: y\" # a title\r\nexclude : {vendor: true}\r\n\r\nother: 1\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 187 single-quoted",
+   "text": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude': 'vendor'\n\n    other: 1\n",
+   "written": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude':\n      - 'vendor'\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 188 entry",
+   "text": "﻿---\n  # indented comment\n    title: \"x: y\" # a title\n    \"exclude\": telar-content/texts\n... # end\n# after\n",
+   "written": "﻿---\n  # indented comment\n    title: \"x: y\" # a title\n    \"exclude\":\n      - telar-content/texts\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 189 block",
+   "text": "﻿--- # site\n    title: \"x: y\" # a title\n    'exclude':\n      - Gemfile\n      # vendored\n      - \"vendor\"\n\n    other: 1\n",
+   "written": "﻿--- # site\n    title: \"x: y\" # a title\n    'exclude':\n      - Gemfile\n      # vendored\n      - \"vendor\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 190 block",
+   "text": "﻿  \"exclude\":\n    - Gemfile\n    # vendored\n    - \"vendor\"\n",
+   "written": "﻿  \"exclude\":\n    - Gemfile\n    # vendored\n    - \"vendor\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 191 null",
+   "text": "﻿  title: \"x: y\" # a title\r\n  'exclude': ~\r\n",
+   "written": "﻿  title: \"x: y\" # a title\r\n  'exclude':\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 192 single-quoted",
+   "text": "# My site\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude: 'vendor'\n    # the end\n",
+   "written": "# My site\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude:\n      - 'vendor'\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 193 block-at-key",
+   "text": "﻿# My site\ntitle: \"x: y\" # a title\nexclude:\n- Gemfile\n- vendor\n\nother: 1\n",
+   "written": "﻿# My site\ntitle: \"x: y\" # a title\nexclude:\n- Gemfile\n- vendor\n- tests/\n- pytest.ini\n- vitest.config.js\n- telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 194 block-at-key",
+   "text": "  sass:\n    exclude: nested\n  exclude:\n  - Gemfile\n  - vendor\n\n  other: 1\n  # the end\n",
+   "written": "  sass:\n    exclude: nested\n  exclude:\n  - Gemfile\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\n  other: 1\n  # the end\n"
+  },
+  {
+   "name": "seed-603 195 NULL",
+   "text": "title: \"x: y\" # a title\n\"exclu\\x64e\": NULL\n\nother: 1\n",
+   "written": "title: \"x: y\" # a title\n\"exclu\\x64e\":\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 196 null-word",
+   "text": "sass:\n  exclude: nested\n\"exclude\": null # none yet\n\nother: 1\n# the end\n",
+   "written": "sass:\n  exclude: nested\n\"exclude\": # none yet\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 197 block-at-key",
+   "text": "title: \"x: y\" # a title\nexclude:\n- Gemfile\n- vendor\n\nother: 1\n",
+   "written": "title: \"x: y\" # a title\nexclude:\n- Gemfile\n- vendor\n- tests/\n- pytest.ini\n- vitest.config.js\n- telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 198 plain-comment",
+   "text": "    title: \"x: y\" # a title\n    'exclude'  : vendor  # gems\n\n    other: 1\n... # end\n# after\n",
+   "written": "    title: \"x: y\" # a title\n    'exclude'  : # gems\n      - vendor\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 199 double-quoted-hash",
+   "text": "﻿  exclude: \"a #b\" # note\r\n--- # two\r\ntitle: y\r\n",
+   "written": "﻿  exclude: # note\r\n    - \"a #b\"\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 200 entry",
+   "text": "﻿---\r\nexclude: telar-content/texts\r\n\r\nother: 1\r\n",
+   "written": "﻿---\r\nexclude:\r\n  - telar-content/texts\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n\r\nother: 1\r\n"
+  },
+  {
+   "name": "seed-603 201 flow-comment",
+   "text": "---  \r\n# My site\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    \"exclu\\x64e\": [Gemfile] # built\r\n",
+   "written": "---  \r\n# My site\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    \"exclu\\x64e\": [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\r\n"
+  },
+  {
+   "name": "seed-603 202 plain-comment",
+   "text": "  exclude : vendor  # gems\r\n",
+   "written": "  exclude : # gems\r\n    - vendor\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 203 null",
+   "text": "---  \n  \"exclu\\x64e\": ~",
+   "written": "---  \n  \"exclu\\x64e\":\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 204 number",
+   "text": "  # indented comment\r\n  title: \"x: y\" # a title\r\n  exclude: 3\r\n",
+   "written": "  # indented comment\r\n  title: \"x: y\" # a title\r\n  exclude:\r\n    - 3\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 205 block",
+   "text": "  title: \"x: y\" # a title\n  exclude:\n    - Gemfile\n    # vendored\n    - \"vendor\"\n\n  other: 1\n  # the end\n",
+   "written": "  title: \"x: y\" # a title\n  exclude:\n    - Gemfile\n    # vendored\n    - \"vendor\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n  # the end\n"
+  },
+  {
+   "name": "seed-603 206 flow-lines",
+   "text": "sass:\n  exclude: nested\n\"exclude\": [\n  Gemfile,\n  vendor  # last\n]\n",
+   "written": "sass:\n  exclude: nested\n\"exclude\": [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]\n"
+  },
+  {
+   "name": "seed-603 207 NULL",
+   "text": "﻿    title: \"x: y\" # a title\r\n    'exclude': NULL",
+   "written": "﻿    title: \"x: y\" # a title\r\n    'exclude':\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 208 block-at-key",
+   "text": "﻿    title: \"x: y\" # a title\r\n    'exclude'  :\r\n    - Gemfile\r\n    - vendor\r\n\r\n    other: 1\r\n",
+   "written": "﻿    title: \"x: y\" # a title\r\n    'exclude'  :\r\n    - Gemfile\r\n    - vendor\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n\r\n    other: 1\r\n"
+  },
+  {
+   "name": "seed-603 209 block",
+   "text": "exclude :\r\n  - Gemfile\r\n  # vendored\r\n  - \"vendor\"\r\n",
+   "written": "exclude :\r\n  - Gemfile\r\n  # vendored\r\n  - \"vendor\"\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 210 single-quoted",
+   "text": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n\"exclude\": 'vendor'\r\n\r\nother: 1\r\n# the end",
+   "written": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n\"exclude\":\r\n  - 'vendor'\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n# the end"
+  },
+  {
+   "name": "seed-603 211 entry",
+   "text": "--- # site\n# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  exclude : telar-content/texts\n\n  other: 1\n",
+   "written": "--- # site\n# My site\n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  exclude :\n    - telar-content/texts\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 212 NULL",
+   "text": "﻿  title: \"x: y\" # a title\r\n  exclude: NULL\r\n  # the end",
+   "written": "﻿  title: \"x: y\" # a title\r\n  exclude:\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n  # the end"
+  },
+  {
+   "name": "seed-603 213 entry",
+   "text": "  exclude : telar-content/texts\n  # the end\n",
+   "written": "  exclude :\n    - telar-content/texts\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n  # the end\n"
+  },
+  {
+   "name": "seed-603 214 absent",
+   "text": "﻿\nother: 1\n",
+   "written": "﻿\nother: 1\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 215 NULL",
+   "text": "﻿title: \"x: y\" # a title\n'exclude'  : NULL\n# the end\n---\nexclude: other\n",
+   "written": "﻿title: \"x: y\" # a title\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 216 tagged-null",
+   "text": "﻿'exclude'  : !!null",
+   "written": null
+  },
+  {
+   "name": "seed-603 217 plain-comment",
+   "text": "  title: \"x: y\" # a title\n  exclude : vendor  # gems\n... # end\n# after\n",
+   "written": "  title: \"x: y\" # a title\n  exclude : # gems\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 218 flow-comment",
+   "text": "---\n# My site\n\"exclude\": [Gemfile] # built\n...\n",
+   "written": "---\n# My site\n\"exclude\": [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n...\n"
+  },
+  {
+   "name": "seed-603 219 tagged-null",
+   "text": "﻿# My site\nsass:\n  exclude: nested\nexclude: !!null\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 220 map",
+   "text": "﻿    sass:\r\n      exclude: nested\r\n    'exclude':\r\n      vendor: true\r\n\r\n    other: 1\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 221 block-at-key",
+   "text": "﻿--- # site\n  exclude :\n  - Gemfile\n  - vendor\n\n  other: 1\n",
+   "written": "﻿--- # site\n  exclude :\n  - Gemfile\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 222 NULL",
+   "text": "title: \"x: y\" # a title\nexclude : NULL\n\nother: 1\n--- # two\ntitle: y\n",
+   "written": "title: \"x: y\" # a title\nexclude :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 223 folded",
+   "text": "﻿title: \"x: y\" # a title\n\"exclude\": >\n  vendor\n# the end\n",
+   "written": "﻿title: \"x: y\" # a title\n\"exclude\":\n  - \"vendor\\n\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n"
+  },
+  {
+   "name": "seed-603 224 flow-map",
+   "text": "  title: \"x: y\" # a title\n  exclude: {vendor: true}\n\n  other: 1\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 225 block-all",
+   "text": "﻿    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude:\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n",
+   "written": "﻿    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude:\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 226 flow-map",
+   "text": "# My site\n'exclude'  : {vendor: true}\n\nother: 1\n# the end\n---\nexclude: other\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 227 single-quoted",
+   "text": "# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\": 'vendor'\n",
+   "written": "# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\":\n  - 'vendor'\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 228 plain-comment",
+   "text": "    \"exclu\\x64e\": vendor  # gems\n\n    other: 1\n---\nexclude: other\n",
+   "written": "    \"exclu\\x64e\": # gems\n      - vendor\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 229 flow",
+   "text": "---  \r\n  # indented comment\r\n\"exclu\\x64e\": [Gemfile, \"vendor\"]\r\n...\r\n",
+   "written": "---  \r\n  # indented comment\r\n\"exclu\\x64e\": [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n...\r\n"
+  },
+  {
+   "name": "seed-603 230 flow",
+   "text": "'exclude'  : [Gemfile, \"vendor\"]\n\nother: 1\n... # end\n# after\n",
+   "written": "'exclude'  : [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\nother: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 231 flow-empty",
+   "text": "﻿    title: \"x: y\" # a title\r\n    \"exclude\": []\r\n    # the end\r\n",
+   "written": "﻿    title: \"x: y\" # a title\r\n    \"exclude\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n    # the end\r\n"
+  },
+  {
+   "name": "seed-603 232 NULL",
+   "text": "﻿---  \nsass:\n  exclude: nested\n'exclude'  : NULL\n",
+   "written": "﻿---  \nsass:\n  exclude: nested\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 233 flow-lines",
+   "text": "--- # site\r\n'exclude'  : [\r\n  Gemfile,\r\n  vendor  # last\r\n]\r\n",
+   "written": "--- # site\r\n'exclude'  : [\r\n  Gemfile,\r\n  vendor,  # last\r\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\r\n]\r\n"
+  },
+  {
+   "name": "seed-603 234 block",
+   "text": "---\r\n  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  \"exclu\\x64e\":\r\n    - Gemfile\r\n    # vendored\r\n    - \"vendor\"\r\n...\r\n",
+   "written": "---\r\n  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  \"exclu\\x64e\":\r\n    - Gemfile\r\n    # vendored\r\n    - \"vendor\"\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n...\r\n"
+  },
+  {
+   "name": "seed-603 235 flow-lines",
+   "text": "exclude: [\n  Gemfile,\n  vendor  # last\n]",
+   "written": "exclude: [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]"
+  },
+  {
+   "name": "seed-603 236 entry",
+   "text": "--- # site\r\n    \"exclu\\x64e\": telar-content/texts\r\n",
+   "written": "--- # site\r\n    \"exclu\\x64e\":\r\n      - telar-content/texts\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n"
+  },
+  {
+   "name": "seed-603 237 null-word",
+   "text": "    \"exclude\": null # none yet\n\n    other: 1\n...\n",
+   "written": "    \"exclude\": # none yet\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n...\n"
+  },
+  {
+   "name": "seed-603 238 null",
+   "text": "  # indented comment\r\ntitle: \"x: y\" # a title\r\n\"exclude\": ~\r\n\r\nother: 1\r\n",
+   "written": "  # indented comment\r\ntitle: \"x: y\" # a title\r\n\"exclude\":\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n"
+  },
+  {
+   "name": "seed-603 239 flow-lines",
+   "text": "﻿sass:\n  exclude: nested\n'exclude': [\n  Gemfile,\n  vendor  # last\n]\n\nother: 1\n",
+   "written": "﻿sass:\n  exclude: nested\n'exclude': [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 240 NULL",
+   "text": "﻿# My site\n'exclude': NULL\n\nother: 1\n---\nexclude: other\n",
+   "written": "﻿# My site\n'exclude':\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 241 number",
+   "text": "﻿--- # site\n\"exclu\\x64e\": 3\n\nother: 1\n---\nexclude: other\n",
+   "written": "﻿--- # site\n\"exclu\\x64e\":\n  - 3\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 242 block",
+   "text": "---  \r\n    title: \"x: y\" # a title\r\n    exclude:\r\n      - Gemfile\r\n      # vendored\r\n      - \"vendor\"\r\n\r\n    other: 1\r\n",
+   "written": "---  \r\n    title: \"x: y\" # a title\r\n    exclude:\r\n      - Gemfile\r\n      # vendored\r\n      - \"vendor\"\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n\r\n    other: 1\r\n"
+  },
+  {
+   "name": "seed-603 243 flow-empty",
+   "text": "---\r\n    title: \"x: y\" # a title\r\n    'exclude': []",
+   "written": "---\r\n    title: \"x: y\" # a title\r\n    'exclude': [tests/, pytest.ini, vitest.config.js, telar-content/texts/]"
+  },
+  {
+   "name": "seed-603 244 flow-empty",
+   "text": "title: \"x: y\" # a title\n\"exclude\": []\n...\n",
+   "written": "title: \"x: y\" # a title\n\"exclude\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n...\n"
+  },
+  {
+   "name": "seed-603 245 flow",
+   "text": "﻿---  \nsass:\n  exclude: nested\nexclude : [Gemfile, \"vendor\"]\n\nother: 1\n# the end\n... # end\n# after\n",
+   "written": "﻿---  \nsass:\n  exclude: nested\nexclude : [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\nother: 1\n# the end\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 246 flow-comment",
+   "text": "﻿'exclude'  : [Gemfile] # built\n",
+   "written": "﻿'exclude'  : [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n"
+  },
+  {
+   "name": "seed-603 247 double-quoted-hash",
+   "text": "  # indented comment\n'exclude': \"a #b\" # note\n\nother: 1\n",
+   "written": "  # indented comment\n'exclude': # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 248 flow-lines",
+   "text": "title: \"x: y\" # a title\n'exclude': [\n  Gemfile,\n  vendor  # last\n]\n",
+   "written": "title: \"x: y\" # a title\n'exclude': [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]\n"
+  },
+  {
+   "name": "seed-603 249 flow-empty",
+   "text": "# My site\n    title: \"x: y\" # a title\n    exclude: []\n\n    other: 1\n",
+   "written": "# My site\n    title: \"x: y\" # a title\n    exclude: [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 250 continued",
+   "text": "﻿--- # site\nsass:\n  exclude: nested\nexclude: two\n  lines\n",
+   "written": "﻿--- # site\nsass:\n  exclude: nested\nexclude:\n  - \"two lines\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 251 double-quoted-hash",
+   "text": "  \"exclude\": \"a #b\" # note\n\n  other: 1\n  # the end\n",
+   "written": "  \"exclude\": # note\n    - \"a #b\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n  # the end\n"
+  },
+  {
+   "name": "seed-603 252 tagged-null",
+   "text": "# My site\r\n  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  \"exclude\": !!null\r\n\r\n  other: 1\r\n  # the end\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 253 flow-empty",
+   "text": "﻿  # indented comment\n    title: \"x: y\" # a title\n    exclude: []\n\n    other: 1\n",
+   "written": "﻿  # indented comment\n    title: \"x: y\" # a title\n    exclude: [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 254 absent",
+   "text": "\r\n",
+   "written": "\r\n\r\nexclude:\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 255 single-quoted",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: 'vendor'\n\nother: 1\n# the end\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n  - 'vendor'\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 256 block-all",
+   "text": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n",
+   "written": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 257 map",
+   "text": "﻿sass:\r\n  exclude: nested\r\n\"exclude\":\r\n  vendor: true\r\n# the end\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 258 plain",
+   "text": "﻿title: \"x: y\" # a title\r\n'exclude': vendor\r\n# the end\r\n",
+   "written": "﻿title: \"x: y\" # a title\r\n'exclude':\r\n  - vendor\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n# the end\r\n"
+  },
+  {
+   "name": "seed-603 259 flow",
+   "text": "    'exclude'  : [Gemfile, \"vendor\"]\n\n    other: 1\n    # the end\n...\n",
+   "written": "    'exclude'  : [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n    other: 1\n    # the end\n...\n"
+  },
+  {
+   "name": "seed-603 260 map",
+   "text": "---\n    sass:\n      exclude: nested\n    'exclude'  :\n      vendor: true\n---\nexclude: other\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 261 null",
+   "text": "--- # site\r\n    sass:\r\n      exclude: nested\r\n    'exclude': ~\r\n\r\n    other: 1\r\n    # the end\r\n... # end\r\n# after\r\n",
+   "written": "--- # site\r\n    sass:\r\n      exclude: nested\r\n    'exclude':\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n\r\n    other: 1\r\n    # the end\r\n... # end\r\n# after\r\n"
+  },
+  {
+   "name": "seed-603 262 block-all",
+   "text": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\":\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/",
+   "written": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\":\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/"
+  },
+  {
+   "name": "seed-603 263 bare",
+   "text": "﻿exclude :\r\n\r\nother: 1\r\n---\r\nexclude: other\r\n",
+   "written": "﻿exclude :\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n---\r\nexclude: other\r\n"
+  },
+  {
+   "name": "seed-603 264 double-quoted-hash",
+   "text": "    \"exclude\": \"a #b\" # note",
+   "written": "    \"exclude\": # note\n      - \"a #b\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 265 block-all",
+   "text": "--- # site\n    sass:\n      exclude: nested\n    'exclude'  :\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n",
+   "written": "--- # site\n    sass:\n      exclude: nested\n    'exclude'  :\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 266 double-quoted-hash",
+   "text": "# My site\r\n    title: \"x: y\" # a title\r\n    exclude : \"a #b\" # note\r\n\r\n    other: 1\r\n... # end\r\n# after\r\n",
+   "written": "# My site\r\n    title: \"x: y\" # a title\r\n    exclude : # note\r\n      - \"a #b\"\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n\r\n    other: 1\r\n... # end\r\n# after\r\n"
+  },
+  {
+   "name": "seed-603 267 NULL",
+   "text": "﻿\"exclu\\x64e\": NULL\r\n",
+   "written": "﻿\"exclu\\x64e\":\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 268 plain",
+   "text": "title: \"x: y\" # a title\n'exclude': vendor\n",
+   "written": "title: \"x: y\" # a title\n'exclude':\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 269 flow-empty",
+   "text": "  'exclude'  : []\n\n  other: 1\n  # the end\n--- # two\ntitle: y\n",
+   "written": "  'exclude'  : [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n  other: 1\n  # the end\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 270 flow-comment",
+   "text": "﻿# My site\ntitle: \"x: y\" # a title\nexclude: [Gemfile] # built\n# the end\n...\n",
+   "written": "﻿# My site\ntitle: \"x: y\" # a title\nexclude: [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n# the end\n...\n"
+  },
+  {
+   "name": "seed-603 271 continued",
+   "text": "﻿\"exclude\": two\r\n  lines\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n",
+   "written": "﻿\"exclude\":\r\n  - \"two lines\"\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 272 flow-lines",
+   "text": "--- # site\n  sass:\n    exclude: nested\n  'exclude'  : [\n    Gemfile,\n    vendor  # last\n  ]\n",
+   "written": "--- # site\n  sass:\n    exclude: nested\n  'exclude'  : [\n    Gemfile,\n    vendor,  # last\n    tests/, pytest.ini, vitest.config.js, telar-content/texts/\n  ]\n"
+  },
+  {
+   "name": "seed-603 273 continued",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude': two\n  lines\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude':\n  - \"two lines\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 274 continued",
+   "text": "---  \n    title: \"x: y\" # a title\n    \"exclude\": two\n      lines\n    # the end\n",
+   "written": "---  \n    title: \"x: y\" # a title\n    \"exclude\":\n      - \"two lines\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 275 plain",
+   "text": "title: \"x: y\" # a title\nexclude: vendor\n\nother: 1\n",
+   "written": "title: \"x: y\" # a title\nexclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 276 block-all",
+   "text": "sass:\n  exclude: nested\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n---\nexclude: other\n",
+   "written": "sass:\n  exclude: nested\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 277 folded",
+   "text": "---\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude'  : >\n      vendor\n",
+   "written": "---\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude'  :\n      - \"vendor\\n\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 278 tagged-null",
+   "text": "﻿  # indented comment\r\ntitle: \"x: y\" # a title\r\n\"exclu\\x64e\": !!null\r\n\r\nother: 1\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 279 tagged-null",
+   "text": "  sass:\n    exclude: nested\n  exclude: !!null\n\n  other: 1",
+   "written": null
+  },
+  {
+   "name": "seed-603 280 null",
+   "text": "---  \n  title: \"x: y\" # a title\n  exclude : ~",
+   "written": "---  \n  title: \"x: y\" # a title\n  exclude :\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 281 absent",
+   "text": "﻿",
+   "written": "﻿\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 282 plain",
+   "text": "﻿  title: \"x: y\" # a title\n  exclude: vendor\n\n  other: 1\n",
+   "written": "﻿  title: \"x: y\" # a title\n  exclude:\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 283 tagged-null",
+   "text": "--- # site\n  'exclude': !!null\n\n  other: 1\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 284 map",
+   "text": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n\"exclude\":\r\n  vendor: true\r\n... # end\r\n# after\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 285 folded",
+   "text": "  # indented comment\n    'exclude'  : >\n      vendor\n    # the end\n",
+   "written": "  # indented comment\n    'exclude'  :\n      - \"vendor\\n\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 286 flow-map",
+   "text": "  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  exclude : {vendor: true}\r\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 287 NULL",
+   "text": "﻿  # indented comment\n  sass:\n    exclude: nested\n  exclude : NULL\n  # the end",
+   "written": "﻿  # indented comment\n  sass:\n    exclude: nested\n  exclude :\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  # the end"
+  },
+  {
+   "name": "seed-603 288 double-quoted-hash",
+   "text": "# My site\n'exclude'  : \"a #b\" # note\n",
+   "written": "# My site\n'exclude'  : # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 289 flow-map",
+   "text": "# My site\nexclude: {vendor: true}\n# the end\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 290 single-quoted",
+   "text": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude'  : 'vendor'\n\n  other: 1\n...\n",
+   "written": "  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  'exclude'  :\n    - 'vendor'\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n...\n"
+  },
+  {
+   "name": "seed-603 291 tagged-null",
+   "text": "'exclude': !!null\n...\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 292 continued",
+   "text": "  # indented comment\r\nsass:\r\n  exclude: nested\r\n'exclude': two\r\n  lines",
+   "written": "  # indented comment\r\nsass:\r\n  exclude: nested\r\n'exclude':\r\n  - \"two lines\"\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 293 flow-empty",
+   "text": "﻿---  \n\"exclu\\x64e\": []\n\nother: 1\n# the end\n",
+   "written": "﻿---  \n\"exclu\\x64e\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 294 null-word",
+   "text": "﻿title: \"x: y\" # a title\n'exclude': null # none yet\n--- # two\ntitle: y\n",
+   "written": "﻿title: \"x: y\" # a title\n'exclude': # none yet\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 295 plain-comment",
+   "text": "﻿title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n'exclude': vendor  # gems\r\n\r\nother: 1\r\n# the end\r\n",
+   "written": "﻿title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n'exclude': # gems\r\n  - vendor\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n# the end\r\n"
+  },
+  {
+   "name": "seed-603 296 entry",
+   "text": "﻿--- # site\n# My site\n'exclude': telar-content/texts\n\nother: 1\n---\nexclude: other\n",
+   "written": "﻿--- # site\n# My site\n'exclude':\n  - telar-content/texts\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n\nother: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 297 flow-empty",
+   "text": "    sass:\n      exclude: nested\n    'exclude': []\n...\n",
+   "written": "    sass:\n      exclude: nested\n    'exclude': [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n...\n"
+  },
+  {
+   "name": "seed-603 298 continued",
+   "text": "---  \n\"exclude\": two\n  lines\n\nother: 1\n",
+   "written": "---  \n\"exclude\":\n  - \"two lines\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 299 double-quoted-hash",
+   "text": "  exclude: \"a #b\" # note\n... # end\n# after\n",
+   "written": "  exclude: # note\n    - \"a #b\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 300 double-quoted-hash",
+   "text": "﻿--- # site\r\n    'exclude'  : \"a #b\" # note\r\n\r\n    other: 1",
+   "written": "﻿--- # site\r\n    'exclude'  : # note\r\n      - \"a #b\"\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n\r\n    other: 1"
+  },
+  {
+   "name": "seed-603 301 null",
+   "text": "# My site\nsass:\n  exclude: nested\n\"exclude\": ~\n\nother: 1\n",
+   "written": "# My site\nsass:\n  exclude: nested\n\"exclude\":\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 302 double-quoted-hash",
+   "text": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    \"exclu\\x64e\": \"a #b\" # note\n    # the end\n",
+   "written": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    \"exclu\\x64e\": # note\n      - \"a #b\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 303 flow-lines",
+   "text": "﻿title: \"x: y\" # a title\n'exclude'  : [\n  Gemfile,\n  vendor  # last\n]\n---\nexclude: other\n",
+   "written": "﻿title: \"x: y\" # a title\n'exclude'  : [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 304 bare",
+   "text": "  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  \"exclu\\x64e\":\r\n  # the end\r\n...\r\n",
+   "written": "  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  \"exclu\\x64e\":\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n  # the end\r\n...\r\n"
+  },
+  {
+   "name": "seed-603 305 bare",
+   "text": "# My site\n  title: \"x: y\" # a title\n  exclude:\n\n  other: 1",
+   "written": "# My site\n  title: \"x: y\" # a title\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1"
+  },
+  {
+   "name": "seed-603 306 bare",
+   "text": "---\n  # indented comment\n  sass:\n    exclude: nested\n  'exclude'  :\n",
+   "written": "---\n  # indented comment\n  sass:\n    exclude: nested\n  'exclude'  :\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 307 NULL",
+   "text": "  # indented comment\n'exclude'  : NULL\n\nother: 1\n",
+   "written": "  # indented comment\n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 308 double-quoted-hash",
+   "text": "﻿---  \n# My site\n\"exclu\\x64e\": \"a #b\" # note\n...\n",
+   "written": "﻿---  \n# My site\n\"exclu\\x64e\": # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "seed-603 309 flow-empty",
+   "text": "﻿  title: \"x: y\" # a title\n  \"exclude\": []\n... # end\n# after\n",
+   "written": "﻿  title: \"x: y\" # a title\n  \"exclude\": [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 310 map",
+   "text": "  title: \"x: y\" # a title\n  \"exclu\\x64e\":\n    vendor: true\n\n  other: 1\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 311 null-word",
+   "text": "# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: null # none yet\n",
+   "written": "# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: # none yet\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 312 null",
+   "text": "---\n  title: \"x: y\" # a title\n  \"exclude\": ~\n\n  other: 1\n... # end\n# after\n",
+   "written": "---\n  title: \"x: y\" # a title\n  \"exclude\":\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 313 entry",
+   "text": "--- # site\n# My site\n    'exclude': telar-content/texts\n---\nexclude: other\n",
+   "written": "--- # site\n# My site\n    'exclude':\n      - telar-content/texts\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 314 bare",
+   "text": "# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n---\nexclude: other\n",
+   "written": "# My site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 315 block-at-key",
+   "text": "---  \n    title: \"x: y\" # a title\n    \"exclu\\x64e\":\n    - Gemfile\n    - vendor\n",
+   "written": "---  \n    title: \"x: y\" # a title\n    \"exclu\\x64e\":\n    - Gemfile\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 316 block-at-key",
+   "text": "# My site\r\n\"exclude\":\r\n- Gemfile\r\n- vendor\r\n\r\nother: 1\r\n",
+   "written": "# My site\r\n\"exclude\":\r\n- Gemfile\r\n- vendor\r\n- tests/\r\n- pytest.ini\r\n- vitest.config.js\r\n- telar-content/texts/\r\n\r\nother: 1\r\n"
+  },
+  {
+   "name": "seed-603 317 continued",
+   "text": "# My site\n    sass:\n      exclude: nested\n    exclude : two\n      lines\n\n    other: 1\n",
+   "written": "# My site\n    sass:\n      exclude: nested\n    exclude :\n      - \"two lines\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 318 flow-lines",
+   "text": "  exclude: [\r\n    Gemfile,\r\n    vendor  # last\r\n  ]\r\n\r\n  other: 1\r\n---\r\nexclude: other\r\n",
+   "written": "  exclude: [\r\n    Gemfile,\r\n    vendor,  # last\r\n    tests/, pytest.ini, vitest.config.js, telar-content/texts/\r\n  ]\r\n\r\n  other: 1\r\n---\r\nexclude: other\r\n"
+  },
+  {
+   "name": "seed-603 319 block-all",
+   "text": "﻿    title: \"x: y\" # a title\r\n    'exclude':\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n--- # two\r\ntitle: y\r\n",
+   "written": "﻿    title: \"x: y\" # a title\r\n    'exclude':\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 320 block-all",
+   "text": "'exclude':\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n",
+   "written": "'exclude':\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 321 flow-lines",
+   "text": "--- # site\r\nsass:\r\n  exclude: nested\r\n'exclude'  : [\r\n  Gemfile,\r\n  vendor  # last\r\n]\r\n\r\nother: 1",
+   "written": "--- # site\r\nsass:\r\n  exclude: nested\r\n'exclude'  : [\r\n  Gemfile,\r\n  vendor,  # last\r\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\r\n]\r\n\r\nother: 1"
+  },
+  {
+   "name": "seed-603 322 folded",
+   "text": "﻿--- # site\n\"exclude\": >\n  vendor\n--- # two\ntitle: y\n",
+   "written": "﻿--- # site\n\"exclude\":\n  - \"vendor\\n\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 323 absent",
+   "text": "﻿---\n  # indented comment\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\nother: 1",
+   "written": "﻿---\n  # indented comment\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n\nother: 1\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 324 NULL",
+   "text": "---  \n'exclude'  : NULL\n# the end\n",
+   "written": "---  \n'exclude'  :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n"
+  },
+  {
+   "name": "seed-603 325 null-word",
+   "text": "    exclude: null # none yet\n\n    other: 1",
+   "written": "    exclude: # none yet\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1"
+  },
+  {
+   "name": "seed-603 326 entry",
+   "text": "﻿--- # site\ntitle: \"x: y\" # a title\nexclude: telar-content/texts\n",
+   "written": "﻿--- # site\ntitle: \"x: y\" # a title\nexclude:\n  - telar-content/texts\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n"
+  },
+  {
+   "name": "seed-603 327 plain-comment",
+   "text": "sass:\n  exclude: nested\nexclude: vendor  # gems\n\nother: 1\n",
+   "written": "sass:\n  exclude: nested\nexclude: # gems\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 328 tagged-null",
+   "text": "  # indented comment\n    title: \"x: y\" # a title\n    exclude : !!null\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 329 block",
+   "text": "  # indented comment\ntitle: \"x: y\" # a title\nexclude:\n  - Gemfile\n  # vendored\n  - \"vendor\"\n\nother: 1\n# the end",
+   "written": "  # indented comment\ntitle: \"x: y\" # a title\nexclude:\n  - Gemfile\n  # vendored\n  - \"vendor\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end"
+  },
+  {
+   "name": "seed-603 330 flow",
+   "text": "---  \n    \"exclu\\x64e\": [Gemfile, \"vendor\"]\n... # end\n# after\n",
+   "written": "---  \n    \"exclu\\x64e\": [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 331 block-at-key",
+   "text": "# My site\r\ntitle: \"x: y\" # a title\r\n'exclude':\r\n- Gemfile\r\n- vendor\r\n# the end",
+   "written": "# My site\r\ntitle: \"x: y\" # a title\r\n'exclude':\r\n- Gemfile\r\n- vendor\r\n- tests/\r\n- pytest.ini\r\n- vitest.config.js\r\n- telar-content/texts/\r\n# the end"
+  },
+  {
+   "name": "seed-603 332 NULL",
+   "text": "'exclude'  : NULL\r\n...\r\n",
+   "written": "'exclude'  :\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n...\r\n"
+  },
+  {
+   "name": "seed-603 333 tagged-null",
+   "text": "---\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  : !!null",
+   "written": null
+  },
+  {
+   "name": "seed-603 334 flow-lines",
+   "text": "    'exclude': [\r\n      Gemfile,\r\n      vendor  # last\r\n    ]\r\n",
+   "written": "    'exclude': [\r\n      Gemfile,\r\n      vendor,  # last\r\n      tests/, pytest.ini, vitest.config.js, telar-content/texts/\r\n    ]\r\n"
+  },
+  {
+   "name": "seed-603 335 block-all",
+   "text": "--- # site\n    \"exclude\":\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n--- # two\ntitle: y\n",
+   "written": "--- # site\n    \"exclude\":\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 336 map",
+   "text": "title: \"x: y\" # a title\nexclude:\n  vendor: true\n\nother: 1\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 337 NULL",
+   "text": "---\n  # indented comment\nexclude: NULL\n\nother: 1\n... # end\n# after\n",
+   "written": "---\n  # indented comment\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 338 continued",
+   "text": "﻿---\ntitle: \"x: y\" # a title\nexclude: two\n  lines\n\nother: 1\n# the end\n---\nexclude: other\n",
+   "written": "﻿---\ntitle: \"x: y\" # a title\nexclude:\n  - \"two lines\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 339 flow-lines",
+   "text": "﻿'exclude': [\n  Gemfile,\n  vendor  # last\n]",
+   "written": "﻿'exclude': [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]"
+  },
+  {
+   "name": "seed-603 340 flow-comment",
+   "text": "sass:\n  exclude: nested\n'exclude': [Gemfile] # built\n\nother: 1\n",
+   "written": "sass:\n  exclude: nested\n'exclude': [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 341 null-word",
+   "text": "---  \r\ntitle: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n'exclude'  : null # none yet\r\n\r\nother: 1\r\n# the end\r\n",
+   "written": "---  \r\ntitle: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\n'exclude'  : # none yet\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n# the end\r\n"
+  },
+  {
+   "name": "seed-603 342 absent",
+   "text": "﻿sass:\n  exclude: nested\n\nother: 1\n# the end\n",
+   "written": "﻿sass:\n  exclude: nested\n\nother: 1\n# the end\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 343 bare",
+   "text": "    sass:\n      exclude: nested\n    exclude :\n\n    other: 1\n... # end\n# after\n",
+   "written": "    sass:\n      exclude: nested\n    exclude :\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 344 continued",
+   "text": "---  \n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclu\\x64e\": two\n    lines\n\n  other: 1\n...\n",
+   "written": "---  \n  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclu\\x64e\":\n    - \"two lines\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n...\n"
+  },
+  {
+   "name": "seed-603 345 flow-lines",
+   "text": "exclude: [\n  Gemfile,\n  vendor  # last\n]\n# the end\n",
+   "written": "exclude: [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]\n# the end\n"
+  },
+  {
+   "name": "seed-603 346 single-quoted",
+   "text": "﻿  exclude: 'vendor'\n  # the end\n",
+   "written": "﻿  exclude:\n    - 'vendor'\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  # the end\n"
+  },
+  {
+   "name": "seed-603 347 entry",
+   "text": "--- # site\ntitle: \"x: y\" # a title\n'exclude': telar-content/texts\n\nother: 1\n# the end\n",
+   "written": "--- # site\ntitle: \"x: y\" # a title\n'exclude':\n  - telar-content/texts\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 348 tagged-null",
+   "text": "---\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: !!null\n# the end",
+   "written": null
+  },
+  {
+   "name": "seed-603 349 flow-empty",
+   "text": "sass:\r\n  exclude: nested\r\nexclude : []\r\n\r\nother: 1\r\n# the end\r\n",
+   "written": "sass:\r\n  exclude: nested\r\nexclude : [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n\r\nother: 1\r\n# the end\r\n"
+  },
+  {
+   "name": "seed-603 350 flow",
+   "text": "﻿---\r\n# My site\r\n  title: \"x: y\" # a title\r\n  exclude: [Gemfile, \"vendor\"]\r\n\r\n  other: 1",
+   "written": "﻿---\r\n# My site\r\n  title: \"x: y\" # a title\r\n  exclude: [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\r\n\r\n  other: 1"
+  },
+  {
+   "name": "seed-603 351 entry",
+   "text": "﻿---  \r\n  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  exclude: telar-content/texts\r\n\r\n  other: 1\r\n",
+   "written": "﻿---  \r\n  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  exclude:\r\n    - telar-content/texts\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n\r\n  other: 1\r\n"
+  },
+  {
+   "name": "seed-603 352 single-quoted",
+   "text": "title: \"x: y\" # a title\nexclude: 'vendor'\n\nother: 1\n",
+   "written": "title: \"x: y\" # a title\nexclude:\n  - 'vendor'\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 353 block",
+   "text": "    sass:\n      exclude: nested\n    exclude :\n      - Gemfile\n      # vendored\n      - \"vendor\"\n\n    other: 1\n--- # two\ntitle: y\n",
+   "written": "    sass:\n      exclude: nested\n    exclude :\n      - Gemfile\n      # vendored\n      - \"vendor\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n--- # two\ntitle: y\n"
+  },
+  {
+   "name": "seed-603 354 null-word",
+   "text": "﻿# My site\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude : null # none yet\n",
+   "written": "﻿# My site\n    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    exclude : # none yet\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 355 folded",
+   "text": "    title: \"x: y\" # a title\r\n    'exclude': >\r\n      vendor",
+   "written": "    title: \"x: y\" # a title\r\n    'exclude':\r\n      - \"vendor\"\r\n      - tests/\r\n      - pytest.ini\r\n      - vitest.config.js\r\n      - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 356 plain",
+   "text": "--- # site\n# My site\nexclude: vendor\n\nother: 1\n# the end\n",
+   "written": "--- # site\n# My site\nexclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 357 flow-lines",
+   "text": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\": [\n    Gemfile,\n    vendor  # last\n  ]",
+   "written": "﻿  title: \"x: y\" # a title\n  sass:\n    exclude: nested\n  \"exclude\": [\n    Gemfile,\n    vendor,  # last\n    tests/, pytest.ini, vitest.config.js, telar-content/texts/\n  ]"
+  },
+  {
+   "name": "seed-603 358 bare",
+   "text": "--- # site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude :\n\nother: 1\n# the end\n",
+   "written": "--- # site\ntitle: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude :\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n# the end\n"
+  },
+  {
+   "name": "seed-603 359 null-word",
+   "text": "exclude: null # none yet\n\nother: 1\n",
+   "written": "exclude: # none yet\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 360 flow-comment",
+   "text": "﻿title: \"x: y\" # a title\r\n\"exclu\\x64e\": [Gemfile] # built\r\n--- # two\r\ntitle: y\r\n",
+   "written": "﻿title: \"x: y\" # a title\r\n\"exclu\\x64e\": [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 361 double-quoted-hash",
+   "text": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: \"a #b\" # note\n\nother: 1\n",
+   "written": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude: # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 362 plain-comment",
+   "text": "  title: \"x: y\" # a title\r\n  exclude: vendor  # gems\r\n\r\n  other: 1\r\n  # the end\r\n",
+   "written": "  title: \"x: y\" # a title\r\n  exclude: # gems\r\n    - vendor\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n\r\n  other: 1\r\n  # the end\r\n"
+  },
+  {
+   "name": "seed-603 363 block-at-key",
+   "text": "\"exclu\\x64e\":\r\n- Gemfile\r\n- vendor\r\n\r\nother: 1\r\n",
+   "written": "\"exclu\\x64e\":\r\n- Gemfile\r\n- vendor\r\n- tests/\r\n- pytest.ini\r\n- vitest.config.js\r\n- telar-content/texts/\r\n\r\nother: 1\r\n"
+  },
+  {
+   "name": "seed-603 364 flow-lines",
+   "text": "﻿'exclude'  : [\n  Gemfile,\n  vendor  # last\n]\n\nother: 1\n... # end\n# after\n",
+   "written": "﻿'exclude'  : [\n  Gemfile,\n  vendor,  # last\n  tests/, pytest.ini, vitest.config.js, telar-content/texts/\n]\n\nother: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 365 null",
+   "text": "---\ntitle: \"x: y\" # a title\nexclude: ~\n\nother: 1",
+   "written": "---\ntitle: \"x: y\" # a title\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1"
+  },
+  {
+   "name": "seed-603 366 tagged-null",
+   "text": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    'exclude'  : !!null\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 367 absent",
+   "text": "﻿  # indented comment\n  sass:\n    exclude: nested\n\n  other: 1\n",
+   "written": "﻿  # indented comment\n  sass:\n    exclude: nested\n\n  other: 1\n\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 368 plain",
+   "text": "exclude: vendor\n",
+   "written": "exclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 369 plain",
+   "text": "exclude : vendor\n",
+   "written": "exclude :\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 370 block-at-key",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  :\n- Gemfile\n- vendor\n\nother: 1\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n'exclude'  :\n- Gemfile\n- vendor\n- tests/\n- pytest.ini\n- vitest.config.js\n- telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 371 block-all",
+   "text": "# My site\n    'exclude'  :\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n",
+   "written": "# My site\n    'exclude'  :\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n    # the end\n"
+  },
+  {
+   "name": "seed-603 372 block",
+   "text": "---\n    sass:\n      exclude: nested\n    'exclude':\n      - Gemfile\n      # vendored\n      - \"vendor\"\n...\n",
+   "written": "---\n    sass:\n      exclude: nested\n    'exclude':\n      - Gemfile\n      # vendored\n      - \"vendor\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "seed-603 373 flow-empty",
+   "text": "--- # site\n  title: \"x: y\" # a title\n  exclude : []\n  # the end\n",
+   "written": "--- # site\n  title: \"x: y\" # a title\n  exclude : [tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n  # the end\n"
+  },
+  {
+   "name": "seed-603 374 bare",
+   "text": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    \"exclu\\x64e\":\n\n    other: 1\n",
+   "written": "    title: \"x: y\" # a title\n    sass:\n      exclude: nested\n    \"exclu\\x64e\":\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n"
+  },
+  {
+   "name": "seed-603 375 null",
+   "text": "﻿  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  'exclude': ~\r\n",
+   "written": "﻿  title: \"x: y\" # a title\r\n  sass:\r\n    exclude: nested\r\n  'exclude':\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 376 double-quoted-hash",
+   "text": "---  \r\nsass:\r\n  exclude: nested\r\n\"exclude\": \"a #b\" # note\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n",
+   "written": "---  \r\nsass:\r\n  exclude: nested\r\n\"exclude\": # note\r\n  - \"a #b\"\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n\r\nother: 1\r\n--- # two\r\ntitle: y\r\n"
+  },
+  {
+   "name": "seed-603 377 bare",
+   "text": "﻿  sass:\n    exclude: nested\n  exclude :\n\n  other: 1\n",
+   "written": "﻿  sass:\n    exclude: nested\n  exclude :\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 378 number",
+   "text": "﻿\"exclu\\x64e\": 3\n\nother: 1\n",
+   "written": "﻿\"exclu\\x64e\":\n  - 3\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 379 tagged-null",
+   "text": "# My site\nexclude : !!null\n# the end\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 380 null",
+   "text": "---  \n    exclude : ~",
+   "written": "---  \n    exclude :\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 381 bare",
+   "text": "---\ntitle: \"x: y\" # a title\n'exclude':\n# the end\n...\n",
+   "written": "---\ntitle: \"x: y\" # a title\n'exclude':\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n...\n"
+  },
+  {
+   "name": "seed-603 382 single-quoted",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude : 'vendor'\n# the end\n---\nexclude: other\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\nexclude :\n  - 'vendor'\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n# the end\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 383 flow-lines",
+   "text": "---  \n  'exclude': [\n    Gemfile,\n    vendor  # last\n  ]\n\n  other: 1\n...\n",
+   "written": "---  \n  'exclude': [\n    Gemfile,\n    vendor,  # last\n    tests/, pytest.ini, vitest.config.js, telar-content/texts/\n  ]\n\n  other: 1\n...\n"
+  },
+  {
+   "name": "seed-603 384 entry",
+   "text": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\": telar-content/texts\n---\nexclude: other\n",
+   "written": "title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\":\n  - telar-content/texts\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 385 single-quoted",
+   "text": "--- # site\n    title: \"x: y\" # a title\n    \"exclu\\x64e\": 'vendor'\n",
+   "written": "--- # site\n    title: \"x: y\" # a title\n    \"exclu\\x64e\":\n      - 'vendor'\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 386 double-quoted-hash",
+   "text": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\": \"a #b\" # note\n\nother: 1\n",
+   "written": "﻿title: \"x: y\" # a title\nsass:\n  exclude: nested\n\"exclude\": # note\n  - \"a #b\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\nother: 1\n"
+  },
+  {
+   "name": "seed-603 387 plain-comment",
+   "text": "  # indented comment\n    sass:\n      exclude: nested\n    \"exclude\": vendor  # gems\n\n    other: 1\n... # end\n# after\n",
+   "written": "  # indented comment\n    sass:\n      exclude: nested\n    \"exclude\": # gems\n      - vendor\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n\n    other: 1\n... # end\n# after\n"
+  },
+  {
+   "name": "seed-603 388 block-at-key",
+   "text": "  title: \"x: y\" # a title\n  exclude :\n  - Gemfile\n  - vendor\n\n  other: 1\n---\nexclude: other\n",
+   "written": "  title: \"x: y\" # a title\n  exclude :\n  - Gemfile\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n\n  other: 1\n---\nexclude: other\n"
+  },
+  {
+   "name": "seed-603 389 folded",
+   "text": "﻿# My site\nexclude: >\n  vendor\n...\n",
+   "written": "﻿# My site\nexclude:\n  - \"vendor\\n\"\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "seed-603 390 null",
+   "text": "  'exclude'  : ~\n\n  other: 1\n  # the end\n...\n",
+   "written": "  'exclude'  :\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n  # the end\n...\n"
+  },
+  {
+   "name": "seed-603 391 flow-lines",
+   "text": "---  \r\n# My site\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    exclude: [\r\n      Gemfile,\r\n      vendor  # last\r\n    ]\r\n\r\n    other: 1\r\n",
+   "written": "---  \r\n# My site\r\n    title: \"x: y\" # a title\r\n    sass:\r\n      exclude: nested\r\n    exclude: [\r\n      Gemfile,\r\n      vendor,  # last\r\n      tests/, pytest.ini, vitest.config.js, telar-content/texts/\r\n    ]\r\n\r\n    other: 1\r\n"
+  },
+  {
+   "name": "seed-603 392 double-quoted-hash",
+   "text": "﻿    \"exclude\": \"a #b\" # note\n",
+   "written": "﻿    \"exclude\": # note\n      - \"a #b\"\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "seed-603 393 flow-comment",
+   "text": "title: \"x: y\" # a title\n\"exclu\\x64e\": [Gemfile] # built\n# the end\n",
+   "written": "title: \"x: y\" # a title\n\"exclu\\x64e\": [Gemfile, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n# the end\n"
+  },
+  {
+   "name": "seed-603 394 folded",
+   "text": "---  \r\n  # indented comment\r\nsass:\r\n  exclude: nested\r\nexclude: >\r\n  vendor\r\n",
+   "written": "---  \r\n  # indented comment\r\nsass:\r\n  exclude: nested\r\nexclude:\r\n  - \"vendor\\n\"\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n"
+  },
+  {
+   "name": "seed-603 395 flow",
+   "text": "---  \n  exclude: [Gemfile, \"vendor\"]\n\n  other: 1\n  # the end\n",
+   "written": "---  \n  exclude: [Gemfile, \"vendor\", tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\n  other: 1\n  # the end\n"
+  },
+  {
+   "name": "seed-603 396 block",
+   "text": "  title: \"x: y\" # a title\n  exclude :\n    - Gemfile\n    # vendored\n    - \"vendor\"\n\n  other: 1\n",
+   "written": "  title: \"x: y\" # a title\n  exclude :\n    - Gemfile\n    # vendored\n    - \"vendor\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n\n  other: 1\n"
+  },
+  {
+   "name": "seed-603 397 map",
+   "text": "title: \"x: y\" # a title\n'exclude':\n  vendor: true\n# the end\n---\nexclude: other\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 398 flow-map",
+   "text": "﻿---  \n    exclude: {vendor: true}\n---\nexclude: other\n",
+   "written": null
+  },
+  {
+   "name": "seed-603 399 continued",
+   "text": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\nexclude : two\r\n  lines\r\n# the end\r\n",
+   "written": "title: \"x: y\" # a title\r\nsass:\r\n  exclude: nested\r\nexclude :\r\n  - \"two lines\"\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\n# the end\r\n"
+  },
+  {
+   "name": "reader bom-scalar",
+   "text": "﻿exclude: vendor\n",
+   "written": "﻿exclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader bom-null",
+   "text": "﻿exclude: null\n",
+   "written": "﻿exclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader bom-crlf",
+   "text": "﻿exclude: vendor\r\ntitle: x\r\n",
+   "written": "﻿exclude:\r\n  - vendor\r\n  - tests/\r\n  - pytest.ini\r\n  - vitest.config.js\r\n  - telar-content/texts/\r\ntitle: x\r\n"
+  },
+  {
+   "name": "reader bom-comment-first",
+   "text": "﻿# My site\nexclude: vendor\n",
+   "written": "﻿# My site\nexclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader bom-block",
+   "text": "﻿exclude:\n  - vendor\n",
+   "written": "﻿exclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader bom-flow",
+   "text": "﻿exclude: [vendor]\n",
+   "written": "﻿exclude: [vendor, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n"
+  },
+  {
+   "name": "reader indented-scalar",
+   "text": "  exclude: vendor\n",
+   "written": "  exclude:\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-scalar-comment",
+   "text": "  title: x\n  exclude: vendor # gems\n  other: 1\n",
+   "written": "  title: x\n  exclude: # gems\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  other: 1\n"
+  },
+  {
+   "name": "reader indented-null",
+   "text": "  exclude: ~\n  other: 1\n",
+   "written": "  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  other: 1\n"
+  },
+  {
+   "name": "reader indented-bare",
+   "text": "  exclude:\n  other: 1\n",
+   "written": "  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  other: 1\n"
+  },
+  {
+   "name": "reader indented-block",
+   "text": "  title: x\n  exclude:\n    - vendor\n  other: 1\n",
+   "written": "  title: x\n  exclude:\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  other: 1\n"
+  },
+  {
+   "name": "reader indented-block-at-key",
+   "text": "  exclude:\n  - vendor\n  other: 1\n",
+   "written": "  exclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n  other: 1\n"
+  },
+  {
+   "name": "reader indented-flow",
+   "text": "  exclude: [vendor] # built\n  other: 1\n",
+   "written": "  exclude: [vendor, tests/, pytest.ini, vitest.config.js, telar-content/texts/] # built\n  other: 1\n"
+  },
+  {
+   "name": "reader indented-continued",
+   "text": "  exclude: two\n    lines\n  other: 1\n",
+   "written": "  exclude:\n    - \"two lines\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n  other: 1\n"
+  },
+  {
+   "name": "reader indented-bom-crlf",
+   "text": "﻿  exclude: vendor\r\n  other: 1\r\n",
+   "written": "﻿  exclude:\r\n    - vendor\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n  other: 1\r\n"
+  },
+  {
+   "name": "reader nested-only",
+   "text": "sass:\n  exclude: vendor\ntitle: x\n",
+   "written": "sass:\n  exclude: vendor\ntitle: x\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader nested-after",
+   "text": "exclude: vendor\nsass:\n  exclude: x\n",
+   "written": "exclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\nsass:\n  exclude: x\n"
+  },
+  {
+   "name": "reader indented-nested-before",
+   "text": "  sass:\n    exclude: x\n  exclude: vendor\n",
+   "written": "  sass:\n    exclude: x\n  exclude:\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-nested-after",
+   "text": "  exclude: [a]\n  sass:\n    exclude: x\n",
+   "written": "  exclude: [a, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n  sass:\n    exclude: x\n"
+  },
+  {
+   "name": "reader document-start",
+   "text": "---\nexclude: vendor\n",
+   "written": "---\nexclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader document-start-indented",
+   "text": "---\n  exclude: vendor\n",
+   "written": "---\n  exclude:\n    - vendor\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader bom-document-start",
+   "text": "﻿--- # site\nexclude: vendor\n",
+   "written": "﻿--- # site\nexclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-absent",
+   "text": "  title: x\n",
+   "written": "  title: x\n\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-absent-no-final-newline",
+   "text": "  title: x",
+   "written": "  title: x\n\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-absent-bom",
+   "text": "﻿  title: x\n",
+   "written": "﻿  title: x\n\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-absent-document-start",
+   "text": "---\n    title: x\n",
+   "written": "---\n    title: x\n\n    exclude:\n      - tests/\n      - pytest.ini\n      - vitest.config.js\n      - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-absent-crlf",
+   "text": "  title: x\r\n  other: 1\r\n",
+   "written": "  title: x\r\n  other: 1\r\n\r\n  exclude:\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n"
+  },
+  {
+   "name": "reader indented-absent-nested",
+   "text": "  sass:\n    exclude: vendor\n  title: x\n",
+   "written": "  sass:\n    exclude: vendor\n  title: x\n\n  exclude:\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader double-quoted-key-flow",
+   "text": "\"exclude\": [vendor]\n",
+   "written": "\"exclude\": [vendor, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n"
+  },
+  {
+   "name": "reader single-quoted-key-spaced",
+   "text": "'exclude' : vendor\n",
+   "written": "'exclude' :\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader spaced-key-block",
+   "text": "exclude  :\n  - a\ntitle: x\n",
+   "written": "exclude  :\n  - a\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\ntitle: x\n"
+  },
+  {
+   "name": "reader double-quoted-key-null",
+   "text": "\"exclude\": ~ # none\n",
+   "written": "\"exclude\": # none\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader indented-quoted-key-continued",
+   "text": "﻿  title: x\n  \"exclude\" : two\n    lines\n",
+   "written": "﻿  title: x\n  \"exclude\" :\n    - \"two lines\"\n    - tests/\n    - pytest.ini\n    - vitest.config.js\n    - telar-content/texts/\n"
+  },
+  {
+   "name": "reader quoted-key-comment",
+   "text": "'exclude' : vendor # gems\n",
+   "written": "'exclude' : # gems\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader escaped-key-block",
+   "text": "\"exclu\\x64e\":\n  - vendor\n",
+   "written": "\"exclu\\x64e\":\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader escaped-key-scalar",
+   "text": "\"\\x65xclude\" : vendor # gems\n",
+   "written": "\"\\x65xclude\" : # gems\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n"
+  },
+  {
+   "name": "reader escaped-key-flow",
+   "text": "  \"excl\\u0075de\": [vendor]\n",
+   "written": "  \"excl\\u0075de\": [vendor, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n"
+  },
+  {
+   "name": "reader escaped-key-null",
+   "text": "\"exclud\\x65\": null\ntitle: x\n",
+   "written": "\"exclud\\x65\":\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\ntitle: x\n"
+  },
+  {
+   "name": "reader single-quoted-key-doubled-quote",
+   "text": "exclude: vendor\n'exclude''': [a]\n",
+   "written": "exclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n'exclude''': [a]\n"
+  },
+  {
+   "name": "reader quoted-other-key-with-colon",
+   "text": "exclude: [a]\n\"exclude: no\": [b]\n",
+   "written": "exclude: [a, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\"exclude: no\": [b]\n"
+  },
+  {
+   "name": "reader escaped-other-key",
+   "text": "exclude: [a]\n\"exclude\\x21\": [b]\n",
+   "written": "exclude: [a, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n\"exclude\\x21\": [b]\n"
+  },
+  {
+   "name": "reader document-end",
+   "text": "title: x\n...\n",
+   "written": "title: x\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n...\n"
+  },
+  {
+   "name": "reader document-end-comment-after",
+   "text": "title: x\n... # end\n# after\n",
+   "written": "title: x\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n... # end\n# after\n"
+  },
+  {
+   "name": "reader document-end-indented-crlf",
+   "text": "  title: x\r\n...\r\n",
+   "written": "  title: x\r\n\r\n  exclude:\r\n    - tests/\r\n    - pytest.ini\r\n    - vitest.config.js\r\n    - telar-content/texts/\r\n...\r\n"
+  },
+  {
+   "name": "reader document-end-list",
+   "text": "exclude: [a]\n...\n",
+   "written": "exclude: [a, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n...\n"
+  },
+  {
+   "name": "reader multi-document-flow",
+   "text": "---\nexclude: [vendor]\n---\ntitle: x\n",
+   "written": "---\nexclude: [vendor, tests/, pytest.ini, vitest.config.js, telar-content/texts/]\n---\ntitle: x\n"
+  },
+  {
+   "name": "reader multi-document-scalar",
+   "text": "---\nexclude: vendor\n---\nexclude: other\n",
+   "written": "---\nexclude:\n  - vendor\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n---\nexclude: other\n"
+  },
+  {
+   "name": "reader multi-document-absent",
+   "text": "title: x\n...\n---\nexclude: y\n",
+   "written": "title: x\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n...\n---\nexclude: y\n"
+  },
+  {
+   "name": "reader multi-document-absent-no-end",
+   "text": "﻿title: x\n--- # two\nexclude: y\n",
+   "written": "﻿title: x\n\nexclude:\n  - tests/\n  - pytest.ini\n  - vitest.config.js\n  - telar-content/texts/\n--- # two\nexclude: y\n"
+  },
+  {
+   "name": "failure bom-tagged-null",
+   "text": "﻿exclude: !!null\n",
+   "written": null
+  },
+  {
+   "name": "failure bom-map",
+   "text": "﻿exclude:\n  vendor: true\n",
+   "written": null
+  },
+  {
+   "name": "failure indented-tagged-null",
+   "text": "  exclude: !!null\n  other: 1\n",
+   "written": null
+  },
+  {
+   "name": "failure indented-map",
+   "text": "  exclude:\n    vendor: true\n  other: 1\n",
+   "written": null
+  },
+  {
+   "name": "failure indented-flow-map",
+   "text": "  exclude: {vendor: true}\n",
+   "written": null
+  },
+  {
+   "name": "failure flow-mapping-absent",
+   "text": "{title: x}\n",
+   "written": null
+  },
+  {
+   "name": "failure tab-after-colon",
+   "text": "exclude:\tvendor\n",
+   "written": null
+  }
+ ]
+}

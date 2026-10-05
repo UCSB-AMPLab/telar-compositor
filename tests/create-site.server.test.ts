@@ -7,7 +7,7 @@
  * Uses the same `globalThis.fetch` mocking pattern as
  * `tests/github.server.test.ts` — no MSW, no nock, no new dependencies.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -20,7 +20,8 @@ import {
   humanizeSlug,
   buildBornCleanConfig,
   languageMatchGlossary,
-  pruneProjectStories,
+  stripStarterStories,
+  stripPlaceholderObject,
   commitBornCleanSite,
   customDomainConfigCorrection,
   rewriteConfigUrl,
@@ -33,6 +34,9 @@ import {
   GitHubError,
   RepoNotReadyError,
 } from "~/lib/create-site.server";
+import { parseDevOnlyFiles } from "~/lib/dev-only-paths.server";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const TOKEN = "test-token-abc";
 
@@ -653,7 +657,7 @@ describe("languageMatchGlossary", () => {
   });
 });
 
-describe("pruneProjectStories", () => {
+describe("stripStarterStories", () => {
   const PROJECT = [
     "order,story_id,title,subtitle,byline,private",
     "orden,id_historia,titulo,subtitulo,firma,privada",
@@ -664,29 +668,81 @@ describe("pruneProjectStories", () => {
     "",
   ].join("\n");
 
-  it("drops the Spanish story for en, keeping the English one", () => {
-    const out = pruneProjectStories(PROJECT, "en");
-    expect(out).toContain("blank_template");
+  it("drops both starter stories, leaving no story rows", () => {
+    const out = stripStarterStories(PROJECT);
+    expect(out).not.toContain("blank_template");
     expect(out).not.toContain("plantilla_en_blanco");
   });
 
-  it("drops the English story for es, keeping the Spanish one", () => {
-    const out = pruneProjectStories(PROJECT, "es");
-    expect(out).toContain("plantilla_en_blanco");
-    expect(out).not.toContain(",blank_template,");
-  });
-
   it("preserves header and both comment rows", () => {
-    const out = pruneProjectStories(PROJECT, "en");
+    const out = stripStarterStories(PROJECT);
     expect(out).toContain("order,story_id");
     expect(out).toContain("orden,id_historia");
     expect(out).toContain("# Must match the tab name");
     expect(out).toContain("# Debe coincidir");
   });
 
-  it("throws when the story-to-drop is absent", () => {
+  it("drops a lone starter story when the template carries only one", () => {
     const onlyEn = "order,story_id,title,subtitle,byline,private\n1,blank_template,x,,,FALSE\n";
-    expect(() => pruneProjectStories(onlyEn, "en")).toThrow(/not found/);
+    const out = stripStarterStories(onlyEn);
+    expect(out).not.toContain("blank_template");
+    expect(out).toContain("order,story_id");
+  });
+
+  it("keeps a user's own story untouched", () => {
+    const withUserStory = PROJECT + "3,my-story,My story,,,FALSE\n";
+    const out = stripStarterStories(withUserStory);
+    expect(out).toContain("my-story");
+    expect(out).not.toContain("blank_template");
+  });
+
+  it("throws when no starter story row is present", () => {
+    const none = "order,story_id,title,subtitle,byline,private\n1,my-story,x,,,FALSE\n";
+    expect(() => stripStarterStories(none)).toThrow(/no starter story rows/);
+  });
+
+  it("throws when there is no story_id column", () => {
+    expect(() => stripStarterStories("order,title\n1,x\n")).toThrow(/story_id/);
+  });
+});
+
+describe("stripPlaceholderObject", () => {
+  const OBJECTS = [
+    "object_id,title,alt_text,featured,creator",
+    "id_objeto,titulo,texto_alt,destacado,creador",
+    "# Make it lower-case,# Please provide a title,# Describe,# Mark yes,# The creator",
+    "# Escríbelo en minúsculas,# Incluye un título,# Describe,# Marca sí,# La persona",
+    "telar-placeholder,Telar placeholder,,FALSE,Adelaida Ávila",
+    "",
+  ].join("\n");
+
+  it("drops the placeholder row", () => {
+    const out = stripPlaceholderObject(OBJECTS);
+    expect(out).not.toContain("telar-placeholder");
+  });
+
+  it("preserves header and both comment rows", () => {
+    const out = stripPlaceholderObject(OBJECTS);
+    expect(out).toContain("object_id,title");
+    expect(out).toContain("id_objeto,titulo");
+    expect(out).toContain("# Make it lower-case");
+    expect(out).toContain("# Escríbelo en minúsculas");
+  });
+
+  it("keeps a user's own object untouched", () => {
+    const withUserObject = OBJECTS + "my-object,My object,,FALSE,Someone\n";
+    const out = stripPlaceholderObject(withUserObject);
+    expect(out).toContain("my-object");
+    expect(out).not.toContain("telar-placeholder");
+  });
+
+  it("throws when the placeholder row is absent", () => {
+    const none = "object_id,title\nmy-object,My object\n";
+    expect(() => stripPlaceholderObject(none)).toThrow(/not found/);
+  });
+
+  it("throws when there is no object_id column", () => {
+    expect(() => stripPlaceholderObject("title,creator\nx,y\n")).toThrow(/object_id/);
   });
 });
 
@@ -809,6 +865,15 @@ describe("commitBornCleanSite", () => {
     "",
   ].join("\n");
 
+  const ORCH_OBJECTS = [
+    "object_id,title,alt_text,featured,creator",
+    "id_objeto,titulo,texto_alt,destacado,creador",
+    "# lower-case,# required,# describe,# yes to feature,# creator",
+    "# minúsculas,# obligatorio,# describe,# sí para destacar,# creador",
+    "telar-placeholder,Telar placeholder,,FALSE,Adelaida Ávila",
+    "",
+  ].join("\n");
+
   const ORCH_GLOSSARY = [
     "term_id,title,definition",
     "id_término,titulo,definición",
@@ -847,6 +912,15 @@ describe("commitBornCleanSite", () => {
     // Number of leading 404s to serve on the _config.yml read before 200,
     // simulating GitHub's post-/generate contents-API propagation lag.
     configRead404Times?: number;
+    // The generated repo's tree (blob paths). Defaults to a template without
+    // the dev-only list, as every template before framework 1.8.0 is.
+    treePaths?: string[];
+    treeStatus?: number;
+    treeTruncated?: boolean;
+    // Content of scripts/dev-only-files.txt, served when the tree lists it.
+    devOnlyList?: string;
+    // The page files in telar-content/texts/pages, by name; none by default.
+    pageFiles?: Record<string, string>;
   };
 
   function bornCleanFetch(opts: RouterOpts = {}) {
@@ -854,6 +928,17 @@ describe("commitBornCleanSite", () => {
     let commitCalls = 0;
     return vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
+      if (url.includes("/git/trees/")) {
+        if (opts.treeStatus && opts.treeStatus >= 400) return jsonRes({ message: "boom" }, opts.treeStatus);
+        const paths = opts.treePaths ?? ["_config.yml", "telar-content/spreadsheets/project.csv"];
+        return jsonRes({
+          tree: paths.map((path) => ({ path, type: "blob", sha: "s", mode: "100644" })),
+          truncated: opts.treeTruncated ?? false,
+        });
+      }
+      if (url.includes("/contents/scripts/dev-only-files.txt")) {
+        return jsonRes({ content: b64(opts.devOnlyList ?? ""), encoding: "base64" });
+      }
       if (url.includes("/contents/_config.yml")) {
         if (opts.configRead404Times && configReads++ < opts.configRead404Times) {
           return jsonRes({ message: "Not Found" }, 404);
@@ -865,6 +950,17 @@ describe("commitBornCleanSite", () => {
       }
       if (url.includes("/contents/telar-content/spreadsheets/glossary.csv")) {
         return jsonRes({ content: b64(ORCH_GLOSSARY), encoding: "base64" });
+      }
+      if (url.includes("/contents/telar-content/spreadsheets/objects.csv")) {
+        return jsonRes({ content: b64(ORCH_OBJECTS), encoding: "base64" });
+      }
+      if (url.endsWith("/contents/telar-content/texts/pages")) {
+        if (!opts.pageFiles) return jsonRes({}, 404);
+        return jsonRes(Object.keys(opts.pageFiles).map((n) => ({ type: "file", path: `telar-content/texts/pages/${n}` })));
+      }
+      if (url.includes("/contents/telar-content/texts/pages/")) {
+        const page = opts.pageFiles?.[decodeURIComponent(url.split("/").pop()!)];
+        return page === undefined ? jsonRes({}, 404) : jsonRes({ content: b64(page), encoding: "base64" });
       }
       if (url.includes("/contents/telar-content/texts/stories/")) {
         if (opts.dirStatus === 404) return jsonRes({}, 404);
@@ -995,7 +1091,7 @@ describe("commitBornCleanSite", () => {
     expect(config).toContain('url: "https://me.github.io"');
   });
 
-  it("happy path (en): returns ok + pagesUrl, commits clean config + content, deletes the es story", async () => {
+  it("happy path (en): returns ok + pagesUrl, commits clean config + content, scrubs all starter content", async () => {
     const fetchMock = bornCleanFetch();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -1010,10 +1106,14 @@ describe("commitBornCleanSite", () => {
       "_config.yml",
       "telar-content/spreadsheets/project.csv",
       "telar-content/spreadsheets/glossary.csv",
+      "telar-content/spreadsheets/objects.csv",
     ]);
     const deletedPaths = input.fileChanges.deletions.map((d: { path: string }) => d.path);
+    // Both languages' starter stories go, not just the non-matching one.
+    expect(deletedPaths).toContain("telar-content/spreadsheets/blank_template.csv");
     expect(deletedPaths).toContain("telar-content/spreadsheets/plantilla_en_blanco.csv");
     expect(deletedPaths).toContain("telar-content/texts/stories/plantilla_en_blanco/ejemplo-panel.md");
+    expect(deletedPaths).toContain("telar-content/objects/telar-placeholder.png");
 
     const config = decodeAddition(input, "_config.yml");
     expect(config).toContain('url: "https://me.github.io"');
@@ -1023,6 +1123,10 @@ describe("commitBornCleanSite", () => {
 
     const project = decodeAddition(input, "telar-content/spreadsheets/project.csv");
     expect(project).not.toContain("plantilla_en_blanco");
+    expect(project).not.toContain("blank_template");
+    const objects = decodeAddition(input, "telar-content/spreadsheets/objects.csv");
+    expect(objects).not.toContain("telar-placeholder");
+    expect(objects).toContain("object_id,title");
     const glossary = decodeAddition(input, "telar-content/spreadsheets/glossary.csv");
     expect(glossary).toContain("English paragraph about Telar");
     expect(glossary).not.toContain("Párrafo en español");
@@ -1066,7 +1170,7 @@ describe("commitBornCleanSite", () => {
     expect(input.message.headline).not.toContain("[skip ci]");
   });
 
-  it("es: deletes the en story and its sister dir, keeps the Spanish story", async () => {
+  it("es: scrubs both starter stories and their panel files", async () => {
     const fetchMock = bornCleanFetch({
       dirFiles: [{ type: "file", path: "telar-content/texts/stories/blank_template/example-panel.md" }],
     });
@@ -1082,14 +1186,45 @@ describe("commitBornCleanSite", () => {
     expect(config).toContain('telar_language: "es"');
   });
 
-  it("missing sister dir (404) → deletes only the csv", async () => {
+  describe("the template's About page, reduced to one file", () => {
+    const templatePages = (
+      JSON.parse(readFileSync(resolve(__dirname, "fixtures/page-sisters/cases.json"), "utf8")) as {
+        cases: Array<{ name: string; files: Record<string, string> }>;
+      }
+    ).cases.find((c) => c.name === "template, English site")!.files;
+
+    it("en: keeps about.md as the template has it and deletes acerca.md in the same commit", async () => {
+      const fetchMock = bornCleanFetch({ pageFiles: templatePages });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      expect((await commitBornCleanSite(baseParams())).ok).toBe(true);
+      const input = commitInput(fetchMock);
+      expect(input.fileChanges.additions.map((a: { path: string }) => a.path)).not.toContain("telar-content/texts/pages/about.md");
+      expect(input.fileChanges.deletions.map((d: { path: string }) => d.path)).toContain("telar-content/texts/pages/acerca.md");
+    });
+
+    it("es: writes the Spanish page at about.md, without its language lines, and deletes acerca.md", async () => {
+      const fetchMock = bornCleanFetch({ pageFiles: templatePages });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      expect((await commitBornCleanSite(baseParams({ locale: "es" }))).ok).toBe(true);
+      const input = commitInput(fetchMock);
+      const about = decodeAddition(input, "telar-content/texts/pages/about.md");
+      expect(about).toBe(templatePages["acerca.md"].replace("localized_for: about.md\nlanguage: es\n", ""));
+      expect(input.fileChanges.deletions.map((d: { path: string }) => d.path)).toContain("telar-content/texts/pages/acerca.md");
+    });
+  });
+
+  it("missing panel dirs (404) → still deletes the story CSVs and the placeholder image", async () => {
     const fetchMock = bornCleanFetch({ dirStatus: 404 });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const result = await commitBornCleanSite(baseParams());
     expect(result.ok).toBe(true);
     const input = commitInput(fetchMock);
     const deletedPaths = input.fileChanges.deletions.map((d: { path: string }) => d.path);
-    expect(deletedPaths).toEqual(["telar-content/spreadsheets/plantilla_en_blanco.csv"]);
+    expect(deletedPaths).toEqual([
+      "telar-content/spreadsheets/blank_template.csv",
+      "telar-content/spreadsheets/plantilla_en_blanco.csv",
+      "telar-content/objects/telar-placeholder.png",
+    ]);
   });
 
   it("commit failure → ok:false, error:commit, no Pages call", async () => {
@@ -1097,7 +1232,7 @@ describe("commitBornCleanSite", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const result = await commitBornCleanSite(baseParams());
     expect(result).toEqual({ ok: false, error: "commit" });
-    const pagesCalled = fetchMock.mock.calls.some(([u]) => String(u).endsWith("/pages"));
+    const pagesCalled = fetchMock.mock.calls.some(([u]) => String(u).endsWith(`/repos/${OWNER}/${NAME}/pages`));
     expect(pagesCalled).toBe(false);
   });
 
@@ -1175,11 +1310,42 @@ describe("commitBornCleanSite", () => {
     expect(dispatched).toBe(false);
   });
 
+  it("commits the wizard's title and author without the characters a build rejects", async () => {
+    const fetchMock = bornCleanFetch();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await commitBornCleanSite(
+      baseParams({ title: "Cr\u00f3nicas\ufffe de la Nueva Granada", author: "Jos\u00e9\u0085Mart\u00ednez" }),
+    );
+    expect(result.ok).toBe(true);
+
+    const config = decodeAddition(commitInput(fetchMock), "_config.yml");
+    expect(config).toContain('title: "Cr\u00f3nicas de la Nueva Granada"');
+    expect(config).toContain('author: "Jos\u00e9 Mart\u00ednez"');
+    expect(config).not.toContain("\ufffe");
+    expect(config).not.toContain("\u0085");
+  });
+
+  it("the custom-domain correction recommits the same config cleaned", async () => {
+    const fetchMock = bornCleanFetch({ pagesHtmlUrl: "https://juancobo.com/my-site/" });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const result = await commitBornCleanSite(baseParams({ title: "Cr\u00f3nicas\ufffe" }));
+    expect(result.ok).toBe(true);
+
+    const inputs = allCommitInputs(fetchMock);
+    expect(inputs).toHaveLength(2);
+    const corrected = decodeAddition(inputs[1], "_config.yml");
+    expect(corrected).toContain('title: "Cr\u00f3nicas"');
+    expect(corrected).toContain('url: "https://juancobo.com"');
+    expect(corrected).not.toContain("\ufffe");
+  });
+
   it("enables Pages with the installation token, not the user token", async () => {
     const fetchMock = bornCleanFetch();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     await commitBornCleanSite(baseParams());
-    const pagesCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/pages"));
+    const pagesCall = fetchMock.mock.calls.find(([u]) => String(u).endsWith(`/repos/${OWNER}/${NAME}/pages`));
     expect(pagesCall).toBeTruthy();
     const headers = (pagesCall![1] as RequestInit).headers as Record<string, string>;
     expect(headers["Authorization"]).toBe(`Bearer ${INSTALL_TOKEN}`);
@@ -1192,7 +1358,7 @@ describe("commitBornCleanSite", () => {
 
     const calls = fetchMock.mock.calls.map(([u]) => String(u));
     const scopeIdx = calls.findIndex((u) => u.includes("/installation/repositories"));
-    const pagesIdx = calls.findIndex((u) => u.endsWith("/pages"));
+    const pagesIdx = calls.findIndex((u) => u.endsWith(`/repos/${OWNER}/${NAME}/pages`));
     expect(scopeIdx).toBeGreaterThanOrEqual(0);
     expect(pagesIdx).toBeGreaterThan(scopeIdx);
 
@@ -1214,7 +1380,7 @@ describe("commitBornCleanSite", () => {
       return String(u).endsWith("/graphql") && String(JSON.parse((init?.body as string) ?? "{}").query).includes("CreateCommit");
     });
     expect(commitCalled).toBe(true);
-    const pagesCalled = fetchMock.mock.calls.some(([u]) => String(u).endsWith("/pages"));
+    const pagesCalled = fetchMock.mock.calls.some(([u]) => String(u).endsWith(`/repos/${OWNER}/${NAME}/pages`));
     expect(pagesCalled).toBe(false);
     const dispatched = fetchMock.mock.calls.some(([u]) => String(u).includes("/dispatches"));
     expect(dispatched).toBe(false);
@@ -1238,7 +1404,7 @@ describe("commitBornCleanSite", () => {
     // No new commit — the born-clean commit already landed.
     expect(allCommitInputs(fetchMock)).toHaveLength(0);
     // But Pages-enable + build dispatch still happen (those are what failed).
-    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/pages"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith(`/repos/${OWNER}/${NAME}/pages`))).toBe(true);
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/dispatches"))).toBe(true);
   });
 
@@ -1250,7 +1416,7 @@ describe("commitBornCleanSite", () => {
 
     // Scope check threw, but we fall through to Pages + dispatch and succeed.
     expect(result.ok).toBe(true);
-    const pagesCalled = fetchMock.mock.calls.some(([u]) => String(u).endsWith("/pages"));
+    const pagesCalled = fetchMock.mock.calls.some(([u]) => String(u).endsWith(`/repos/${OWNER}/${NAME}/pages`));
     expect(pagesCalled).toBe(true);
   });
 
@@ -1276,5 +1442,115 @@ describe("commitBornCleanSite", () => {
 
     const config = decodeAddition(input, "_config.yml");
     expect(config).toContain('# Options: "en" (English), "es" (Español)');
+  });
+
+  // A new site is born without the framework's developer-only files,
+  // named by the template's scripts/dev-only-files.txt.
+  describe("the template's developer-only files", () => {
+    const LIST = [
+      "# Files the framework needs for its own development, not a site's.",
+      "tests/",
+      "",
+      "vitest.config.js",
+      "pytest.ini",
+      ".github/workflows/telar-tests.yml",
+    ].join("\n");
+    const TREE = [
+      "_config.yml",
+      "scripts/dev-only-files.txt",
+      "tests/js/story.test.js",
+      "tests/python/test_csv.py",
+      "tests-extra/keep.txt",
+      "vitest.config.js",
+      "pytest.ini",
+      ".github/workflows/telar-tests.yml",
+      ".github/workflows/build.yml",
+    ];
+    function deleted(fetchMock: ReturnType<typeof vi.fn>): string[] {
+      return commitInput(fetchMock).fileChanges.deletions.map((d: { path: string }) => d.path);
+    }
+
+    it("reads the list as the framework's read_dev_only_files does: file order, notes and blanks dropped, a directory's slash kept", () => {
+      expect(parseDevOnlyFiles("# note\r\ntests/\n\n  vitest.config.js  \n#tests/\npytest.ini\n")).toEqual([
+        "tests/",
+        "vitest.config.js",
+        "pytest.ini",
+      ]);
+    });
+
+    it("deletes every listed file and every file under a listed directory", async () => {
+      const fetchMock = bornCleanFetch({ treePaths: TREE, devOnlyList: LIST });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const result = await commitBornCleanSite(baseParams());
+      expect(result.ok).toBe(true);
+      const paths = deleted(fetchMock);
+      for (const p of [
+        "tests/js/story.test.js",
+        "tests/python/test_csv.py",
+        "vitest.config.js",
+        "pytest.ini",
+        ".github/workflows/telar-tests.yml",
+      ]) {
+        expect(paths).toContain(p);
+      }
+      // A directory entry is a path prefix ending in "/", not a string prefix.
+      expect(paths).not.toContain("tests-extra/keep.txt");
+      expect(paths).not.toContain(".github/workflows/build.yml");
+      expect(paths).not.toContain("scripts/dev-only-files.txt");
+    });
+
+    it("deletes nothing extra when the template carries no list", async () => {
+      const fetchMock = bornCleanFetch({ treePaths: ["_config.yml", "tests/js/story.test.js"] });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const result = await commitBornCleanSite(baseParams());
+      expect(result.ok).toBe(true);
+      expect(deleted(fetchMock)).not.toContain("tests/js/story.test.js");
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("dev-only-files.txt"))).toBe(false);
+    });
+
+    it("skips an entry that is absent, leaves the repository, or names a file the commit writes", async () => {
+      const fetchMock = bornCleanFetch({
+        treePaths: TREE,
+        devOnlyList: ["missing.txt", "../outside", "/", "/etc/passwd", "_config.yml", "pytest.ini"].join("\n"),
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const result = await commitBornCleanSite(baseParams());
+      expect(result.ok).toBe(true);
+      const paths = deleted(fetchMock);
+      expect(paths).toContain("pytest.ini");
+      for (const p of ["missing.txt", "../outside", "/", "/etc/passwd", "_config.yml"]) {
+        expect(paths).not.toContain(p);
+      }
+      expect(paths.some((p) => p.startsWith("tests/"))).toBe(false);
+    });
+
+    it("keeps the list itself, even when it names itself or its directory", async () => {
+      const fetchMock = bornCleanFetch({ treePaths: TREE, devOnlyList: "scripts/\nscripts/dev-only-files.txt\npytest.ini" });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      await commitBornCleanSite(baseParams());
+      const paths = deleted(fetchMock);
+      expect(paths).toContain("pytest.ini");
+      expect(paths).not.toContain("scripts/dev-only-files.txt");
+    });
+
+    it("names each path once when the list repeats a starter file", async () => {
+      const starter = "telar-content/spreadsheets/blank_template.csv";
+      const fetchMock = bornCleanFetch({ treePaths: [...TREE, starter], devOnlyList: `${starter}\npytest.ini` });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      await commitBornCleanSite(baseParams());
+      const paths = deleted(fetchMock);
+      expect(paths.filter((p) => p === starter)).toHaveLength(1);
+    });
+
+    it("still creates the site when the tree cannot be read or is truncated, without the cleanup", async () => {
+      for (const opts of [{ treeStatus: 500 }, { treeTruncated: true }]) {
+        const fetchMock = bornCleanFetch({ ...opts, treePaths: TREE, devOnlyList: LIST });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const result = await commitBornCleanSite(baseParams());
+        expect(result.ok).toBe(true);
+        expect(deleted(fetchMock)).not.toContain("pytest.ini");
+      }
+    });
   });
 });

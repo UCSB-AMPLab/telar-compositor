@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "from_version": "1.3.0",
+  "to_version": "1.4.0",
+  "description": "Responsive system overhaul and custom IIIF viewer (Tify removed) — runtime-only upgrade, no user-content changes required",
+  "operations": [],
+  "manual_steps": {
+    "en": [
+      {
+        "description": "**No action required.** v1.4.0 is a runtime-only upgrade.\n\nYour stories, objects, and configuration keep working without any content changes. The headline improvements:\n\n- **Cross-device IIIF centering fixed** — focal points land correctly across phones, tablets, and desktops, including iPad portrait and landscape phones.\n- **Lighter and faster** — Tify (and its Vue dependency) removed; OpenSeadragon is now vendored and loaded locally, so the viewer no longer depends on a CDN.\n- **iOS Safari stability** — the URL-bar layout jump is fixed and notch safe-area clearance is added.\n\nOne note: the upgrade refreshed the framework language packs (en.yml / es.yml). If you had customised either file, re-apply your changes — the new release adds six `object.viewer.*` keys (pagination labels and error messages for the IIIF viewer) that the updated packs already include.",
+        "doc_url": "https://telar.org/docs"
+      }
+    ],
+    "es": [
+      {
+        "description": "**No se requiere ninguna acción.** v1.4.0 cambia solo el funcionamiento interno de Telar: tus historias, objetos y configuración siguen funcionando sin que tengas que tocar nada.\n\nLas mejoras principales:\n\n- **Centrado IIIF entre dispositivos corregido** — los puntos focales se ubican correctamente en teléfonos, tabletas y computadores, incluidos el iPad en vertical y los teléfonos en horizontal.\n- **Más liviano y rápido** — se eliminó Tify (y su dependencia de Vue); ahora OpenSeadragon viene incluido en el repositorio y se carga localmente, así que el visor ya no depende de un CDN.\n- **Estabilidad en iOS Safari** — se corrigió el salto del diseño que causaba la barra de direcciones del navegador y se añadió espacio para la muesca de la pantalla.\n\nUn detalle: la actualización reemplazó los paquetes de idioma de Telar (en.yml / es.yml). Si habías personalizado alguno de ellos, vuelve a aplicar tus cambios — esta versión agrega seis claves `object.viewer.*` (etiquetas de paginación y mensajes de error del visor IIIF) que los paquetes actualizados ya incluyen.",
+        "doc_url": "https://telar.org/guia"
+      }
+    ]
+  }
+}

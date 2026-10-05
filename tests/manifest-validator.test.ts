@@ -1,8 +1,10 @@
 /**
  * Unit tests for manifest-schema.server.ts
  *
- * Covers: validateManifest (valid + invalid inputs for each of the 9 op types)
+ * Covers: validateManifest (valid + invalid inputs for each of the 10 op types)
  * and resolveBilingual.
+ *
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -12,6 +14,7 @@ import {
   ManifestValidationError,
   type Manifest,
 } from "~/lib/manifest-schema.server";
+import { releaseDateForUpgrade } from "~/lib/upgrade.server";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -227,6 +230,36 @@ describe("validateManifest (invalid inputs)", () => {
   it("rejects operation with missing type", () => {
     const bad = makeValid([{ key: "foo" }]);
     expectValidationError(() => validateManifest(bad), "/operations/0/type");
+  });
+
+  it("rejects an operation type that is only a name every object inherits", () => {
+    for (const type of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+      expectValidationError(() => validateManifest(makeValid([{ type }])), "/operations/0/type");
+    }
+  });
+
+  // --- yaml_list_add ---
+
+  const listAdd = (fields: Record<string, unknown>) =>
+    makeValid([{ type: "yaml_list_add", file: "_config.yml", key: "exclude", values: ["tests/"], ...fields }]);
+
+  it("accepts yaml_list_add with a file in scope, a key and string values", () => {
+    expect(() => validateManifest(listAdd({}))).not.toThrow();
+    expect(() => validateManifest(listAdd({ file: "_data/extra.yaml", values: [] }))).not.toThrow();
+  });
+
+  it("rejects yaml_list_add without file, key or values, or with the wrong types", () => {
+    expectValidationError(() => validateManifest(listAdd({ file: undefined })), "/operations/0/file");
+    expectValidationError(() => validateManifest(listAdd({ file: 3 })), "/operations/0/file");
+    expectValidationError(() => validateManifest(listAdd({ key: ["exclude"] })), "/operations/0/key");
+    expectValidationError(() => validateManifest(listAdd({ values: "tests/" })), "/operations/0/values");
+    expectValidationError(() => validateManifest(listAdd({ values: ["tests/", 1] })), "/operations/0/values/1");
+  });
+
+  it("rejects yaml_list_add on a file outside the scope allowlist", () => {
+    for (const file of ["/etc/config.yml", "../_config.yml", ".git/config.yml", "scripts/build.py", "Gemfile"]) {
+      expectValidationError(() => validateManifest(listAdd({ file })), "/operations/0/file");
+    }
   });
 
   // --- config_add_field ---
@@ -503,6 +536,79 @@ describe("validateManifest (invalid inputs)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// validateManifest — manual step kind
+// ---------------------------------------------------------------------------
+
+describe("validateManifest (manual step kind)", () => {
+  const withKind = (kind: unknown): unknown => ({
+    ...(makeValid() as object),
+    manual_steps: { en: [{ description: "x", kind }], es: [] },
+  });
+
+  it("accepts each known kind, and one this build does not know", () => {
+    for (const kind of ["action", "optional", "note", "some-future-kind"]) {
+      expect(() => validateManifest(withKind(kind))).not.toThrow();
+    }
+  });
+
+  it("rejects a kind that is not a string", () => {
+    expectValidationError(() => validateManifest(withKind(1)), "/manual_steps/en/0/kind");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateManifest — manual step audience
+// ---------------------------------------------------------------------------
+
+describe("validateManifest (manual step audience)", () => {
+  function withAudience(audience: unknown): unknown {
+    return {
+      ...(makeValid() as object),
+      manual_steps: {
+        en: [{ description: "x", audience }],
+        es: [],
+      },
+    };
+  }
+
+  it("accepts an audience value this build doesn't recognise, without throwing", () => {
+    const input = withAudience("some-future-value");
+    expect(() => validateManifest(input)).not.toThrow();
+  });
+
+  it("rejects a non-string audience (number)", () => {
+    const bad = withAudience(42);
+    expectValidationError(
+      () => validateManifest(bad),
+      "/manual_steps/en/0/audience",
+    );
+  });
+
+  it("rejects a non-string audience (object)", () => {
+    const bad = withAudience({});
+    expectValidationError(
+      () => validateManifest(bad),
+      "/manual_steps/en/0/audience",
+    );
+  });
+
+  it("still accepts each known audience value", () => {
+    for (const audience of ["all", "compositor", "local", "google-sheets"]) {
+      const input = withAudience(audience);
+      expect(() => validateManifest(input)).not.toThrow();
+    }
+  });
+
+  it("accepts a step with no audience key at all", () => {
+    const input = {
+      ...(makeValid() as object),
+      manual_steps: { en: [{ description: "x" }], es: [] },
+    };
+    expect(() => validateManifest(input)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // resolveBilingual
 // ---------------------------------------------------------------------------
 
@@ -524,5 +630,46 @@ describe("resolveBilingual", () => {
     expect(resolveBilingual(undefined as unknown as string, "en")).toBe(
       undefined,
     );
+  });
+});
+
+// A manifest may declare the date of the release it installs.
+describe("validateManifest (release_date)", () => {
+  const withDate = (release_date: unknown) => ({ ...(makeValid() as object), release_date });
+
+  it("accepts a manifest with no release_date, as every one before v1.8.0 is", () => {
+    expect(() => validateManifest(makeValid())).not.toThrow();
+  });
+
+  it("accepts a date written YYYY-MM-DD and keeps it", () => {
+    expect(validateManifest(withDate("2026-09-09")).release_date).toBe("2026-09-09");
+    expect(validateManifest(withDate("2028-02-29")).release_date).toBe("2028-02-29");
+  });
+
+  it("rejects a date in any other shape, or not a string", () => {
+    for (const bad of ["2026-9-9", "09/09/2026", "2026-09-09T00:00:00Z", 20260909]) {
+      expectValidationError(() => validateManifest(withDate(bad)), "/release_date");
+    }
+  });
+
+  it("rejects a date the calendar does not have", () => {
+    for (const bad of ["2026-02-30", "2026-13-01", "2026-00-10", "2025-02-29"]) {
+      expectValidationError(() => validateManifest(withDate(bad)), "/release_date");
+    }
+  });
+});
+
+describe("releaseDateForUpgrade", () => {
+  const manifest = (release_date?: string) =>
+    ({ ...(makeValid() as object), ...(release_date ? { release_date } : {}) }) as Manifest;
+
+  it("takes the date the last manifest of the chain declares", () => {
+    expect(releaseDateForUpgrade([manifest("2026-03-01"), manifest("2026-09-09")], "2026-09-10T01:07:36Z")).toBe(
+      "2026-09-09",
+    );
+  });
+
+  it("falls back to the publication day when the last manifest declares none", () => {
+    expect(releaseDateForUpgrade([manifest("2026-03-01"), manifest()], "2026-09-10T01:07:36Z")).toBe("2026-09-10");
   });
 });

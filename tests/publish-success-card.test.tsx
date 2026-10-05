@@ -10,8 +10,10 @@
  *
  * Mock strategy mirrors tests/_app.homepage.test.tsx + tests/PublishingPopover
  * .test.tsx: react-i18next key passthrough, a per-fetcher useFetcher mock keyed
- * by call order (validation / publish / poll-build), useIsConvenor → true,
+ * by call order (validation / publish / poll / repair), useIsConvenor → true,
  * useCollaborationContext stubbed inert.
+ *
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,8 +21,9 @@ import { render, screen } from "@testing-library/react";
 import React from "react";
 
 // ---------------------------------------------------------------------------
-// Per-fetcher mock state. The component calls useFetcher() three times in a
-// stable order: validationFetcher, publishFetcher, pollFetcher. We hand each
+// Per-fetcher mock state. The component calls useFetcher() once per slot in a
+// stable order: validation, publish, poll-build, workflow repair, the repair's
+// own build poll. We hand each
 // call its own controllable `data` + a submit spy.
 // ---------------------------------------------------------------------------
 
@@ -30,7 +33,14 @@ interface FetcherStub {
   submit: ReturnType<typeof vi.fn>;
 }
 
-let fetchers: FetcherStub[] = [];
+/**
+ * One stub per `useFetcher()` call the page makes, named for the slot it fills
+ * in declaration order: validation, publish, poll-build, workflow repair,
+ * the repair's own build poll.
+ */
+const FETCHER_SLOTS = ["validation", "publish", "poll", "repair", "repairPoll"] as const;
+type FetcherSlot = (typeof FETCHER_SLOTS)[number];
+let fetchers: Record<FetcherSlot, FetcherStub> = {} as Record<FetcherSlot, FetcherStub>;
 let fetcherCallIndex = 0;
 
 function makeFetcher(): FetcherStub {
@@ -38,13 +48,19 @@ function makeFetcher(): FetcherStub {
 }
 
 function resetFetchers() {
-  fetchers = [makeFetcher(), makeFetcher(), makeFetcher()];
+  fetchers = {
+    validation: makeFetcher(),
+    publish: makeFetcher(),
+    poll: makeFetcher(),
+    repair: makeFetcher(),
+    repairPoll: makeFetcher(),
+  };
   fetcherCallIndex = 0;
 }
 
-const validationFetcher = () => fetchers[0];
-const publishFetcher = () => fetchers[1];
-const pollFetcher = () => fetchers[2];
+const validationFetcher = () => fetchers.validation;
+const publishFetcher = () => fetchers.publish;
+const pollFetcher = () => fetchers.poll;
 
 // STABLE `t` identity (module-level singleton). The component's publish-
 // response effect depends on `[publishData, t]` and calls setState; a fresh `t`
@@ -62,12 +78,11 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("react-router", () => ({
   useFetcher: () => {
-    // The component calls useFetcher() three times per render in a stable
-    // order (validation / publish / poll-build). Map by call position MODULO 3
-    // so the same fetcher object (and its submit spy) is returned for the same
-    // slot across re-renders — otherwise a second render would hand out fresh
-    // stubs and lose the spy history.
-    const f = fetchers[fetcherCallIndex % fetchers.length];
+    // Render order is the component's declaration order, so the call index
+    // names the slot; it wraps so the same fetcher object (and its submit spy)
+    // is returned for the same slot across re-renders — otherwise a second
+    // render would hand out fresh stubs and lose the spy history.
+    const f = fetchers[FETCHER_SLOTS[fetcherCallIndex % FETCHER_SLOTS.length]];
     fetcherCallIndex += 1;
     return f;
   },
@@ -81,6 +96,7 @@ vi.mock("react-router", () => ({
 
 vi.mock("~/hooks/use-role", () => ({
   useIsConvenor: () => true,
+  useIsPublisher: () => true,
   useRole: () => "convenor",
 }));
 
@@ -134,6 +150,11 @@ vi.mock("~/components/features/publish/ChangeSummary", () => ({
 }));
 vi.mock("~/components/features/publish/ValidationChecks", () => ({
   ValidationChecks: () => <div data-testid="validation-checks" />,
+  ValidationWarnings: ({ warnings }: { warnings: Array<{ code: string; params?: { file?: string } }> }) => (
+    <ul data-testid="validation-warnings">
+      {warnings.map((w) => <li key={w.code + w.params?.file}>{`${w.code} ${w.params?.file}`}</li>)}
+    </ul>
+  ),
 }));
 vi.mock("~/components/features/publish/CommitMessageEditor", () => ({
   CommitMessageEditor: () => <div data-testid="commit-editor" />,
@@ -153,6 +174,7 @@ function makeChangeSummary() {
     settings: { changed: [] },
     landing: { changed: false },
     navigation: { changed: false },
+    objectOrder: { changed: false },
     backCompatBootstrap: false,
     // Not up to date so the Publish section + post-commit states render.
     isUpToDate: false,
@@ -190,12 +212,13 @@ async function renderPublish() {
 }
 
 // Drive the publish fetcher to a successful commit (sets publishResult).
-function commitSucceeded() {
+function commitSucceeded(leftFiles: unknown[] = []) {
   publishFetcher().data = {
     ok: true,
     intent: "publish",
     newHeadSha: "new-sha-123",
     commitUrl: "https://github.com/owner/repo/commit/new-sha-123",
+    leftFiles,
   };
 }
 
@@ -280,8 +303,33 @@ describe("success card is gated on build completion", () => {
     await renderPublish();
 
     expect(screen.queryByText(/success_card\.heading/)).toBeNull();
-    // A failure state is shown instead.
+    // A failure state is shown instead, in the build's own words.
     expect(screen.getByText("failure_card.heading")).toBeTruthy();
+    expect(screen.getByText("failure_card.description")).toBeTruthy();
+    expect(screen.queryByText("build.publish_failed_description")).toBeNull();
+  });
+
+  describe("the story files the publish left", () => {
+    const LEFT = [{ code: "story_file_kept_changed", message: "story_file_kept_changed", params: { file: "gone.csv" } }];
+    const NAMED = "story_file_kept_changed gone.csv";
+
+    it.each([
+      ["after a successful build", "completed", "success"],
+      ["after a failed build", "completed", "failure"],
+      ["while the build is still running", "in_progress", null],
+    ])("names them %s", async (_label, status, conclusion) => {
+      commitSucceeded(LEFT);
+      pollReturns(status, conclusion);
+      await renderPublish();
+      expect(screen.getByText(NAMED)).toBeTruthy();
+    });
+
+    it("names nothing when the publish left no file", async () => {
+      commitSucceeded();
+      pollReturns("completed", "failure");
+      await renderPublish();
+      expect(screen.queryByText(NAMED)).toBeNull();
+    });
   });
 
   it("the in-route BuildTracker is removed — the headless poll fetcher drives the build chrome; the poll fetcher submits poll-build after commit", async () => {

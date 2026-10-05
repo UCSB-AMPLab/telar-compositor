@@ -1,27 +1,50 @@
 // @vitest-environment jsdom
+/**
+ * Publish page tests for the repo-unavailable state: the banner and disabled
+ * actions the page falls back to when GitHub reports the linked repository
+ * gone or inaccessible.
+ *
+ * @version v1.5.0-beta
+ */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import React from "react";
 
 interface FetcherStub { data: unknown; state: "idle" | "submitting" | "loading"; submit: ReturnType<typeof vi.fn>; }
-let fetchers: FetcherStub[] = [];
+/**
+ * One stub per `useFetcher()` call the page makes, named for the slot it fills
+ * in declaration order: validation, publish, poll-build, workflow repair,
+ * the repair's own build poll.
+ */
+const FETCHER_SLOTS = ["validation", "publish", "poll", "repair", "repairPoll"] as const;
+type FetcherSlot = (typeof FETCHER_SLOTS)[number];
+let fetchers: Record<FetcherSlot, FetcherStub> = {} as Record<FetcherSlot, FetcherStub>;
 let fetcherCallIndex = 0;
 const makeFetcher = (): FetcherStub => ({ data: undefined, state: "idle", submit: vi.fn() });
-function resetFetchers() { fetchers = [makeFetcher(), makeFetcher(), makeFetcher()]; fetcherCallIndex = 0; }
+function resetFetchers() {
+  fetchers = {
+    validation: makeFetcher(),
+    publish: makeFetcher(),
+    poll: makeFetcher(),
+    repair: makeFetcher(),
+    repairPoll: makeFetcher(),
+  };
+  fetcherCallIndex = 0;
+}
 
 const stableT = (key: string, opts?: Record<string, unknown>) =>
   opts && typeof opts.repo === "string" ? `${key} ${opts.repo}` : key;
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: stableT }) }));
 
 vi.mock("react-router", () => ({
-  useFetcher: () => { const f = fetchers[fetcherCallIndex % fetchers.length]; fetcherCallIndex += 1; return f; },
+  useFetcher: () => { const f = fetchers[FETCHER_SLOTS[fetcherCallIndex % FETCHER_SLOTS.length]]; fetcherCallIndex += 1; return f; },
   redirect: (url: string) => ({ url }),
   useOutletContext: () => ({}),
   useRouteLoaderData: () => ({ repoUnavailable: true, repoFullName: "owner/repo" }),
   Link: ({ children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a {...rest}>{children}</a>,
 }));
 
-vi.mock("~/hooks/use-role", () => ({ useIsConvenor: () => true, useRole: () => "convenor" }));
+vi.mock("~/hooks/use-role", () => ({ useIsConvenor: () => true, useIsPublisher: () => true, useRole: () => "convenor" }));
 vi.mock("~/hooks/use-collaboration", () => ({
   useCollaborationContext: () => ({ provider: null, isPublishing: false, publishError: false, remoteCollaborators: [], ydoc: null }),
 }));
@@ -54,6 +77,7 @@ function makeLoaderData() {
       github_pages_url: "https://owner.github.io/repo", installation_id: 123 },
     changeSummary: { stories: empty, objects: empty, pages: empty, glossary: empty,
       settings: { changed: [] }, landing: { changed: false }, navigation: { changed: false },
+      objectOrder: { changed: false },
       backCompatBootstrap: false, isUpToDate: false },
     user: { github_login: "u", github_name: "U", github_email: "u@e.co" },
   };
@@ -74,6 +98,6 @@ describe("Publish page — repo unavailable", () => {
     expect(screen.getByText("repo_unavailable.manage_cta")).toBeTruthy();
     expect(container.querySelector("a[href='https://github.com/settings/installations']")).toBeTruthy();
     expect(screen.queryByTestId("change-summary")).toBeNull();
-    expect(fetchers[0].submit).not.toHaveBeenCalled();
+    expect(fetchers.validation.submit).not.toHaveBeenCalled();
   });
 });
