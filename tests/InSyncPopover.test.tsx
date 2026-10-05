@@ -5,7 +5,7 @@
  * commit, synced-from-repo), the ok icon swatch tokens, the `View published
  * site` ghost button, and graceful fail-open when the commit message is absent.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -40,6 +40,7 @@ const fullPayload = {
   head_sha: "abc1234def5678",
   last_synced_at: "2026-05-20T10:05:00Z",
   commitMessage: "Publish stories",
+  blobBytes: null,
 };
 
 function renderPopover(props: Parameters<typeof InSyncPopover>[0]) {

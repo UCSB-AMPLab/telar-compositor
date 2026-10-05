@@ -18,7 +18,7 @@
  * asserts the blob UPDATE was still persisted via a standalone `.run()`
  * independent of the failing batch.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -38,6 +38,9 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 import { ProjectCollaborationDO } from "../workers/collaboration";
+import { markLoaded } from "./helpers/claimed-document";
+import { trackBaseRow } from "./helpers/base-row";
+import { checkD1Bind } from "./helpers/d1-memory";
 
 const TEST_PROJECT_ID = 42;
 
@@ -54,6 +57,7 @@ interface RunCall {
  */
 function makeRejectingDb() {
   const runCalls: RunCall[] = [];
+  const row = trackBaseRow();
   let lastRowId = 100;
   let batchCalls = 0;
 
@@ -61,18 +65,20 @@ function makeRejectingDb() {
     const stmt = {
       sql,
       bind(..._args: unknown[]) {
+        checkD1Bind(sql, _args);
         return stmt;
       },
       async run() {
         runCalls.push({ sql });
+        row.note(sql);
         lastRowId += 1;
-        return { meta: { last_row_id: lastRowId }, success: true };
+        return { meta: { last_row_id: lastRowId, changes: 1 }, success: true };
       },
       async all<T = unknown>() {
         return { results: [] as T[], success: true };
       },
       async first<T = unknown>() {
-        return null as T | null;
+        return (row.read(sql) ?? null) as T | null;
       },
     };
     return stmt;
@@ -102,9 +108,15 @@ function makeCtx() {
     blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
     storage: {
       getAlarm: async () => (alarms.length ? alarms[alarms.length - 1] : null),
+      // The loader and the snapshot read the generation from storage, and a
+      // load lists the log prefix before it tags an untagged blob.
+      get: async (key: string) => (key === "docGeneration" ? 0 : undefined),
+      put: async () => {},
+      list: async () => new Map(),
       setAlarm: async (t: number) => {
         alarms.push(t);
       },
+      delete: async () => 0,
     },
     acceptWebSocket: vi.fn(),
   };
@@ -129,7 +141,7 @@ function makeDoReadyToSnapshot() {
     env as unknown as Env,
   );
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
-  (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+  markLoaded(doInstance);
 
   // Seed a brand-new story (no D1 id yet) into the DO's live Y.Doc.
   const ydoc = (doInstance as unknown as { ydoc: Y.Doc }).ydoc;

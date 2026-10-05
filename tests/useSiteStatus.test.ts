@@ -5,6 +5,8 @@
  * deriveState() is tested exhaustively for precedence; the Saving timer is
  * tested through the hook with fake timers and mocked react-router /
  * use-collaboration signals.
+ *
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -16,6 +18,7 @@ import {
   type DeriveStateInput,
 } from "~/components/features/site-status/useSiteStatus";
 import type { DerivedGithubStatus } from "~/lib/github-status.server";
+import type { PersistenceHaltResult } from "~/hooks/use-persistence-halt";
 
 // ---------------------------------------------------------------------------
 // Mocks for the hook-level (timer) tests
@@ -44,6 +47,26 @@ vi.mock("~/hooks/use-collaboration", () => ({
 // a real fetch. Defaults to undefined (poll not yet returned).
 vi.mock("~/hooks/use-github-status-poll", () => ({
   useGithubStatusPoll: () => mockPollData,
+}));
+
+// The halt trigger is the hook's one I/O input. It is stubbed here so the
+// precedence and overlay tests stay free of timers and fetches of their own;
+// its own behaviour is proved in tests/use-persistence-halt.test.tsx.
+let mockPersistence: PersistenceHaltResult = {
+  halted: false,
+  lastKnownHalt: null,
+  stateUnreadable: false,
+  confirmedGeneration: null,
+  lastReadHalted: null,
+  haltedAgain: false,
+  outcome: null,
+  submitting: false,
+  checkAgain: vi.fn(),
+  restore: vi.fn(),
+  dismissOutcome: vi.fn(),
+};
+vi.mock("~/hooks/use-persistence-halt", () => ({
+  usePersistenceHalt: () => mockPersistence,
 }));
 
 function saveFetcher(intent: string) {
@@ -133,11 +156,79 @@ describe("deriveState (precedence)", () => {
   it("is 'in-sync' when neither isPublishing nor isBuilding is set", () => {
     expect(deriveState({ ...BASE, isPublishing: false, isBuilding: false })).toBe("in-sync");
   });
+
+  it("returns 'persistence-halted' when halted is the only input", () => {
+    expect(deriveState({ ...BASE, halted: true })).toBe("persistence-halted");
+  });
+
+  it("returns 'persistence-halted' over every other signal at once", () => {
+    expect(
+      deriveState({
+        halted: true,
+        repoUnavailable: true,
+        isPublishing: true,
+        isBuilding: true,
+        headDiverged: true,
+        unpublishedCount: 12,
+        needsUpgrade: true,
+      }),
+    ).toBe("persistence-halted");
+  });
+
+  it.each([
+    ["repoUnavailable", { repoUnavailable: true }, "repo-unavailable"],
+    ["isPublishing", { isPublishing: true }, "publishing"],
+    ["isBuilding", { isBuilding: true }, "publishing"],
+    ["headDiverged", { headDiverged: true }, "out-of-sync"],
+    ["unpublishedCount", { unpublishedCount: 4 }, "unpublished"],
+    ["needsUpgrade", { needsUpgrade: true }, "upgrade"],
+    ["nothing", {}, "in-sync"],
+  ])("no input other than halted produces it: %s", (_label, input, expected) => {
+    expect(deriveState({ ...BASE, ...(input as DeriveStateInput) })).toBe(expected);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // useSiteStatus — Saving overlay timer (1500ms)
 // ---------------------------------------------------------------------------
+
+describe("deriveState — the member's own repository invitation", () => {
+  it("sits below out-of-sync and above unpublished", () => {
+    expect(deriveState({ ...BASE, invitationOpen: true, unpublishedCount: 3, needsUpgrade: true })).toBe("repo-invitation");
+    expect(deriveState({ ...BASE, invitationOpen: true, headDiverged: true })).toBe("out-of-sync");
+  });
+
+  it("yields to publishing and repo-unavailable, and is absent without an invitation", () => {
+    expect(deriveState({ ...BASE, invitationOpen: true, isPublishing: true })).toBe("publishing");
+    expect(deriveState({ ...BASE, invitationOpen: true, repoUnavailable: true })).toBe("repo-unavailable");
+    expect(deriveState({ ...BASE, invitationOpen: false })).toBe("in-sync");
+  });
+});
+
+describe("useSiteStatus — the invitation comes from the poll", () => {
+  const stage = (stage: "pending" | "lapsed" | "access" | "none") => ({
+    repoUnavailable: false, headDiverged: false, needsUpgrade: false, isBelowMinimum: false,
+    latestTelarTag: null, unpublishedCount: 0, ownRepoAccess: { stage, invitationUrl: "https://github.com/o/r/invitations" },
+  });
+  afterEach(() => { mockPollData = undefined; });
+
+  it.each(["pending", "lapsed"] as const)("a %s invitation raises the state and is handed on", (s) => {
+    mockPollData = stage(s);
+    const { result } = renderHook(() => useSiteStatus());
+    expect(result.current.state).toBe("repo-invitation");
+    expect(result.current.ownRepoAccess).toEqual({ stage: s, invitationUrl: "https://github.com/o/r/invitations" });
+  });
+
+  it.each(["access", "none"] as const)("a member whose stage is %s sees nothing", (s) => {
+    mockPollData = stage(s);
+    expect(renderHook(() => useSiteStatus()).result.current.state).toBe("in-sync");
+  });
+
+  it("no ownRepoAccess in the answer sees nothing", () => {
+    mockPollData = { ...stage("pending"), ownRepoAccess: null };
+    expect(renderHook(() => useSiteStatus()).result.current.state).toBe("in-sync");
+  });
+});
 
 describe("useSiteStatus saving overlay", () => {
   beforeEach(() => {
@@ -147,6 +238,7 @@ describe("useSiteStatus saving overlay", () => {
     mockIsPublishing = false;
     mockIsBuilding = false;
     mockPollData = undefined;
+    mockPersistence = { ...mockPersistence, halted: false };
   });
 
   afterEach(() => {
@@ -238,6 +330,7 @@ describe("useSiteStatus — poll count overrides loader proxy", () => {
     mockIsPublishing = false;
     mockIsBuilding = false;
     mockPollData = undefined;
+    mockPersistence = { ...mockPersistence, halted: false };
   });
 
   afterEach(() => {
@@ -320,5 +413,99 @@ describe("useSiteStatus — poll count overrides loader proxy", () => {
     const { result } = renderHook(() => useSiteStatus());
     expect(result.current.count).toBe(7);
     expect(result.current.state).toBe("unpublished");
+  });
+});
+
+describe("useSiteStatus — the count is known only once the live status answers", () => {
+  beforeEach(() => {
+    mockLoaderData = { headDiverged: false, needsUpgrade: false, unpublishedCount: 8 };
+    mockPollData = undefined;
+  });
+
+  it("countKnown is false while only the loader's stand-in exists", () => {
+    const { result } = renderHook(() => useSiteStatus());
+    expect(result.current.countKnown).toBe(false);
+    expect(result.current.state).toBe("unpublished");
+  });
+
+  it("countKnown is false when the poll answers without a count", () => {
+    mockPollData = {
+      repoUnavailable: false,
+      headDiverged: false,
+      needsUpgrade: false,
+      isBelowMinimum: false,
+      latestTelarTag: null,
+    };
+    const { result } = renderHook(() => useSiteStatus());
+    expect(result.current.countKnown).toBe(false);
+  });
+
+  it("countKnown is true, with the live number, once the poll answers", () => {
+    mockPollData = {
+      repoUnavailable: false,
+      headDiverged: false,
+      needsUpgrade: false,
+      isBelowMinimum: false,
+      latestTelarTag: null,
+      unpublishedCount: 4,
+    };
+    const { result } = renderHook(() => useSiteStatus());
+    expect(result.current.countKnown).toBe(true);
+    expect(result.current.count).toBe(4);
+  });
+});
+
+describe("useSiteStatus — the halt is a state, and Saving stays an overlay over it", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockFetchers = [];
+    mockLoaderData = { headDiverged: true, needsUpgrade: true, unpublishedCount: 3 };
+    mockIsPublishing = false;
+    mockIsBuilding = false;
+    mockPollData = undefined;
+    mockPersistence = { ...mockPersistence, halted: false };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it("derives persistence-halted from the trigger's halt over the loader's signals", () => {
+    mockPersistence = { ...mockPersistence, halted: true };
+    const { result } = renderHook(() => useSiteStatus());
+    expect(result.current.state).toBe("persistence-halted");
+  });
+
+  it("keeps Saving as an overlay on the halted state rather than replacing it", () => {
+    mockPersistence = { ...mockPersistence, halted: true };
+    mockFetchers = [saveFetcher("autosave-story-field")];
+    const { result } = renderHook(() => useSiteStatus());
+    expect(result.current.state).toBe("persistence-halted");
+    expect(result.current.saving).toBe(true);
+  });
+
+  it("returns the trigger's halt, generation and outcome unchanged", () => {
+    // The hook calls the trigger once and passes what it answers straight on;
+    // what the popover does with it is pinned in its own test.
+    const halt = { projectId: 7, reason: "log_corrupt", at: 12, generation: 3 };
+    const outcome = { kind: "stale", generation: 4 } as const;
+    mockPersistence = {
+      ...mockPersistence,
+      halted: true,
+      lastKnownHalt: halt,
+      confirmedGeneration: 3,
+      lastReadHalted: true,
+      haltedAgain: true,
+      outcome,
+      submitting: true,
+    };
+    const { result } = renderHook(() => useSiteStatus());
+    expect(result.current.persistence).toBe(mockPersistence);
+    expect(result.current.persistence.lastKnownHalt).toEqual(halt);
+    expect(result.current.persistence.confirmedGeneration).toBe(3);
+    expect(result.current.persistence.outcome).toEqual(outcome);
+    expect(result.current.persistence.haltedAgain).toBe(true);
+    expect(result.current.persistence.submitting).toBe(true);
   });
 });

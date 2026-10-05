@@ -1,32 +1,13 @@
 /**
- * Coordination helper that keeps a request-side project_config repair from being
- * silently undone by a stale collaboration Y.Doc.
+ * Read a project's saving state from its collaboration Durable Object.
  *
- * The collaboration Durable Object is the only writer to D1 for the entities it
- * owns (config included), reconciling its in-memory Y.Doc to D1 on each snapshot.
- * So when a request path writes one of those columns DIRECTLY to D1 — as
- * onboarding's `fix-site-config` does for url / baseurl / google_sheets_enabled —
- * a DO that still holds the OLD config Y.Map would overwrite the repair on its
- * next snapshot.
+ * The halted-project restore (`api.persistence.tsx`) reads the state here
+ * before it sends its own signed reset. Config repairs no longer reset the
+ * document: they go through it (`config-repair.server.ts`).
  *
- * The fix is to rebuild the Y.Doc from the repaired D1 via the DO's `/reset`
- * route (it clears the yjs_state blob and reloads from D1 rows). We only need to
- * do this when a blob actually exists: with no blob the next editor session cold-
- * starts straight from the repaired D1, so there is nothing to clobber — and we
- * avoid needlessly spinning up the DO during the common first-onboarding flow.
- *
- * Best-effort: a DO outage must never fail the config repair the caller just
- * committed to D1 and the repo. (A residual sub-second race remains if a warm
- * DO's snapshot alarm fires between the D1 write and this /reset; it is
- * negligible for the onboarding-only trigger and shares the broader sync-gate
- * question tracked for the dashboard full-sync path.)
- *
- * @version v1.3.2-beta
+ * @version v1.5.0-beta
  */
 
-import { eq } from "drizzle-orm";
-import { projects } from "~/db/schema";
-import type { getDb } from "~/lib/db.server";
 import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 
 interface CollabResetEnv {
@@ -37,29 +18,54 @@ interface CollabResetEnv {
   };
 }
 
-export async function resetCollabDocIfBlobExists(
-  db: ReturnType<typeof getDb>,
+/** What `/persistence-state` answers, passed through for a caller that reports it. */
+export interface PersistenceStateAnswer {
+  projectId: number;
+  halted: boolean | null;
+  reason?: string;
+  at?: number;
+  generation?: number;
+  /** The object's non-2xx body, present only when `halted` is null. */
+  unavailable?: string;
+}
+
+function collaborationStubFor(env: CollabResetEnv, projectId: number) {
+  return env.COLLABORATION.get(env.COLLABORATION.idFromName(String(projectId)));
+}
+
+/**
+ * Read one project's saving state through the object's read-only route.
+ *
+ * A non-2xx status is not an error here: the object is saying it cannot
+ * answer, and the answer comes back with `halted: null` rather than throwing,
+ * so a caller decides for itself whether that unreadable state blocks it.
+ */
+export async function readPersistenceState(
   env: CollabResetEnv,
   projectId: number,
-): Promise<void> {
-  const [row] = await db
-    .select({ yjs_state: projects.yjs_state })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-
-  // No live Y.Doc snapshot to diverge — the next cold start builds from the
-  // repaired D1 directly.
-  if (!row?.yjs_state) return;
-
-  try {
-    const headers = await makeInternalMarkerHeaders(projectId, env.SESSION_SECRET, "reset");
-    const stub = env.COLLABORATION.get(env.COLLABORATION.idFromName(String(projectId)));
-    await stub.fetch(
-      new Request("https://internal/reset", { method: "POST", headers }),
-    );
-  } catch {
-    // Best-effort: the D1 repair already succeeded; a DO outage must not flip the
-    // user-visible outcome. The next snapshot/reset will reconcile eventually.
+): Promise<PersistenceStateAnswer> {
+  const headers = await makeInternalMarkerHeaders(
+    projectId,
+    env.SESSION_SECRET,
+    "persistence-state",
+  );
+  const response = await collaborationStubFor(env, projectId).fetch(
+    new Request("https://internal/persistence-state", { method: "GET", headers }),
+  );
+  if (!response.ok) {
+    return { projectId, halted: null, unavailable: await response.text() };
   }
+  const body = (await response.json()) as {
+    halted: boolean;
+    reason?: string;
+    at?: number;
+    generation: number;
+  };
+  return {
+    projectId,
+    halted: body.halted,
+    reason: body.reason,
+    at: body.at,
+    generation: body.generation,
+  };
 }

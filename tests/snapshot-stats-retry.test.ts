@@ -17,7 +17,7 @@
  *   - On a failed batch the guards remain un-mutated → the next snapshot will
  *     retry the inserts.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -35,6 +35,9 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 import { ProjectCollaborationDO } from "../workers/collaboration";
+import { markLoaded } from "./helpers/claimed-document";
+import { trackBaseRow } from "./helpers/base-row";
+import { checkD1Bind } from "./helpers/d1-memory";
 
 const TEST_PROJECT_ID = 42;
 const TEST_USER_ID = 7;
@@ -51,21 +54,25 @@ function makeRejectingBatchDb() {
   let lastRowId = 200;
   let batchCalls = 0;
 
+  const row = trackBaseRow();
+
   function prepare(sql: string) {
     const stmt = {
       sql,
       bind(..._args: unknown[]) {
+        checkD1Bind(sql, _args);
         return stmt;
       },
       async run() {
+        row.note(sql);
         lastRowId += 1;
-        return { meta: { last_row_id: lastRowId }, success: true };
+        return { meta: { last_row_id: lastRowId, changes: 1 }, success: true };
       },
       async all<T = unknown>() {
         return { results: [] as T[], success: true };
       },
       async first<T = unknown>() {
-        return null as T | null;
+        return (row.read(sql) ?? null) as T | null;
       },
     };
     return stmt;
@@ -89,21 +96,25 @@ function makeRejectingBatchDb() {
 function makeSucceedingDb() {
   let lastRowId = 300;
 
+  const row = trackBaseRow();
+
   function prepare(sql: string) {
     const stmt = {
       sql,
       bind(..._args: unknown[]) {
+        checkD1Bind(sql, _args);
         return stmt;
       },
       async run() {
+        row.note(sql);
         lastRowId += 1;
-        return { meta: { last_row_id: lastRowId }, success: true };
+        return { meta: { last_row_id: lastRowId, changes: 1 }, success: true };
       },
       async all<T = unknown>() {
         return { results: [] as T[], success: true };
       },
       async first<T = unknown>() {
-        return null as T | null;
+        return (row.read(sql) ?? null) as T | null;
       },
     };
     return stmt;
@@ -128,7 +139,13 @@ function makeCtx() {
     blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
     storage: {
       getAlarm: async () => (alarms.length ? alarms[alarms.length - 1] : null),
+      // The loader and the snapshot read the generation from storage, and a
+      // load lists the log prefix before it tags an untagged blob.
+      get: async (key: string) => (key === "docGeneration" ? 0 : undefined),
+      put: async () => {},
+      list: async () => new Map(),
       setAlarm: async (t: number) => { alarms.push(t); },
+      delete: async () => 0,
     },
     acceptWebSocket: vi.fn(),
   };
@@ -162,7 +179,7 @@ function makeDoWithActivityAndSession(db: ReturnType<typeof makeRejectingBatchDb
 
   // Set required DO state
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
-  (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+  markLoaded(doInstance);
 
   // Seed a story with a real D1 id (999) into the Y.Doc — no INSERT path needed
   const ydoc = (doInstance as unknown as { ydoc: Y.Doc }).ydoc;
