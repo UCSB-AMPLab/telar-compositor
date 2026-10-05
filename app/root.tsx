@@ -12,7 +12,11 @@
  * screen with a Report-this-crash button wired into the bug-report
  * pipeline.
  *
- * @version v1.2.0-beta
+ * `Layout` also installs the document-level paste cleaning
+ * (`~/lib/paste-cleaning`) once on the client, so every plain text field on
+ * every route, onboarding included, drops the characters a Telar build rejects.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useState } from "react";
@@ -32,8 +36,11 @@ import { getLocale } from "~/i18n/i18next.server";
 import { recordError, type CapturedError } from "~/lib/error-capture";
 import { BugReportPanel } from "~/components/features/bug-report/BugReportPanel";
 import { ToastProvider } from "~/hooks/use-toast";
+import { installPasteCleaning } from "~/lib/paste-cleaning";
 
 import "~/styles/app.css";
+import { readAnotherPage } from "~/lib/unreachable-write";
+import type { ShouldRevalidateFunctionArgs } from "react-router";
 
 export const handle = { i18n: ["common", "bug-report"] };
 
@@ -56,6 +63,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
     // Error boundary context — use defaults
   }
 
+  // Client only: useEffect does not run during SSR.
+  useEffect(() => installPasteCleaning(), []);
+
   return (
     <html lang={locale} data-env={env}>
       <head>
@@ -73,6 +83,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </body>
     </html>
   );
+}
+
+/** Another page is always read, whatever a story write's answer held back (`readAnotherPage`). */
+export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
+  return readAnotherPage(args);
 }
 
 export default function App() {
