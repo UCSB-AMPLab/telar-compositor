@@ -138,7 +138,7 @@ describe("ObjectPickerDialog", () => {
   });
 
   it("highlights the current object with a distinct border class", () => {
-    const { container } = render(
+    const { baseElement: container } = render(
       <ObjectPickerDialog
         open={true}
         onClose={vi.fn()}

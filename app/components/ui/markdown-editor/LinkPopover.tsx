@@ -1,26 +1,39 @@
 /**
  * LinkPopover — inline URL input popover for link insertion in the MarkdownEditor.
  *
- * Appears absolutely positioned near the cursor when the user triggers
- * the link toolbar button or presses Cmd+K. Accepts a URL and inserts
- * a markdown link on Enter or button click.
+ * Opens under the cursor when the user triggers the link toolbar button or
+ * presses Cmd+K, placed from `anchor` in screen pixels through
+ * EditorPopover's portal, which calls `onDetach` when the cursor scrolls out
+ * of view. Accepts a URL and inserts a markdown link on Enter or button
+ * click. The selected text it shows is read back with the entities
+ * `authorText` writes decoded.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { EditorPopover, type PopoverAnchor } from "./EditorPopover";
+import { decodeWrittenEntities } from "./authorText";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
+
+export const LINK_POPOVER_WIDTH = 288;
 
 interface LinkPopoverProps {
-  position: { top: number; left: number };
+  anchor: PopoverAnchor;
   selectedText: string;
   onInsert: (url: string) => void;
   onCancel: () => void;
+  /** Called when the cursor has scrolled out of view or its editor is gone. */
+  onDetach: () => void;
 }
 
-export function LinkPopover({ position, selectedText, onInsert, onCancel }: LinkPopoverProps) {
+export function LinkPopover({ anchor, selectedText, onInsert, onCancel, onDetach }: LinkPopoverProps) {
   const { t } = useTranslation("editor");
   const [url, setUrl] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  useOverlayOpen(true);
 
   // Auto-focus the URL input on mount
   useEffect(() => {
@@ -47,14 +60,17 @@ export function LinkPopover({ position, selectedText, onInsert, onCancel }: Link
   }
 
   return (
-    <div
-      ref={popoverRef}
-      style={{ top: position.top, left: position.left }}
-      className="absolute z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-3 w-72"
+    <EditorPopover
+      anchor={anchor}
+      width={LINK_POPOVER_WIDTH}
+      onDetach={onDetach}
+      rootRef={(el) => {
+        popoverRef.current = el;
+      }}
     >
       {selectedText && (
         <p className="font-body text-xs text-gray-500 mb-2 truncate">
-          {t("link_popover.link_text")}<span className="font-medium text-charcoal">{selectedText}</span>
+          {t("link_popover.link_text")}<span className="font-medium text-charcoal">{decodeWrittenEntities(selectedText)}</span>
         </p>
       )}
       <input
@@ -83,6 +99,6 @@ export function LinkPopover({ position, selectedText, onInsert, onCancel }: Link
           {t("link_popover.insert")}
         </button>
       </div>
-    </div>
+    </EditorPopover>
   );
 }

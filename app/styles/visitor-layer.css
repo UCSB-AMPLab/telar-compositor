@@ -1,0 +1,862 @@
+/**
+ * The framing stage's visitor layers: the published story page's step card,
+ * as the framework's `_sass/_story.scss` (`.text-card`), `_typography.scss`
+ * and Bootstrap's reboot draw it, its layer panels, as `_panels.scss` and
+ * Bootstrap's `.offcanvas` draw them, and its story intro and section cards
+ * (`.story-intro`, `.title-card`), in the site's theme.
+ *
+ * The layer is laid out at the visitor's size and scaled onto the stage, so
+ * every length here is the visitor's. Colours and fonts are the theme's
+ * custom properties, which the stage sets on the layer from the site's theme
+ * file and the shipped theme's defaults (`theme-tokens.ts`).
+ *
+ * Where the card sits and how tall it may grow come from `framing-stage.ts`,
+ * written inline by StepCard, and each panel's box from `panelBox`, written
+ * inline by StagePanels; nothing here places either.
+ *
+ * The card's own padding rule inside the container queries has no ancestor
+ * container to answer it on the published page, since the card is the only
+ * container there; the same holds here, so it applies as it does there, which
+ * is never. The question's and answer's sizes do follow the card's width.
+ *
+ * @version v1.5.0-beta
+ */
+
+.visitor-layer {
+  font-family: var(--font-body);
+  color: var(--color-body);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.visitor-layer .text-card {
+  container-type: inline-size;
+  position: absolute;
+  box-sizing: border-box;
+  background: white;
+  border-radius: 3px;
+  padding: 1.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow: hidden;
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2), 0 8px 30px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+}
+
+/* The bottom card in vertical layout scrolls; the side card cuts. */
+.visitor-layer .text-card[data-placement="bottom"] {
+  overflow-y: auto;
+}
+
+.visitor-layer .text-card > :only-child {
+  margin-block: auto;
+}
+
+.visitor-layer .text-card .step-question {
+  font-family: var(--font-headings);
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--color-heading);
+  margin: 0 0 0.75rem;
+}
+
+/* Each width tier declares the answer's size in --telar-answer-base-size;
+   the answer keeps that size on every card. */
+.visitor-layer .text-card .step-answer {
+  --telar-answer-base-size: 1rem;
+  font-size: var(--telar-answer-base-size);
+  line-height: 1.6;
+  color: var(--color-body);
+}
+
+.visitor-layer .text-card .step-answer p {
+  margin: 0;
+}
+
+.visitor-layer .text-card .step-answer p + p {
+  margin-top: 10px;
+}
+
+/* An answer of more than 15 lines: the 18 it may have fit every side card
+   only at this size and with 10px between paragraphs. */
+.visitor-layer .text-card .step-answer--long {
+  font-size: calc(var(--telar-answer-base-size) * 0.9);
+}
+
+.visitor-layer .text-card a {
+  color: var(--color-link);
+  text-decoration: underline;
+}
+
+/* `<p class="mt-3">` around the trigger: Bootstrap's 1rem above and below. */
+.visitor-layer .text-card .step-actions {
+  margin: 1rem 0;
+}
+
+.visitor-layer .panel-trigger {
+  display: inline-block;
+  padding: 0.5rem 1.25rem;
+  background: var(--color-button-bg);
+  color: var(--color-button-text);
+  font-weight: 600;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+
+/* The fields that edit the card in place take the text they replace. */
+.visitor-layer .text-card .step-question input,
+.visitor-layer .text-card .step-question textarea {
+  font: inherit;
+  color: inherit;
+}
+
+@container (max-width: 480px) {
+  .visitor-layer .text-card {
+    padding: 1.3rem;
+  }
+
+  .visitor-layer .text-card .step-question {
+    font-size: 1.35rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .visitor-layer .text-card .step-answer {
+    --telar-answer-base-size: 0.95rem;
+  }
+}
+
+@container (max-width: 360px) {
+  .visitor-layer .text-card {
+    padding: 1rem;
+  }
+
+  .visitor-layer .text-card .step-question {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .visitor-layer .text-card .step-answer {
+    --telar-answer-base-size: 0.85rem;
+  }
+}
+
+/* Editor marks on the card, which the published card does not carry. */
+
+/* The card's bottom line: one element, whose text StepCard decides (the
+   words of the pencil hovered or focused, else the edit hint), so it shows
+   one text at a time. It sits in the card's bottom padding, so the card
+   keeps the height the published card has. The edit hint shows while the
+   card is hovered or holds focus, and not while a field is open; a pencil's
+   words show while their pencil is hovered or focused. Every rule that shows
+   the line names the card without a waiting draft's marker, so the marker
+   holds the line in every state, whatever the rules' specificity. */
+.visitor-layer .text-card .stage-card-hint {
+  position: absolute;
+  left: 2rem;
+  right: 2rem;
+  bottom: 0.3rem;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.visitor-layer .text-card:is(:hover, :focus-within):not(:has([data-in-place-marker], input, textarea, .cm-editor)) .stage-card-hint[data-kind="edit"] {
+  opacity: 0.7;
+}
+
+.visitor-layer .text-card:not(:has([data-in-place-marker])) .stage-card-hint[data-kind="pencil"] {
+  opacity: 1;
+}
+
+/* A field whose failed draft waits says so under its value. On the card the
+   line sits in the card's bottom padding, the hint's line, so the card keeps
+   the height the published card has. */
+.visitor-layer .text-card [data-in-place-marker] {
+  position: absolute;
+  left: 2rem;
+  right: 2rem;
+  bottom: 0.3rem;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The pencil after a question or an answer: a box of no size, placed
+   absolutely at the end of the text's last line (StepCard's FieldPencil), so
+   the pencil stands just past the last word, centred on that line, and no
+   line of the text moves. */
+.visitor-layer .text-card .stage-field-pencil {
+  position: absolute;
+  width: 0;
+  height: 0;
+  white-space: nowrap;
+}
+
+.visitor-layer .text-card .stage-field-pencil > [data-in-place] {
+  margin-left: 0.25rem;
+  transform: translateY(-50%);
+}
+
+/* The published card's ceiling: past this line its text is cut. */
+.visitor-layer .card-ceiling {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed rgba(51, 51, 51, 0.55);
+  pointer-events: none;
+}
+
+/* The answer's word count on the image: light text on the dark chip. */
+.stage-line-counter [data-testid="answer-line-count"],
+.stage-line-counter [data-testid="answer-length-status"] {
+  color: rgba(255, 255, 255, 0.9);
+  text-align: left;
+}
+
+/* The layer panels, as the framework's `_sass/_panels.scss` and Bootstrap's
+   `.offcanvas` draw them, in the panel layer over the stage (StagePanels).
+   Where each panel stands and how large it is come from `panelBox`, written
+   inline; nothing here places a panel. The panel layer takes no pointer
+   events and each panel takes its own. */
+.visitor-layer .offcanvas {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  outline: 0;
+  font-size: 1.05rem;
+  line-height: 1.8;
+  animation: stage-panel-in 0.3s ease-in-out;
+}
+
+/* Bootstrap's `.offcanvas-end` enters from the right edge of the window. */
+@keyframes stage-panel-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+.visitor-layer .stage-panel-1 {
+  background: var(--color-panel-layer1-bg);
+  color: var(--color-panel-layer1-text);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+}
+
+.visitor-layer .stage-panel-2 {
+  background: var(--color-panel-layer2-bg);
+  color: var(--color-panel-layer2-text);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+}
+
+.visitor-layer .offcanvas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2rem 2rem 1rem 2rem;
+}
+
+.visitor-layer .offcanvas-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 2rem;
+}
+
+/* Positioned, so the title's pencil is placed against the heading and moves
+   with it as the panel's body scrolls. */
+.visitor-layer .offcanvas-title {
+  position: relative;
+  font-family: var(--font-headings);
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 0 auto 1.5rem;
+  max-width: 650px;
+  color: inherit;
+}
+
+.visitor-layer .stage-panel-2 .offcanvas-title {
+  max-width: 600px;
+}
+
+/* The title's pencil, placed as the card's are: a box of no size at the end
+   of the title's last line. */
+.visitor-layer .offcanvas-title .stage-field-pencil {
+  position: absolute;
+  width: 0;
+  height: 0;
+  white-space: nowrap;
+}
+
+.visitor-layer .offcanvas-title .stage-field-pencil > [data-in-place] {
+  margin-left: 0.25rem;
+  transform: translateY(-50%);
+}
+
+/* The title's field takes the heading's type, as the card's question's does. */
+.visitor-layer .offcanvas-title input {
+  font: inherit;
+  color: inherit;
+}
+
+/* `.panel-trigger` as `_panels.scss` sizes it; the card's is smaller. */
+.visitor-layer .offcanvas .panel-trigger {
+  border: none;
+  font-size: 0.9rem;
+}
+
+/* Layer 2's button at the end of layer 1's content: `<p>` around it. */
+.visitor-layer .stage-panel-next {
+  max-width: 650px;
+  margin: 1rem auto;
+}
+
+/* The editor's button that adds layer 2, where layer 2's button would be. */
+.visitor-layer .stage-panel-add {
+  padding: 0.5rem 1.25rem;
+  border: 2px dashed currentColor;
+  border-radius: 20px;
+  background: transparent;
+  color: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.visitor-layer .stage-panel-add:hover {
+  opacity: 1;
+}
+
+/* `#panel-layer1-back`: a pill adapted to the panel's background. */
+.visitor-layer .stage-panel-back {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.visitor-layer .stage-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+/* Bootstrap's `.btn-close`, inverted on the panels as the site's are. */
+.visitor-layer .btn-close {
+  box-sizing: content-box;
+  width: 1em;
+  height: 1em;
+  padding: 0.25em;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23000'%3e%3cpath d='M.293.293a1 1 0 0 1 1.414 0L8 6.586 14.293.293a1 1 0 1 1 1.414 1.414L9.414 8l6.293 6.293a1 1 0 0 1-1.414 1.414L8 9.414l-6.293 6.293a1 1 0 0 1-1.414-1.414L6.586 8 .293 1.707a1 1 0 0 1 0-1.414z'/%3e%3c/svg%3e") center / 1em auto no-repeat;
+  filter: brightness(0) invert(1);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.visitor-layer .btn-close:hover {
+  opacity: 1;
+}
+
+/* The editor's delete button beside the close button, which the site has not. */
+.visitor-layer .stage-panel-delete {
+  display: inline-flex;
+  padding: 0.25rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.visitor-layer .stage-panel-delete:hover {
+  opacity: 1;
+}
+
+.visitor-layer .stage-panel-delete[aria-disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* The vertical layout's sheets: the header floats over the scrolling body,
+   and the close button alone stands in it (`_panels.scss` 600-640). */
+.visitor-layer .stage-panel[data-sheet] .offcanvas-header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 10;
+  padding: 1rem;
+}
+
+.visitor-layer .stage-panel[data-sheet] .offcanvas-body {
+  padding: 1.5rem;
+}
+
+/* A covered panel is inert (StagePanels), which does not change how it looks,
+   and the panel over it leaves a strip of it in view. Its controls are hidden
+   once the panel over it has slid in, and return as soon as it leaves:
+   `_panels.scss` at a698d09d,
+   `.offcanvas[inert] :is(button, a, [tabindex]:not([tabindex="-1"]))`. The
+   editor's panel heading holds the title's in-place text block as a direct
+   child, which is focusable but is the heading the reader sees, so it stays;
+   the title's pencil, in its own span, is hidden with the other controls.
+   The content's block is focusable too and is the text the reader sees, so
+   it stays, and so do the links in its text (PanelRendering marks them),
+   which the site's rule hides nowhere but in a covered panel's controls;
+   a widget's controls, inside the block, are hidden. */
+.visitor-layer .offcanvas[inert] :is(button, a, [tabindex]:not([tabindex="-1"])):not(.offcanvas-title > [data-in-place], [data-panel-content], [data-prose-link]) {
+  visibility: hidden;
+  transition: visibility 0s linear 0.3s;
+}
+
+/* The panel's content as the site draws it: its text at a reading width,
+   centred, narrower on layer 2, and its widgets at the same width
+   (`_panels.scss` at 808565be). */
+.visitor-layer .stage-panel-text {
+  cursor: text;
+}
+
+.visitor-layer .stage-panel-text :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6),
+.visitor-layer .stage-panel-text :is(.telar-widget-accordion, .telar-widget-carousel, .telar-widget-tabs, .telar-widget-bibliography) {
+  max-width: 650px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.visitor-layer .stage-panel-2 .stage-panel-text :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6),
+.visitor-layer .stage-panel-2 .stage-panel-text :is(.telar-widget-accordion, .telar-widget-carousel, .telar-widget-tabs, .telar-widget-bibliography) {
+  max-width: 600px;
+}
+
+/* The page's own rules for text in a panel, which the editor's reset would
+   otherwise take away: Bootstrap 5.3's reboot for headings, paragraphs,
+   lists and blockquotes (the site loads it; `_reboot.scss`), then the
+   framework's panel rules over it, `_panels.scss` at 808565be: the h1's
+   spacing (146-148), footnotes (328-392), blockquotes (394-424), links
+   (426-436), images and figures (438-470), glossary links (297-326). The
+   heading sizes are the reboot's at its widest, where its h1 settles at 2.5rem. */
+.visitor-layer .stage-panel-text :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-headings);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.visitor-layer .stage-panel-text h1 { font-size: 2.5rem; margin-bottom: 1.5rem; }
+.visitor-layer .stage-panel-text h2 { font-size: 2rem; }
+.visitor-layer .stage-panel-text h3 { font-size: 1.75rem; }
+.visitor-layer .stage-panel-text h4 { font-size: 1.5rem; }
+.visitor-layer .stage-panel-text h5 { font-size: 1.25rem; }
+.visitor-layer .stage-panel-text h6 { font-size: 1rem; }
+
+.visitor-layer .stage-panel-text p {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+/* Lists in the text; a widget's navigation list (the tabs' `.nav`) keeps
+   Bootstrap's own rules (panel-bootstrap.css). */
+.visitor-layer .stage-panel-text :is(ul, ol):not(.nav) {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  padding-left: 2rem;
+}
+
+.visitor-layer .stage-panel-text ul:not(.nav) { list-style: disc; }
+.visitor-layer .stage-panel-text ol:not(.nav) { list-style: decimal; }
+.visitor-layer .stage-panel-text :is(ul, ol) :is(ul, ol):not(.nav) { margin-bottom: 0; }
+
+.visitor-layer .stage-panel-text :is(strong, b) { font-weight: bolder; }
+.visitor-layer .stage-panel-text :is(em, i) { font-style: italic; }
+
+.visitor-layer .stage-panel-text a {
+  color: var(--color-link);
+  text-decoration: underline;
+}
+
+.visitor-layer .stage-panel-text blockquote {
+  margin: 1.5rem 0;
+  padding: 1rem 1.5rem;
+  border-left: 4px solid;
+  font-style: italic;
+  position: relative;
+}
+
+.visitor-layer .stage-panel-1 .stage-panel-text blockquote {
+  border-left-color: var(--color-heading);
+  background: color-mix(in srgb, var(--color-heading) 5%, transparent);
+  color: var(--color-heading);
+}
+
+.visitor-layer .stage-panel-2 .stage-panel-text blockquote {
+  border-left-color: var(--color-panel-layer1-bg);
+  background: color-mix(in srgb, var(--color-panel-layer1-bg) 10%, transparent);
+  color: var(--color-panel-layer2-text);
+}
+
+.visitor-layer .stage-panel-text blockquote p {
+  margin-bottom: 0;
+}
+
+.visitor-layer .stage-panel-text a.footnote-ref {
+  font-size: 0.75em;
+  vertical-align: super;
+  line-height: 0;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0 0.15em;
+}
+
+.visitor-layer .stage-panel-text .footnote hr {
+  margin: 2.5rem 0 1.5rem 0;
+  border: 0;
+  border-top: 2px solid rgba(0, 0, 0, 0.1);
+  opacity: 0.5;
+}
+
+.visitor-layer .stage-panel-2 .stage-panel-text .footnote hr {
+  border-top-color: rgba(255, 255, 255, 0.2);
+}
+
+.visitor-layer .stage-panel-text .footnote :is(p, li) {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin-bottom: 0.75rem;
+  opacity: 0.9;
+}
+
+.visitor-layer .stage-panel-text a.footnote-backref {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.visitor-layer .stage-panel-text img {
+  max-width: 100%;
+  max-height: 80vh;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  margin: 1rem auto;
+}
+
+.visitor-layer .stage-panel-text .telar-image-figure {
+  display: block;
+  margin: 1rem auto;
+  text-align: center;
+}
+
+.visitor-layer .stage-panel-text .telar-image-figure img {
+  margin: 0 auto 0.25rem auto;
+}
+
+.visitor-layer .stage-panel-text .telar-image-caption {
+  font-size: 1rem;
+  opacity: 0.9;
+  margin: 0.25rem auto 0;
+  text-align: center;
+  display: block;
+  max-width: 70%;
+  line-height: 1.2;
+  font-weight: 400;
+}
+
+/* The site's glossary colours where the theme names them; the stage sets
+   no glossary panel colours of its own. */
+.visitor-layer .stage-panel-text a.glossary-inline-link:not(.glossary-callout) {
+  background-color: var(--color-panel-glossary-bg, rgba(0, 0, 0, 0.08));
+  color: var(--color-on-panel-glossary, inherit);
+  padding: 0.02em 0.4em;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 0.95em;
+  display: inline-block;
+}
+
+.visitor-layer .stage-panel-text .glossary-link-error {
+  background-color: #fff3cd;
+  color: #856404;
+  padding: 0.02em 0.4em;
+  border-radius: 6px;
+  border: 1px solid #ffc107;
+  font-size: 0.95em;
+  display: inline-block;
+}
+
+/* The glossary callout as `_widgets.scss` draws it (at 93c70bdd), floated
+   in the text at the edge of its column, in the glossary colours the inline
+   link takes here; its icon takes the accent colour, the theme's link
+   colour. The site's rule for windows under 576px wide, which sets the box
+   full width in the flow, answers the browser's window, not the visitor's,
+   and is not mirrored. The general link rule above is outranked rather than
+   excluded, as the site excludes it. */
+.visitor-layer .offcanvas-body { --glossary-callout-column: 650px; }
+.visitor-layer .stage-panel-2 .offcanvas-body { --glossary-callout-column: 600px; }
+
+.visitor-layer .stage-panel-text a.glossary-callout {
+  float: right;
+  clear: right;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  width: auto;
+  max-width: 290px;
+  margin: 0.35rem max(0px, calc((100% - var(--glossary-callout-column)) / 2)) 0.9rem 1.4rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  background: var(--color-panel-glossary-bg, rgba(0, 0, 0, 0.08));
+  color: var(--color-on-panel-glossary, inherit);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  font-size: 1rem;
+  line-height: 1.3;
+  text-align: left;
+  text-decoration: none;
+}
+
+.visitor-layer .stage-panel-text a.glossary-callout--left {
+  float: left;
+  clear: left;
+  margin: 0.35rem 1.4rem 0.9rem max(0px, calc((100% - var(--glossary-callout-column)) / 2));
+}
+
+.visitor-layer .stage-panel-text a.glossary-callout:focus-visible {
+  outline: 2px solid var(--color-accent, var(--color-link));
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .visitor-layer .stage-panel-text a.glossary-callout:hover {
+    opacity: 0.9;
+  }
+}
+
+.visitor-layer .stage-panel-text .glossary-callout-icon {
+  flex: none;
+  width: 1.45rem;
+  height: 1.45rem;
+  margin-top: 0.1rem;
+  color: var(--color-accent, var(--color-link));
+}
+
+.visitor-layer .stage-panel-text .glossary-callout-text {
+  display: block;
+  min-width: 0;
+}
+
+.visitor-layer .stage-panel-text .glossary-callout-kind {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.visitor-layer .stage-panel-text .glossary-callout-title {
+  display: block;
+  font-family: var(--font-headings);
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+
+.visitor-layer .stage-panel-text .glossary-callout-arrow {
+  flex: none;
+  align-self: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-left: auto;
+  opacity: 0.5;
+}
+
+/* The text that holds a callout closes below it. */
+.visitor-layer .stage-panel-text [data-panel-prose]::after {
+  content: "";
+  display: block;
+  clear: both;
+}
+
+/* The story intro (the title card) and the section cards, as the framework's
+   `_sass/_story.scss` draws `.story-intro`, `.intro-floating-card`,
+   `.story-intro--toc`, `.intro-toc` and `.title-card`, with Bootstrap's
+   reboot margins on their headings and paragraphs. Both fill the visitor's
+   window and frame nothing. A section card is drawn as the active card, in
+   place: the stage shows one card at a time, so the framework's slide in
+   from below has nothing to slide over. Both take pointer events, since there
+   is no image under them to reach.
+
+   The published page centres the card in a window that clips it
+   (`.story-container`, `overflow: hidden`), so a card taller than the window
+   loses its top and bottom there. Here the card scrolls instead, so that
+   every field on it can be reached: it is centred by auto margins, which
+   centre it exactly as the framework's flex centring does while it fits and
+   fall to nothing once it does not, leaving its top in reach. */
+.visitor-layer :is(.story-intro, .title-card) {
+  position: absolute;
+  inset: 0;
+  background: #f5f7fa;
+  display: flex;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+.visitor-layer :is(.intro-floating-card, .title-card-inner) {
+  position: relative;
+  margin: auto;
+  box-sizing: border-box;
+  text-align: center;
+  max-width: 550px;
+  width: 90%;
+  padding: 2.5rem 3rem;
+}
+
+.visitor-layer :is(.intro-title, .title-card-heading) {
+  font-family: var(--font-headings);
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--color-heading);
+  line-height: 1.2;
+  margin: 0 0 0.5rem;
+}
+
+.visitor-layer .intro-subtitle {
+  font-family: var(--font-headings);
+  font-size: 1.25rem;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--color-heading);
+  margin: 0 0 0.75rem;
+}
+
+.visitor-layer .intro-byline {
+  font-size: 1rem;
+  color: #5a6c7d;
+  margin: 0 0 0.75rem;
+  font-weight: 400;
+}
+
+.visitor-layer .intro-hint {
+  margin-top: 1.5rem;
+  font-size: 0.9rem;
+  color: #9aabbf;
+}
+
+.visitor-layer .intro-hint small {
+  font-size: 0.875em;
+}
+
+.visitor-layer .title-card-body {
+  font-size: 1.1rem;
+  color: #5a6c7d;
+  line-height: 1.6;
+}
+
+/* The rendered answer's paragraphs, with Bootstrap's reboot margin, as on the
+   step card. */
+.visitor-layer .title-card-body p {
+  margin: 0 0 1rem;
+}
+
+/* With the section list on, the intro takes the layer 2 panel's colour. */
+.visitor-layer .story-intro--toc {
+  background: var(--color-panel-layer2-bg);
+  padding-top: 100px;
+}
+
+.visitor-layer .story-intro--toc .intro-title {
+  color: var(--color-panel-layer2-text);
+}
+
+.visitor-layer .story-intro--toc :is(.intro-subtitle, .intro-byline) {
+  color: var(--color-panel-layer2-text);
+  opacity: 0.85;
+}
+
+.visitor-layer .story-intro--toc .intro-hint {
+  color: var(--color-panel-layer2-text);
+  opacity: 0.5;
+}
+
+.visitor-layer .intro-toc {
+  margin-top: 3.5rem;
+  text-align: center;
+}
+
+.visitor-layer .intro-toc-heading {
+  font-family: var(--font-headings);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--color-panel-layer2-text);
+  opacity: 0.5;
+  margin: 0 0 0.75rem;
+}
+
+.visitor-layer .intro-toc ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.visitor-layer .intro-toc li {
+  margin-bottom: 0.4rem;
+}
+
+.visitor-layer .intro-toc-link {
+  color: var(--color-panel-layer2-text);
+  font-family: var(--font-headings);
+  font-size: 1.05rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+/* The fields that edit the cards in place take the text they replace. */
+.visitor-layer :is(.intro-floating-card, .title-card-inner) :is(input, textarea) {
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+}
+
+/* The editor's hint, under the card's content and out of its flow, so the
+   content keeps the place the published page gives it. It shows while the
+   card is hovered or holds focus, and not while a field is open. */
+.visitor-layer .stage-intro-hint {
+  position: absolute;
+  top: calc(100% - 2rem);
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 13px;
+  line-height: 1.2;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.visitor-layer :is(.story-intro, .title-card):is(:hover, :focus-within):not(:has(input, textarea)) .stage-intro-hint {
+  opacity: 0.75;
+}
+
+.visitor-layer .story-intro--toc .stage-intro-hint {
+  color: var(--color-panel-layer2-text);
+}

@@ -4,28 +4,23 @@
  * Escapes the app shell's `p-6` padding with `-m-6` to take the full available
  * height below the header + tab nav, leaving calc(100dvh - 6rem) for the editor.
  *
- * Three responsive tiers (mobile-first):
- *  - Phone (< sm): steps live in a slide-over drawer; the narrative and viewer
- *    stack vertically (narrative on top, image below) and the region scrolls.
- *  - Tablet portrait (sm–lg): steps drawer + narrative and viewer side-by-side.
- *  - Desktop / landscape (lg+): the classic three columns — static 200px step
- *    sidebar + narrative (1/3) + viewer (remainder).
- *
- * When `hideViewer` is true (title card) the narrative fills the content area
- * and no viewer pane is shown.
+ * Two parts beside the toolbar bar: the step list and the stage. At `lg` and
+ * above the step list is a static 200px sidebar; below it, a slide-over
+ * drawer. The stage slot takes the rest of the area, whatever it holds: the
+ * framing stage for a step, or the title and section cards. The published
+ * page's own layout breakpoints decide only what the stage draws, never
+ * whether the sidebar shows.
  *
  * On a phone held in portrait (< sm, coarse pointer) a dismissible hint nudges
- * the user to rotate to landscape, where crossing the `sm` breakpoint promotes
- * the stacked layout to the side-by-side Write/View columns. The hint only
- * shows where rotating actually upgrades the layout — i.e. when the viewer is
- * present — and stays dismissed for the rest of the session.
+ * the user to rotate to landscape. It shows only while the stage frames a
+ * step (`framing`), and stays dismissed for the rest of the session.
  *
  * Once in `landscape-compact` (phone landscape: short + touch) the surrounding
  * shell slims the header and hides the tab nav, so this shell reclaims that
  * space by growing to `100dvh - 2.75rem` (header only) instead of the default
  * `100dvh - 6rem` (header + tab nav).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import React, { useState } from "react";
@@ -39,12 +34,12 @@ const ROTATE_HINT_DISMISSED_KEY = "telar:editor:rotate-hint-dismissed";
 interface EditorShellProps {
   storyTitle: string;
   sidebar: React.ReactNode;
-  narrative: React.ReactNode;
-  viewer: React.ReactNode;
-  hideViewer?: boolean;
+  stage: React.ReactNode;
+  /** The stage frames a step, which is when rotating a phone is worth suggesting. */
+  framing?: boolean;
 }
 
-export function EditorShell({ storyTitle, sidebar, narrative, viewer, hideViewer }: EditorShellProps) {
+export function EditorShell({ storyTitle, sidebar, stage, framing }: EditorShellProps) {
   const { t } = useTranslation("editor");
   // Open the steps drawer by default so its importance is obvious on entering
   // the editor. It only renders below `lg` (the desktop sidebar is always
@@ -53,9 +48,8 @@ export function EditorShell({ storyTitle, sidebar, narrative, viewer, hideViewer
   const [drawerOpen, setDrawerOpen] = useState(true);
 
   // Rotate-to-landscape nudge: only a phone-sized portrait touch screen, and
-  // only while the viewer is on screen (where rotating swaps the cramped stack
-  // for side-by-side columns). Dismissal persists for the session so it never
-  // nags — once the user rotates, the media query stops matching anyway.
+  // only while a step is framed. Dismissal persists for the session so it
+  // never nags — once the user rotates, the media query stops matching anyway.
   const isPortraitPhone = useMediaQuery(
     "(max-width: 639px) and (orientation: portrait) and (pointer: coarse)"
   );
@@ -68,7 +62,7 @@ export function EditorShell({ storyTitle, sidebar, narrative, viewer, hideViewer
       return false;
     }
   });
-  const showRotateHint = isPortraitPhone && !hideViewer && !rotateHintDismissed;
+  const showRotateHint = isPortraitPhone && Boolean(framing) && !rotateHintDismissed;
   const dismissRotateHint = () => {
     setRotateHintDismissed(true);
     try {
@@ -165,27 +159,8 @@ export function EditorShell({ storyTitle, sidebar, narrative, viewer, hideViewer
           {sidebar}
         </div>
 
-        {/* Content. Phone (< sm): narrative and viewer STACK and the region
-            scrolls. Tablet+ (sm–lg): side-by-side columns. Desktop (lg+): the
-            static sidebar above + narrative (1/3) + viewer. Wrapped so the
-            absolute steps drawer stays put while this region scrolls on phones. */}
-        {hideViewer ? (
-          /* Title card: narrative fills remaining space */
-          <div className="flex-1 min-w-0 overflow-y-auto">{narrative}</div>
-        ) : (
-          <div className="flex flex-1 min-w-0 flex-col sm:flex-row overflow-y-auto sm:overflow-hidden">
-            {/* Narrative (Text) */}
-            <div className="sm:basis-1/2 lg:basis-1/3 sm:shrink-0 sm:overflow-y-auto">
-              {narrative}
-            </div>
-
-            {/* Viewer (Image) — fixed height when stacked so it stays usable;
-                fills its column on tablet and up. */}
-            <div className="relative bg-charcoal-deep min-h-[60dvh] sm:min-h-0 sm:flex-1">
-              {viewer}
-            </div>
-          </div>
-        )}
+        {/* The stage: everything beside the step list */}
+        <div className="relative flex-1 min-w-0 overflow-hidden bg-charcoal-deep">{stage}</div>
       </div>
     </div>
   );

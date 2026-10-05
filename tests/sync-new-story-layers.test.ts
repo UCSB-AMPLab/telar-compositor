@@ -14,14 +14,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock setup — identical to sync.server.test.ts harness
 // ---------------------------------------------------------------------------
 
-vi.mock("~/lib/github.server", () => ({
-  getFileContent: vi.fn(),
-  getRepoTree: vi.fn(),
-  getRepoHead: vi.fn(),
-  graphqlGitHub: vi.fn(),
-  githubHeaders: vi.fn(() => ({})),
-  decodeGitHubContent: vi.fn((s: string) => s),
-}));
+// objects.csv is read strictly at a head; the cases here state the
+// sheet through getFileContent, so the strict read answers from it: null is
+// a missing file.
+vi.mock("~/lib/github.server", () => {
+  const getFileContent = vi.fn();
+  return {
+    getFileContent,
+    getFileAtRef: vi.fn(async (...args: unknown[]) => {
+      const content = await getFileContent(...args.slice(0, 4));
+      return content == null ? { status: "absent" } : { status: "ok", content };
+    }),
+    getRepoTree: vi.fn(),
+    getRepoHead: vi.fn(),
+    graphqlGitHub: vi.fn(),
+    githubHeaders: vi.fn(() => ({})),
+    decodeGitHubContent: vi.fn((s: string) => s),
+  };
+});
 
 import * as githubServer from "~/lib/github.server";
 import { resolveFullSyncPayload } from "~/lib/sync.server";
@@ -147,6 +157,8 @@ const PROJECT_ID = 1;
 const TOKEN = "test-token";
 const OWNER = "test-owner";
 const REPO = "test-repo";
+/** The owner who accepted the sync; the route resolves them server-side. */
+const LAYERS_ACTOR_ID = 7;
 
 // New-story import now resolves into an ingest payload whose story insert
 // carries steps/layers by step_index (the DO threads layers onto their parent
@@ -182,7 +194,7 @@ describe("resolveFullSyncPayload — new-story insert carries layers", () => {
     });
 
     const mockDb = createTrackedMockDb({ responses: [[], []] });
-    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
+    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb, LAYERS_ACTOR_ID);
 
     const ins = payload.stories.insert.find((s) => s.storyId === "my-story");
     expect(ins?.layers ?? []).toHaveLength(0);
@@ -199,7 +211,7 @@ describe("resolveFullSyncPayload — new-story insert carries layers", () => {
     });
 
     const mockDb = createTrackedMockDb({ responses: [[], []] });
-    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
+    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb, LAYERS_ACTOR_ID);
 
     const ins = payload.stories.insert.find((s) => s.storyId === "my-story");
     expect(ins?.layers).toHaveLength(2);
@@ -216,6 +228,28 @@ describe("resolveFullSyncPayload — new-story insert carries layers", () => {
     expect(second.content).toBe("Second layer content");
   });
 
+  it("reads a layer file two cells name once, and gives both cells its text", async () => {
+    const csv = `step,object,x,y,zoom,layer1_button,layer1_content,layer2_button,layer2_content
+1,obj-a,0.5,0.5,1.0,Open,panel.md,More,panel.md
+2,obj-b,0.3,0.3,1.2,Open,panel.md,,`;
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_NEW_STORY;
+      if (path === "_config.yml") return CONFIG_YML;
+      if (path === "telar-content/spreadsheets/my-story.csv") return csv;
+      if (path === "telar-content/texts/stories/panel.md") return "Panel text.";
+      return null;
+    });
+
+    const mockDb = createTrackedMockDb({ responses: [[], []] });
+    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb, LAYERS_ACTOR_ID);
+
+    const ins = payload.stories.insert.find((s) => s.storyId === "my-story");
+    expect(ins?.layers.map((l) => l.content)).toEqual(["Panel text.", "Panel text.", "Panel text."]);
+    const reads = vi.mocked(githubServer.getFileAtRef).mock.calls.filter((c) => c[3] === "telar-content/texts/stories/panel.md");
+    expect(reads).toHaveLength(1);
+  });
+
   it("assigns step_index by filtered-row order even when the step column is non-sequential", async () => {
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
       if (path === "telar-content/spreadsheets/objects.csv") return "";
@@ -226,7 +260,7 @@ describe("resolveFullSyncPayload — new-story insert carries layers", () => {
     });
 
     const mockDb = createTrackedMockDb({ responses: [[], []] });
-    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb);
+    const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb, LAYERS_ACTOR_ID);
 
     const ins = payload.stories.insert.find((s) => s.storyId === "my-story");
     expect(ins?.layers).toHaveLength(2);
@@ -239,5 +273,28 @@ describe("resolveFullSyncPayload — new-story insert carries layers", () => {
     const beta = ins!.layers[1];
     expect(beta.step_index).toBe(1); // second CSV row (step_number=20)
     expect(beta.content).toBe("Beta layer content");
+  });
+  // A layer 1 with no title or text under a published layer 2 is written with
+  // the heading the site derives; the sync reads a default
+  // label in any language the framework ships as no title, whatever the
+  // site's _config.yml states.
+  it("reads an empty layer 1's derived heading as no title, whatever language _config.yml states", async () => {
+    const storyCsv = `step,object,x,y,zoom,layer1_button,layer1_content,layer2_button,layer2_content
+1,obj-a,0.5,0.5,1.0,,my-story-saber-mas.md,,my-story-deeper.md`;
+    for (const lang of ["es", "en"]) {
+      vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+        if (path === "telar-content/spreadsheets/objects.csv") return "";
+        if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_NEW_STORY;
+        if (path === "_config.yml") return `${CONFIG_YML}\ntelar_language: ${lang}`;
+        if (path === "telar-content/spreadsheets/my-story.csv") return storyCsv;
+        if (path === "telar-content/texts/stories/my-story-saber-mas.md") return '---\ntitle: "Saber más"\n---\n\n';
+        if (path === "telar-content/texts/stories/my-story-deeper.md") return '---\ntitle: ""\n---\n\nDeeper';
+        return null;
+      });
+      const mockDb = createTrackedMockDb({ responses: [[], []] });
+      const { payload } = await resolveFullSyncPayload(PROJECT_ID, changes, TOKEN, OWNER, REPO, mockDb, LAYERS_ACTOR_ID);
+      const layer1 = payload.stories.insert.find((s) => s.storyId === "my-story")!.layers.find((l) => l.layer_number === 1);
+      expect(layer1?.title, lang).toBe("");
+    }
   });
 });

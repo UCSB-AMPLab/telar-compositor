@@ -1,105 +1,106 @@
 /**
- * This file renders the editor panel for a section-card step
- * (`kind='section'`) — a heading-only preview with a centred large
- * editable heading input bound to the step's `question` Y.Text. No
- * IIIF viewer, no narrative column, no layers/panels — section
- * cards are chapter breaks in published stories.
+ * A section card (`kind='section'`) on the framing stage: the framework's
+ * centred card (`.title-card`, built by card-pool.js), with the step's
+ * question as its heading and its answer under it, each edited in place. The
+ * card frames nothing, so it has no frame, circle or capture.
  *
- * Mirrors `TitleCardView`'s centred-card chrome so authors get a
- * consistent editor shape across the two heading-only step types.
+ * The heading shows as escaped plain text. The answer shows as the build
+ * publishes it and is edited as the step card's answer is (`AnswerField`):
+ * its field refuses what the step answer's refuses (images, tables, code,
+ * footnotes, widgets), in words that fit a card with no layer panel.
  *
- * @version v1.3.7-beta
+ * With a Y.Text a field saves as it is typed; without one, `onSaveField`
+ * saves it when the field is finished, through the route's step-field save
+ * the step card uses, and a failed save keeps the field open with its draft.
+ *
+ * @version v1.5.0-beta
  */
 
-import { useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { PencilLine } from "lucide-react";
-import * as Y from "yjs";
-import { InlineTextField } from "~/components/ui/InlineTextField";
-import { InlineTextArea } from "~/components/ui/InlineTextArea";
+import type * as Y from "yjs";
+import { InPlaceText } from "~/components/ui/InPlaceText";
+import { StageIntroHint } from "~/components/features/editor/TitleCardView";
+import { AnswerField, routeSaveFor, type StepTextField } from "~/components/features/editor/StepCard";
+import type { GlossaryContext } from "~/lib/card-markdown";
+import type { MathDelimiter } from "~/components/ui/markdown-editor/panelMath";
 
 interface SectionCardViewProps {
   step: {
     id: number;
-    step_number: number;
     question: string | null;
     answer: string | null;
   };
-  storyId: string;
+  /** The step being edited, as the editor keys a selection. */
+  target: string;
+  /** The awareness key's stem for the step's fields. */
+  fieldKeyPrefix: string;
   questionYText: Y.Text | null;
   answerYText: Y.Text | null;
+  /** Saves a field finished without a Y.Text. */
+  onSaveField?: (field: StepTextField, value: string) => Promise<unknown>;
+  /** Shown under a save that failed. */
+  saveErrorMessage?: string;
+  /** Where a failed draft of each field is kept across a reload of the tab. */
+  recoveryKeys?: { question?: string; answer?: string };
+  glossary: GlossaryContext;
+  /** The site's formula delimiters; formulas stay as typed without them. */
+  delimiters?: MathDelimiter[];
 }
 
-export function SectionCardView({ step, storyId, questionYText, answerYText }: SectionCardViewProps) {
+export function SectionCardView({
+  step,
+  target,
+  fieldKeyPrefix,
+  questionYText,
+  answerYText,
+  onSaveField,
+  saveErrorMessage,
+  recoveryKeys = {},
+  glossary,
+  delimiters,
+}: SectionCardViewProps) {
   const { t } = useTranslation("editor");
-  const headingRef = useRef<HTMLDivElement>(null);
-  const subtitleRef = useRef<HTMLDivElement>(null);
-
-  function focusHeading() {
-    const el = headingRef.current?.querySelector("input, textarea") as HTMLElement | null;
-    el?.focus();
-  }
-
-  function focusSubtitle() {
-    const el = subtitleRef.current?.querySelector("input, textarea") as HTMLElement | null;
-    el?.focus();
-  }
+  const saveFor = routeSaveFor(onSaveField);
 
   return (
-    <div className="px-8 py-12 flex flex-col items-center justify-center min-h-full">
-      <div className="w-full max-w-lg rounded-lg bg-white px-6 py-8 shadow-sm border border-gray-100 space-y-4">
-        <div>
-          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
-            {t("section_card.heading_label")}
-          </span>
-          <div className="group/field relative" ref={headingRef}>
-            <button
-              type="button"
-              onClick={focusHeading}
-              className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
-              aria-label={t("step.click_to_edit")}
-            >
-              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 pointer-coarse:opacity-100 transition-opacity">
-                {t("step.click_to_edit")}
-              </span>
-              <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
-            </button>
-            <InlineTextField
-              initialValue={step.question ?? ""}
-              yText={questionYText}
-              placeholder=""
-              inputClassName="font-heading text-3xl font-semibold text-charcoal"
-              fieldKey={`step-${step.id}-section-heading`}
-            />
-          </div>
+    <div data-testid="section-card" className="title-card">
+      <div className="title-card-inner">
+        <h2 className="title-card-heading">
+          <InPlaceText
+            target={`${target}:question`}
+            yText={questionYText}
+            initialValue={step.question ?? ""}
+            placeholder={t("section_card.heading_label")}
+            label={t("section_card.heading_label")}
+            fieldKey={`${fieldKeyPrefix}-section-heading`}
+            onSave={saveFor(questionYText, "question")}
+            saveErrorMessage={saveErrorMessage}
+            recoveryKey={recoveryKeys.question}
+          />
+        </h2>
+        <div className="title-card-body group/answer">
+          <p className="hidden group-has-[textarea]/answer:block font-body text-xs uppercase tracking-wider text-anil-ink mb-1">
+            {t("stage.answer_field_label")}
+          </p>
+          <AnswerField
+            target={`${target}:answer`}
+            yText={answerYText}
+            initialValue={step.answer ?? ""}
+            placeholder={t("section_card.subtitle_label")}
+            label={t("section_card.subtitle_label")}
+            fieldKey={`${fieldKeyPrefix}-section-subtitle`}
+            onSave={saveFor(answerYText, "answer")}
+            saveErrorMessage={saveErrorMessage}
+            recoveryKey={recoveryKeys.answer}
+            glossary={glossary}
+            delimiters={delimiters}
+            textOnlyMessageKey="section_card.subtitle_text_only"
+          />
+          <p className="hidden group-has-[textarea]/answer:block font-body text-xs text-gray-500 mt-1">
+            {t("stage.answer_field_hint")}
+          </p>
         </div>
-
-        <div>
-          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
-            {t("section_card.subtitle_label")}
-          </span>
-          <div className="group/field relative" ref={subtitleRef}>
-            <button
-              type="button"
-              onClick={focusSubtitle}
-              className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
-              aria-label={t("step.click_to_edit")}
-            >
-              <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 pointer-coarse:opacity-100 transition-opacity">
-                {t("step.click_to_edit")}
-              </span>
-              <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
-            </button>
-            <InlineTextArea
-              initialValue={step.answer ?? ""}
-              yText={answerYText}
-              placeholder=""
-              inputClassName="font-body text-base text-charcoal"
-              rows={2}
-              fieldKey={`step-${step.id}-section-subtitle`}
-            />
-          </div>
-        </div>
+        <StageIntroHint text={t("stage.edit_hint")} />
       </div>
     </div>
   );

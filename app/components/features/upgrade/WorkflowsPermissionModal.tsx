@@ -11,11 +11,12 @@
  * "upgrade manually" link target is locale-specific (workflowsModalManualUrl).
  * Escape and overlay-click dismiss.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 import { useEffect } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { KeyRound } from "lucide-react";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
 
 export interface WorkflowsPermissionModalProps {
   open: boolean;
@@ -31,6 +32,7 @@ export function WorkflowsPermissionModal({
   approvalUrl,
 }: WorkflowsPermissionModalProps) {
   const { t } = useTranslation("upgrade");
+  useOverlayOpen(open);
 
   useEffect(() => {
     if (!open) return;

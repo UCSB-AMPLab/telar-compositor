@@ -7,12 +7,13 @@
  * Styling mirrors the added-to-project welcome modal (cream panel, terracotta
  * CTA, charcoal overlay). Escape and overlay-click both dismiss.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles, Bug } from "lucide-react";
 import { CURRENT_RELEASE } from "~/lib/release-notes";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
 
 export interface WhatsNewModalProps {
   open: boolean;
@@ -21,6 +22,7 @@ export interface WhatsNewModalProps {
 
 export function WhatsNewModal({ open, onDismiss }: WhatsNewModalProps) {
   const { t } = useTranslation("release-notes");
+  useOverlayOpen(open);
 
   useEffect(() => {
     if (!open) return;

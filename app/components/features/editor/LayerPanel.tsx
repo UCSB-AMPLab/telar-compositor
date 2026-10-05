@@ -1,490 +1,242 @@
 /**
- * LayerPanel — slide-in overlay panel for editing a story layer.
+ * LayerPanel — what a layer panel on the stage holds, as the published page
+ * draws it (the framework `_includes/panels.html`, `getPanelContent` in
+ * assets/js/telar-story/panels.js): the heading, the content, and on layer 1
+ * the button that opens layer 2. The panel's frame, its Back, close and
+ * delete buttons, and where it stands are StagePanels'.
  *
- * Renders as an absolute overlay within the ViewerColumn's `children` slot.
- * Uses autosave mode — title and content save automatically.
- * Layer 1 = anil, Layer 2 = terracotta. Stacked card effect.
- * Navigation: "← BACK" pill on both layers and X close.
- * Editor background matches panel colour — no white box.
+ * The heading is `h1.offcanvas-title`, focusable by script only
+ * (`tabIndex=-1`), so it can take focus as the panel opens. It holds the
+ * title edited in place: the title as the reader sees it, which opens its
+ * field, and beside it the pencil, in its own `span.stage-field-pencil`, as
+ * the card's question has one. A panel with no title of its own is headed as
+ * the site heads it (`panelHeading`: its button label, else the site
+ * language's default label), shown muted in the title's place; opening the
+ * field then starts it empty, and finishing it unedited stores nothing. A
+ * stored title is shown whatever it says, a default label included, since an
+ * author may have written it.
  *
- * @version v1.3.7-beta
+ * Layer 1's content ends with layer 2's button, as the site draws it, with a
+ * pencil that edits its label in place, as the card's button has; or, with
+ * no layer 2, the dashed button that adds one. There is no other place to
+ * edit a button's label in a panel: layer 1's is edited on the card.
+ *
+ * With a Y.Text a field writes to it as it is typed, as the card's fields
+ * do. Without one it saves through `saveField` (the stage's `autosave-layer`
+ * save, which outlives the panel), and a save that is refused or fails keeps
+ * the field open with `saveErrorMessage`, and the draft kept under the
+ * field's recovery key once the field has gone (in-place-editing.tsx). A
+ * layer with no database id yet has nothing to save to without a Y.Text.
+ *
+ * A panel held in the editor until its first content (`writeUnsaved`)
+ * writes its fields there, and offers no layer 2 until it is written.
+ *
+ * The content is PanelContent's: drawn as the site renders it, opened into
+ * the editor to be edited, and without a Y.Text saved through the stage's
+ * owner of layer content (`contentDrafts`), which outlives the panel.
+ *
+ * @version v1.5.0-beta
  */
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import type { RefObject } from "react";
 import { useTranslation } from "react-i18next";
-import { useFetcher } from "react-router";
-import * as Y from "yjs";
-import { Trash2, X, ArrowLeft, ChevronRight, Pencil, Check } from "lucide-react";
-import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
+import { Pencil } from "lucide-react";
+import { PanelContent } from "~/components/features/editor/PanelContent";
 import { DocsLink } from "~/components/ui/DocsLink";
-import { Dialog } from "~/components/ui/Dialog";
-import { useCollaborationContext } from "~/hooks/use-collaboration";
-import { isPersistableLayerId } from "~/lib/yjs-helpers";
+import { ReportedText } from "~/components/features/editor/StepCard";
+import type { StagePanelLayer } from "~/components/features/editor/StagePanels";
+import type { PanelPreviewConfig, PanelPreviewSource } from "~/lib/panel-preview-config";
+import type { GlossaryContext } from "~/lib/card-markdown";
+import { derivedHeadingOf } from "~/lib/panel-heading";
+import type { LayerContentDrafts } from "~/hooks/use-layer-content-drafts";
+import type { FieldSaveOptions } from "~/hooks/use-route-field-save";
 
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
+/** A text field of a layer that a panel edits in place. */
+export type LayerTextField = "title" | "button_label";
+
+/** How a panel's fields save without a Y.Text, and what they are given. */
+export interface LayerFieldSaves {
+  /**
+   * Saves a field of a layer, resolving with the answer's confirmation stamp;
+   * rejects for a layer with no database id.
+   */
+  save: (layer: StagePanelLayer, field: LayerTextField, value: string, options?: FieldSaveOptions) => Promise<number | undefined>;
+  /** The value a field may be given, which a read older than its last save does not replace. */
+  fresh: (layer: StagePanelLayer, field: LayerTextField, value: string) => string;
+  /** Where a failed draft of a field is kept, for a layer with a database id. */
+  recoveryKey: (layer: StagePanelLayer, field: LayerTextField) => string | undefined;
+  /** Shown under a field whose save failed. */
+  saveErrorMessage: string;
+}
 
 interface LayerPanelProps {
-  layer: {
-    id: number;
-    layer_number: number;
-    title: string | null;
-    button_label: string | null;
-    content: string | null;
-  };
-  open: boolean;
-  onClose: () => void;
-  onDelete: (layerId: number) => void;
-  canDelete: boolean;
-  hasLayer2: boolean;
-  /** Layer 2 data — used to show its button label on the "Open" button */
-  layer2ButtonLabel?: string | null;
-  /** Layer 2 ID — for autosaving its button label */
-  layer2Id?: number;
+  layer: StagePanelLayer;
+  /** The panel's heading, which takes focus as the panel opens. */
+  headingRef?: RefObject<HTMLHeadingElement | null>;
+  /** The site's `telar_language`, whose default labels head an untitled panel. */
+  siteLang?: string | null;
+  /** The panel is covered by the one over it: its editor's popovers and menus close. */
+  dismissed?: boolean;
+  /** Layer 2, on layer 1's panel. */
+  layer2?: StagePanelLayer | null;
   onCreateLayer2?: () => void;
-  onOpenLayer2?: () => void;
-  objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null }>;
+  /** Opens layer 2, from the button pressed. */
+  onOpenLayer2?: (opener: HTMLElement) => void;
+  fields: LayerFieldSaves;
+  /** The stage's owner of layer content without a Y.Text. */
+  contentDrafts: LayerContentDrafts;
+  /** When the loader read the layer. */
+  readStamp?: number;
+  /** The site's glossary, which the rendered content resolves its links against. */
+  glossary: GlossaryContext;
+  /** The site's preview configuration, once it has arrived. */
+  previewConfig?: PanelPreviewConfig;
+  /** A request to highlight the content's first glossary link, by its id. */
+  highlight?: number | null;
+  onHighlighted?: (id: number) => void;
+  objects: Array<{ object_id: string; title: string | null; thumbnail: string | null; image_available?: boolean | null; source_url: string | null }>;
   siteBaseUrl?: string | null;
+  /** The site's `telar_version`, which the image dialog builds a self-hosted object's address by. */
+  frameworkVersion?: string | null;
+  /** The site's widget and formula preview settings, as the loader streams them. */
+  panelPreview?: PanelPreviewSource;
   actionUrl: string;
-  /**
-   * Yjs-backed bindings for layer fields. When provided, edits write directly
-   * to the shared Y.Text instances instead of the D1-only autosave-layer
-   * fetcher (which posts the layer id as a `layerId` form field, and would be
-   * silently overwritten by snapshotToD1 on the next cycle). Pass null in
-   * non-Yjs fallback mode.
-   */
-  titleYText?: Y.Text | null;
-  contentYText?: Y.Text | null;
-  /** Y.Text for layer 2's button_label, when layer 2 exists. */
-  layer2ButtonLabelYText?: Y.Text | null;
-  /**
-   * Y.Text for THIS panel's own layer button_label — written by the pinned
-   * button-label strip. The SAME Y.Text the step-view trigger pill writes, so
-   * both surfaces stay in sync live.
-   */
-  buttonLabelYText?: Y.Text | null;
-  /** Story title for the breadcrumb (falls back to breadcrumb.untitled). */
-  storyTitle?: string | null;
-  /** 1-based step number for the breadcrumb `Story / Step N / Layer M`. */
-  stepNumber?: number;
-  /**
-   * When true, the trash button bypasses this component's internal Dialog and
-   * calls `onDelete` immediately — the parent renders a centralised
-   * DeleteConfirmationModal (content summary + red button).
-   */
-  skipInternalConfirm?: boolean;
-  /** Tooltip shown when canDelete is false. */
-  deleteTooltip?: string;
   /** Callback to open the in-product docs drawer — threaded from the _app shell via outlet context. */
   onOpenDoc?: (id: string) => void;
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export function LayerPanel({
   layer,
-  open,
-  onClose,
-  onDelete,
-  canDelete,
-  hasLayer2,
-  layer2ButtonLabel,
-  layer2Id,
+  headingRef,
+  siteLang,
+  dismissed = false,
+  layer2 = null,
   onCreateLayer2,
   onOpenLayer2,
+  fields,
+  contentDrafts,
+  readStamp,
+  glossary,
+  previewConfig,
+  highlight,
+  onHighlighted,
   objects,
   siteBaseUrl,
+  frameworkVersion,
+  panelPreview,
   actionUrl,
-  skipInternalConfirm = false,
-  deleteTooltip,
-  titleYText = null,
-  contentYText = null,
-  layer2ButtonLabelYText = null,
-  buttonLabelYText = null,
-  storyTitle = null,
-  stepNumber,
   onOpenDoc,
 }: LayerPanelProps) {
   const { t } = useTranslation("editor");
-  const { ydoc } = useCollaborationContext();
-  const titleFetcher = useFetcher();
-  const l2LabelFetcher = useFetcher();
-
-  // Replace the contents of a Y.Text without losing the shared identity (so
-  // remote observers see a single update, not a destroy+create). Falls back
-  // to the D1 fetcher when no Y.Text is available (non-Yjs mode).
-  const writeYText = useCallback(
-    (yText: Y.Text | null, value: string): boolean => {
-      if (!ydoc || !yText) return false;
-      ydoc.transact(() => {
-        if (yText.length > 0) yText.delete(0, yText.length);
-        if (value.length > 0) yText.insert(0, value);
-      });
-      return true;
-    },
-    [ydoc]
-  );
-
-  const defaultTitle =
-    layer.layer_number === 1
-      ? t("layer.default_title_1")
-      : t("layer.default_title_2");
-
-  const [panelTitle, setPanelTitle] = useState(
-    layer.title ?? defaultTitle
-  );
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-
-  // Inline edit state for layer 2 button label
-  const [editingL2Label, setEditingL2Label] = useState(false);
-  const [l2Label, setL2Label] = useState(layer2ButtonLabel ?? t("layer.default_label_2"));
-  const l2InputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (editingL2Label && l2InputRef.current) {
-      l2InputRef.current.focus();
-      l2InputRef.current.select();
-    }
-  }, [editingL2Label]);
-
-  // Pinned button-label strip — edits THIS layer's button_label via the same
-  // Y.Text the step-view trigger pill writes. Debounced like the title field,
-  // with a D1 fetcher fallback when no Y.Text is available.
-  const stripDefaultLabel =
-    layer.layer_number === 1
-      ? t("layer.default_label_1")
-      : t("layer.default_label_2");
-  const [stripLabel, setStripLabel] = useState(layer.button_label ?? stripDefaultLabel);
-  const stripFetcher = useFetcher();
-  const stripTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleStripChange = useCallback(
-    (value: string) => {
-      setStripLabel(value);
-      if (stripTimerRef.current) clearTimeout(stripTimerRef.current);
-      stripTimerRef.current = setTimeout(() => {
-        if (writeYText(buttonLabelYText, value)) return;
-        if (!isPersistableLayerId(layer.id)) return;
-        stripFetcher
-          .submit(
-            {
-              intent: "autosave-layer",
-              field: "button_label",
-              value,
-              layerId: String(layer.id),
-            },
-            { method: "post", action: actionUrl }
-          )
-          .catch((err) => {
-            console.error("LayerPanel button_label autosave failed", err);
-          });
-      }, 1500);
-    },
-    [buttonLabelYText, writeYText, stripFetcher, layer.id, actionUrl]
-  );
-
-  // Debounced autosave for panel title
-  const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleTitleChange = useCallback(
-    (value: string) => {
-      setPanelTitle(value);
-      if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
-      titleTimerRef.current = setTimeout(() => {
-        if (writeYText(titleYText, value)) return;
-        if (!isPersistableLayerId(layer.id)) return;
-        titleFetcher
-          .submit(
-            {
-              intent: "autosave-layer",
-              field: "title",
-              value,
-              layerId: String(layer.id),
-            },
-            { method: "post", action: actionUrl }
-          )
-          .catch((err) => {
-            console.error("LayerPanel title autosave failed", err);
-          });
-      }, 1500);
-    },
-    [layer.id, actionUrl, titleFetcher, titleYText, writeYText]
-  );
-
-  function handleSaveL2Label() {
-    setEditingL2Label(false);
-    const trimmed = l2Label.trim() || t("layer.default_label_2");
-    setL2Label(trimmed);
-    if (writeYText(layer2ButtonLabelYText, trimmed)) return;
-    if (!isPersistableLayerId(layer2Id)) return;
-    l2LabelFetcher
-      .submit(
-        {
-          intent: "autosave-layer",
-          field: "button_label",
-          value: trimmed,
-          layerId: String(layer2Id),
-        },
-        { method: "post", action: actionUrl }
-      )
-      .catch((err) => {
-        console.error("LayerPanel layer-2 label autosave failed", err);
-      });
-  }
-
-  // Visual theme per layer number
   const isLayer1 = layer.layer_number === 1;
-  const panelBg = isLayer1 ? "bg-anil" : "bg-terracotta";
-  const panelBorder = isLayer1 ? "border-anil" : "border-terracotta";
-  const labelColor = isLayer1 ? "text-charcoal/60" : "text-cream/70";
-  const borderColor = isLayer1 ? "border-charcoal/10" : "border-cream/20";
-  const inputBg = isLayer1
-    ? "bg-anil/50 border-charcoal/15 text-charcoal placeholder-charcoal/40"
-    : "bg-terracotta/80 border-cream/20 text-cream placeholder-cream/50";
-  const backBtnStyle = isLayer1
-    ? "bg-charcoal/10 text-charcoal/70 hover:bg-charcoal/20"
-    : "bg-cream/20 text-cream hover:bg-cream/30";
-  // Layer 1 leaves a sliver of image visible on the left; layer 2 offset by same gap
-  const panelInset = isLayer1
-    ? "left-[3%] right-0 top-0 bottom-0"
-    : "left-[6%] right-0 top-0 bottom-0";
-  const panelZ = isLayer1 ? "z-20" : "z-30";
-
-  function handleDeleteClick() {
-    if (!canDelete) return;
-    if (skipInternalConfirm) {
-      onDelete(layer.id);
-      return;
-    }
-    setShowDeleteDialog(true);
-  }
-
-  function handleConfirmDelete() {
-    setShowDeleteDialog(false);
-    onDelete(layer.id);
-  }
+  const titleTarget = `layer:${layer.key}:title`;
 
   return (
     <>
-      {/* Slide-in panel */}
-      <div
-        className={`absolute ${panelInset} ${panelZ} ${panelBg} flex flex-col transition-transform duration-300 ease-in-out shadow-[-4px_0_16px_rgba(0,0,0,0.12)] border-l-4 ${panelBorder} ${
-          open ? "translate-x-0" : "translate-x-full"
-        }`}
-      >
-        {/* Breadcrumb — Story / Step N / Layer M */}
-        <nav
-          className={`flex items-center gap-1.5 px-4 pt-3 font-heading text-xs ${labelColor} shrink-0`}
-          aria-label={t("breadcrumb.layer", { number: layer.layer_number })}
-        >
-          <span className="truncate max-w-[10rem]">
-            {storyTitle?.trim() || t("breadcrumb.untitled")}
-          </span>
-          {stepNumber != null && (
-            <>
-              <ChevronRight className="w-3 h-3 text-fg-subtle shrink-0" />
-              <span>{t("breadcrumb.step", { number: stepNumber })}</span>
-            </>
-          )}
-          <ChevronRight className="w-3 h-3 text-fg-subtle shrink-0" />
-          <span>{t("breadcrumb.layer", { number: layer.layer_number })}</span>
-        </nav>
+      <h1 ref={headingRef} tabIndex={-1} className="offcanvas-title">
+        <ReportedText
+          target={titleTarget}
+          yText={layer.titleYText}
+          initialValue={fields.fresh(layer, "title", layer.title ?? "")}
+          placeholder={derivedHeadingOf(layer.layer_number, layer.button_label, siteLang)}
+          label={t("layer.panel_title_aria")}
+          fieldKey={`layer-${layer.key}-title`}
+          onSave={layer.titleYText ? undefined : saveOf(layer, "title", fields)}
+          saveErrorMessage={fields.saveErrorMessage}
+          recoveryKey={fields.recoveryKey(layer, "title")}
+          pencilLabel={t("stage.edit_panel_title")}
+        />
+      </h1>
 
-        {/* Navigation bar */}
-        <div className="flex items-center justify-between px-4 py-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className={`inline-flex items-center gap-1.5 px-4 py-1.5 font-heading font-semibold text-xs uppercase tracking-wider rounded-full transition-colors ${backBtnStyle}`}
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              {t("layer.back")}
-            </button>
-            <button
-              type="button"
-              onClick={handleDeleteClick}
-              disabled={!canDelete}
-              title={!canDelete ? deleteTooltip : undefined}
-              className={`p-1.5 transition-colors rounded ${
-                canDelete
-                  ? isLayer1
-                    ? "text-charcoal/40 hover:text-red-600"
-                    : "text-cream/50 hover:text-red-300"
-                  : isLayer1
-                  ? "text-charcoal/20 cursor-not-allowed"
-                  : "text-cream/25 cursor-not-allowed"
-              }`}
-              aria-label={t("layer.delete_title")}
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+      <div className="stage-panel-content">
+        {onOpenDoc && (
+          <div className="flex justify-end mb-1">
+            <DocsLink docId="markdown" onOpenDoc={onOpenDoc} className={isLayer1 ? "" : "!text-cream/70 hover:!text-cream"} />
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className={`p-1.5 ${isLayer1 ? "text-charcoal/40 hover:text-charcoal" : "text-cream/50 hover:text-cream"} transition-colors rounded`}
-            aria-label={t("layer.close_panel_aria")}
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        )}
+        <PanelContent
+          layer={layer}
+          drafts={contentDrafts}
+          readStamp={readStamp}
+          glossary={glossary}
+          previewConfig={previewConfig}
+          highlight={highlight}
+          onHighlighted={onHighlighted}
+          dismissed={dismissed}
+          objects={objects}
+          siteBaseUrl={siteBaseUrl}
+          frameworkVersion={frameworkVersion}
+          panelPreview={panelPreview}
+          actionUrl={actionUrl}
+        />
 
-        {/* Title input */}
-        <div className="px-6 pb-4 shrink-0">
-          <label className={`block font-heading text-xs font-semibold ${labelColor} uppercase tracking-wider mb-2`}>
-            {t("layer.panel_title")}
-          </label>
-          <input
-            type="text"
-            value={panelTitle}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            className={`w-full px-4 py-2 font-heading font-semibold text-lg border rounded-lg ${inputBg}`}
-            aria-label={t("layer.panel_title_aria")}
-          />
-        </div>
-
-        {/* Button label — the text on the step-view trigger pill. Styled like
-            the other labelled fields (no tinted box) and placed below the title.
-            Writes the SAME Y.Text the step-view pill reads. */}
-        <div className="px-6 pb-4 shrink-0">
-          <label className={`block font-heading text-xs font-semibold ${labelColor} uppercase tracking-wider mb-2`}>
-            {t("layer.button_label_strip_label")}
-          </label>
-          <input
-            type="text"
-            value={stripLabel}
-            onChange={(e) => handleStripChange(e.target.value)}
-            placeholder={stripDefaultLabel}
-            className={`w-full px-4 py-2 font-heading font-semibold text-base border rounded-lg ${inputBg}`}
-            aria-label={t("layer.button_label_strip_label")}
-          />
-        </div>
-
-        {/* Content editor — fills remaining height, blends into panel */}
-        <div className="flex-1 min-h-0 flex flex-col px-6 pb-4">
-          <div className="flex items-center justify-between mb-2">
-            <label className={`block font-heading text-xs font-semibold ${labelColor} uppercase tracking-wider`}>
-              {t("layer.content_label")}
-            </label>
-            {onOpenDoc && (
-              <DocsLink
-                docId="markdown"
-                onOpenDoc={onOpenDoc}
-                className={isLayer1 ? "" : "!text-cream/70 hover:!text-cream"}
-              />
-            )}
-          </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <MarkdownEditor
-              key={layer.id}
-              initialValue={layer.content ?? ""}
-              fieldName="content"
-              projectId={layer.id}
-              formFieldName="layerId"
-              intent="autosave-layer"
-              actionUrl={actionUrl}
-              mode="autosave"
-              yText={contentYText}
-              objects={objects}
-              siteBaseUrl={siteBaseUrl}
-              className="h-full flex flex-col"
-              transparent
-              darkTheme={!isLayer1}
-              enableGlossaryLinks
-            />
-          </div>
-        </div>
-
-        {/* Footer — layer 2 creation/navigation (layer 1 only) */}
-        {isLayer1 && (
-          <div className={`px-6 py-4 border-t ${borderColor} shrink-0`}>
-            {hasLayer2 ? (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onOpenLayer2}
-                  className="inline-flex items-center gap-2 px-6 py-2.5 bg-terracotta text-cream font-heading font-semibold text-sm rounded-full hover:bg-terracotta/90 transition-colors"
-                >
-                  {l2Label}
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                {editingL2Label ? (
-                  <div className="inline-flex items-center gap-1">
-                    <input
-                      ref={l2InputRef}
-                      type="text"
-                      value={l2Label}
-                      onChange={(e) => setL2Label(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleSaveL2Label();
-                        if (e.key === "Escape") { setL2Label(layer2ButtonLabel ?? t("layer.default_label_2")); setEditingL2Label(false); }
-                      }}
-                      className="px-3 py-1.5 font-heading font-semibold text-sm text-charcoal bg-white border border-gray-300 rounded-full min-w-[8rem]"
-                    />
-                    <button type="button" onClick={handleSaveL2Label} className="p-1 text-green-600 hover:text-green-700" aria-label={t("layer.save_label_aria")}>
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button type="button" onClick={() => { setL2Label(layer2ButtonLabel ?? t("layer.default_label_2")); setEditingL2Label(false); }} className="p-1 text-gray-400 hover:text-charcoal" aria-label={t("step.cancel_editing_aria")}>
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setEditingL2Label(true)}
-                    className="group/pencil flex items-center gap-1 p-1.5 text-charcoal/30 hover:text-charcoal rounded hover:bg-charcoal/10 transition-all"
-                    aria-label={t("layer.edit_button_label_aria")}
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                    <span className="font-body text-xs text-charcoal/40 opacity-0 group-hover/pencil:opacity-100 pointer-coarse:opacity-100 transition-opacity">
-                      {t("layer.edit_button_label")}
-                    </span>
-                  </button>
-                )}
-              </div>
+        {isLayer1 && !layer.writeUnsaved && (
+          <p className="stage-panel-next">
+            {layer2 ? (
+              <Layer2Button layer2={layer2} fields={fields} siteLang={siteLang} onOpen={onOpenLayer2} />
             ) : (
-              <button
-                type="button"
-                onClick={onCreateLayer2}
-                className="px-6 py-2.5 border-2 border-dashed border-charcoal/25 text-charcoal/60 font-heading font-semibold text-sm rounded-full hover:border-charcoal/50 hover:text-charcoal transition-colors"
-              >
+              <button type="button" className="stage-panel-add" onClick={onCreateLayer2}>
                 {t("layer.add_further_panel")}
               </button>
             )}
-          </div>
+          </p>
         )}
       </div>
-
-      {/* Delete confirmation dialog */}
-      <Dialog
-        open={showDeleteDialog}
-        onClose={() => setShowDeleteDialog(false)}
-      >
-        <h2 className="font-heading font-semibold text-charcoal text-lg mb-2">
-          {t("layer.delete_title")}
-        </h2>
-        <p className="font-body text-sm text-gray-600 mb-5">
-          {t("layer.delete_body")}
-        </p>
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setShowDeleteDialog(false)}
-            className="px-4 py-2 text-sm font-heading font-semibold text-charcoal hover:bg-gray-100 rounded transition-colors"
-          >
-            {t("layer.delete_cancel")}
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirmDelete}
-            className="px-4 py-2 text-sm font-heading font-semibold text-cream bg-terracotta hover:bg-terracotta/90 rounded-full transition-colors"
-          >
-            {t("layer.delete_confirm")}
-          </button>
-        </div>
-      </Dialog>
     </>
+  );
+}
+
+/** How a field without a Y.Text saves: to the held panel, else through the stage. */
+function saveOf(layer: StagePanelLayer, field: LayerTextField, fields: LayerFieldSaves) {
+  const writeUnsaved = layer.writeUnsaved;
+  return writeUnsaved ? (value: string) => writeUnsaved(field, value) : (value: string) => fields.save(layer, field, value);
+}
+
+/**
+ * Layer 2's button at the end of layer 1's content, as the site draws it,
+ * with the pencil beside it that edits its label in place, as the card's
+ * button has (StepCard's PanelButton): the same opener pattern, writing
+ * layer 2's `button_label`.
+ */
+function Layer2Button({
+  layer2,
+  fields,
+  siteLang,
+  onOpen,
+}: {
+  layer2: StagePanelLayer;
+  fields: LayerFieldSaves;
+  siteLang?: string | null;
+  onOpen?: (opener: HTMLElement) => void;
+}) {
+  const { t } = useTranslation("editor");
+  const placeholder = derivedHeadingOf(2, null, siteLang);
+  return (
+    <ReportedText
+      target={`layer:${layer2.key}:button_label`}
+      yText={layer2.buttonLabelYText}
+      initialValue={fields.fresh(layer2, "button_label", layer2.button_label ?? "")}
+      placeholder={placeholder}
+      label={t("layer.edit_button_label_aria")}
+      fieldKey={`layer-${layer2.key}-button_label`}
+      onSave={layer2.buttonLabelYText ? undefined : saveOf(layer2, "button_label", fields)}
+      saveErrorMessage={fields.saveErrorMessage}
+      recoveryKey={fields.recoveryKey(layer2, "button_label")}
+      className="ml-1 inline-flex items-center p-1 rounded opacity-70 hover:opacity-100 transition-opacity cursor-pointer!"
+      opener={{
+        content: <Pencil className="w-3 h-3" aria-hidden="true" />,
+        around: (value, pencil) => (
+          <>
+            <button type="button" data-layer2-pill="" className="panel-trigger text-left" onClick={(e) => onOpen?.(e.currentTarget)}>
+              {value || placeholder}
+              <span aria-hidden="true"> →</span>
+            </button>
+            <span className="inline-flex items-center w-0 h-0 align-middle whitespace-nowrap" data-stage-pencil={t("layer.edit_button_label")}>
+              {pencil}
+            </span>
+          </>
+        ),
+      }}
+    />
   );
 }
