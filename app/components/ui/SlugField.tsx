@@ -10,12 +10,15 @@
  *
  * Auto-suffix alert: when makeUniqueSlug returns wasAdjusted:true, an amber inline
  * banner appears below the field. It dismisses when the user edits further.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useState, useRef, useCallback } from "react";
 import { Pencil } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { normaliseSlug, makeUniqueSlug } from "~/lib/slug";
+import { siteAddressOfPage } from "~/lib/jekyll-slug";
 
 interface SlugFieldProps {
   slug: string;
@@ -109,7 +112,7 @@ export function SlugField({
       onMouseLeave={() => setIsHovered(false)}
       onClick={enterEditMode}
     >
-      <span className="font-body text-xs text-gray-500">/{slug}/</span>
+      <span className="font-body text-xs text-gray-500">/{siteAddressOfPage(slug)}/</span>
       <button
         type="button"
         aria-label={t("common:a11y.edit_slug")}
