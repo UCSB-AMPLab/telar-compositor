@@ -10,7 +10,7 @@
  *   (D) decrypt / D1 error       → fail-open 200 with cache-derived values (no 500).
  *   (E) unpublishedCount         → real content-diff count included in gh-status response.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => ({
   // publish.server
   computeChangeSummary: vi.fn(),
   buildEntityHashes: vi.fn(),
+  // team-access.server
+  refreshTeamAccess: vi.fn(),
   // auth.server (middleware)
   userContext: Symbol("userContext"),
 }));
@@ -61,11 +63,21 @@ vi.mock("~/lib/github-status.server", () => ({
   deriveHeadDiverged: mocks.deriveHeadDiverged,
   getCachedLatestTag: mocks.getCachedLatestTag,
 }));
-vi.mock("~/lib/upgrade.server", () => ({
+vi.mock("~/lib/team-access.server", () => ({
+  refreshTeamAccess: mocks.refreshTeamAccess,
+}));
+vi.mock("~/lib/telar-version", () => ({
   compareTelarVersion: mocks.compareTelarVersion,
 }));
 vi.mock("~/lib/github-app.server", () => ({
   getInstallationInfo: mocks.getInstallationInfo,
+  // Echoes the user token back unchanged — this file's assertions pin the
+  // gh-status orchestration (isStale/claimRefresh/re-read), not which token
+  // resolveProjectToken picks; that split is pinned in
+  // tests/publishing-role-matrix.test.ts and its siblings.
+  resolveProjectToken: vi.fn(
+    async (_appId: string, _key: string, _installationId: number, userToken: string) => userToken,
+  ),
 }));
 // The route also imports github.server (GITHUB_API constant only) and
 // publish/sync servers (for other payload cases). Stub them so imports
@@ -108,6 +120,7 @@ const BASE_PROJECT_ROW = {
   gh_remote_head_sha: "abc123",
   gh_diverged: 0,
   gh_diverged_against_sha: "abc123",
+  installation_id: 55,
 };
 
 const ACTIVE_PROJECT = {
@@ -219,6 +232,7 @@ const EMPTY_SUMMARY = {
   settings: { changed: [] },
   landing: { changed: false },
   navigation: { changed: false },
+  objectOrder: { changed: false },
   fileChanges: { addedStoryFiles: [], removedStoryFiles: [] },
 };
 
@@ -229,6 +243,7 @@ beforeEach(() => {
   mocks.getUserRoleMock.mockResolvedValue("owner");
   mocks.decryptMock.mockResolvedValue("decrypted-token");
   mocks.refreshGithubStatus.mockResolvedValue(undefined);
+  mocks.refreshTeamAccess.mockResolvedValue(undefined);
   mocks.getCachedLatestTag.mockResolvedValue("v1.4.0");
   mocks.compareTelarVersion.mockReturnValue({ needsUpgrade: true, isBelowMinimum: false });
   mocks.deriveHeadDiverged.mockReturnValue(false);
@@ -248,6 +263,28 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("api.site-status — gh-status payload", () => {
+  describe("(H) the caller's own repository access", () => {
+    it("carries the caller's own row from D1 and calls no GitHub reading for it", async () => {
+      mocks.isStale.mockReturnValue(false);
+      const ctx = makeContext(ghQueue(
+        [BASE_PROJECT_ROW],
+        [CONFIG_ROW],
+        [{ gh_access: "pending", gh_invitation_url: "https://github.com/owner/repo/invitations" }],
+      ));
+      const res = await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never) as Response;
+      const body = (await res.json()) as { ownRepoAccess?: unknown };
+      expect(body.ownRepoAccess).toEqual({ stage: "pending", invitationUrl: "https://github.com/owner/repo/invitations" });
+      expect(mocks.refreshGithubStatus).not.toHaveBeenCalled();
+    });
+
+    it("is null when the caller has no recorded reading", async () => {
+      mocks.isStale.mockReturnValue(false);
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [CONFIG_ROW]));
+      const res = await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never) as Response;
+      expect(((await res.json()) as { ownRepoAccess?: unknown }).ownRepoAccess).toBeNull();
+    });
+  });
+
   describe("(A) stale cache + claim won → refreshGithubStatus IS called", () => {
     it("calls refreshGithubStatus when cache is stale and claim succeeds", async () => {
       mocks.isStale.mockReturnValue(true);
@@ -271,6 +308,52 @@ describe("api.site-status — gh-status payload", () => {
         "decrypted-token",
         expect.anything(),
         expect.any(Number),
+        { env: expect.anything(), userId: expect.any(Number) },
+      );
+    });
+
+    // This poll writes the SHARED gh_* cache columns
+    // every project member's browser reads, so it must resolve its token
+    // through resolveProjectToken (installation token, convenor-only
+    // fallback) rather than trust the polling member's own decrypted token.
+    it("collaborator: resolveProjectToken is asked for the project's installation, non-convenor", async () => {
+      mocks.isStale.mockReturnValue(true);
+      mocks.claimRefresh.mockResolvedValue(true);
+      mocks.getUserRoleMock.mockResolvedValue("collaborator");
+      const { resolveProjectToken } = await import("~/lib/github-app.server");
+
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never);
+
+      expect(vi.mocked(resolveProjectToken)).toHaveBeenCalledWith(
+        undefined,
+        undefined,
+        BASE_PROJECT_ROW.installation_id,
+        "decrypted-token",
+        "collaborator",
+      );
+    });
+
+    // The installation token belongs to publishing
+    // roles only. gh-status's own gate is only `role !== null`, so an
+    // instructor still reaches it — resolveProjectToken (real
+    // implementation, see tests/github-app.server.test.ts) decides their
+    // own token from the role passed here, never even attempting a mint.
+    it("instructor: resolveProjectToken is asked with the instructor role, a non-publishing role", async () => {
+      mocks.isStale.mockReturnValue(true);
+      mocks.claimRefresh.mockResolvedValue(true);
+      mocks.getUserRoleMock.mockResolvedValue("instructor");
+      const { resolveProjectToken } = await import("~/lib/github-app.server");
+
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never);
+
+      expect(vi.mocked(resolveProjectToken)).toHaveBeenCalledWith(
+        undefined,
+        undefined,
+        BASE_PROJECT_ROW.installation_id,
+        "decrypted-token",
+        "instructor",
       );
     });
 
@@ -606,6 +689,22 @@ describe("api.site-status — gh-status payload", () => {
       expect(body.unpublishedCount).toBe(3);
     });
 
+    it("counts a changed order of objects once", async () => {
+      mocks.isStale.mockReturnValue(false);
+      mocks.buildEntityHashes.mockResolvedValue({});
+      mocks.computeChangeSummary.mockReturnValue({ ...EMPTY_SUMMARY, isUpToDate: false, objectOrder: { changed: true } });
+
+      const ctx = makeContext([
+        [], [], [], [], [],
+        [BASE_PROJECT_ROW],
+        [CONFIG_ROW],
+      ]);
+
+      const res = await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never) as Response;
+      const body = await res.json() as Record<string, unknown>;
+      expect(body.unpublishedCount).toBe(1);
+    });
+
     it("includes unpublishedCount: 0 when summary reports everything up to date", async () => {
       mocks.isStale.mockReturnValue(false);
       mocks.buildEntityHashes.mockResolvedValue({});
@@ -700,6 +799,51 @@ describe("api.site-status — gh-status payload", () => {
       const res = await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never) as Response;
       const body = await res.json() as Record<string, unknown>;
       expect(body.unpublishedCount).toBe(2);
+    });
+  });
+
+  describe("(F) the team page's access read rides the poll", () => {
+    const run = () =>
+      loader({
+        request: makeRequest("gh-status"),
+        context: makeContext(ghQueue([BASE_PROJECT_ROW], [CONFIG_ROW])) as never,
+        params: {},
+      } as never) as Promise<Response>;
+
+    it("asks for the refresh of the active project even when the status cache is fresh", async () => {
+      mocks.isStale.mockReturnValue(false);
+      const res = await run();
+      expect(res.status).toBe(200);
+      expect(mocks.refreshTeamAccess).toHaveBeenCalledOnce();
+      expect(mocks.refreshTeamAccess).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ id: BASE_PROJECT_ROW.id, github_repo_full_name: BASE_PROJECT_ROW.github_repo_full_name }),
+        expect.any(Number),
+      );
+    });
+
+    it("still refreshes the team when the caller's own token cannot be decrypted", async () => {
+      mocks.isStale.mockReturnValue(false);
+      mocks.decryptMock.mockRejectedValue(new Error("decrypt failure"));
+      const res = await run();
+      expect(res.status).toBe(200);
+      expect(mocks.refreshTeamAccess).toHaveBeenCalledOnce();
+      expect(mocks.refreshTeamAccess).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ id: BASE_PROJECT_ROW.id }),
+        expect.any(Number),
+      );
+    });
+
+    it("answers exactly as it does when the refresh succeeds, when the refresh throws", async () => {
+      mocks.isStale.mockReturnValue(false);
+      const ok = await (await run()).json();
+      mocks.refreshTeamAccess.mockRejectedValue(new Error("github down"));
+      const res = await run();
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(ok);
     });
   });
 });
