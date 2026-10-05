@@ -1,54 +1,43 @@
 /**
  * CollaborationSidebar — right-hand slide-in overlay for collaboration info.
  *
- * Three sections:
+ * Four sections:
  *   1. Online now — connected remote collaborators (presence-authenticated only)
- *   2. Contributions — DonutChart from contributionsByUser
- *   3. Team / Invite — MemberRow list + InviteForm for convenor
+ *   2. Your own contributions, loaded on every open and while open
+ *   3. Your time in the Compositor
+ *   4. Team / Invite — MemberRow list + InviteForm for convenor
  *
  * Entry point: Users icon in Header.
  * State: local sidebarOpen, no URL or localStorage.
  * z-index: z-40 (modal inside is z-50).
  * a11y: focus-trap via close button focus on open; focus-return on close;
  *       Escape closes; aria-hidden when closed; role="complementary" when open.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useFetcher } from "react-router";
+import { usePageSite, useSiteFetcher } from "~/lib/page-site";
+import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
 import { AlertTriangle, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
-import { DonutChart } from "~/components/features/collaboration/DonutChart";
-import type { DonutMember } from "~/components/features/collaboration/DonutChart";
+import { useAnswerKeptFor } from "~/hooks/use-answer-kept-for";
+import { useToast } from "~/hooks/use-toast";
+import { SidebarContributions } from "~/components/features/contributions/SidebarContributions";
+import type { MemberContribution } from "~/lib/contributions";
 import { RemoveCollaboratorModal } from "~/components/features/collaboration/RemoveCollaboratorModal";
 import { MemberRow } from "~/components/features/dashboard/MemberRow";
 import { InviteForm } from "~/components/features/dashboard/InviteForm";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
 
-// AVATAR_FALLBACK_PALETTE — 8 colours, assigned by index, for the DonutChart
-// contribution-avatar fallback when a member has no `presenceColor`.
-// Deliberately distinct from membership.server.ts's own `PRESENCE_PALETTE`
-// (a 6-entry palette assigning each project member's persistent presence
-// colour) — accepted as a separate, intentional data-viz palette rather than
-// unified, since the two serve different lifetimes (per-project persistent
-// assignment vs. per-render chart fallback) and different sizes (6 vs 8).
-// Defined inline here (rather than imported) to avoid a circular dep
-// through PresenceBar.
-const AVATAR_FALLBACK_PALETTE = [
-  "#8B5E3C",
-  "#4A7C9E",
-  "#6B8E23",
-  "#9B59B6",
-  "#E67E22",
-  "#1ABC9C",
-  "#E74C3C",
-  "#2C3E50",
-];
 
 interface Member {
   userId: number;
   githubId: number;
   username: string;
-  role: "convenor" | "collaborator";
+  role: "convenor" | "collaborator" | "instructor";
   contributions: {
     fields_edited: number;
     sessions: number;
@@ -66,7 +55,8 @@ interface Member {
  */
 export interface PendingInvite {
   id: number;
-  createdBy?: number;
+  /** Null once the issuer's account is deleted — a code outlives its creator. */
+  createdBy?: number | null;
 }
 
 export interface CollaborationSidebarProps {
@@ -77,6 +67,15 @@ export interface CollaborationSidebarProps {
   /** Outstanding, not-yet-accepted invitations (convenor-only surface). */
   pendingInvites?: PendingInvite[];
   seats: { used: number; limit: number };
+  /**
+   * True when the project this sidebar is showing IS a course project
+   * (kind === "course"), not a child site enrolled in one. Gates
+   * MemberRow's kebab for instructor rows: course-management, including
+   * removing staff, belongs to the course project's own member list —
+   * never a child's, where instructor membership is tied to the course
+   * and can only be ended by leaving it (design §5).
+   */
+  isCourseProject?: boolean;
   /** ref to the Users icon button — focus returns here on close (a11y) */
   triggerRef?: React.RefObject<HTMLElement | null>;
   className?: string;
@@ -87,6 +86,20 @@ interface RemoveTarget {
   username: string;
 }
 
+/** How often the open panel asks for the record again. */
+const RECORD_POLL_MS = 30_000;
+/** How long after the reader's last own change the panel asks early. */
+const RECORD_OWN_EDIT_MS = 2_000;
+/** The record, read as the panel's (the route's `clientLoader`). */
+const RECORD_URL = "/contributions?panel=record";
+
+interface PanelRecord {
+  members: MemberContribution[];
+  currentUserId: number;
+  /** The project the record was read for. */
+  projectId: number;
+}
+
 export function CollaborationSidebar({
   open,
   onClose,
@@ -94,15 +107,100 @@ export function CollaborationSidebar({
   members,
   pendingInvites = [],
   seats,
+  isCourseProject = false,
   triggerRef,
   className,
 }: CollaborationSidebarProps) {
   const { t } = useTranslation(["collaboration", "team", "common"]);
-  const { remoteCollaborators, contributionsByUser, isPublishing, isUpgrading } = useCollaborationContext();
+  const { ydoc, remoteCollaborators, isPublishing, isUpgrading } = useCollaborationContext();
+  const { showToast } = useToast();
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  useOverlayOpen(open);
   const [removeTarget, setRemoveTarget] = useState<RemoveTarget | null>(null);
-  const removeFetcher = useFetcher();
-  const cancelInviteFetcher = useFetcher();
+  const removeFetcher = useSiteFetcher<{ ok: boolean; intent: string; error?: string }>();
+  const cancelInviteFetcher = useSiteFetcher();
+  // The record is loaded while the panel is open rather than with every page:
+  // it is a dozen aggregates, and no surface outside this panel and its own
+  // page reads it. `/contributions` serves it as the page's own loader data, so
+  // the panel and the record can never be built from different reads. Read as
+  // the panel's, a failed read answers `{ unreachable: true }` instead of
+  // reaching the error card, and the panel keeps the last record it showed
+  // for the active project.
+  const recordFetcher = useFetcher<PanelRecord | { unreachable: true }>();
+  const recordProjectId = usePageSite().live;
+  // The last record, for the project its read was sent under.
+  const { kept: record, markSent } = useAnswerKeptFor<PanelRecord>(
+    recordFetcher.data,
+    (answer) => (answer && !("unreachable" in (answer as object)) ? (answer as PanelRecord) : null),
+    recordProjectId,
+    (kept) => kept.projectId,
+  );
+  const loadRecord = () => {
+    markSent();
+    recordFetcher.load(RECORD_URL);
+  };
+
+  // Every clock, bar, share line and percentage in the panel derives from the
+  // one row this fetch brings back, so a refetch moves all of them together and
+  // none of them can go stale against another. The seconds it carries are the
+  // Durable Object's, which move as people work; the beat is what keeps the
+  // panel from showing a figure taken when it opened.
+  //
+  // Thirty seconds because the booking rule credits a minute in advance of a
+  // change: at that resolution a figure taken every thirty seconds and one
+  // pushed on every keystroke are the same figure.
+  useEffect(() => {
+    if (!open) return;
+    loadRecord();
+    const beat = setInterval(loadRecord, RECORD_POLL_MS);
+    return () => clearInterval(beat);
+    // Keyed on `open` alone: the fetcher's identity changes with every state
+    // transition it makes, and depending on it would restart the beat mid-cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // The reader's own edits, which are the ones they will look down to see
+  // counted, are worth a refetch sooner than the beat allows. Debounced,
+  // because a burst of typing is one stretch of work and books one minute
+  // however many transactions it arrives in; remote transactions are somebody
+  // else's changes and the beat already carries them.
+  useEffect(() => {
+    if (!open || !ydoc) return;
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    function onTransaction(tr: { local: boolean }) {
+      if (!tr.local) return;
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(loadRecord, RECORD_OWN_EDIT_MS);
+    }
+    ydoc.on("afterTransaction", onTransaction);
+    return () => {
+      ydoc.off("afterTransaction", onTransaction);
+      if (pending) clearTimeout(pending);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ydoc]);
+
+  // A refused removal leaves the row exactly where it was, so without this
+  // the panel reports a refusal as though nothing had been asked.
+  //
+  // `instructor_on_child` has its own sentence: instructor membership on a
+  // child is tied to the course in both directions (design §5), which is a
+  // standing rule rather than a failure, and the kebab already hides the
+  // path (MemberRow's isCourseProject gate). Every other refusal —
+  // `cannot_remove_owner`, `no_project`, a missing id — is a state the
+  // convenor cannot act on differently, and takes the generic sentence.
+  useEffect(() => {
+    if (removeFetcher.state !== "idle" || !removeFetcher.data || removeFetcher.data.ok) return;
+    // The layout's notice speaks for a write refused because the site changed.
+    if (isSiteChanged(removeFetcher.data)) return;
+    showToast({
+      message:
+        removeFetcher.data.error === "instructor_on_child"
+          ? t("team:remove_instructor_refused")
+          : t("team:error_remove_failed"),
+      type: "destructive",
+    });
+  }, [removeFetcher.state, removeFetcher.data, showToast, t]);
 
   // Optimistic revocation: while a cancel-invite POST is in flight, hide the
   // targeted row immediately (the loader revalidation removes it for good on
@@ -152,15 +250,6 @@ export function CollaborationSidebar({
   const onlineList = remoteCollaborators.filter(
     (c) => memberUserIds.has(c.user.githubId)
   );
-
-  // Build DonutChart data: join members + contributionsByUser + AVATAR_FALLBACK_PALETTE colour
-  const donutData: DonutMember[] = members.map((m, i) => ({
-    userId: m.userId,
-    name: m.username,
-    color: m.presenceColor ?? AVATAR_FALLBACK_PALETTE[i % AVATAR_FALLBACK_PALETTE.length],
-    count: contributionsByUser.get(m.userId)?.fields_edited ?? 0,
-    isConvenor: m.role === "convenor",
-  }));
 
   // Find the convenor member for InviteForm projectId
   const convenorMember = members.find((m) => m.role === "convenor");
@@ -264,16 +353,16 @@ export function CollaborationSidebar({
             )}
           </section>
 
-          {/* Section 2: Contributions */}
-          <section aria-labelledby="sb-contrib" className="px-4 pt-4 pb-3 border-b border-gray-100">
-            <h3
-              id="sb-contrib"
-              className="font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3"
-            >
-              {t("collaboration:contributions")}
-            </h3>
-            <DonutChart members={donutData} />
-          </section>
+          {/* Section 2: your own contributions, and your time.
+              The donut this replaced was drawn from `fields_edited`, which
+              counts unique field paths touched and so reported a convenor who
+              catalogued thirty objects as barely present. What it showed was
+              never the question anyone was asking. */}
+          <SidebarContributions
+            members={record?.members}
+            currentUserId={record?.currentUserId}
+            recordHref="/contributions"
+          />
 
           {/* Section 3: Team / Invite */}
           <section aria-labelledby="sb-team" className="px-4 pt-4 pb-4">
@@ -293,12 +382,19 @@ export function CollaborationSidebar({
                   role={m.role}
                   isCurrentUserOwner={isConvenor}
                   isConvenor={isConvenor}
+                  isCourseProject={isCourseProject}
                   onRemoveRequest={(target) =>
                     setRemoveTarget({ userId: target.userId, username: target.username })
                   }
                 />
               ))}
             </ul>
+            <a
+              href="/team"
+              className="block mt-2 font-heading text-[13px] text-terracotta no-underline hover:text-terracotta-deep"
+            >
+              {t("team:team_page_link")}
+            </a>
 
             {/* Pending invitations — convenor-only. Sits beside the invite
                 controls so a sent-but-unaccepted invite can be revoked before

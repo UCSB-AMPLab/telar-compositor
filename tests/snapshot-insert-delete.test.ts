@@ -4,7 +4,7 @@
  * Tests: INSERT for Y.Maps with _id === null, DELETE for D1 rows absent from
  * Y.Array, ID backfill broadcast. Also covers unique-field Set semantics.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -186,12 +186,15 @@ describe("snapshotToD1 writes fields.size to contributions.fields_edited", () =>
     expect(result2.fields_edited).toBe(3);
   });
 
-  it("user with userTouches but no userFieldSets entry writes fields_edited = 0 (edge case)", () => {
-    // No fieldSet entry (e.g. session started before this code landed)
+  it("user with no userFieldSets entry keeps the count already stored", () => {
+    // No fieldSet entry, which is what every fresh Durable Object lifetime
+    // looks like: the map is in memory and dies with the instance. Treating
+    // that as "zero fields edited" wrote the current lifetime over the whole
+    // history, and a member who reconnected before their first edit had the
+    // row set to zero. See tests/contribution-counter-monotonic.test.ts.
     const prev = { fields_edited: 5, sessions: 1, last_active: "2026-01-01" };
     const result = buildContributionUpdate(prev, undefined, false);
-    // fields_edited is reset to 0 (the set is empty/absent — migration zeroed the baseline)
-    expect(result.fields_edited).toBe(0);
+    expect(result.fields_edited).toBe(5);
     // Other fields preserved
     expect(result.sessions).toBe(1);
     expect(result.last_active).toBe("2026-01-01");
