@@ -15,6 +15,8 @@
  *  D. Resume flow (`?resume=N`) bypasses `handleSelectRepo` entirely.
  *  E. Stale-prompt guard: a second `handleSelectRepo` clears
  *     `scopeBlocked` BEFORE the second submit fires.
+ *  F. The sync step's default-branch fix submits `intent=fix_default_branch`
+ *     for the selected repo on the import fetcher.
  *
  * Copy note: the connect-existing-repo path uses its own
  * `step_connect.installation_scope.*` key set (the create-site copy
@@ -34,7 +36,7 @@
  * `onSelect(testRepo)` synchronously; this isolates WizardShell orchestration
  * from the (separately tested) StepConnect surface.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -143,8 +145,15 @@ vi.mock("~/components/features/onboarding/StepConnect", () => ({
 }));
 
 // Stub the other step components so we don't need to render real markup.
+// StepSync exposes its default-branch fix as a test-driver button.
 vi.mock("~/components/features/onboarding/StepSync", () => ({
-  StepSync: () => <div data-testid="step-sync">sync</div>,
+  StepSync: (props: { onFixDefaultBranch: () => void }) => (
+    <div data-testid="step-sync">
+      <button type="button" data-testid="fix-default-branch" onClick={props.onFixDefaultBranch}>
+        fix
+      </button>
+    </div>
+  ),
 }));
 vi.mock("~/components/features/onboarding/StepReview", () => ({
   StepReview: () => <div data-testid="step-review">review</div>,
@@ -175,11 +184,13 @@ const baseProps = {
     github_login: "tester",
     github_name: "Tester",
     github_email: "tester@example.com",
-    github_plan: "free",
   },
   hasInstallations: true,
   orphanRepoNames: [],
   githubAppSlug: "telar-compositor",
+  // The course choice is not what these tests are about; unlocked keeps
+  // the create form exactly as it was before the gate.
+  courseGateOpen: true,
 };
 
 describe("WizardShell — scope pre-check orchestration", () => {
@@ -263,7 +274,7 @@ describe("WizardShell — scope pre-check orchestration", () => {
     rerender(<WizardShell {...baseProps} />);
     expect(consoleErrorSpy).toHaveBeenCalled();
     const errMsg = consoleErrorSpy.mock.calls
-      .map((c) => c.join(" "))
+      .map((c: unknown[]) => c.join(" "))
       .join("\n");
     expect(errMsg).toMatch(/check-installation-scope/);
     expect(importFetcher.submit).toHaveBeenCalledTimes(1);
@@ -295,6 +306,50 @@ describe("WizardShell — scope pre-check orchestration", () => {
     );
   });
 
+  it("Case D2 — an incomplete project without ?resume= does not auto-resume", () => {
+    searchParamsMock = new URLSearchParams("force=1");
+    render(
+      <WizardShell
+        {...baseProps}
+        connectedProjects={[
+          { id: 99, github_repo_full_name: "tester/old-repo", onboarding_completed: null },
+        ]}
+      />,
+    );
+    expect(fetcherRegistry[1].submit).not.toHaveBeenCalled();
+  });
+
+  it("Case D3 — ?resume= for a different id does not resume another project", () => {
+    searchParamsMock = new URLSearchParams("resume=5");
+    render(
+      <WizardShell
+        {...baseProps}
+        connectedProjects={[
+          { id: 99, github_repo_full_name: "tester/old-repo", onboarding_completed: null },
+        ]}
+      />,
+    );
+    expect(fetcherRegistry[1].submit).not.toHaveBeenCalled();
+  });
+
+  it("Case D4 — choosing Resume after the wizard opened resumes that project", () => {
+    searchParamsMock = new URLSearchParams("force=1");
+    const props = {
+      ...baseProps,
+      connectedProjects: [
+        { id: 99, github_repo_full_name: "tester/old-repo", onboarding_completed: null },
+      ],
+    };
+    const { rerender } = render(<WizardShell {...props} />);
+    expect(fetcherRegistry[1].submit).not.toHaveBeenCalled();
+    searchParamsMock = new URLSearchParams("resume=99");
+    rerender(<WizardShell {...props} />);
+    expect(fetcherRegistry[1].submit).toHaveBeenCalledTimes(1);
+    expect((fetcherRegistry[1].submit.mock.calls[0][0] as Record<string, string>).project_id).toBe("99");
+    rerender(<WizardShell {...props} />);
+    expect(fetcherRegistry[1].submit).toHaveBeenCalledTimes(1);
+  });
+
   it("Case E — stale-prompt guard: selecting a second repo clears scopeBlocked before re-submit", () => {
     const { rerender } = render(<WizardShell {...baseProps} />);
     // First selection — out-of-scope, prompt appears.
@@ -321,5 +376,96 @@ describe("WizardShell — scope pre-check orchestration", () => {
     expect(screen.queryByTestId("scope-prompt")).toBeNull();
     // Second submit fires (a fresh check-installation-scope call).
     expect(scopeFetcher.submit).toHaveBeenCalledTimes(2);
+  });
+
+  it("Case F — the default-branch fix submits intent=fix_default_branch for the selected repo", () => {
+    const { rerender } = render(<WizardShell {...baseProps} />);
+    act(() => {
+      fireEvent.click(screen.getByTestId("select-repo-a"));
+    });
+    const importFetcher = fetcherRegistry[0];
+    const scopeFetcher = fetcherRegistry[4];
+    act(() => {
+      scopeFetcher.data = { ok: true, intent: "check-installation-scope", inScope: true };
+    });
+    rerender(<WizardShell {...baseProps} />);
+    expect(importFetcher.submit).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      fireEvent.click(screen.getByTestId("fix-default-branch"));
+    });
+
+    expect(importFetcher.submit).toHaveBeenCalledTimes(2);
+    const [body, options] = importFetcher.submit.mock.calls[1] as [FormData, Record<string, string>];
+    expect(body.get("intent")).toBe("fix_default_branch");
+    expect(body.get("installation_id")).toBe("42");
+    expect(body.get("repo_full_name")).toBe("tester/repo-a");
+    expect(options).toEqual({ method: "post", action: "/onboarding" });
+  });
+  it("Case G — completing onboarding forgets the site the tab remembered, as the session now names the new one", () => {
+    // The layout reached next would read site 1 and switch the session back.
+    window.sessionStorage.setItem("telar.tab-site", "1");
+    searchParamsMock = new URLSearchParams("resume=99");
+    const props = {
+      ...baseProps,
+      connectedProjects: [
+        { id: 99, github_repo_full_name: "tester/old-repo", onboarding_completed: null },
+      ],
+    };
+    const { rerender } = render(<WizardShell {...props} />);
+    const configCheck = fetcherRegistry[1];
+    const completeFetcher = fetcherRegistry[3];
+    expect(window.sessionStorage.getItem("telar.tab-site")).toBe("1");
+    act(() => {
+      configCheck.data = { ok: true, intent: "check-site-config", sheetsEnabled: false, pagesNotEnabled: false, urlMismatch: null };
+    });
+    rerender(<WizardShell {...props} />);
+    expect(completeFetcher.submit).toHaveBeenCalledTimes(1);
+    expect((completeFetcher.submit.mock.calls[0][0] as Record<string, string>).project_id).toBe("99");
+    expect(window.sessionStorage.getItem("telar.tab-site")).toBeNull();
+  });
+
+  it("Case H — a refused completion leaves the tab remembering the site it showed", () => {
+    window.sessionStorage.setItem("telar.tab-site", "1");
+    searchParamsMock = new URLSearchParams("resume=99");
+    const props = {
+      ...baseProps,
+      connectedProjects: [
+        { id: 99, github_repo_full_name: "tester/old-repo", onboarding_completed: null },
+      ],
+    };
+    const { rerender } = render(<WizardShell {...props} />);
+    act(() => {
+      fetcherRegistry[1].data = { ok: true, intent: "check-site-config", sheetsEnabled: false, pagesNotEnabled: false, urlMismatch: null };
+    });
+    rerender(<WizardShell {...props} />);
+    expect(fetcherRegistry[3].submit).toHaveBeenCalledTimes(1);
+    expect(window.sessionStorage.getItem("telar.tab-site")).toBeNull();
+    act(() => {
+      fetcherRegistry[3].data = { ok: false, intent: "complete-onboarding", error: "not_found" };
+    });
+    rerender(<WizardShell {...props} />);
+    expect(window.sessionStorage.getItem("telar.tab-site")).toBe("1");
+  });
+
+  it("Case I — a completed onboarding keeps the site forgotten", () => {
+    window.sessionStorage.setItem("telar.tab-site", "1");
+    searchParamsMock = new URLSearchParams("resume=99");
+    const props = {
+      ...baseProps,
+      connectedProjects: [
+        { id: 99, github_repo_full_name: "tester/old-repo", onboarding_completed: null },
+      ],
+    };
+    const { rerender } = render(<WizardShell {...props} />);
+    act(() => {
+      fetcherRegistry[1].data = { ok: true, intent: "check-site-config", sheetsEnabled: false, pagesNotEnabled: false, urlMismatch: null };
+    });
+    rerender(<WizardShell {...props} />);
+    act(() => {
+      fetcherRegistry[3].data = { ok: true, intent: "complete-onboarding" };
+    });
+    rerender(<WizardShell {...props} />);
+    expect(window.sessionStorage.getItem("telar.tab-site")).toBeNull();
   });
 });

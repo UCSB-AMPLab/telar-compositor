@@ -17,12 +17,40 @@ interface Props {
   sheetsEnabled: boolean;
   pagesNotEnabled: boolean;
   urlMismatch: { pagesUrl: string; configUrl: string } | null;
+  /** The refusal code alone, never carrying GitHub's text: the branches below select on it by equality. */
   error: string | null;
+  /** GitHub's own words, shown as detail beneath whichever explanation the code selected. */
+  errorMessage: string | null;
+  /** Carries the visibility remedy's link to the repository's own settings; null drops the link, never the explanation. */
+  repoFullName: string | null;
   installationId: number | null;
   onConfirmed: () => void;
   onSkip: () => void;
   isSubmitting: boolean;
 }
+
+/**
+ * Refusal code to the pair of keys that explains it, one entry per code, in the
+ * shape `_auth.invite.$token.tsx` already uses for its own refusals. A code with
+ * no entry takes the generic pair, so an unmapped refusal reads as a refusal
+ * rather than as a blank card — and adding a code means adding a row, never
+ * lengthening a chain of conditions.
+ */
+const REFUSAL_COPY: Record<string, { title: string; body: string }> = {
+  pages_private_repo: {
+    title: "site_config.error_private_repo_title",
+    body: "site_config.error_private_repo",
+  },
+  pages_permission_denied: {
+    title: "site_config.error_pages_permission_title",
+    body: "site_config.error_pages_permission",
+  },
+};
+
+const GENERIC_REFUSAL = {
+  title: "site_config.error_generic_title",
+  body: "site_config.error_generic",
+};
 
 function CheckItem({
   passed,
@@ -64,6 +92,8 @@ export function SiteConfigConfirmation({
   pagesNotEnabled,
   urlMismatch,
   error,
+  errorMessage,
+  repoFullName,
   installationId,
   onConfirmed,
   onSkip,
@@ -71,6 +101,7 @@ export function SiteConfigConfirmation({
 }: Props) {
   const { t } = useTranslation("onboarding");
 
+  const refusal = (error && REFUSAL_COPY[error]) || GENERIC_REFUSAL;
   const allPassed = !sheetsEnabled && !pagesNotEnabled && !urlMismatch;
   const hasIssues = sheetsEnabled || pagesNotEnabled || urlMismatch;
 
@@ -132,17 +163,23 @@ export function SiteConfigConfirmation({
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-4">
           <p className="font-heading font-semibold text-sm text-red-900 mb-1">
-            {error === "pages_permission_denied"
-              ? t("site_config.error_pages_permission_title")
-              : t("site_config.error_generic_title")}
+            {t(refusal.title)}
           </p>
           <p className="font-body text-sm text-red-800">
-            {error === "pages_permission_denied"
-              ? t("site_config.error_pages_permission")
-              : t("site_config.error_generic")}
+            {t(refusal.body)}
           </p>
-          {error !== "pages_permission_denied" && (
-            <p className="font-mono text-xs text-red-600 mt-2 break-all">{error}</p>
+          {errorMessage && (
+            <p className="font-mono text-xs text-red-600 mt-2 break-all">{errorMessage}</p>
+          )}
+          {error === "pages_private_repo" && repoFullName && (
+            <a
+              href={`https://github.com/${repoFullName}/settings`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block mt-2 font-body text-sm text-blue-600 hover:underline"
+            >
+              {t("site_config.error_private_repo_link")} →
+            </a>
           )}
           {error === "pages_permission_denied" && installationId && (
             <a

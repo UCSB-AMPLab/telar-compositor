@@ -2,15 +2,16 @@
  * StepReview — import results summary step.
  *
  * Shows: site settings summary, objects count, stories count, glossary count,
- * Google Sheets warning (if auto-disabled), and CSV warnings in a collapsible
- * section. Two actions: "Go to Dashboard" and "Edit Config First".
+ * Google Sheets warning (if auto-disabled), the GitHub Pages branch a site
+ * still publishes from after the Compositor moved it to `main`, and CSV
+ * warnings in a collapsible section. Two actions: "Go to Dashboard" and
+ * "Edit Config First".
  */
 
-import { useState } from "react";
-import { ChevronDown } from "lucide-react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
+import { SheetWarnings } from "~/components/ui/SheetWarnings";
 import { WarningBanner } from "~/components/ui/WarningBanner";
 import { InlineConfig } from "./InlineConfig";
 import type { ImportResult } from "~/lib/import.server";
@@ -33,7 +34,6 @@ export function StepReview({
   className = "",
 }: StepReviewProps) {
   const { t } = useTranslation("onboarding");
-  const [warningsOpen, setWarningsOpen] = useState(false);
 
   const allWarnings = [
     ...importResult.objects.warnings,
@@ -129,31 +129,20 @@ export function StepReview({
         </div>
       </div>
 
-      {/* CSV warnings collapsible */}
-      {allWarnings.length > 0 && (
-        <details
-          open={warningsOpen}
-          onToggle={(e) => setWarningsOpen((e.target as HTMLDetailsElement).open)}
-          className="mb-4 border border-amber-200 rounded-lg overflow-hidden"
-        >
-          <summary className="flex items-center justify-between px-4 py-3 bg-amber-50 cursor-pointer list-none">
-            <span className="text-sm font-body font-medium text-amber-800">
-              {t("step_review.warnings", { count: allWarnings.length })}
-            </span>
-            <ChevronDown
-              className={`w-4 h-4 text-amber-600 transition-transform ${warningsOpen ? "rotate-180" : ""}`}
-              aria-hidden="true"
-            />
-          </summary>
-          <ul className="px-4 py-3 space-y-1">
-            {allWarnings.map((w, i) => (
-              <li key={i} className="text-xs font-body text-gray-600">
-                {w}
-              </li>
-            ))}
-          </ul>
-        </details>
+      {/* Pages still publishing from a branch after the move to main */}
+      {importResult.pagesWarning && (
+        <WarningBanner
+          message={t("step_sync.warning_pages_old_branch", { branch: importResult.pagesWarning.branch })}
+          className="mb-4"
+        />
       )}
+
+      {/* CSV warnings collapsible */}
+      <SheetWarnings
+        warnings={allWarnings}
+        summary={t("step_review.warnings", { count: allWarnings.length })}
+        className="mb-4"
+      />
 
       {/* Inline config editor */}
       {showInlineConfig && (
