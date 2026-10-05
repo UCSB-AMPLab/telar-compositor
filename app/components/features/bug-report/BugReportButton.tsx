@@ -2,21 +2,23 @@
  * This file renders the bug-report trigger button — the small bug
  * icon in the header that opens `BugReportPanel` on click.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Bug } from "lucide-react";
-import { BugReportPanel } from "./BugReportPanel";
+import { BugReportPanel, type ReportSite } from "./BugReportPanel";
 
 interface BugReportButtonProps {
   /** GitHub login of the signed-in user, threaded into the "signed in as @x"
    * caption. */
   userLogin: string;
+  /** The active site, recorded in the report. */
+  site?: ReportSite;
 }
 
-export function BugReportButton({ userLogin }: BugReportButtonProps) {
+export function BugReportButton({ userLogin, site }: BugReportButtonProps) {
   const { t } = useTranslation("bug-report");
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -38,6 +40,7 @@ export function BugReportButton({ userLogin }: BugReportButtonProps) {
         onClose={() => setOpen(false)}
         mode="default"
         userLogin={userLogin}
+        {...site}
         triggerRef={triggerRef}
       />
     </>

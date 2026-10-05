@@ -11,7 +11,7 @@
  * deliberately do NOT live here; they belong with the TabNav tab bar so the
  * header stays purely a global-context strip.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -25,7 +25,7 @@ import { PresenceBar } from "~/components/ui/PresenceBar";
 import { ConnectionPill } from "~/components/ui/ConnectionPill";
 import { SiteStatusPill } from "~/components/features/site-status/SiteStatusPill";
 import { ProjectSwitcher } from "~/components/features/header/ProjectSwitcher";
-import { BugReportPanel } from "~/components/features/bug-report/BugReportPanel";
+import { BugReportPanel, type ReportSite } from "~/components/features/bug-report/BugReportPanel";
 import { BugReportButton } from "~/components/features/bug-report/BugReportButton";
 
 /** Shape of the routes/_app loader fields the header reads. */
@@ -33,13 +33,17 @@ interface AppLoaderData {
   allProjects?: Array<{
     id: number;
     github_repo_full_name: string;
-    userRole: "convenor" | "collaborator";
+    userRole: "convenor" | "collaborator" | "instructor";
     ownerLogin?: string;
     collaboratorCount?: number;
   }>;
   activeProjectId?: number | null;
   /** Active project's GitHub repo ("owner/name"), threaded into bug reports. */
   repoFullName?: string | null;
+  /** The site's `telar_version`, threaded into bug reports. */
+  siteTelarVersion?: string | null;
+  /** True when the repository has commits the Compositor didn't make. */
+  headDiverged?: boolean;
   /** True when the active project has at least one collaborator (members > 1).
    * The Convenor/Collaborator role distinction has no meaning on a solo project,
    * so the role chip is hidden until someone else joins. */
@@ -69,6 +73,16 @@ function RoleChip() {
   );
 }
 
+/** What the `_app` loader knows about the active site, for bug reports. */
+function reportSiteOf(app: AppLoaderData | null): ReportSite {
+  return {
+    repoFullName: app?.repoFullName ?? undefined,
+    telarVersion: app?.siteTelarVersion ?? undefined,
+    headDiverged: app?.headDiverged ?? false,
+    projectId: app?.activeProjectId ?? undefined,
+  };
+}
+
 interface HeaderProps {
   user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email">;
   environment?: string;
@@ -80,6 +94,19 @@ interface HeaderProps {
   className?: string;
 }
 
+/** Why the sidebar toggle is disabled; no project outranks a running freeze. */
+function sidebarToggleTooltip(
+  t: (key: string) => string,
+  hasProject: boolean,
+  isPublishing: boolean,
+  isUpgrading: boolean,
+): string | undefined {
+  if (!hasProject) return t("sidebar_disabled_tooltip");
+  if (isPublishing) return t("sidebar_publishing_tooltip");
+  if (isUpgrading) return t("sidebar_upgrading_tooltip");
+  return undefined;
+}
+
 export function Header({ user, environment, presenceColor, sidebarOpen, onToggleSidebar, usersIconRef, hasProject = false, className = "" }: HeaderProps) {
   const { t: tCollab } = useTranslation("collaboration");
   const { t: tCommon } = useTranslation("common");
@@ -88,10 +115,12 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { connectionStatus, isPublishing, isUpgrading } = useCollaborationContext();
   const isFrozen = isPublishing || isUpgrading;
+  const toggleTooltip = sidebarToggleTooltip(tCollab, hasProject, isPublishing, isUpgrading);
 
   // Project switcher data — read from the routes/_app loader. The switcher
   // tolerates allProjects being undefined.
   const app = useRouteLoaderData("routes/_app") as AppLoaderData | null;
+  const reportSite = reportSiteOf(app);
 
   // Bug-report panel — also folded into the user menu as "Report a problem".
   // The panel itself is reused as-is; only the trigger relocates.
@@ -130,7 +159,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
             Compositor
           </span>
           {environment === "staging" && (
-            <span className="ml-2 px-2 py-0.5 rounded-full bg-anil/20 border border-anil/40 font-heading text-xs text-anil font-semibold tracking-wide uppercase">
+            <span className="ml-2 px-2 py-0.5 max-sm:hidden rounded-full bg-anil/20 border border-anil/40 font-heading text-xs text-anil font-semibold tracking-wide uppercase">
               Staging
             </span>
           )}
@@ -163,8 +192,10 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
           <button
             ref={usersIconRef}
             type="button"
-            onClick={onToggleSidebar}
-            disabled={!hasProject || isFrozen}
+            onClick={!hasProject || isFrozen ? undefined : onToggleSidebar}
+            aria-disabled={!hasProject || isFrozen}
+            aria-describedby={toggleTooltip ? "sidebar-toggle-why" : undefined}
+            title={toggleTooltip}
             aria-expanded={sidebarOpen}
             aria-label={sidebarOpen ? tCollab("sidebar_close_aria") : tCollab("sidebar_open_aria")}
             className={`p-1.5 pointer-coarse:min-w-11 pointer-coarse:min-h-11 inline-flex items-center justify-center rounded-full transition-colors focus-visible:outline-offset-0 ${
@@ -176,6 +207,14 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
             }`}
           >
             <Users className="w-4.5 h-4.5" />
+            {/* Stays focusable while unavailable (aria-disabled, not disabled),
+                so a keyboard user can reach the reason, which is read out as
+                its description. */}
+            {toggleTooltip && (
+              <span id="sidebar-toggle-why" className="sr-only">
+                {toggleTooltip}
+              </span>
+            )}
           </button>
         )}
 
@@ -298,7 +337,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
         {/* Standalone bug button — hidden below lg; it is also in the user
             dropdown ("Report a problem"), so narrow headers stay uncluttered. */}
         <span className="hidden lg:inline-flex">
-          <BugReportButton userLogin={user.github_login} />
+          <BugReportButton userLogin={user.github_login} site={reportSite} />
         </span>
       </div>
 
@@ -308,7 +347,7 @@ export function Header({ user, environment, presenceColor, sidebarOpen, onToggle
         onClose={() => setBugReportOpen(false)}
         mode="default"
         userLogin={user.github_login}
-        repoFullName={app?.repoFullName ?? undefined}
+        {...reportSite}
         triggerRef={reportTriggerRef}
       />
     </header>
