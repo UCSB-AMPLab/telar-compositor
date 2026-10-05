@@ -6,7 +6,7 @@
  * pre-aggregated into +/~/− totals — this pure helper sums it. FullSyncDiff is
  * imported type-only so no server runtime is pulled into the client bundle.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import type { FullSyncDiff } from "~/lib/sync.server";
@@ -22,6 +22,7 @@ export interface SyncDiffTotals {
  *
  *   added   = new objects   + new stories     + glossary added
  *   changed = changed objects + changed stories + config changedFields + glossary changed
+ *             + one for a reorder of objects
  *   removed = missing objects + missing stories + glossary removed
  *
  * unregisteredFiles, config.versionChange and hasConflicts are intentionally
@@ -37,7 +38,8 @@ export function aggregateSyncDiff(diff: FullSyncDiff): SyncDiffTotals {
     diff.objects.changedObjects.length +
     diff.stories.changedStories.length +
     diff.config.changedFields.length +
-    diff.glossary.changed.length;
+    diff.glossary.changed.length +
+    (diff.objects.reordered != null ? 1 : 0);
 
   const removed =
     diff.objects.missingObjects.length +

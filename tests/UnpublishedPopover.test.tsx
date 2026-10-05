@@ -8,7 +8,7 @@
  * one-click commit). The displayed count derives from the SAME ChangeSummary
  * (single source of truth).
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -22,6 +22,7 @@ import type { ChangeSummary } from "~/lib/publish.server";
 // in tests/role-gating.test.tsx. Default to convenor here.
 vi.mock("~/hooks/use-role", () => ({
   useIsConvenor: () => true,
+  useIsPublisher: () => true,
 }));
 
 vi.mock("react-i18next", () => ({
@@ -40,6 +41,7 @@ vi.mock("react-i18next", () => ({
         "unpublished.added": "added",
         "unpublished.review": "Review all changes",
         "unpublished.publish": "Publish",
+        "unpublished.objects_order": "Order of objects",
       };
       let out = map[key] ?? key;
       if (opts) {
@@ -77,6 +79,7 @@ const summary: ChangeSummary = {
   settings: { changed: [] },
   landing: { changed: false },
   navigation: { changed: false },
+  objectOrder: { changed: false },
   fileChanges: { addedStoryFiles: [], removedStoryFiles: [] },
 };
 
@@ -89,6 +92,19 @@ function renderPopover(props: Parameters<typeof UnpublishedPopover>[0]) {
 }
 
 describe("UnpublishedPopover", () => {
+  it("names a changed order of objects in the objects section, counted once", () => {
+    const reordered: ChangeSummary = {
+      ...summary,
+      objects: emptyBucket(),
+      objectOrder: { changed: true },
+    };
+    const { container } = renderPopover({ summary: reordered });
+    expect(container.textContent).toContain("Objects");
+    expect(container.textContent).toContain("Order of objects");
+    // 2 stories + the order of objects
+    expect(container.textContent).toContain("3 unpublished changes");
+  });
+
   it("renders the pluralised title from the ChangeSummary total", () => {
     const { container } = renderPopover({ summary });
     // 2 stories + 1 object = 3 changes

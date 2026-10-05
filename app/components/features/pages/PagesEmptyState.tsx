@@ -10,13 +10,16 @@
  * `PagesRepoImportEmptyState` instead. Both variants share the
  * same outer layout, anil circle, `FileText` icon, and font
  * tokens so the screen feels like one empty state with an extra
- * import section.
+ * import section. A page the scan could not read as valid UTF-8 is named
+ * above the list, before it is imported.
  *
- * @version v1.3.6-beta
+ * @version v1.5.0-beta
  */
 
 import { FileText } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { SheetWarnings } from "~/components/ui/SheetWarnings";
+import type { SheetWarning } from "~/lib/sheet-warnings";
 
 interface PagesEmptyStateProps {
   onCreateNew: () => void;
@@ -58,6 +61,8 @@ export interface ImportablePage {
 
 interface PagesRepoImportEmptyStateProps {
   pages: ImportablePage[];
+  /** What the scan found wrong in the pages' files, shown above the list. */
+  warnings?: readonly SheetWarning[];
   onImportAll: () => void;
   onImportOne: (slug: string) => void;
   isImporting: boolean;
@@ -79,6 +84,7 @@ interface PagesRepoImportEmptyStateProps {
  */
 export function PagesRepoImportEmptyState({
   pages,
+  warnings = [],
   onImportAll,
   onImportOne,
   isImporting,
@@ -97,6 +103,8 @@ export function PagesRepoImportEmptyState({
       <p className="font-body text-sm text-gray-500 max-w-sm mb-6">
         {t("repo_pages_description")}
       </p>
+
+      <SheetWarnings warnings={warnings} defaultOpen className="w-full max-w-md mb-6 text-left" />
 
       {/* Per-page list — rounded panel mirrors CommitAndBuildModal urlMismatch */}
       <ul className="w-full max-w-md mb-6 border border-gray-200 rounded-lg bg-white divide-y divide-gray-100">

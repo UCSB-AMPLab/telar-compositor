@@ -7,7 +7,7 @@
  * that submits the existing `accept-divergence` intent via a POST fetcher —
  * with no new backend intent and no db write introduced in the file.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -16,6 +16,7 @@ import type { FullSyncDiff } from "~/lib/sync.server";
 
 // Capture fetcher.submit calls so we can assert the accept-divergence intent.
 const submitSpy = vi.fn();
+const fetcherData: { current: unknown } = { current: undefined };
 vi.mock("react-router", async () => {
   const actual = await vi.importActual<typeof import("react-router")>("react-router");
   return {
@@ -23,7 +24,7 @@ vi.mock("react-router", async () => {
     useFetcher: () => ({
       submit: submitSpy,
       state: "idle",
-      data: undefined,
+      data: fetcherData.current,
     }),
   };
 });
@@ -41,6 +42,7 @@ vi.mock("react-i18next", () => ({
         "out_of_sync.removed": "{{n}} removed",
         "out_of_sync.keep_mine": "Keep my version",
         "out_of_sync.review": "Review changes",
+        "out_of_sync.accept_divergence_stale": "GitHub changed while you were reviewing the differences.",
       };
       let out = map[key] ?? key;
       if (opts) {
@@ -56,6 +58,11 @@ vi.mock("react-i18next", () => ({
 import { fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { OutOfSyncPopover } from "~/components/features/site-status/popovers/OutOfSyncPopover";
+
+/** The commit the popover's check read. */
+const SHOWN = "0123456789abcdef0123456789abcdef01234567";
+/** The head_sha the check compared against. */
+const BASE = "fedcba9876543210fedcba9876543210fedcba98";
 
 // FullSyncDiff fixture: 2 new objects, 1 changed story, 1 config field, 1 removed term.
 // aggregateSyncDiff → { added: 2, changed: 2, removed: 1 }
@@ -83,10 +90,15 @@ const diff: FullSyncDiff = {
   hasConflicts: false,
   classification: "two-way",
   suppressedEditorOnly: 0,
+  unreadableFiles: [],
+  projectId: 7,
+  baseSha: BASE,
+  headSha: SHOWN,
 };
 
 function renderPopover(props: Parameters<typeof OutOfSyncPopover>[0]) {
   submitSpy.mockClear();
+  fetcherData.current = undefined;
   return render(
     <MemoryRouter>
       <OutOfSyncPopover {...props} />
@@ -135,7 +147,10 @@ describe("OutOfSyncPopover", () => {
     fireEvent.click(getByText("Keep my version"));
     expect(submitSpy).toHaveBeenCalledTimes(1);
     const [body, opts] = submitSpy.mock.calls[0];
-    expect(body).toEqual({ intent: "accept-divergence" });
+    // The diff's own identity: the project it is of, the base it was
+    // computed against, and the commit whose differences the author chose to
+    // keep their version over.
+    expect(body).toEqual({ intent: "accept-divergence", projectId: "7", baseSha: BASE, headSha: SHOWN });
     expect(opts).toMatchObject({ method: "post", action: "/dashboard" });
   });
 
@@ -144,5 +159,22 @@ describe("OutOfSyncPopover", () => {
     const review = container.querySelector("a.bg-anil");
     expect(review).not.toBeNull();
     expect(review?.getAttribute("href")).toBe("/objects?sync=1");
+  });
+
+  it("says GitHub changed, and keeps the way to review, when the keep is answered stale", () => {
+    const { container, rerender } = renderPopover({ diff });
+    fetcherData.current = { ok: false, intent: "accept-divergence", error: "accept_divergence_stale" };
+    rerender(
+      <MemoryRouter>
+        <OutOfSyncPopover diff={diff} />
+      </MemoryRouter>,
+    );
+    expect(container.textContent).toContain("GitHub changed while you were reviewing the differences.");
+    expect(container.querySelector("a.bg-anil")?.getAttribute("href")).toBe("/objects?sync=1");
+  });
+
+  it("shows no stale notice before the keep is answered", () => {
+    const { container } = renderPopover({ diff });
+    expect(container.textContent).not.toContain("GitHub changed while you were reviewing");
   });
 });

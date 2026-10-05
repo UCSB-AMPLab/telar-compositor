@@ -7,7 +7,12 @@
  *
  * `Keep my version` reuses the EXISTING `accept-divergence` intent on the
  * dashboard action (requireOwner-gated server-side) via a POST fetcher exactly
- * as SyncConfirmModal does — it introduces NO new intent and NO D1 write.
+ * as SyncConfirmModal does — it introduces NO new intent and NO D1 write. It
+ * posts the identity of the diff it is showing (`keepMineFields`): the
+ * project it is of, the base it was computed against, and `headSha`, the
+ * commit whose differences the author is keeping their version over. A diff that names none, or a head that moved
+ * since, is answered `accept_divergence_stale`, and the popover says so above
+ * its existing way to review the changes.
  *
  * Both actions surface only for convenors — out-of-sync renders only for
  * convenors today (mirrors `SyncBanner`), and the server gate is authoritative.
@@ -17,14 +22,16 @@
  * `FullSyncDiff` is imported type-only so no `.server` runtime reaches the
  * client bundle.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
-import { Link, useFetcher } from "react-router";
+import { Link } from "react-router";
+import { useSiteFetcher } from "~/lib/page-site";
 import { ArrowUpRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { FullSyncDiff } from "~/lib/sync.server";
 import { aggregateSyncDiff } from "~/components/features/site-status/site-status-diff";
+import { keepMineFields } from "~/components/features/dashboard/sync-changes";
 
 export interface OutOfSyncPopoverProps {
   diff: FullSyncDiff;
@@ -45,7 +52,7 @@ export function OutOfSyncPopover({
   const { t } = useTranslation("popover");
   // Reuse the existing accept-divergence intent — NOT a new one. Posts to the
   // dashboard action exactly like SyncConfirmModal's applyFetcher.
-  const acceptFetcher = useFetcher();
+  const acceptFetcher = useSiteFetcher();
 
   const { added, changed, removed } = aggregateSyncDiff(diff);
 
@@ -54,13 +61,16 @@ export function OutOfSyncPopover({
     // but only the dashboard action handles `accept-divergence`. Target it
     // explicitly so the intent always reaches its handler — a bare POST would
     // hit the current route's action and 400/no-op everywhere but /dashboard.
-    // The dashboard action resolves the active project from the session, so a
-    // cross-route POST is safe.
+    // The dashboard action resolves the active project from the session and
+    // refuses the write unless the page's site is that one.
     acceptFetcher.submit(
-      { intent: "accept-divergence" },
+      keepMineFields(diff),
       { method: "post", action: "/dashboard" },
     );
   }
+
+  const acceptData = acceptFetcher.data as { ok?: boolean; error?: string } | undefined;
+  const acceptStale = acceptData?.ok === false && acceptData.error === "accept_divergence_stale";
 
   return (
     <div className={className}>
@@ -72,6 +82,15 @@ export function OutOfSyncPopover({
         <p className="font-body text-fg-muted" style={{ fontSize: "12px", marginTop: "2px", lineHeight: 1.45 }}>
           {t("out_of_sync.body")}
         </p>
+        {acceptStale && (
+          <p
+            role="status"
+            className="font-body text-charcoal bg-amber-50 border border-amber-200"
+            style={{ fontSize: "12px", marginTop: "8px", lineHeight: 1.45, padding: "6px 10px", borderRadius: "0.375rem" }}
+          >
+            {t("out_of_sync.accept_divergence_stale")}
+          </p>
+        )}
       </div>
 
       {/* Body: What-changed label + three diff chips */}

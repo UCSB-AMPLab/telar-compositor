@@ -5,7 +5,7 @@
  * comprehension threshold; shares the registry-derived fixtures via
  * ./sync-probe-fixtures.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -15,26 +15,34 @@ vi.mock("~/lib/github.server", () => ({
   getFileAtRef: vi.fn(),
   getRepoTree: vi.fn(),
   getRepoHead: vi.fn(),
+  commitExists: vi.fn(),
   graphqlGitHub: vi.fn(),
   githubHeaders: vi.fn(() => ({})),
   decodeGitHubContent: vi.fn((s: string) => s),
 }));
 
 import * as githubServer from "~/lib/github.server";
+import { strictReadsFromFileContent } from "./helpers/strict-sheet-read";
 import {
   computeSyncDiff,
   computeFullSyncDiff,
   computeGlossarySyncDiff,
   resolveFullSyncPayload,
+  type SyncField,
 } from "~/lib/sync.server";
 import type { FieldDecl } from "../app/lib/field-registry";
 import {
   probeSequentialMockDb, syncOf,
   objectSyncFields, storySyncFields, configSyncFields, glossarySyncFields,
-  PROJECT_ID, TOKEN, OWNER, REPO, probeObjectsCsv, d1ObjectRow, projectCsv,
+  PROJECT_ID, TOKEN, OWNER, REPO, probeObjectsCsv, objectCsvHeader, d1ObjectRow, projectCsv,
   d1StoryRow, configValueKind, configYml, d1ConfigRow, glossaryCsv, d1GlossaryRow,
-  emptyChanges,
+  emptyChanges, emptyThreeWaySelections,
+  kindsValue,
 } from "./sync-probe-fixtures";
+import { buildThreeWayChanges } from "~/components/features/dashboard/sync-changes";
+
+/** The owner who accepted the sync; the route resolves them server-side. */
+const THREEWAY_ACTOR_ID = 7;
 
 // ===========================================================================
 // 7. Three-way classification probes (base = repo files at head_sha)
@@ -67,6 +75,7 @@ function editorConfigValue(f: FieldDecl): string | boolean | number {
   const kind = configValueKind(f);
   if (kind === "bool") return true; // base false, repo true — can't 3-way-conflict a boolean
   if (kind === "int") return 9; // base 4, repo 7, editor 9
+  if (kind === "kinds") return kindsValue("edit");
   return `edit-${f.name}`;
 }
 
@@ -90,10 +99,10 @@ function mockByRef(byPath: (path: string, isBase: boolean) => string | null) {
   vi.mocked(githubServer.getFileContent).mockImplementation(
     async (_t, _o, _r, path, ref) => byPath(path, Boolean(ref)),
   );
-  vi.mocked(githubServer.getFileAtRef).mockImplementation(async (_t, _o, _r, path) => {
+  vi.mocked(githubServer.getFileAtRef).mockImplementation(strictReadsFromFileContent(githubServer.getFileContent, async (_t, _o, _r, path) => {
     const c = byPath(path, true);
     return c === null ? { status: "absent" as const } : { status: "ok" as const, content: c };
-  });
+  }, (ref) => ref === BASE_REF));
 }
 
 // The base objects.csv content a direct computeSyncDiff probe should receive:
@@ -145,6 +154,75 @@ describe("three-way probes — objects (computeSyncDiff)", () => {
       expect(changed?.conflictFields).toContain(field.name);
     });
   }
+});
+
+// A value the base held and the repo cleared is an edit, not a cell left for
+// enrichment. `featured` has no empty cell (blank reads as false) and an empty
+// `extra_columns` blob is never passed over, so both are outside this family.
+const objectClearable = objectSyncFields.filter((f) => f.name !== "featured" && f.name !== "extra_columns");
+
+/** probeObjectsCsv with `name`'s cell blank. */
+function clearedObjectsCsv(name: string): string {
+  const [header, row] = probeObjectsCsv().split("\n");
+  const at = header.split(",").indexOf(objectCsvHeader(objectSyncFields.find((f) => f.name === name)!));
+  const cells = row.split(",");
+  cells[at] = "";
+  return [header, cells.join(",")].join("\n");
+}
+
+describe("three-way probes — objects, a value cleared on GitHub", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
+  });
+
+  for (const field of objectClearable) {
+    it(`objects.${field.name}: base held it, repo cleared it, editor untouched → repo-only change to empty`, async () => {
+      mockByRef((path) => (path === OBJECTS_PATH ? clearedObjectsCsv(field.name) : null));
+      const db = probeSequentialMockDb([[d1ObjectRow()], [], []]);
+      const result = await computeSyncDiff(PROJECT_ID, TOKEN, OWNER, REPO, db, probeObjectsCsv());
+
+      const changed = result.changedObjects.find((o) => o.object_id === "obj-1");
+      expect(changed?.changedFields).toEqual([field.name]);
+      expect(changed?.conflictFields).toEqual([]);
+      expect(changed?.repoValues[field.name as SyncField]).toBeNull();
+    });
+
+    it(`objects.${field.name}: base held it, repo cleared it, editor changed it → conflict`, async () => {
+      mockByRef((path) => (path === OBJECTS_PATH ? clearedObjectsCsv(field.name) : null));
+      const db = probeSequentialMockDb([[editorObjectRow(field.name)], [], []]);
+      const result = await computeSyncDiff(PROJECT_ID, TOKEN, OWNER, REPO, db, probeObjectsCsv());
+
+      const changed = result.changedObjects.find((o) => o.object_id === "obj-1");
+      expect(changed?.conflictFields).toEqual([field.name]);
+    });
+
+    it(`objects.${field.name}: empty in the repo and the base → left for enrichment`, async () => {
+      mockByRef((path) => (path === OBJECTS_PATH ? clearedObjectsCsv(field.name) : null));
+      const db = probeSequentialMockDb([[d1ObjectRow()], [], []]);
+      const result = await computeSyncDiff(PROJECT_ID, TOKEN, OWNER, REPO, db, clearedObjectsCsv(field.name));
+
+      expect(result.changedObjects).toEqual([]);
+      expect(result.suppressedEditorOnly ?? 0).toBe(0);
+    });
+  }
+
+  it("a clearing the check offers, applied as the dialog posts it, writes null to the field", async () => {
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue("d".repeat(40));
+    mockByRef((path, isBase) => (path === OBJECTS_PATH ? (isBase ? probeObjectsCsv() : clearedObjectsCsv("creator")) : null));
+    const diff = await computeFullSyncDiff(
+      PROJECT_ID, TOKEN, OWNER, REPO, probeSequentialMockDb([[d1ObjectRow()], [], [], [], []]), BASE_REF,
+    );
+    const posted = JSON.parse(JSON.stringify(buildThreeWayChanges(diff, emptyThreeWaySelections())));
+    const { payload } = await resolveFullSyncPayload(
+      // Not ready, as the empty tree reads it, so the accept recomputes nothing.
+      PROJECT_ID, posted, TOKEN, OWNER, REPO, probeSequentialMockDb([[{ ...d1ObjectRow(), image_available: false }], []]), THREEWAY_ACTOR_ID,
+    );
+    expect(payload.objects.update).toEqual([
+      { objectId: "obj-1", docId: 1, fields: { creator: null }, seen: { creator: "base-creator" } },
+    ]);
+  });
 });
 
 describe("three-way probes — stories (computeFullSyncDiff)", () => {
@@ -373,8 +451,15 @@ describe("three-way edge pins", () => {
     // source_url blank in repo and base; D1 holds an enriched value. The
     // repo-empty guard skips it BEFORE classification, so it is neither a
     // change nor counted as an editor-only suppression.
-    const base = "object_id,source_url\nobj-1,";
-    const head = "object_id,source_url\nobj-1,";
+    //
+    // The custom column is carried on both sides so that source_url is the
+    // only field in play: the guard deliberately does NOT cover extra_columns
+    // (an empty repo blob there is the author deleting their last custom
+    // column, not a cell left for enrichment to fill), so a fixture whose D1
+    // row has extras its CSV omits would report that instead and say nothing
+    // about the precedence this pins.
+    const base = "object_id,source_url,accession_number\nobj-1,,ACC-BASE";
+    const head = "object_id,source_url,accession_number\nobj-1,,ACC-BASE";
     mockByRef((path, isBase) => (path === OBJECTS_PATH ? (isBase ? base : head) : null));
     const d1 = { ...d1ObjectRow(), source_url: "https://iiif.example/enriched" };
     const db = probeSequentialMockDb([[d1], [], []]);
@@ -438,21 +523,23 @@ describe("three-way edge pins", () => {
     expect(result.suppressedEditorOnly ?? 0).toBeGreaterThan(0);
   });
 
-  it("one base file error → two-way everywhere, equal to the no-base run", async () => {
-    // A transient error on ANY of the four base fetches must force the WHOLE
-    // diff two-way — never leave some sub-domains three-way and silently
-    // degrade others.
+  it("one base file error at a base commit that does not exist → two-way everywhere, equal to the no-base run", async () => {
+    // A failed read of ANY of the four base fetches, where the base commit is
+    // gone, must force the WHOLE diff two-way — never leave some sub-domains
+    // three-way and silently degrade others. At a commit that exists it
+    // refuses (tests/sync-sheet-unreadable.test.ts).
     const head = probeObjectsCsv("title");
+    vi.mocked(githubServer.commitExists).mockResolvedValue("missing");
 
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) =>
       path === OBJECTS_PATH ? head : null,
     );
     const noBase = await computeFullSyncDiff(PROJECT_ID, TOKEN, OWNER, REPO, fullDb());
 
-    vi.mocked(githubServer.getFileAtRef).mockImplementation(async (_t, _o, _r, path) => {
+    vi.mocked(githubServer.getFileAtRef).mockImplementation(strictReadsFromFileContent(githubServer.getFileContent, async (_t, _o, _r, path) => {
       if (path === PROJECT_PATH) return { status: "error" }; // one file errors
       return { status: "ok", content: path === OBJECTS_PATH ? probeObjectsCsv() : "" };
-    });
+    }, (ref) => ref === BASE_REF));
     const baseErr = await computeFullSyncDiff(PROJECT_ID, TOKEN, OWNER, REPO, fullDb(), BASE_REF);
 
     expect(noBase.classification).toBe("two-way");
@@ -471,10 +558,10 @@ describe("three-way edge pins", () => {
       if (path === PROJECT_PATH) return "";
       return null;
     });
-    vi.mocked(githubServer.getFileAtRef).mockImplementation(async (_t, _o, _r, path) => {
+    vi.mocked(githubServer.getFileAtRef).mockImplementation(strictReadsFromFileContent(githubServer.getFileContent, async (_t, _o, _r, path) => {
       if (path === OBJECTS_PATH) return { status: "absent" };
       return { status: "ok", content: "" };
-    });
+    }, (ref) => ref === BASE_REF));
     // D1 holds obj-d1 (origin repo) present in neither repo nor base.
     const d1Obj = { ...d1ObjectRow(), object_id: "obj-d1", origin: "repo" };
     const db = probeSequentialMockDb([[d1Obj]]);
@@ -542,7 +629,7 @@ describe("three-way edge pins", () => {
     const changes = emptyChanges();
     changes.stories.reject = ["my-story"];
     const { payload } = await resolveFullSyncPayload(
-      PROJECT_ID, changes, TOKEN, OWNER, REPO, probeSequentialMockDb([[], []]),
+      PROJECT_ID, changes, TOKEN, OWNER, REPO, probeSequentialMockDb([[], []]), THREEWAY_ACTOR_ID,
     );
     expect(payload.stories.update).toHaveLength(0);
   });

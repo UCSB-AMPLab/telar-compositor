@@ -1,0 +1,378 @@
+{
+ "pyyaml": "6.0.3",
+ "python": "3.14.6",
+ "cases": [
+  {
+   "block": "title: yes # note",
+   "title": "yes # note",
+   "body": "Body."
+  },
+  {
+   "block": "title: &label yes",
+   "title": "&label yes",
+   "body": "Body."
+  },
+  {
+   "block": "title: on # one",
+   "title": "on # one",
+   "body": "Body."
+  },
+  {
+   "block": "title: 1:20 # time",
+   "title": "1:20 # time",
+   "body": "Body."
+  },
+  {
+   "block": "title: yes # one",
+   "title": "yes # one",
+   "body": "Body."
+  },
+  {
+   "block": "title: yes # two",
+   "title": "yes # two",
+   "body": "Body."
+  },
+  {
+   "block": "title: yes",
+   "title": "yes",
+   "body": "Body."
+  },
+  {
+   "block": "title: No",
+   "title": "No",
+   "body": "Body."
+  },
+  {
+   "block": "title: TRUE",
+   "title": "TRUE",
+   "body": "Body."
+  },
+  {
+   "block": "title: false",
+   "title": "false",
+   "body": "Body."
+  },
+  {
+   "block": "title: On",
+   "title": "On",
+   "body": "Body."
+  },
+  {
+   "block": "title: OFF",
+   "title": "OFF",
+   "body": "Body."
+  },
+  {
+   "block": "title: y",
+   "title": "y",
+   "body": "Body."
+  },
+  {
+   "block": "title: Yes!",
+   "title": "Yes!",
+   "body": "Body."
+  },
+  {
+   "block": "title: yess",
+   "title": "yess",
+   "body": "Body."
+  },
+  {
+   "block": "title: 42",
+   "title": "42",
+   "body": "Body."
+  },
+  {
+   "block": "title: -7",
+   "title": "-7",
+   "body": "Body."
+  },
+  {
+   "block": "title: 0b101",
+   "title": "0b101",
+   "body": "Body."
+  },
+  {
+   "block": "title: 0o17",
+   "title": "0o17",
+   "body": "Body."
+  },
+  {
+   "block": "title: 017",
+   "title": "017",
+   "body": "Body."
+  },
+  {
+   "block": "title: 0x1F",
+   "title": "0x1F",
+   "body": "Body."
+  },
+  {
+   "block": "title: 1_000",
+   "title": "1_000",
+   "body": "Body."
+  },
+  {
+   "block": "title: 190:20:30",
+   "title": "190:20:30",
+   "body": "Body."
+  },
+  {
+   "block": "title: 3.14",
+   "title": "3.14",
+   "body": "Body."
+  },
+  {
+   "block": "title: 1.5e+3",
+   "title": "1.5e+3",
+   "body": "Body."
+  },
+  {
+   "block": "title: 1e3",
+   "title": "1e3",
+   "body": "Body."
+  },
+  {
+   "block": "title: .5",
+   "title": ".5",
+   "body": "Body."
+  },
+  {
+   "block": "title: 190:20:30.15",
+   "title": "190:20:30.15",
+   "body": "Body."
+  },
+  {
+   "block": "title: .inf",
+   "title": ".inf",
+   "body": "Body."
+  },
+  {
+   "block": "title: -.Inf",
+   "title": "-.Inf",
+   "body": "Body."
+  },
+  {
+   "block": "title: .NaN",
+   "title": ".NaN",
+   "body": "Body."
+  },
+  {
+   "block": "title: ~",
+   "title": "~",
+   "body": "Body."
+  },
+  {
+   "block": "title: null",
+   "title": "null",
+   "body": "Body."
+  },
+  {
+   "block": "title: NULL",
+   "title": "NULL",
+   "body": "Body."
+  },
+  {
+   "block": "title: nul",
+   "title": "nul",
+   "body": "Body."
+  },
+  {
+   "block": "title: 2024-05-01",
+   "title": "2024-05-01",
+   "body": "Body."
+  },
+  {
+   "block": "title: 2024-5-1 10:20:30",
+   "title": "2024-5-1 10:20:30",
+   "body": "Body."
+  },
+  {
+   "block": "title: 2024-05-01T10:20:30.5Z",
+   "title": "2024-05-01T10:20:30.5Z",
+   "body": "Body."
+  },
+  {
+   "block": "title: <<",
+   "title": "<<",
+   "body": "Body."
+  },
+  {
+   "block": "title: =",
+   "title": "=",
+   "body": "Body."
+  },
+  {
+   "block": "title: ==",
+   "title": "==",
+   "body": "Body."
+  },
+  {
+   "block": "title: \"yes\"",
+   "title": "yes",
+   "body": "Body."
+  },
+  {
+   "block": "title: 'on'",
+   "title": "on",
+   "body": "Body."
+  },
+  {
+   "block": "title: !!str yes",
+   "title": "yes",
+   "body": "Body."
+  },
+  {
+   "block": "title: ! yes",
+   "title": "! yes",
+   "body": "Body."
+  },
+  {
+   "block": "title: ! \"yes\"",
+   "title": "! \"yes",
+   "body": "Body."
+  },
+  {
+   "block": "title: !!int 12",
+   "title": "!!int 12",
+   "body": "Body."
+  },
+  {
+   "block": "title: !custom text",
+   "title": "!custom text",
+   "body": "Body."
+  },
+  {
+   "block": "title: ! \"1\\n\"",
+   "title": "! \"1\\n",
+   "body": "Body."
+  },
+  {
+   "block": "title: ! \"yes\\n\"",
+   "error": "KeyError"
+  },
+  {
+   "block": "title: A panel",
+   "title": "A panel",
+   "body": "Body."
+  },
+  {
+   "block": "title: Chapter 1: Opening",
+   "title": "Chapter 1: Opening",
+   "body": "Body."
+  },
+  {
+   "block": "title: \"a \\\"q\\\" b\"",
+   "title": "a \"q\" b",
+   "body": "Body."
+  },
+  {
+   "block": "title: |\n  Alpha\n  Beta",
+   "title": "Alpha\nBeta",
+   "body": "Body."
+  },
+  {
+   "block": "title: >-\n  Alpha\n  Beta",
+   "title": "Alpha Beta",
+   "body": "Body."
+  },
+  {
+   "block": "title: plain\n  continued",
+   "title": "plain continued",
+   "body": "Body."
+  },
+  {
+   "block": "title: [one]",
+   "title": "[one]",
+   "body": "Body."
+  },
+  {
+   "block": "title: {a: 1}",
+   "title": "{a: 1}",
+   "body": "Body."
+  },
+  {
+   "block": "title:\n  - a\n  - b",
+   "title": "- a",
+   "body": "Body."
+  },
+  {
+   "block": "title:\nsummary: next",
+   "title": "summary: next",
+   "body": "Body."
+  },
+  {
+   "block": "title:",
+   "title": "",
+   "body": "Body."
+  },
+  {
+   "block": "base: &b yes\ntitle: *b",
+   "title": "*b",
+   "body": "Body."
+  },
+  {
+   "block": "base: &b Hello\ntitle: *b",
+   "title": "Hello",
+   "body": "Body."
+  },
+  {
+   "block": "defaults: &d {title: yes}\n<<: *d",
+   "title": "",
+   "body": "---\ndefaults: &d {title: yes}\n<<: *d\n---\n\nBody."
+  },
+  {
+   "block": "defaults: &d {title: Hello}\n<<: *d",
+   "title": "",
+   "body": "---\ndefaults: &d {title: Hello}\n<<: *d\n---\n\nBody."
+  },
+  {
+   "block": "defaults: &d {title: Hello}\n<<: *d\ntitle: on",
+   "title": "on",
+   "body": "Body."
+  },
+  {
+   "block": "title: \"a \\\"q\\\" b\"\nother: =",
+   "title": "a \\\"q\\\" b",
+   "body": "Body."
+  },
+  {
+   "block": "title: Plain\nother: <<",
+   "title": "Plain",
+   "body": "Body."
+  },
+  {
+   "block": "title: \"a \\\"q\\\" b\"\nother: <<",
+   "title": "a \\\"q\\\" b",
+   "body": "Body."
+  },
+  {
+   "block": "title: \"a \\\"q\\\" b\"\n<<: 5",
+   "title": "a \\\"q\\\" b",
+   "body": "Body."
+  },
+  {
+   "block": "title: \"a \\\"q\\\" b\"\nlist: [x, =]",
+   "title": "a \\\"q\\\" b",
+   "body": "Body."
+  },
+  {
+   "block": "title: \"a \\\"q\\\" b\"\n=: x",
+   "title": "a \"q\" b",
+   "body": "Body."
+  },
+  {
+   "block": "title: 2024-13-45",
+   "error": "ValueError"
+  },
+  {
+   "block": "title: \"a \\\"q\\\" b\"\nwhen: 2024-13-45",
+   "error": "ValueError"
+  },
+  {
+   "block": "summary: yes",
+   "title": "",
+   "body": "---\nsummary: yes\n---\n\nBody."
+  }
+ ]
+}

@@ -9,12 +9,13 @@
  * the apply builder. The value-pair + per-field radio layout mirrors the
  * objects-tab SyncDiffDialog so the two conflict UIs read the same.
  *
- * @version v1.4.2-beta
+ * @version v1.5.0-beta
  */
 
 import { useTranslation } from "react-i18next";
 import type { FullSyncDiff } from "~/lib/sync.server";
 import type { ConflictChoice, ThreeWaySelections } from "./SyncConfirmModal";
+import { objectFieldChoiceOf, ownValue, rowChoiceOf } from "./sync-changes";
 import { configFieldLabel } from "~/lib/activity-display";
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ interface ChoiceRadiosProps {
   mineLabel: string;
 }
 
-function ChoiceRadios({ name, choice, onChoice, repoLabel, mineLabel }: ChoiceRadiosProps) {
+export function ChoiceRadios({ name, choice, onChoice, repoLabel, mineLabel }: ChoiceRadiosProps) {
   return (
     <div className="flex items-center gap-3">
       <label className="flex items-center gap-1.5 cursor-pointer">
@@ -67,7 +68,7 @@ interface ValuePairProps {
 }
 
 /** The GitHub / Compositor value pair, striking through the unselected side. */
-function ValuePair({ repoLabel, mineLabel, repoValue, mineValue, choice }: ValuePairProps) {
+export function ValuePair({ repoLabel, mineLabel, repoValue, mineValue, choice }: ValuePairProps) {
   const useRepo = choice === "repo";
   return (
     <div className="flex gap-2 text-xs font-body mt-0.5">
@@ -87,9 +88,55 @@ function ValuePair({ repoLabel, mineLabel, repoValue, mineValue, choice }: Value
   );
 }
 
-function displayValue(v: string | boolean | null | undefined): string {
+export function displayValue(v: string | boolean | null | undefined): string {
   if (v === null || v === undefined || v === "") return "—";
   return String(v);
+}
+
+type ChangedTerm = FullSyncDiff["glossary"]["changed"][number];
+
+/** A term field's GitHub and Compositor values; extra_columns raw, as the objects cards show it. */
+function termValuesOf(tm: ChangedTerm, field: string): [string, string] {
+  if (field === "title") return [tm.repoTitle, tm.d1Title];
+  if (field === "definition") return [tm.repoDefinition, tm.d1Definition];
+  if (field === "related_terms") return [tm.repoRelatedTerms, tm.d1RelatedTerms];
+  if (field === "kind") return [tm.repoKind ?? "", tm.d1Kind ?? ""];
+  return [tm.repoExtraColumns, tm.d1ExtraColumns];
+}
+
+/**
+ * A story or term conflict's fields: each conflicting one under the row's
+ * choice, then the ones only GitHub changed, which apply whatever the choice,
+ * listed muted as on an object card.
+ */
+function RowFieldPairs({ row, valuesOf, choice }: {
+  row: { changedFields: readonly string[]; conflictFields: readonly string[] };
+  valuesOf: (field: string) => [string | boolean | null | undefined, string | boolean | null | undefined];
+  choice: ConflictChoice;
+}) {
+  const { t } = useTranslation("dashboard");
+  const rowFieldPair = (field: string, shown: ConflictChoice) => (
+    <ValuePair
+      key={field}
+      repoLabel={t("sync_modal.conflict_value_repo")}
+      mineLabel={t("sync_modal.conflict_value_mine")}
+      repoValue={displayValue(valuesOf(field)[0])}
+      mineValue={displayValue(valuesOf(field)[1])}
+      choice={shown}
+    />
+  );
+  const repoOnly = row.changedFields.filter((f) => !row.conflictFields.includes(f));
+  return (
+    <>
+      {row.conflictFields.map((field) => rowFieldPair(field, choice))}
+      {repoOnly.length > 0 && (
+        <div className="mt-1 rounded border border-amber-100 bg-white/40 px-3 py-2">
+          <p className="font-body text-xs text-gray-500 mb-1">{t("sync_modal.conflict_also_applying")}</p>
+          {repoOnly.map((field) => rowFieldPair(field, "repo"))}
+        </div>
+      )}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +152,11 @@ interface Props {
   onRowChoice: (kind: "story" | "config" | "glossary", id: string, choice: ConflictChoice) => void;
   onStoryRestore: (storyId: string, restore: boolean) => void;
   onGlossaryRestore: (termId: string, restore: boolean) => void;
+  /**
+   * Stories whose content changed as well: their one choice is on the story
+   * content card (SyncStoryContentBlock), so their row conflict is not shown here.
+   */
+  contentStoryIds?: ReadonlySet<string>;
 }
 
 export function SyncConflictsBlock({
@@ -116,6 +168,7 @@ export function SyncConflictsBlock({
   onRowChoice,
   onStoryRestore,
   onGlossaryRestore,
+  contentStoryIds,
 }: Props) {
   const { t } = useTranslation("dashboard");
   const useRepoLabel = t("sync_modal.conflict_use_repo");
@@ -153,7 +206,7 @@ export function SyncConflictsBlock({
               </div>
               <div className="space-y-1">
                 {o.conflictFields.map((field) => {
-                  const choice = selections.objectFieldChoices[o.object_id]?.[field] ?? "d1";
+                  const choice = objectFieldChoiceOf(o, field, selections);
                   return (
                     <div key={field} className="flex flex-col gap-1 bg-white/70 rounded border border-amber-100 px-3 py-2">
                       <div className="flex items-center justify-between gap-2">
@@ -204,7 +257,7 @@ export function SyncConflictsBlock({
         {diff.objects.newObjects
           .filter((o) => o.deletedInCompositor)
           .map((o) => {
-            const restore = selections.objectRestore[o.object_id] ?? false;
+            const restore = ownValue(selections.objectRestore, o.object_id) ?? false;
             return (
               <div key={`del-${o.object_id}`} className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
                 <div className="flex items-center justify-between mb-1">
@@ -229,7 +282,7 @@ export function SyncConflictsBlock({
         {diff.objects.missingObjects
           .filter((o) => o.editedInCompositor)
           .map((o) => {
-            const del = selections.objectDelete[o.object_id] ?? false;
+            const del = ownValue(selections.objectDelete, o.object_id) ?? false;
             return (
               <div key={`del-repo-${o.object_id}`} className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
                 <div className="flex items-center justify-between mb-1">
@@ -282,9 +335,9 @@ export function SyncConflictsBlock({
 
         {/* Story conflicts (row grain) */}
         {diff.stories.changedStories
-          .filter((s) => s.conflict)
+          .filter((s) => s.conflict && !contentStoryIds?.has(s.story_id))
           .map((s) => {
-            const choice = selections.storyChoices[s.story_id] ?? "d1";
+            const choice = rowChoiceOf(selections.storyChoices, s.story_id, s.repoByDefault);
             return (
               <div key={`story-${s.story_id}`} className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
                 <div className="flex items-center justify-between gap-2 mb-1">
@@ -299,16 +352,14 @@ export function SyncConflictsBlock({
                     mineLabel={keepMineLabel}
                   />
                 </div>
-                {s.changedFields.map((field) => (
-                  <ValuePair
-                    key={field}
-                    repoLabel={repoValueLabel}
-                    mineLabel={mineValueLabel}
-                    repoValue={displayValue(s.repoValues[field as keyof typeof s.repoValues])}
-                    mineValue={displayValue(s.d1Values[field as keyof typeof s.d1Values])}
-                    choice={choice}
-                  />
-                ))}
+                <RowFieldPairs
+                  row={s}
+                  valuesOf={(field) => [
+                    s.repoValues[field as keyof typeof s.repoValues],
+                    s.d1Values[field as keyof typeof s.d1Values],
+                  ]}
+                  choice={choice}
+                />
               </div>
             );
           })}
@@ -317,7 +368,7 @@ export function SyncConflictsBlock({
         {diff.stories.newStories
           .filter((s) => s.deletedInCompositor)
           .map((s) => {
-            const restore = selections.storyRestore[s.story_id] ?? false;
+            const restore = ownValue(selections.storyRestore, s.story_id) ?? false;
             return (
               <div key={`story-del-${s.story_id}`} className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
                 <div className="flex items-center justify-between mb-1">
@@ -341,7 +392,7 @@ export function SyncConflictsBlock({
         {diff.glossary.changed
           .filter((tm) => tm.conflict)
           .map((tm) => {
-            const choice = selections.glossaryChangedChoices[tm.term_id] ?? "d1";
+            const choice = rowChoiceOf(selections.glossaryChangedChoices, tm.term_id, tm.repoByDefault);
             return (
               <div key={`gloss-${tm.term_id}`} className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
                 <div className="flex items-center justify-between gap-2 mb-1">
@@ -356,24 +407,7 @@ export function SyncConflictsBlock({
                     mineLabel={keepMineLabel}
                   />
                 </div>
-                {tm.d1Title !== tm.repoTitle && (
-                  <ValuePair
-                    repoLabel={repoValueLabel}
-                    mineLabel={mineValueLabel}
-                    repoValue={displayValue(tm.repoTitle)}
-                    mineValue={displayValue(tm.d1Title)}
-                    choice={choice}
-                  />
-                )}
-                {tm.d1Definition !== tm.repoDefinition && (
-                  <ValuePair
-                    repoLabel={repoValueLabel}
-                    mineLabel={mineValueLabel}
-                    repoValue={displayValue(tm.repoDefinition)}
-                    mineValue={displayValue(tm.d1Definition)}
-                    choice={choice}
-                  />
-                )}
+                <RowFieldPairs row={tm} valuesOf={(field) => termValuesOf(tm, field)} choice={choice} />
               </div>
             );
           })}
@@ -382,7 +416,7 @@ export function SyncConflictsBlock({
         {diff.glossary.added
           .filter((tm) => tm.deletedInCompositor)
           .map((tm) => {
-            const restore = selections.glossaryRestore[tm.term_id] ?? false;
+            const restore = ownValue(selections.glossaryRestore, tm.term_id) ?? false;
             return (
               <div key={`gloss-del-${tm.term_id}`} className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
                 <div className="flex items-center justify-between mb-1">

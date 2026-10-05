@@ -4,11 +4,13 @@
  * Renders one counted chip per content type that has changes (Stories N /
  * Objects N / Glossary N / Pages N / Settings N) with the type accent icon.
  * The count is the total of new + modified + deleted for that type (settings
- * counts changed fields plus the landing/navigation booleans). Types with no
- * changes are omitted. When nothing changed, a single neutral line is shown.
+ * counts changed fields plus the landing/navigation booleans; objects count a
+ * changed order of objects as one). Types with no changes are omitted. When
+ * nothing changed, a single neutral line is shown.
  *
- * This compact chip layout replaces an earlier expandable-section review
- * render. Tailwind token classes only (no hardcoded hex).
+ * Tailwind token classes only (no hardcoded hex).
+ *
+ * @version v1.5.0-beta
  */
 
 import { FileText, File, Image, BookOpen, Settings } from "lucide-react";
@@ -37,7 +39,8 @@ export function ChangeSummary({ summary, className = "" }: ChangeSummaryProps) {
   const objectCount =
     summary.objects.new.length +
     summary.objects.modified.length +
-    summary.objects.deleted.length;
+    summary.objects.deleted.length +
+    (summary.objectOrder.changed ? 1 : 0);
   const glossaryCount =
     summary.glossary.new.length +
     summary.glossary.modified.length +

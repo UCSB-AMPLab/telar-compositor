@@ -4,6 +4,8 @@
  * Provides:
  *   - commitFilesToRepo: multi-file atomic commit via GraphQL createCommitOnBranch,
  *     with deletions narrowed to paths present at the expected head
+ *   - cleanCommitContent: the text cleaning every commit primitive applies to
+ *     an author file before encoding it
  *   - disableGoogleSheetsInConfig / isGoogleSheetsEnabled: safe _config.yml mutation
  *   - listWorkflowRunsBySha: Actions run status by commit SHA
  *   - getJobSteps: per-step status from an Actions run job
@@ -12,16 +14,19 @@
  *   - StaleHeadError: distinguishable error for stale expectedHeadOid failures
  *   - dispatchWorkflow: trigger a workflow_dispatch event for a specific workflow
  *   - getLatestWorkflowRun: fetch the most recently created run for a named workflow
+ *   - getWorkflowRun: fetch one run by its id
  *
- * @version v1.4.4-beta
+ * @version v1.5.0-beta
  */
 
-import { graphqlGitHub, githubHeaders } from "~/lib/github.server";
+import { getFileAtRef, graphqlGitHub, githubHeaders } from "~/lib/github.server";
 import {
-  findInYamlBlock,
   mutateYamlBlock,
   readConfigScalar,
 } from "~/lib/config-yaml-block.server";
+import { isFrameworkPath } from "~/lib/framework-paths.server";
+import { cleanText } from "~/lib/unsafe-text";
+import { isGoogleSheetsOn, sameExceptSheetsEnabled } from "~/lib/pyyaml";
 
 // ---------------------------------------------------------------------------
 // GraphQL query strings
@@ -123,11 +128,65 @@ export class StaleHeadError extends Error {
 // commitFilesToRepo
 // ---------------------------------------------------------------------------
 
+/**
+ * A path the commit deletes when it is present at the expected head and none
+ * of `unlessPresent` is. With `onlyIfUnreadable`, also only when its bytes
+ * there are not valid UTF-8, as a strict read reports them (`lossy`). A read
+ * of such a path that fails refuses the commit (`UnreadableOlderCopyError`);
+ * a path gone by the time it is read is not deleted.
+ */
+export interface ConditionalDeletion {
+  path: string;
+  unlessPresent: string[];
+  onlyIfUnreadable?: boolean;
+}
+
+/**
+ * A file a commit would delete only if its bytes are not valid UTF-8 could
+ * not be read, so nothing is committed: kept, it would never be selected
+ * again once the commit wrote the file that replaces it.
+ */
+export class UnreadableOlderCopyError extends Error {
+  constructor(readonly path: string) {
+    super(`could not read ${path} to tell whether its bytes are valid UTF-8`);
+    this.name = "UnreadableOlderCopyError";
+  }
+}
+
 export interface CommitFile {
   /** Repository-relative path, e.g. "telar-content/spreadsheets/objects.csv" */
   path: string;
-  /** UTF-8 file content — will be base64-encoded before sending */
+  /**
+   * UTF-8 file content, base64-encoded before sending; with `encoding:
+   * "base64"`, the file's bytes already in base64, sent as they are.
+   */
   content: string;
+  /** Set for a file that is not text, such as a framework image. */
+  encoding?: "base64";
+  /**
+   * Set for text committed as it is, without `cleanCommitContent`: a sheet the
+   * upgrade repairs is written as the framework's 1.8.0 migration writes it
+   * (`Sheet.write` in scripts/migrations/v180_sheets.py), the edited text and
+   * nothing else, so the repair changes no cell the author did not choose.
+   */
+  verbatim?: true;
+}
+
+/**
+ * Returns the content to commit at `path`: the text with the characters a
+ * Telar build rejects cleaned out (`cleanText`), unless the path is a
+ * framework path, which is committed byte for byte because the upgrade
+ * compares it to the release by blob hash, or a dotfile such as
+ * `.compositor-ignored` or `.gitignore`, whose lines are exact paths that a
+ * cleaned character would no longer match. Never changes the path.
+ *
+ * Every primitive that encodes text for GitHub calls this just before
+ * encoding, so a writer is covered without cleaning anything itself, and text
+ * a writer carries forward from the repository is cleaned with the rest.
+ */
+export function cleanCommitContent(path: string, content: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return isFrameworkPath(path) || name.startsWith(".") ? content : cleanText(content);
 }
 
 interface HeadOidData {
@@ -136,6 +195,53 @@ interface HeadOidData {
 
 interface CreateCommitData {
   createCommitOnBranch: { commit: { oid: string; url: string } };
+}
+
+/**
+ * The deletions a commit at `oid` sends: each of `deletions` present there,
+ * then each conditional deletion whose path is present and none of whose
+ * `unlessPresent` is, and, where it asks, whose bytes are not valid UTF-8. One
+ * existence probe answers the first two tests; a file is read only once they
+ * select it, and a read that fails throws before anything is committed.
+ */
+async function deletionsAtHead(
+  token: string,
+  owner: string,
+  repo: string,
+  oid: string,
+  deletions: string[],
+  conditional: ConditionalDeletion[],
+): Promise<string[]> {
+  const probe = [...new Set([...deletions, ...conditional.flatMap((c) => [c.path, ...c.unlessPresent])])];
+  if (probe.length === 0) return [];
+  const present = new Set(await filterExistingPaths(token, owner, repo, oid, probe));
+  const absent = deletions.filter((p) => !present.has(p));
+  if (absent.length > 0) {
+    console.warn(
+      `[commitFilesToRepo] ${absent.length} deletion path(s) absent at ${oid}, skipping: ${absent.join(", ")}`,
+    );
+  }
+  const kept = deletions.filter((p) => present.has(p));
+  const selected = conditional.filter((c) => present.has(c.path) && !c.unlessPresent.some((p) => present.has(p)));
+  const older = await filterAsync(selected, (c) => !c.onlyIfUnreadable || unreadableAt(token, owner, repo, oid, c.path));
+  return [...new Set([...kept, ...older.map((c) => c.path)])];
+}
+
+/** The items `keep` answers true for, in order. */
+async function filterAsync<T>(items: readonly T[], keep: (item: T) => boolean | Promise<boolean>): Promise<T[]> {
+  const answers = await Promise.all(items.map(keep));
+  return items.filter((_, i) => answers[i]);
+}
+
+/**
+ * Whether `path` at `oid` holds bytes that are not valid UTF-8, by the strict
+ * read the unreadable-characters warning is raised from. A file no longer
+ * there answers false; a read that fails throws `UnreadableOlderCopyError`.
+ */
+async function unreadableAt(token: string, owner: string, repo: string, oid: string, path: string): Promise<boolean> {
+  const read = await getFileAtRef(token, owner, repo, path, oid, { strict: true });
+  if (read.status === "error") throw new UnreadableOlderCopyError(path);
+  return read.status === "ok" && read.lossy === true;
 }
 
 /**
@@ -159,6 +265,7 @@ export async function commitFilesToRepo(
   deletions?: string[],
   skipCi?: boolean,
   expectedHeadOidOverride?: string,
+  conditionalDeletions?: ConditionalDeletion[],
 ): Promise<{ newHeadSha: string }> {
   // 1. Resolve expectedHeadOid — prefer caller-supplied override (captured
   //    earlier in a multi-step pipeline to guard against TOCTOU), fall back
@@ -179,28 +286,17 @@ export async function commitFilesToRepo(
   //    createCommitOnBranch rejects the WHOLE commit if any deletion targets a
   //    path that is already absent, so an unfiltered list makes a commit
   //    un-retryable once part of it has landed.
-  let presentDeletions: string[] | undefined = deletions;
-  if (deletions && deletions.length > 0) {
-    presentDeletions = await filterExistingPaths(
-      token,
-      owner,
-      repo,
-      expectedHeadOid,
-      deletions,
-    );
-    if (presentDeletions.length < deletions.length) {
-      const absent = deletions.filter((p) => !presentDeletions!.includes(p));
-      console.warn(
-        `[commitFilesToRepo] ${absent.length} deletion path(s) absent at ` +
-          `${expectedHeadOid}, skipping: ${absent.join(", ")}`,
-      );
-    }
-  }
+  const presentDeletions = await deletionsAtHead(
+    token, owner, repo, expectedHeadOid, deletions ?? [], conditionalDeletions ?? [],
+  );
 
-  // 3. Base64-encode each file's content (UTF-8 safe)
+  // 3. Base64-encode each text file's content (UTF-8 safe); a file carried as
+  //    bytes is already base64.
   const additions = files.map((f) => ({
     path: f.path,
-    contents: btoa(unescape(encodeURIComponent(f.content))),
+    contents: f.encoding === "base64"
+      ? f.content
+      : btoa(unescape(encodeURIComponent(f.verbatim ? f.content : cleanCommitContent(f.path, f.content)))),
   }));
 
   // 4. Create the commit
@@ -215,7 +311,7 @@ export async function commitFilesToRepo(
           : { headline },
         fileChanges: {
           additions,
-          ...(presentDeletions && presentDeletions.length > 0
+          ...(presentDeletions.length > 0
             ? { deletions: presentDeletions.map((path) => ({ path })) }
             : {}),
         },
@@ -238,30 +334,73 @@ export async function commitFilesToRepo(
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the _config.yml content has a google_sheets block with
- * enabled: true.
+ * Whether the build fetches Google Sheets for this _config.yml: read through
+ * the PyYAML port as the build reads it, so `TRUE`, `yes`, `on` and a quoted
+ * "True" count as on and a quoted "true" does not (`isGoogleSheetsOn`).
  */
 export function isGoogleSheetsEnabled(configYmlContent: string): boolean {
-  return (
-    findInYamlBlock(configYmlContent, "google_sheets", (line) =>
-      /^\s+enabled:\s*(true|True)\b/.test(line) ? true : undefined,
-    ) ?? false
-  );
+  return isGoogleSheetsOn(configYmlContent);
+}
+
+/** A YAML 1.1 true spelling, or the quoted string "True" the build also reads as on, on an `enabled:` line. */
+const ENABLED_TRUE_LINE = /^(\s+enabled:\s*)(?:true|True|TRUE|yes|Yes|YES|on|On|ON|"True"|'True')(?![\w-])/;
+/** The same, inside a flow mapping: `{enabled: yes, ...}`. */
+const ENABLED_TRUE_FLOW = /(\benabled\s*:\s*)(?:true|True|TRUE|yes|Yes|YES|on|On|ON)(?![\w-])/;
+
+/** Thrown when a config reads as Google Sheets on and no safe rewrite turns it off. */
+export class SheetsNotDisableableError extends Error {
+  constructor() {
+    super("google_sheets.enabled is on in a form that cannot be rewritten safely");
+    this.name = "SheetsNotDisableableError";
+  }
+}
+
+/** The text of a flow-style `google_sheets: {...}` mapping, which may span lines, and where it sits. */
+function flowSheetsSpan(content: string): { start: number; end: number } | null {
+  const header = /^google_sheets:\s*\{/m.exec(content);
+  if (!header) return null;
+  const start = header.index + header[0].length;
+  let depth = 1;
+  for (let i = start; i < content.length; i++) {
+    if (content[i] === "{") depth++;
+    else if (content[i] === "}" && --depth === 0) return { start, end: i };
+  }
+  return null;
+}
+
+function disableFlowSheets(content: string): string {
+  const span = flowSheetsSpan(content);
+  if (!span) return content;
+  const inside = content.slice(span.start, span.end).replace(ENABLED_TRUE_FLOW, "$1false");
+  return content.slice(0, span.start) + inside + content.slice(span.end);
 }
 
 /**
- * Replaces `enabled: true` with `enabled: false` in the google_sheets block
- * of a _config.yml string. Preserves all other content including comments,
- * formatting, and indentation.
+ * Replaces an unquoted true spelling (`true`, `yes`, `on`, in any case the
+ * build reads as true) on `enabled:` in the google_sheets block of a
+ * _config.yml string with `false`, in block or flow style, and a quoted
+ * "True" in block style. Preserves all other
+ * content including comments, formatting, and indentation.
  *
- * Idempotent: if already disabled, returns the content unchanged.
+ * Idempotent: if already disabled, returns the content unchanged. Throws
+ * `SheetsNotDisableableError` when the file still reads as Sheets on after the
+ * rewrite (an anchor, an alias, a tag, or any other form it does not rewrite),
+ * or when the rewrite changed anything else the build reads,
+ * so a caller never goes on as though Sheets were off.
  */
 export function disableGoogleSheetsInConfig(configYmlContent: string): string {
-  return mutateYamlBlock(configYmlContent, "google_sheets", (line) =>
-    /^(\s+enabled:\s*)true\b/.test(line)
-      ? line.replace(/^(\s+enabled:\s*)true\b/, "$1false")
-      : null,
+  if (!isGoogleSheetsOn(configYmlContent)) return configYmlContent;
+  const rewritten = disableFlowSheets(
+    mutateYamlBlock(configYmlContent, "google_sheets", (line) =>
+      ENABLED_TRUE_LINE.test(line) ? line.replace(ENABLED_TRUE_LINE, "$1false") : null,
+    ),
   );
+  // The rewrite is line-based: it must have changed the setting and nothing
+  // else the build reads, a quoted value containing `enabled: yes` included.
+  if (isGoogleSheetsOn(rewritten) || !sameExceptSheetsEnabled(configYmlContent, rewritten)) {
+    throw new SheetsNotDisableableError();
+  }
+  return rewritten;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +412,45 @@ export interface SiteUrlCheck {
   match: boolean;
   pagesUrl: string;
   configUrl: string;
+  /**
+   * The Pages read failed (a server error, a rate limit, a timeout), which
+   * says nothing about whether Pages is on or the address matches. A 404, 401
+   * or 403 is an answer and leaves this unset.
+   */
+  readFailed?: true;
+  /** The Pages read was refused (401 or 403): no Pages URL exists to compare. */
+  readRefused?: true;
+}
+
+/**
+ * Whether the repository is private, or null when the question could not be
+ * answered.
+ *
+ * The three states are the point. GitHub Pages does not serve a private
+ * repository on a free plan, so a private repository is the likeliest cause of
+ * a build that fails at the deploy step or of Pages refusing to switch on — but
+ * only a definite `false` from GitHub licenses naming that cause to an author.
+ * A failed probe returns null and the caller says nothing, because "the
+ * repository is private" and "we could not ask" are different answers and only
+ * one of them is about the author's repository.
+ *
+ * Call it on a failure path. Nothing here needs it when things are working.
+ */
+export async function isRepoPrivate(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<boolean | null> {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+      headers: githubHeaders(token),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { private?: boolean };
+    return typeof data.private === "boolean" ? data.private : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -318,8 +496,12 @@ export async function verifySiteUrl(
   }
 
   if (!res.ok) {
+    if (res.status >= 500 || res.status === 408 || res.status === 429) {
+      return { pagesEnabled: false, match: false, pagesUrl: "", configUrl, readFailed: true };
+    }
     // Pages not enabled or no permission
-    return { pagesEnabled: false, match: false, pagesUrl: "", configUrl };
+    const refused = res.status === 401 || res.status === 403;
+    return { pagesEnabled: false, match: false, pagesUrl: "", configUrl, ...(refused ? { readRefused: true as const } : {}) };
   }
 
   const data = (await res.json()) as { html_url?: string; https_enforced?: boolean };
@@ -393,7 +575,9 @@ export async function enableGitHubPages(
 
 /**
  * Result returned by dispatchWorkflow when the API supports return_run_details.
- * When the API responds with 204 (legacy/GHES fallback), runId is 0 and URLs are empty.
+ * A runId of 0 with empty URLs means the dispatch was accepted and the run was
+ * not named — the 204 a GHES instance answers with, or a 2xx whose body could
+ * not be read.
  */
 export interface DispatchResult {
   runId: number;
@@ -403,10 +587,15 @@ export interface DispatchResult {
 
 /**
  * Triggers a workflow_dispatch event for a specific workflow file.
- * Sends return_run_details: true to request the workflow run ID directly from the
- * API response (GitHub API enhancement, February 2026). Returns DispatchResult with
- * the run ID and URLs. Falls back gracefully to { runId: 0, ... } for GHES instances
- * that respond with 204 No Content.
+ *
+ * Sends return_run_details: true, which asks GitHub to name the run it started
+ * in the response body rather than leaving the caller to guess it from a
+ * listing. Not every deployment honours that: a GHES instance answers 204 No
+ * Content, and a body can fail to arrive, fail to parse, or parse to something
+ * that is not an object. All of those are answered with { runId: 0, ... } rather
+ * than a throw, because the dispatch itself succeeded and a caller told
+ * otherwise would report a running build as a failure. Only a non-2xx status
+ * throws.
  */
 export async function dispatchWorkflow(
   token: string,
@@ -437,17 +626,43 @@ export async function dispatchWorkflow(
     throw new Error(`workflow_dispatch failed (${res.status}): ${body}`);
   }
 
-  // 200 OK with JSON body — return_run_details supported
-  const data = (await res.json()) as {
+  // 2xx with a JSON body — return_run_details supported. A body that cannot be
+  // read, cannot be parsed, or does not parse to an object leaves the run
+  // unnamed, which is the same answer as the 204 above: the dispatch was
+  // accepted either way. `null` parses cleanly and is not an object, so the
+  // shape has to be checked rather than only the parse — reading a field off it
+  // would throw outside the catch and turn a running build into a failure.
+  const unnamedRun: DispatchResult = { runId: 0, runUrl: "", htmlUrl: "" };
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
+    return unnamedRun;
+  }
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return unnamedRun;
+  }
+  const data = payload as Partial<{
     workflow_run_id: number;
     run_url: string;
     html_url: string;
-  };
+  }>;
   return {
-    runId: data.workflow_run_id,
-    runUrl: data.run_url,
-    htmlUrl: data.html_url,
+    runId: data.workflow_run_id ?? 0,
+    runUrl: data.run_url ?? "",
+    htmlUrl: data.html_url ?? "",
   };
+}
+
+/**
+ * One GET against a repository's Actions API. The run and job readers below
+ * differ only in the path they ask for and in what they make of a non-ok
+ * answer, so the request itself is written once.
+ */
+function actionsApiGet(token: string, path: string): Promise<Response> {
+  return fetch(`https://api.github.com/repos/${path}`, {
+    headers: githubHeaders(token),
+  });
 }
 
 /**
@@ -461,13 +676,30 @@ export async function getLatestWorkflowRun(
   repo: string,
   workflowFile: string,
 ): Promise<WorkflowRun | null> {
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflowFile}/runs?per_page=1`,
-    { headers: githubHeaders(token) },
+  const res = await actionsApiGet(
+    token,
+    `${owner}/${repo}/actions/workflows/${workflowFile}/runs?per_page=1`,
   );
   if (!res.ok) return null;
   const data = (await res.json()) as { workflow_runs: WorkflowRun[] };
   return data.workflow_runs[0] ?? null;
+}
+
+/**
+ * Returns one workflow run by its id, or null when GitHub does not answer with
+ * the run — including the 404 a just-dispatched run gives while it is still
+ * being registered, which callers distinguish by retrying rather than by the
+ * status.
+ */
+export async function getWorkflowRun(
+  token: string,
+  owner: string,
+  repo: string,
+  runId: number,
+): Promise<WorkflowRun | null> {
+  const res = await actionsApiGet(token, `${owner}/${repo}/actions/runs/${runId}`);
+  if (!res.ok) return null;
+  return (await res.json()) as WorkflowRun;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +712,9 @@ export interface WorkflowRun {
   status: string;
   conclusion: string | null;
   html_url: string;
+  /** Optional because the run listings this type also describes are consumed
+   *  for status alone; the REST payload carries it on both shapes. */
+  head_sha?: string;
 }
 
 /** Workflow names to match for the deploy build (case-insensitive). */
@@ -496,9 +731,9 @@ export async function listWorkflowRunsBySha(
   repo: string,
   headSha: string,
 ): Promise<WorkflowRun[]> {
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/actions/runs?head_sha=${headSha}`,
-    { headers: githubHeaders(token) },
+  const res = await actionsApiGet(
+    token,
+    `${owner}/${repo}/actions/runs?head_sha=${headSha}`,
   );
   if (!res.ok) {
     throw new Error(`GitHub Actions API error: ${res.status}`);
@@ -526,10 +761,7 @@ export async function getJobSteps(
   repo: string,
   runId: number,
 ): Promise<JobStep[]> {
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/jobs`,
-    { headers: githubHeaders(token) },
-  );
+  const res = await actionsApiGet(token, `${owner}/${repo}/actions/runs/${runId}/jobs`);
   if (!res.ok) {
     throw new Error(`GitHub Actions jobs API error: ${res.status}`);
   }
