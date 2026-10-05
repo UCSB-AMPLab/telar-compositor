@@ -10,7 +10,7 @@
  * boundary primitive both walkers and publish.server's updateConfigBlocks
  * now build on.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -161,6 +161,38 @@ telar:
     );
     expect(haltedScan).toBeUndefined();
   });
+
+  it("extracts an integer child key from a block (extractAnswerWordLimit shape)", () => {
+    const yaml = `story_content:
+  answer_word_limit: 60
+title: My Site`;
+
+    const result = findInYamlBlock(
+      yaml,
+      "story_content",
+      (line) => {
+        const m = line.match(/^\s+answer_word_limit:\s*["']?([^\s"'#]+)/);
+        return m ? m[1] : undefined;
+      },
+      { haltAfterBlock: true },
+    );
+    expect(result).toBe("60");
+  });
+
+  it("matches a child key whose value is the digit zero", () => {
+    // "0" is falsy as a string is not, but a matcher returning it must still be
+    // read as a hit: the walk stops on `!== undefined`, never on truthiness.
+    const result = findInYamlBlock(
+      "story_content:\n  answer_word_limit: 0\n",
+      "story_content",
+      (line) => {
+        const m = line.match(/^\s+answer_word_limit:\s*["']?([^\s"'#]+)/);
+        return m ? m[1] : undefined;
+      },
+      { haltAfterBlock: true },
+    );
+    expect(result).toBe("0");
+  });
 });
 
 describe("findYamlBlockRegions", () => {
@@ -213,6 +245,19 @@ describe("findYamlBlockRegions", () => {
 
   it("returns no regions when the key is absent or only appears indented", () => {
     expect(findYamlBlockRegions(["a: 1", "  telar: x"], "telar")).toEqual([]);
+  });
+
+  it("treats the block key as a literal, hyphens and all", () => {
+    // `development-features:` is the framework's own block name, and the first
+    // caller whose key is not a bare identifier. The key is documented as
+    // literal, so regex metacharacters in it must not become syntax.
+    const lines = ["development-features:", "  skip_stories: true", "next: y"];
+    expect(findYamlBlockRegions(lines, "development-features")).toEqual([
+      { headerIdx: 0, regionEnd: 2, childIndent: "  " },
+    ]);
+    // A dot would otherwise match any character — a near-miss key must not
+    // resolve to a real block.
+    expect(findYamlBlockRegions(lines, "development.features")).toEqual([]);
   });
 
   it("haltAfterBlock still scans through an ADJACENT duplicate block (walker fidelity)", () => {
@@ -321,5 +366,96 @@ baseurl: "/old"`;
     expect(out).toBe(`title: My Site
 url: "https://new.github.io"
 baseurl: "/new"`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readConfigScalar decodes, it does not unquote
+// ---------------------------------------------------------------------------
+//
+// The publish path writes _config.yml scalars as double-quoted YAML with real
+// escapes, so a reader that strips the outer quote pair and returns what is
+// between them returns the escape text and not the value. `verifySiteUrl`
+// compares what it reads against the URL that produced the line, so a url
+// carrying a quote or a backslash compared unequal against itself.
+//
+// This reads through the same parser `extractConfigFields` uses, so both
+// readers of the same file agree about what a line says.
+describe("readConfigScalar decodes escaped scalars", () => {
+  const cases: Array<[label: string, written: string, value: string]> = [
+    ["an escaped double quote", 'url: "https://x.test/a\\"b"', 'https://x.test/a"b'],
+    ["an escaped backslash", 'url: "https://x.test/a\\\\b"', "https://x.test/a\\b"],
+    ["both together", 'url: "a\\\\b\\"c"', 'a\\b"c'],
+    ["a carriage return", 'url: "a\\rb"', "a\rb"],
+    ["a line feed", 'url: "a\\nb"', "a\nb"],
+    ["a NEL escape", 'url: "a\\u0085b"', "ab"],
+    ["a plain quoted value", 'url: "https://x.test/"', "https://x.test/"],
+    ["a single-quoted value", "url: 'it''s here'", "it's here"],
+  ];
+
+  it.each(cases)("%s", (_label, written, value) => {
+    expect(readConfigScalar(`${written}\n`, "url")).toBe(value);
+  });
+
+  it("returns undefined for an absent key and empty string for a bare one", () => {
+    expect(readConfigScalar("title: X\n", "url")).toBeUndefined();
+    expect(readConfigScalar("url:\n", "url")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A `#` is only a comment where YAML says it is
+// ---------------------------------------------------------------------------
+//
+// `configLineRegex` splits a trailing comment into its own group, which the
+// REWRITE path needs so it can put the comment back after replacing a value.
+// A reader must not use that split: it loses every `#` that is part of the
+// value. Where a comment starts is the parser's judgement — YAML wants
+// whitespace before the `#`, and never reads one inside quotes.
+describe("readConfigScalar and the hash character", () => {
+  const cases: Array<[label: string, line: string, value: string]> = [
+    ["a hash inside a double-quoted value", 'url: "a\\"b#c"', 'a"b#c'],
+    ["a hash inside a single-quoted value", "url: 'it''s # here'", "it's # here"],
+    ["a hash with no space before it is part of a bare value", "url: a#b", "a#b"],
+    ["a hash with a space before it starts a comment", "url: a #comment", "a"],
+    ["a comment after a quoted value", 'url: "x" # note', "x"],
+    ["a comment after a bare path", "url: /my-repo # the base path", "/my-repo"],
+  ];
+
+  it.each(cases)("%s", (_label, line, value) => {
+    expect(readConfigScalar(`${line}\n`, "url")).toBe(value);
+  });
+
+  it("agrees with extractConfigFields, which shares the matcher", async () => {
+    const { extractConfigFields } = await import("~/lib/sync.server");
+    for (const [, line, value] of cases) {
+      expect(extractConfigFields(`${line}\n`).url).toBe(value);
+    }
+  });
+});
+
+// A remainder that is only a comment is no value. YAML's rule is that a `#`
+// needs whitespace before it to start a comment, and the matcher that hands
+// this reader its remainder has already eaten the space after the colon — so
+// the rule has to be applied knowing that a plain scalar cannot begin with a
+// `#` in the first place.
+describe("a key whose whole value is a comment", () => {
+  const cases: Array<[label: string, line: string, value: string]> = [
+    ["a comment in the value position", "baseurl: # root site", ""],
+    ["a comment with no space after the colon", "baseurl: #root", ""],
+    ["no value at all", "baseurl:", ""],
+    ["a value then a comment", "url: a # c", "a"],
+    ["a quoted value containing a hash", 'url: "a#b"', "a#b"],
+  ];
+
+  it.each(cases)("%s", (_label, line, value) => {
+    const key = line.slice(0, line.indexOf(":"));
+    expect(readConfigScalar(`${line}\n`, key)).toBe(value);
+  });
+
+  it("agrees with extractConfigFields", async () => {
+    const { extractConfigFields } = await import("~/lib/sync.server");
+    expect(extractConfigFields("baseurl: # root site\n").baseurl).toBeNull();
+    expect(extractConfigFields("url: a # c\n").url).toBe("a");
   });
 });

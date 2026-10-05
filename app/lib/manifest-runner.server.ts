@@ -14,17 +14,27 @@
  *     and whitespace exactly. Never yaml.load/yaml.dump for mutation.
  *   - CSV mutations use papaparse (same stack as parseTelarCsv in
  *     import.server.ts). Idempotency checks honour both language variants of
- *     the column name.
+ *     the column name. Every read pins the comma, because the framework's
+ *     `pd.read_csv` splits on nothing else and `Papa.unparse` writes nothing
+ *     else: a guessed delimiter reads a file the site is not built from and
+ *     rewrites it under a dialect it never had.
  *   - Bilingual fields ({ en, es }) resolve via resolveBilingual using the
  *     site's `telar_language` — passed in as `lang` on applyManifestChain.
  *   - Unknown operation type throws — exhaustive switch is enforced at compile
  *     time via the Operation union, and fail-closed at runtime.
  *   - regex_replace enforces a scope allowlist to prevent arbitrary file
  *     corruption via a malicious glob. Paths containing `..`, starting with
- *     `/`, or under `.git/` are rejected with a hard error.
+ *     `/`, or under `.git/` are rejected with a hard error. The allowlist
+ *     lives in manifest-schema.server.ts, which holds `yaml_list_add`'s file
+ *     to it at validation.
+ *   - yaml_list_add edits a YAML list in place (yaml-list-add.server.ts) and
+ *     throws YamlListAddError when it cannot, which the upgrade names.
+ *
+ * @version v1.5.0-beta
  */
 
 import Papa from "papaparse";
+import { classifyManualSteps } from "~/lib/manual-step-kinds.server";
 import {
   type Manifest,
   type Operation,
@@ -39,8 +49,10 @@ import {
   type GitignoreAddOp,
   type RegexReplaceOp,
   type CreateDirectoryOp,
+  isPathInScope,
   resolveBilingual,
 } from "~/lib/manifest-schema.server";
+import { applyYamlListAdd } from "~/lib/yaml-list-add.server";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -51,30 +63,11 @@ export interface ManifestApplyResult {
   files: Map<string, string>;
   /** Paths to delete (from file_delete ops), deduplicated. */
   deletions: string[];
-  /** Manual steps in the site's language, concatenated across the chain. */
-  manualSteps: ManualStep[];
-}
-
-// ---------------------------------------------------------------------------
-// Scope allowlist for regex_replace
-// ---------------------------------------------------------------------------
-
-const REGEX_REPLACE_SCOPE_ALLOWLIST: RegExp[] = [
-  /^[^/].*\.csv$/,
-  /^[^/].*\.yml$/,
-  /^[^/].*\.yaml$/,
-  /^[^/].*\.md$/,
-  /^[^/].*\.markdown$/,
-  /^[^/].*\.html$/,
-  /^_config\.yml$/,
-  /^\.gitignore$/,
-];
-
-function isPathInScope(path: string): boolean {
-  if (path.startsWith("/") || path.includes("..") || path.startsWith(".git/")) {
-    return false;
-  }
-  return REGEX_REPLACE_SCOPE_ALLOWLIST.some((r) => r.test(path));
+  /**
+   * Manual steps in both languages, concatenated across the chain. They are
+   * shown in the Compositor's interface language, which is not the site's.
+   */
+  manualSteps: Record<Language, ManualStep[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +207,22 @@ function opConfigRenameField(
 // ---------------------------------------------------------------------------
 
 /**
+ * Inserts one cell at `insertIdx` in every row. pd.read_csv fills the missing
+ * trailing cells of a short row, so the row is padded to the insertion point
+ * or the value lands under an earlier column.
+ */
+function insertColumnCells(
+  rows: string[][],
+  insertIdx: number,
+  cellFor: (row: number) => string,
+): void {
+  for (let r = 0; r < rows.length; r++) {
+    while (rows[r].length < insertIdx) rows[r].push("");
+    rows[r].splice(insertIdx, 0, cellFor(r));
+  }
+}
+
+/**
  * Adds a column (bilingually resolved) to every CSV matching `file_glob`.
  *
  * Idempotency: skips the file if EITHER language variant of the column name
@@ -246,10 +255,9 @@ function opCsvAddColumn(
 
   for (const path of filesMatchingGlob(files, op.file_glob)) {
     const content = files.get(path)!;
-    const parsed = Papa.parse<string[]>(content, { skipEmptyLines: false });
-    const rows = parsed.data;
-    if (rows.length === 0) continue;
-    const header = rows[0];
+    const { rows, blank, endsWithNewline, headerRow, secondRow } = parseSheet(content);
+    if (headerRow < 0) continue;
+    const header = rows[headerRow];
     // Skip if column already present in either language in the header
     if (header.includes(newEn) || header.includes(newEs)) continue;
 
@@ -269,8 +277,8 @@ function opCsvAddColumn(
     // anchor variant (rows 0 and 1 are sibling headers in different
     // languages). Requires the anchor to be present in both rows.
     let row1Value: string | null = null;
-    if (rows.length >= 2 && anchorIdx >= 0 && row0IsEn !== null) {
-      const row1 = rows[1];
+    if (secondRow >= 0 && anchorIdx >= 0 && row0IsEn !== null) {
+      const row1 = rows[secondRow];
       const expectedRow1Anchor = row0IsEn ? anchorEs : anchorEn;
       if (row1.length === header.length && row1[anchorIdx] === expectedRow1Anchor) {
         row1Value = row0IsEn ? newEs : newEn;
@@ -280,15 +288,86 @@ function opCsvAddColumn(
       ? (row0IsEn ? newEn : newEs)
       : newCol;
 
-    for (let r = 0; r < rows.length; r++) {
-      let value: string;
-      if (r === 0) value = row0Value;
-      else if (r === 1 && row1Value !== null) value = row1Value;
-      else value = op.default;
-      rows[r].splice(insertIdx, 0, value);
-    }
-    files.set(path, Papa.unparse(rows, { newline: "\n" }));
+    insertColumnCells(rows, insertIdx, (r) => {
+      if (r === headerRow) return row0Value;
+      if (r === secondRow && row1Value !== null) return row1Value;
+      return op.default;
+    });
+    files.set(path, unparseRows(rows, blank, endsWithNewline));
   }
+}
+
+/**
+ * A sheet read with the comma pinned, with the facts papaparse's rows alone
+ * do not carry. papaparse gives a blank line, a quoted empty record (`""`) and
+ * the end of the text after a final line terminator the same `[""]`; only the
+ * quoted empty record is a row to the framework's `pd.read_csv`, so each
+ * record's raw source, sliced by the parser's cursor, decides.
+ *   - rows: every record except the one after a final line terminator.
+ *   - blank: the text, without its line terminator, of each record that
+ *     `pd.read_csv` skips as a blank line, by index: a line holding nothing
+ *     or only spaces and tabs. A line of commas, or a quoted cell of spaces,
+ *     is a row.
+ *   - endsWithNewline: whether the text ends in a line terminator.
+ *   - headerRow, secondRow: indices of the first and second non-blank
+ *     records, or -1. `pd.read_csv` skips blank lines and takes the first
+ *     non-blank one as the header; a bilingual sheet's second header row is
+ *     the next non-blank record.
+ */
+interface ParsedSheet {
+  rows: string[][];
+  blank: Map<number, string>;
+  endsWithNewline: boolean;
+  headerRow: number;
+  secondRow: number;
+}
+
+function parseSheet(content: string): ParsedSheet {
+  const rows: string[][] = [];
+  const blank = new Map<number, string>();
+  let start = 0;
+  Papa.parse<string[]>(content, {
+    skipEmptyLines: false,
+    delimiter: ",",
+    step: (result) => {
+      const end = result.meta.cursor;
+      const raw = content.slice(start, end);
+      start = end;
+      if (raw === "" && end === content.length && rows.length > 0) return;
+      const line = raw.replace(/\r?\n$|\r$/, "");
+      if (/^[ \t]*$/.test(line)) blank.set(rows.length, line);
+      rows.push(result.data);
+    },
+  });
+  const nonBlank = rows.map((_, r) => r).filter((r) => !blank.has(r));
+  return {
+    rows,
+    blank,
+    endsWithNewline: /[\r\n]$/.test(content),
+    headerRow: nonBlank[0] ?? -1,
+    secondRow: nonBlank[1] ?? -1,
+  };
+}
+
+/**
+ * Writes rows with LF line endings. A blank line is written back as it was. A
+ * row holding one empty cell is written as `""`, because papaparse writes it
+ * as an empty line, which the framework's `pd.read_csv` skips.
+ */
+function unparseRows(
+  rows: string[][],
+  blank: Map<number, string>,
+  endsWithNewline: boolean,
+): string {
+  const body = rows
+    .map((row, r) => {
+      const blankLine = blank.get(r);
+      if (blankLine !== undefined) return blankLine;
+      if (row.length === 1 && row[0] === "") return '""';
+      return Papa.unparse([row], { newline: "\n" });
+    })
+    .join("\n");
+  return body + (endsWithNewline ? "\n" : "");
 }
 
 /**
@@ -314,9 +393,9 @@ function opCsvRenameColumn(
 
   for (const path of filesMatchingGlob(files, op.file_glob)) {
     const content = files.get(path)!;
-    const parsed = Papa.parse<string[]>(content, { skipEmptyLines: false });
-    if (parsed.data.length === 0) continue;
-    const header = parsed.data[0];
+    const { rows, blank, endsWithNewline, headerRow, secondRow } = parseSheet(content);
+    if (headerRow < 0) continue;
+    const header = rows[headerRow];
 
     let idx = header.indexOf(oldEn);
     let row0IsEn: boolean | null = null;
@@ -330,20 +409,19 @@ function opCsvRenameColumn(
 
     // Detect bilingual second header row: same column count AND carries the
     // other-language variant of the old name at the same index.
-    const rows = parsed.data;
     const expectedRow1 = row0IsEn ? oldEs : oldEn;
     const isBilingualHeader =
-      rows.length >= 2 &&
-      rows[1].length === header.length &&
-      rows[1][idx] === expectedRow1;
+      secondRow >= 0 &&
+      rows[secondRow].length === header.length &&
+      rows[secondRow][idx] === expectedRow1;
 
     if (isBilingualHeader) {
       header[idx] = row0IsEn ? newEn : newEs;
-      rows[1][idx] = row0IsEn ? newEs : newEn;
+      rows[secondRow][idx] = row0IsEn ? newEs : newEn;
     } else {
       header[idx] = newName;
     }
-    files.set(path, Papa.unparse(rows, { newline: "\n" }));
+    files.set(path, unparseRows(rows, blank, endsWithNewline));
   }
 }
 
@@ -364,6 +442,18 @@ function opFileDelete(
     if (!deletions.includes(path)) deletions.push(path);
     files.delete(path);
   }
+}
+
+/**
+ * The paths the chain's `file_delete` operations name, deduplicated, in the
+ * order `applyManifestChain` reports them. A deletion is named by the
+ * operation alone, so no file contents are needed to know it.
+ */
+export function manifestChainDeletions(manifests: Manifest[]): string[] {
+  const paths = manifests
+    .flatMap((m) => m.operations)
+    .flatMap((op) => (op.type === "file_delete" ? op.paths : []));
+  return Array.from(new Set(paths));
 }
 
 /**
@@ -435,10 +525,35 @@ function opCreateDirectory(
 // Top-level dispatch
 // ---------------------------------------------------------------------------
 
+/** What an operation's implementation is handed. */
+type OperationRunner<K extends Operation["type"]> = (
+  files: Map<string, string>,
+  op: Extract<Operation, { type: K }>,
+  lang: Language,
+  deletions: string[],
+) => void;
+
+/**
+ * The implementation of each operation type. The mapped type makes the table
+ * exhaustive at compile time: a type added to the Operation union and missing
+ * here does not compile.
+ */
+const OPERATION_RUNNERS: { readonly [K in Operation["type"]]: OperationRunner<K> } = {
+  config_add_field: (files, op) => opConfigAddField(files, op),
+  config_update_value: (files, op) => opConfigUpdateValue(files, op),
+  config_rename_field: (files, op) => opConfigRenameField(files, op),
+  csv_add_column: (files, op, lang) => opCsvAddColumn(files, op, lang),
+  csv_rename_column: (files, op, lang) => opCsvRenameColumn(files, op, lang),
+  file_delete: (files, op, _lang, deletions) => opFileDelete(files, op, deletions),
+  gitignore_add: (files, op) => opGitignoreAdd(files, op),
+  regex_replace: (files, op) => opRegexReplace(files, op),
+  yaml_list_add: (files, op) => applyYamlListAdd(files, op),
+  create_directory: (files, op) => opCreateDirectory(files, op),
+};
+
 /**
  * Dispatches a single operation to its implementation. Throws for unknown
- * operation types (fail-closed). The exhaustive switch is also enforced at
- * compile time via the `never` check in the default branch.
+ * operation types (fail-closed).
  */
 export function applyOperation(
   files: Map<string, string>,
@@ -446,37 +561,18 @@ export function applyOperation(
   lang: Language,
   deletions: string[],
 ): void {
-  switch (op.type) {
-    case "config_add_field":
-      return opConfigAddField(files, op);
-    case "config_update_value":
-      return opConfigUpdateValue(files, op);
-    case "config_rename_field":
-      return opConfigRenameField(files, op);
-    case "csv_add_column":
-      return opCsvAddColumn(files, op, lang);
-    case "csv_rename_column":
-      return opCsvRenameColumn(files, op, lang);
-    case "file_delete":
-      return opFileDelete(files, op, deletions);
-    case "gitignore_add":
-      return opGitignoreAdd(files, op);
-    case "regex_replace":
-      return opRegexReplace(files, op);
-    case "create_directory":
-      return opCreateDirectory(files, op);
-    default: {
-      const _exhaustive: never = op;
-      throw new Error(
-        `Unknown operation type: ${JSON.stringify(_exhaustive)}`,
-      );
-    }
+  if (!Object.hasOwn(OPERATION_RUNNERS, op.type)) {
+    throw new Error(`Unknown operation type: ${JSON.stringify(op)}`);
   }
+  (OPERATION_RUNNERS[op.type] as OperationRunner<Operation["type"]>)(files, op, lang, deletions);
 }
 
 /**
  * Applies a chain of manifests to a virtual filesystem in order, concatenating
- * manual steps in the requested language. Returns a new Map so callers can
+ * manual steps in both languages (`lang` only selects the language of file
+ * operations). Each manifest's steps are
+ * classified first, while both languages and the release version are in
+ * hand. Returns a new Map so callers can
  * mutate the result without affecting the input.
  *
  * The validator guarantees each manifest is well-formed before it reaches
@@ -489,12 +585,14 @@ export function applyManifestChain(
 ): ManifestApplyResult {
   const current = new Map(files);
   const deletions: string[] = [];
-  const manualSteps: ManualStep[] = [];
+  const manualSteps: Record<Language, ManualStep[]> = { en: [], es: [] };
   for (const m of manifests) {
     for (const op of m.operations) {
       applyOperation(current, op, lang, deletions);
     }
-    manualSteps.push(...m.manual_steps[lang]);
+    const classified = classifyManualSteps(m);
+    manualSteps.en.push(...classified.en);
+    manualSteps.es.push(...classified.es);
   }
   return { files: current, deletions, manualSteps };
 }

@@ -25,7 +25,7 @@
  * one-way (publish-only, no reader of _data/navigation.yml exists), so
  * there is no import side to round-trip against.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
@@ -44,6 +44,7 @@ import {
   buildIndexMd,
   pageRowsToCommitFiles,
   storyPathsForPublish,
+  publishableConfigYaml,
   type StepWithLayers,
 } from "~/lib/publish.server";
 import {
@@ -87,6 +88,11 @@ const yamlHazard = (base: string) => `${base}: value #hash í "quoted"`;
 
 // --- stories ---------------------------------------------------------------
 
+const STORY_EXTRAS = {
+  custom_epsilon: "S-stories-extra-epsilon",
+  custom_zeta: "S-stories-extra-zeta",
+};
+
 const STORY = {
   story_id: "s-stories-story-id",
   title: "S-stories-title, with a comma",
@@ -96,6 +102,7 @@ const STORY = {
   private: true,
   draft: false,
   show_sections: true,
+  extra_columns: JSON.stringify(STORY_EXTRAS),
 };
 
 /** False-side probe for the boolean encodings (yes-empty <-> bool-yes-true-si). */
@@ -138,6 +145,11 @@ const LAYER2 = {
   content: "S-layers-second-content body.",
 };
 
+const STEP_EXTRAS = {
+  layer3_content: "S-steps-extra-layer3",
+  custom_epsilon: "S-steps-extra-epsilon",
+};
+
 const MEDIA_STEP: StepWithLayers = {
   step_number: 1,
   kind: "media",
@@ -152,6 +164,7 @@ const MEDIA_STEP: StepWithLayers = {
   clip_start: "S-steps-clip-start",
   clip_end: "S-steps-clip-end",
   loop: "S-steps-loop",
+  extra_columns: JSON.stringify(STEP_EXTRAS),
   layers: [LAYER1, LAYER2],
 };
 
@@ -200,7 +213,7 @@ const OBJECT_DB = {
   extra_columns: JSON.stringify(OBJECT_EXTRAS),
 };
 
-/** False-side probe for featured (yes-empty <-> bool-yes-true-1). */
+/** False-side probe for featured (yes-empty <-> bool-yes-true-si-1). */
 const OBJECT_FALSE = {
   object_id: "s-objects-false-id",
   title: "S-objects-false-title",
@@ -222,11 +235,18 @@ const OBJECT_FALSE = {
 
 // --- glossary ----------------------------------------------------------------
 
+const GLOSSARY_EXTRAS = {
+  custom_gamma: "S-glossary-extra-gamma",
+  custom_delta: "S-glossary-extra-delta",
+};
+
 const TERM = {
   term_id: "s-glossary-term-id",
   title: "S-glossary-title",
   definition: "S-glossary-definition, with a comma",
   related_terms: "s-glossary-rel-a|s-glossary-rel-b",
+  kind: "s-glossary-kind",
+  extra_columns: JSON.stringify(GLOSSARY_EXTRAS),
 };
 
 // --- config ------------------------------------------------------------------
@@ -257,9 +277,15 @@ const CONFIG_ROW: ProjectConfigRow = {
   show_link_on_homepage: false,
   show_sample_on_homepage: true,
   collection_mode: true,
+  skip_stories: false,
   featured_count: 7, // off the schema default of 4
+  answer_word_limit: 60, // retired: carried by no subsystem, so no round trip
   story_key: yamlHazard("S-config-story-key"),
   navigation_json: null, // navigation-yml is one-way (publish only); skipped
+  glossary_kinds_json: JSON.stringify([
+    { id: "place", label: "Place", heading: "Places", values: ["location", "site"] },
+    { id: "ritual", label: "Ritual", heading: "Rituals", values: [] },
+  ]),
   updated_at: null,
 };
 
@@ -272,6 +298,7 @@ const CONFIG_BOOL_KEYS = [
   "show_link_on_homepage",
   "show_sample_on_homepage",
   "collection_mode",
+  "skip_stories",
 ] as const;
 
 const CONFIG_ROW_INVERTED: ProjectConfigRow = {
@@ -284,6 +311,7 @@ const CONFIG_ROW_INVERTED: ProjectConfigRow = {
   show_link_on_homepage: true,
   show_sample_on_homepage: false,
   collection_mode: false,
+  skip_stories: true,
 };
 
 /**
@@ -317,6 +345,8 @@ const PAGE = {
   title: "S-pages-title",
   slug: "s-pages-slug",
   body: "S-pages-body first paragraph.\n\nSecond paragraph.",
+  // The block holds the sentinel title, so the publish leaves it byte for byte.
+  frontmatter: '\ntitle: "S-pages-title"\n# S-pages-frontmatter\nlocalized_for: s-pages-canonical\n',
 };
 
 // ---------------------------------------------------------------------------
@@ -333,6 +363,7 @@ const sentinels: Record<string, Record<string, unknown>> = {
     order: STORY.order,
     private: STORY.private,
     show_sections: STORY.show_sections,
+    extra_columns: STORY.extra_columns,
   },
   steps: {
     step_number: MEDIA_STEP.step_number,
@@ -348,6 +379,7 @@ const sentinels: Record<string, Record<string, unknown>> = {
     clip_start: MEDIA_STEP.clip_start,
     clip_end: MEDIA_STEP.clip_end,
     loop: MEDIA_STEP.loop,
+    extra_columns: MEDIA_STEP.extra_columns,
   },
   layers: {
     layer_number: LAYER1.layer_number,
@@ -377,12 +409,15 @@ const sentinels: Record<string, Record<string, unknown>> = {
     title: PAGE.title,
     slug: PAGE.slug,
     body: PAGE.body,
+    frontmatter: PAGE.frontmatter,
   },
   glossary: {
     term_id: TERM.term_id,
     title: TERM.title,
     definition: TERM.definition,
     related_terms: TERM.related_terms,
+    kind: TERM.kind,
+    extra_columns: TERM.extra_columns,
   },
   config: {
     title: CONFIG_ROW.title,
@@ -403,7 +438,9 @@ const sentinels: Record<string, Record<string, unknown>> = {
     show_sample_on_homepage: CONFIG_ROW.show_sample_on_homepage,
     featured_count: CONFIG_ROW.featured_count,
     collection_mode: CONFIG_ROW.collection_mode,
+    skip_stories: CONFIG_ROW.skip_stories,
     story_key: CONFIG_ROW.story_key,
+    glossary_kinds_json: CONFIG_ROW.glossary_kinds_json,
   },
   landing: {
     stories_heading: LANDING.stories_heading,
@@ -454,6 +491,7 @@ beforeAll(async () => {
     order: storyOut.order,
     private: storyOut.private,
     show_sections: storyOut.show_sections,
+    extra_columns: storyOut.extra_columns,
   };
 
   // --- steps + layers: {story_id}.csv + layer .md files -----------------------
@@ -462,7 +500,11 @@ beforeAll(async () => {
   // exact content buildPublishFileSet writes (layerFileContent = frontmatter
   // title + body).
   const layerFileMap = new Map(
-    layerFiles.map((f) => [f.filename, layerFileContent(f.title, f.content)]),
+    await Promise.all(
+      layerFiles.map(
+        async (f) => [f.filename, await layerFileContent(f.title, f.content)] as const,
+      ),
+    ),
   );
   captured.layerFilenames = layerFiles.map((f) => f.filename);
   const storyCsvRows = parseTelarCsv(storyCsv);
@@ -497,6 +539,7 @@ beforeAll(async () => {
     clip_start: mediaOut.clip_start,
     clip_end: mediaOut.clip_end,
     loop: mediaOut.loop,
+    extra_columns: mediaOut.extra_columns,
   };
   imported.layers = {
     layer_number: layer1Out?.layer_number,
@@ -542,14 +585,12 @@ beforeAll(async () => {
     title: termOut?.title,
     definition: termOut?.definition,
     related_terms: termOut?.related_terms,
+    kind: termOut?.kind,
+    extra_columns: termOut?.extra_columns,
   };
 
   // --- config: _config.yml -------------------------------------------------------
-  const publishedYaml = healConfigYaml(
-    CONFIG_TEMPLATE,
-    buildConfigManagedFields(CONFIG_ROW),
-    buildConfigManagedBlocks(CONFIG_ROW),
-  );
+  const publishedYaml = publishableConfigYaml(CONFIG_TEMPLATE, CONFIG_ROW)!;
   captured.publishedConfigYaml = publishedYaml;
   const parsedYaml = parseYaml(publishedYaml);
   captured.parsedConfigYaml = parsedYaml;
@@ -573,7 +614,9 @@ beforeAll(async () => {
     show_sample_on_homepage: configOut.show_sample_on_homepage,
     featured_count: configOut.featured_count,
     collection_mode: configOut.collection_mode,
+    skip_stories: configOut.skip_stories,
     story_key: configOut.story_key,
+    glossary_kinds_json: configOut.glossary_kinds_json,
   };
 
   // Inverted-boolean variant: probes the complementary side of every
@@ -597,7 +640,7 @@ beforeAll(async () => {
   };
 
   // --- pages: texts/pages/{slug}.md ---------------------------------------------------
-  const pageFiles = pageRowsToCommitFiles([PAGE]);
+  const pageFiles = await pageRowsToCommitFiles([PAGE]);
   const pageFile = pageFiles[0];
   if (!pageFile) throw new Error("pages pipeline: sentinel page produced no commit file");
   // Import derives the slug from the filename (scanRepoPages rule:
@@ -609,6 +652,7 @@ beforeAll(async () => {
     title: pageOut.title,
     slug: slugOut,
     body: pageOut.body,
+    frontmatter: pageOut.frontmatter,
   };
 });
 
@@ -662,6 +706,7 @@ const EXPECT_BY_PUBLISH_ENCODING: Partial<Record<EncodingToken, RoundTripExpecta
   "unquoted-yaml": strictEqual,
   "unquoted-bool": booleanFidelity,
   "unquoted-int": numericEqual,
+  "glossary-kinds-yml": strictEqual, // canonical JSON in vs canonical JSON read back from glossary.kinds
   "json-spread-columns": (sentinel, actual, label) => {
     // Semantic equality: the blob is spread into individual CSV columns and
     // reassembled on import; key order is not part of the contract.
@@ -675,6 +720,7 @@ const EXPECT_BY_PUBLISH_ENCODING: Partial<Record<EncodingToken, RoundTripExpecta
   frontmatter: strictEqual,
   "md-body": strictEqual,
   "frontmatter-of-cell": strictEqual,
+  "frontmatter-block": strictEqual, // the stored block in vs the block read back from the file
   filename: strictEqual, // slug in vs filename-derived slug out
   "empty-object-cell": strictEqual, // kind "section" in vs derived kind out
   "layer-cell": strictEqual, // cell-pair position in vs layer_number/label out
@@ -826,8 +872,8 @@ describe("structural encodings", () => {
     expect(isLayerFileReference(inlineRow.layer1_content)).toBe(false);
   });
 
-  it("pages.slug (filename): the commit path is derived from the slug the importer reads back", () => {
-    const files = pageRowsToCommitFiles([PAGE]);
+  it("pages.slug (filename): the commit path is derived from the slug the importer reads back", async () => {
+    const files = await pageRowsToCommitFiles([PAGE]);
     expect(files[0]?.path).toBe(`telar-content/texts/pages/${PAGE.slug}.md`);
   });
 
@@ -847,29 +893,29 @@ describe("structural encodings", () => {
 // one-sided import reads for fields publish never writes.
 // ---------------------------------------------------------------------------
 
-describe("config: story_key protected-block shape", () => {
-  it("publishes story_key under protected: -> key:, not as a top-level scalar", () => {
+describe("config: story_key is a top-level scalar", () => {
+  // The framework has read story_key from the top level since v0.8.0-beta and
+  // from nowhere else; a `protected:` block is not a place a key lives.
+  it("publishes story_key as a top-level scalar, never under protected: -> key:", () => {
     const parsed = captured.parsedConfigYaml as Record<string, unknown>;
-    const protectedBlock = parsed.protected as Record<string, unknown>;
-    expect(protectedBlock?.key).toBe(CONFIG_ROW.story_key);
-    expect(parsed.story_key).toBeUndefined();
+    expect(parsed.story_key).toBe(CONFIG_ROW.story_key);
+    const protectedBlock = parsed.protected as Record<string, unknown> | undefined;
+    expect(protectedBlock?.key).not.toBe(CONFIG_ROW.story_key);
   });
 
-  it("import reads story_key from the protected block", () => {
+  it("import reads story_key from the top level", () => {
     expect(imported.config?.story_key).toBe(CONFIG_ROW.story_key);
-  });
-
-  it("import falls back to a top-level story_key: line when no protected block exists", () => {
     const out = mapConfigToProjectConfig({ story_key: "S-config-story-key-top-level" });
     expect(out.story_key).toBe("S-config-story-key-top-level");
   });
 
-  it("protected.key wins over a top-level story_key when both are present", () => {
+  it("import does not read a key from a protected: block, even with no top-level story_key", () => {
+    expect(mapConfigToProjectConfig({ protected: { key: "S-protected-ignored" } }).story_key).toBeUndefined();
     const out = mapConfigToProjectConfig({
-      protected: { key: "S-protected-wins" },
-      story_key: "S-top-level-loses",
+      protected: { key: "S-protected-ignored" },
+      story_key: "S-top-level-wins",
     });
-    expect(out.story_key).toBe("S-protected-wins");
+    expect(out.story_key).toBe("S-top-level-wins");
   });
 });
 
@@ -942,14 +988,24 @@ describe("registry participation accounting", () => {
     expect(partial.sort()).toEqual(
       [
         "stories.draft", // file-presence publish; import excluded (orphan-restore path) — pinned above
+        "stories.order_key", // compositor-internal ordering; publishes as the derived `order` rank
+        "steps.order_key", // compositor-internal ordering; publishes as the derived `step` number
+        "layers.order_key", // compositor-internal ordering; publishes as the derived layer slot
+        "objects.order_key", // compositor-internal ordering; objects.csv encodes no order
+        "glossary.order_key", // compositor-internal ordering; glossary.csv encodes no order
+        "pages.order_key", // compositor-internal ordering; publishes via navigation_json
         "objects.image_available", // internal probe state, both sides excluded/derived
         "objects.missing_from_repo", // sync-derived flag, excluded both sides
         "objects.origin", // provenance classifier, excluded both sides
+        "objects.course_project_id", // course marker, never in a CSV cell — excluded both sides
         "pages.order", // import-only tree-index; publishes via navigation_json
+        "pages.frontmatter_source", // D1-only: which file an uncaptured page's block is carried from
         "config.telar_version", // import-only (telar.version) — pinned one-sided above
         "config.google_sheets_enabled", // import-only — pinned one-sided above
         "config.google_sheets_published_url", // import-only — pinned one-sided above
         "config.navigation_json", // publish-only navigation-yml (one-way, declared)
+        "config.answer_word_limit", // retired setting: a live column no subsystem carries
+        "glossary.quoted_in_stories", // retired acknowledgement: a live column no subsystem carries
       ].sort(),
     );
   });
