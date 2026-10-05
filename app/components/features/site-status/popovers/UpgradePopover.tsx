@@ -5,20 +5,22 @@
  * bullet list (terracotta markers), a `Learn more →` linky, and the role-gated
  * upgrade affordance.
  *
- * Role gate: when `userRole === "convenor"` the terracotta `Run upgrade` CTA is
- * shown (links to the existing `/upgrade` flow, which confirms). Otherwise
- * collaborators see the inert cream `Convenor needs to upgrade` line
+ * Role gate: a publishing role (`isPublishingRole`, shared with the server
+ * gate on the upgrade action) gets the terracotta `Run upgrade` CTA (links
+ * to the existing `/upgrade` flow, which confirms). A caller with no
+ * membership sees the inert cream `Convenor needs to upgrade` line
  * (bg-cream-dark / text-charcoal, NOT a button).
  *
  * The What's-new notes are supplied per-release at render time (the pill passes
  * them from the upgrade loader) — they are NOT hardcoded i18n strings.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { Link } from "react-router";
 import { ArrowRight, ArrowUpCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { isPublishingRole } from "~/lib/publishing-roles";
 
 export interface UpgradePopoverProps {
   /** The newest available framework version (e.g. "1.3.0" or a tag). */
@@ -27,8 +29,8 @@ export interface UpgradePopoverProps {
   currentVersion: string;
   /** Per-release "What's new" notes, supplied at render time (not i18n). */
   whatsNew?: string[];
-  /** Only convenors get the Run-upgrade CTA. */
-  userRole: "convenor" | "collaborator" | null;
+  /** A publishing role gets the Run-upgrade CTA; a non-member does not. */
+  userRole: "convenor" | "collaborator" | "instructor" | null;
   /** Optional external link for the "Learn more" linky. */
   learnMoreUrl?: string | null;
   className?: string;
@@ -43,7 +45,7 @@ export function UpgradePopover({
   className = "",
 }: UpgradePopoverProps) {
   const { t } = useTranslation("popover");
-  const isConvenor = userRole === "convenor";
+  const canUpgrade = isPublishingRole(userRole);
 
   return (
     <div className={className}>
@@ -99,7 +101,7 @@ export function UpgradePopover({
           <span />
         )}
 
-        {isConvenor ? (
+        {canUpgrade ? (
           <Link
             to="/upgrade"
             className="font-heading font-semibold inline-flex items-center gap-1.5 bg-terracotta text-surface hover:bg-terracotta-deep transition-colors"

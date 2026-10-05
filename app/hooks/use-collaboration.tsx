@@ -10,16 +10,31 @@
  * disconnects on unmount. Offline edits queue automatically via
  * y-websocket's built-in reconnect/backoff behaviour.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
 import * as decoding from "lib0/decoding";
 import { useTranslation } from "react-i18next";
 import { useToast } from "~/hooks/use-toast";
 import { createUndoManager } from "~/lib/undo-manager";
+import { watchLiveness } from "~/lib/connection-liveness";
+import { watchPresenceExpiry } from "~/lib/presence-expiry";
+import {
+  EMPTY_FREEZE_VIEW,
+  applyFreezeFrame,
+  dismissFreezeError,
+  expireFreeze,
+  nextFreezeDeadline,
+  parseFreezeFrame,
+  readFreezeView,
+  readLockHolder,
+  type FreezeFrame,
+  type FreezeKind,
+  type FreezeView,
+} from "~/lib/freeze-view";
 
 // Bespoke session-control protocol (mirrors workers/collaboration.ts).
 // Wire format = varuint(2) + uint8(subtype). Server→client only.
@@ -42,6 +57,35 @@ import { createUndoManager } from "~/lib/undo-manager";
 const MSG_SESSION_CONTROL = 2;
 const SUB_PROJECT_DELETED = 0x01;
 const SUB_REMOVED_FROM_PROJECT = 0x02;
+// The server has rebuilt this project's document from D1. The document held
+// here predates that rebuild and must not reach the server: y-websocket
+// reconnects after any close code and answers the server's sync step 1 with
+// everything it still holds, which merges the discarded state straight back in.
+// Both subtypes below carry a varuint generation after the subtype byte.
+const SUB_STATE_RESET = 0x03;
+// The generation the document just received belongs to. Echoed back as `?gen=`
+// on every later connection so the server can recognise a document from before
+// a reset — including one held by a client that was offline throughout the
+// reset and so never saw SUB_STATE_RESET.
+const SUB_DOC_GENERATION = 0x04;
+// The freeze leases standing on this project and the operations that ended
+// recently, as a JSON string after the subtype byte (`~/lib/freeze-view`).
+// The only source this client reads a freeze from.
+const SUB_FREEZE = 0x05;
+/**
+ * Connection query-string parameter declaring this client's awareness client
+ * id, which is the one entry the server lets this socket set. Kept in step
+ * with `workers/collaboration.ts`.
+ */
+const AWARENESS_CLIENT_PARAM = "aw";
+/** Connection query-string parameter carrying the generation above. */
+const GENERATION_PARAM = "gen";
+// What this client presents for a document it has just built and has not yet
+// synced. The server refuses a socket that claims nothing once the project has
+// been reset, because a stale document and a fresh one both arrive silent;
+// stating the claim is what keeps a first connection, a new tab and the
+// post-reset rebuild admissible. Kept in step with `workers/collaboration.ts`.
+const FRESH_DOCUMENT_GENERATION = "new";
 
 /**
  * Install the session-control handler onto a WebsocketProvider's per-instance
@@ -59,7 +103,13 @@ const SUB_REMOVED_FROM_PROJECT = 0x02;
  */
 export function installSessionControlHandler(
   provider: Pick<WebsocketProvider, "messageHandlers">,
-  callbacks: { onProjectDeleted: () => void; onRemovedFromProject: () => void },
+  callbacks: {
+    onProjectDeleted: () => void;
+    onRemovedFromProject: () => void;
+    onStateReset: (generation: number | null) => void;
+    onDocGeneration: (generation: number) => void;
+    onFreeze?: (frame: FreezeFrame) => void;
+  },
 ): void {
   const handlers = provider.messageHandlers;
   if (!Array.isArray(handlers)) return;
@@ -67,14 +117,43 @@ export function installSessionControlHandler(
     _encoder,
     decoder,
     _provider,
-    _emitSynced,
+    emitSynced,
     _messageType,
   ) => {
     const subtype = decoding.readUint8(decoder);
+    // The trailing generation is read defensively: a frame that carries none,
+    // or a truncated one, still has to dispatch. Dropping a state-reset frame
+    // over a malformed tail would leave the discarded document connected.
+    const readGeneration = (): number | null => {
+      try {
+        return decoding.readVarUint(decoder);
+      } catch {
+        return null;
+      }
+    };
     if (subtype === SUB_PROJECT_DELETED) {
       callbacks.onProjectDeleted();
     } else if (subtype === SUB_REMOVED_FROM_PROJECT) {
       callbacks.onRemovedFromProject();
+    } else if (subtype === SUB_STATE_RESET) {
+      callbacks.onStateReset(readGeneration());
+    } else if (subtype === SUB_DOC_GENERATION) {
+      const generation = readGeneration();
+      if (generation !== null) callbacks.onDocGeneration(generation);
+    } else if (subtype === SUB_FREEZE && emitSynced) {
+      // Only from the socket: y-websocket runs BroadcastChannel messages
+      // through these same handlers with `emitSynced` false, and a freeze
+      // another tab could raise or end would be one the server did not hold.
+      // The provider is built with BroadcastChannel off; this holds if it is
+      // ever turned on.
+      let json: string | null = null;
+      try {
+        json = decoding.readVarString(decoder);
+      } catch {
+        json = null;
+      }
+      const frame = json === null ? null : parseFreezeFrame(json);
+      if (frame !== null) callbacks.onFreeze?.(frame);
     }
   };
 }
@@ -104,6 +183,19 @@ export interface CollaborationContextValue {
   connected: boolean;
   /** Three-state connection status. Replaces the binary `connected` boolean for UI. */
   connectionStatus: "connected" | "connecting" | "offline";
+  /**
+   * Counts the generation handshakes this provider has received, and so counts
+   * the times the server has proved it is serving the document to this client.
+   *
+   * `connected` does not prove that: a client at a stale generation is admitted
+   * temporarily just to receive the reset frame, and `y-websocket` reports
+   * `connected` at `onopen`, before any frame arrives. The server sends
+   * SUB_DOC_GENERATION only after a real admission, so a consumer that has to
+   * know the document is being served — the halted site-status state, which
+   * nothing else clears — watches this instead. It increments on every
+   * handshake, including one naming a generation it already held.
+   */
+  admissionEpoch: number;
   isPublishing: boolean;
   /**
    * The GitHub Actions build is still running after a successful commit
@@ -114,7 +206,11 @@ export interface CollaborationContextValue {
    */
   isBuilding: boolean;
   publishError: boolean;
-  setIsPublishing: (v: boolean) => void;
+  /** A publish another user started is running; the freeze modal shows. */
+  publishHeldByOther: boolean;
+  /** The user running that publish, or null. */
+  publishHeldBy: number | null;
+  dismissPublishError: () => void;
   /**
    * The commit SHA of the in-flight publish, broadcast off-route via awareness
    * so the global Site Status pill's PublishingPopover can drive the existing
@@ -126,7 +222,18 @@ export interface CollaborationContextValue {
   publishCommitUrl: string | null;
   isUpgrading: boolean;
   upgradeError: boolean;
-  setIsUpgrading: (v: boolean) => void;
+  /** An upgrade another user started is running; the freeze modal shows. */
+  upgradeHeldByOther: boolean;
+  /** The user running that upgrade, or null. */
+  upgradeHeldBy: number | null;
+  dismissUpgradeError: () => void;
+  /** An upgrade another user started, which this page saw running, has succeeded. */
+  upgradeSucceeded: boolean;
+  /**
+   * Who else is committing new objects on the Objects page, holding the
+   * operation lock without freezing anyone; null when nobody is.
+   */
+  objectsHeldBy: number | null;
   remoteCollaborators: AwarenessUser[];
   lastEditorByField: Map<string, { name: string; color: string }>;
   undoManager: Y.UndoManager | null;
@@ -149,15 +256,22 @@ const defaultValue: CollaborationContextValue = {
   provider: null,
   connected: false,
   connectionStatus: "offline",
+  admissionEpoch: 0,
   isPublishing: false,
   isBuilding: false,
   publishError: false,
-  setIsPublishing: () => {},
+  publishHeldByOther: false,
+  publishHeldBy: null,
+  dismissPublishError: () => {},
   publishSha: null,
   publishCommitUrl: null,
   isUpgrading: false,
   upgradeError: false,
-  setIsUpgrading: () => {},
+  upgradeHeldByOther: false,
+  upgradeHeldBy: null,
+  dismissUpgradeError: () => {},
+  upgradeSucceeded: false,
+  objectsHeldBy: null,
   remoteCollaborators: [],
   lastEditorByField: new Map(),
   undoManager: null,
@@ -212,6 +326,7 @@ export function useSetAwarenessLocation() {
  */
 export function CollaborationProvider({
   projectId,
+  userId = null,
   userGithubId,
   userName,
   presenceColor,
@@ -219,6 +334,8 @@ export function CollaborationProvider({
   children,
 }: {
   projectId: number | null;
+  /** The signed-in user's D1 id, which the freeze leases name their holders by. */
+  userId?: number | null;
   userGithubId: number | null;
   userName: string | null;
   presenceColor: string | null;
@@ -241,24 +358,52 @@ export function CollaborationProvider({
   // /dashboard with a fresh loader run rather than a soft route swap
   // that might leave Yjs context state lingering.
   const { showToast } = useToast();
+  // Read by the frame handler, which is installed once per connection and so
+  // closes over the render it was installed in.
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
   const { t } = useTranslation("account");
 
   const [ydoc, setYdoc] = useState<Y.Doc | null>(null);
   const [provider, setProvider] = useState<WebsocketProvider | null>(null);
   const [connected, setConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "offline">("connecting");
-  const [isPublishing, setIsPublishing] = useState(false);
+  const [admissionEpoch, setAdmissionEpoch] = useState(0);
+  // The freeze as the server last described it, for the project it describes.
+  // It outlives the provider on purpose: the revisions it has seen are what
+  // let a replayed end be told from one this page has not witnessed, across
+  // reconnections. It does not outlive the project, because revisions are
+  // numbered per project, and one seen in another would match an end here
+  // that this page never saw begin.
+  const [freeze, setFreeze] = useState<{ projectId: number | null; view: FreezeView }>({
+    projectId,
+    view: EMPTY_FREEZE_VIEW,
+  });
+  const freezeView = freeze.projectId === projectId ? freeze.view : EMPTY_FREEZE_VIEW;
+  const updateFreezeView = useCallback(
+    (forProject: number | null, update: (view: FreezeView) => FreezeView) => {
+      setFreeze((current) => ({
+        projectId: forProject,
+        view: update(current.projectId === forProject ? current.view : EMPTY_FREEZE_VIEW),
+      }));
+    },
+    [],
+  );
   const [isBuilding, setIsBuilding] = useState(false);
-  const [publishError, setPublishError] = useState(false);
   const [publishSha, setPublishSha] = useState<string | null>(null);
   const [publishCommitUrl, setPublishCommitUrl] = useState<string | null>(null);
-  const [isUpgrading, setIsUpgrading] = useState(false);
-  const [upgradeError, setUpgradeError] = useState(false);
   const [remoteCollaborators, setRemoteCollaborators] = useState<AwarenessUser[]>([]);
   const [lastEditorByField, setLastEditorByField] = useState<Map<string, { name: string; color: string }>>(new Map());
   const [undoManager, setUndoManager] = useState<Y.UndoManager | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  // Bumped when the server reports that it has rebuilt the project document.
+  // It is a dependency of the effect below, so a bump tears the current Y.Doc
+  // and provider down and builds a fresh pair — the only way to stop the
+  // discarded document being re-offered to the server on reconnection.
+  const [docGeneration, setDocGeneration] = useState(0);
 
   // Create Y.Doc and WebsocketProvider when projectId is available
   useEffect(() => {
@@ -266,8 +411,27 @@ export function CollaborationProvider({
 
     const doc = new Y.Doc();
     const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
+    // y-websocket keeps this object and re-encodes it into the URL on every
+    // connection, so writing into it below is what reaches the next socket. It
+    // starts on the fresh-document claim: the document built on the line above
+    // belongs to no generation until the server names one, and saying so is
+    // what admits it to a project that has been reset.
+    const connectionParams: Record<string, string> = {
+      [GENERATION_PARAM]: FRESH_DOCUMENT_GENERATION,
+      [AWARENESS_CLIENT_PARAM]: String(doc.clientID),
+    };
+    // `disableBc`: the same browser's other tabs reach this one through the
+    // server, as tabs in any other browser do. Over BroadcastChannel a tab
+    // applies a sibling's document updates with none of the server's checks
+    // (membership, the revert of a refused edit, the generation fence), and a
+    // tab whose socket closes publishes the removal of every collaborator it
+    // holds, which only its siblings receive. The cost: a tab whose socket
+    // is down neither receives its siblings' edits nor passes on its own
+    // until it reconnects; its edits are kept in its document meanwhile.
     const wsProvider = new WebsocketProvider(wsUrl, `ws/${projectId}`, doc, {
       connect: false,
+      disableBc: true,
+      params: connectionParams,
     });
 
     wsProvider.on("status", (event: { status: string }) => {
@@ -329,13 +493,49 @@ export function CollaborationProvider({
         });
         goToDashboard();
       },
+      onStateReset: () => {
+        // Disconnect before anything else. y-websocket schedules its own
+        // reconnection as soon as the socket closes, and that reconnection
+        // would carry this document back to the server; the teardown below
+        // runs on React's commit, which is later than that.
+        wsProvider.disconnect();
+        showToast({
+          message: t("state_reset_ws_toast", {
+            defaultValue:
+              "This project was rebuilt from its last saved version — your unsaved changes in this tab are lost.",
+          }),
+          type: "destructive",
+          autoDismissMs: null,
+          critical: true,
+        });
+        setDocGeneration((n) => n + 1);
+      },
+      onDocGeneration: (generation) => {
+        connectionParams[GENERATION_PARAM] = String(generation);
+        // The handshake is the one proof that this connection is being served
+        // the document, so it is counted separately from `docGeneration`, which
+        // drives document destruction and must not move for a repeat of the
+        // generation the client already holds.
+        setAdmissionEpoch((n) => n + 1);
+      },
+      onFreeze: (frame) => {
+        updateFreezeView(projectId, (view) => applyFreezeFrame(view, frame, userIdRef.current, Date.now()));
+      },
     });
 
+    // In place of y-websocket's own silence check, which reconnects a hidden
+    // tab whose timers the browser throttles (see connection-liveness).
+    const stopLiveness = watchLiveness(wsProvider, document);
+    // In place of the awareness's own expiry, which drops a collaborator whose
+    // hidden tab renews too rarely (see presence-expiry).
+    const stopPresenceExpiry = watchPresenceExpiry(wsProvider.awareness, document);
     wsProvider.connect();
     setYdoc(doc);
     setProvider(wsProvider);
 
     return () => {
+      stopLiveness();
+      stopPresenceExpiry();
       wsProvider.disconnect();
       wsProvider.destroy();
       doc.destroy();
@@ -344,7 +544,7 @@ export function CollaborationProvider({
       setConnected(false);
       setConnectionStatus("connecting");
     };
-  }, [projectId]);
+  }, [projectId, docGeneration]);
 
   // Listen for publish-freeze flag broadcast via Yjs awareness, and track remote collaborators
   useEffect(() => {
@@ -352,15 +552,7 @@ export function CollaborationProvider({
     const awareness = provider.awareness;
     const handleChange = () => {
       const states = awareness.getStates();
-      let publishing = false;
       let building = false;
-      let hasError = false;
-      // upgrading is display-only — any client can broadcast it, but the
-      // actual upgrade commit is gated by the owner role check in the upgrade
-      // route action. Spoofed upgrading=true can only trigger a freeze modal
-      // locally.
-      let upgrading = false;
-      let hasUpgradeError = false;
       // The publish SHA/commit URL are broadcast by whichever client is running
       // the publish (the publish route's awareness effect). The pill reads them
       // off-route so its PublishingPopover can poll from anywhere.
@@ -368,11 +560,7 @@ export function CollaborationProvider({
       let commitUrl: string | null = null;
       const collaborators: AwarenessUser[] = [];
       states.forEach((state: Record<string, unknown>, clientId: number) => {
-        if (state.publishing) publishing = true;
         if (state.building) building = true;
-        if (state.publishError) hasError = true;
-        if (state.upgrading) upgrading = true;
-        if (state.upgradeError) hasUpgradeError = true;
         if (typeof state.publishSha === "string") sha = state.publishSha;
         if (typeof state.publishCommitUrl === "string") commitUrl = state.publishCommitUrl;
         if (clientId !== awareness.clientID && state.user) {
@@ -384,13 +572,9 @@ export function CollaborationProvider({
           });
         }
       });
-      setIsPublishing(publishing);
       setIsBuilding(building);
-      setPublishError(hasError);
       setPublishSha(sha);
       setPublishCommitUrl(commitUrl);
-      setIsUpgrading(upgrading);
-      setUpgradeError(hasUpgradeError);
       setRemoteCollaborators(collaborators);
       // Build lastEditorByField from awareness location state (session-scoped)
       const newEditorMap = new Map<string, { name: string; color: string }>();
@@ -406,8 +590,36 @@ export function CollaborationProvider({
       setLastEditorByField(newEditorMap);
     };
     awareness.on("change", handleChange);
-    return () => awareness.off("change", handleChange);
+    return () => {
+      awareness.off("change", handleChange);
+    };
   }, [provider]);
+
+  // Lift a lease at its local deadline. Nothing is broadcast when a lease runs
+  // out, so without a timer an expired freeze would lift only when the next
+  // frame happened to arrive. One timeout, for the nearest deadline; none
+  // while nothing stands.
+  useEffect(() => {
+    const deadline = nextFreezeDeadline(freezeView);
+    if (deadline === null) return;
+    const timer = setTimeout(
+      () => updateFreezeView(projectId, (view) => expireFreeze(view, Date.now())),
+      Math.max(0, deadline - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [freezeView, projectId, updateFreezeView]);
+
+  const publishFreeze = readFreezeView(freezeView, "publish", userId);
+  const upgradeFreeze = readFreezeView(freezeView, "upgrade", userId);
+  const objectsHeldBy = readLockHolder(freezeView, "objects", userId);
+  const isPublishing = publishFreeze.frozen;
+  const isUpgrading = upgradeFreeze.frozen;
+  const dismissError = useCallback(
+    (kind: FreezeKind) => updateFreezeView(projectId, (view) => dismissFreezeError(view, kind)),
+    [projectId, updateFreezeView],
+  );
+  const dismissPublishError = useCallback(() => dismissError("publish"), [dismissError]);
+  const dismissUpgradeError = useCallback(() => dismissError("upgrade"), [dismissError]);
 
   // Unified Yjs UndoManager: scoped to all root Y.Arrays so that structural
   // operations (add/delete/reorder of stories, steps, layers, pages, objects, glossary)
@@ -490,15 +702,22 @@ export function CollaborationProvider({
       provider,
       connected,
       connectionStatus,
+      admissionEpoch,
       isPublishing,
       isBuilding,
-      publishError,
-      setIsPublishing,
+      publishError: publishFreeze.error,
+      publishHeldByOther: publishFreeze.heldByOther,
+      publishHeldBy: publishFreeze.heldBy,
+      dismissPublishError,
       publishSha,
       publishCommitUrl,
       isUpgrading,
-      upgradeError,
-      setIsUpgrading,
+      upgradeError: upgradeFreeze.error,
+      upgradeHeldByOther: upgradeFreeze.heldByOther,
+      upgradeHeldBy: upgradeFreeze.heldBy,
+      dismissUpgradeError,
+      upgradeSucceeded: freezeView.upgradeSucceeded,
+      objectsHeldBy,
       remoteCollaborators,
       lastEditorByField,
       undoManager,
@@ -514,13 +733,22 @@ export function CollaborationProvider({
       provider,
       connected,
       connectionStatus,
+      admissionEpoch,
       isPublishing,
       isBuilding,
-      publishError,
+      publishFreeze.error,
+      publishFreeze.heldByOther,
+      publishFreeze.heldBy,
+      dismissPublishError,
       publishSha,
       publishCommitUrl,
       isUpgrading,
-      upgradeError,
+      upgradeFreeze.error,
+      upgradeFreeze.heldByOther,
+      upgradeFreeze.heldBy,
+      dismissUpgradeError,
+      freezeView.upgradeSucceeded,
+      objectsHeldBy,
       remoteCollaborators,
       lastEditorByField,
       undoManager,

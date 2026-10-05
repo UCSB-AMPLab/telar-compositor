@@ -1,28 +1,24 @@
 /**
- * ReloadOnUpgradeComplete — collaborators reload when the upgrade finishes
- * successfully. Owner stays on the "upgrade complete" screen.
+ * ReloadOnUpgradeComplete — reload the page when another user's upgrade has
+ * succeeded, so this editor picks up the framework it rewrote.
  *
- * Reload only fires on true -> false transition (prevRef.current=true while
- * isUpgrading just became false), with no upgradeError and provider already
- * connected. Owner identified via isOwner prop.
+ * Driven only by `upgradeSucceeded`, which the collaboration context sets when
+ * the server reports that an upgrade this page saw running ended well and was
+ * held by someone else (`~/lib/freeze-view`). A lease that expires, an upgrade
+ * that fails, and a socket that drops all lift the freeze without it, so none
+ * of them reads as a finished upgrade. Whoever ran the upgrade stays on its
+ * completion screen.
  *
- * Extracted from _app.tsx so edge-transition behaviour can be covered by
- * upgrade-reload.test.tsx without rendering the full layout route.
+ * @version v1.5.0-beta
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 
-export function ReloadOnUpgradeComplete({ isOwner }: { isOwner: boolean }) {
-  const { isUpgrading, upgradeError, provider } = useCollaborationContext();
-  const prevRef = useRef(false);
+export function ReloadOnUpgradeComplete() {
+  const { upgradeSucceeded } = useCollaborationContext();
   useEffect(() => {
-    // Only collaborators reload. Owner stays on the
-    // "upgrade complete" screen to see success + manual steps.
-    if (!isOwner && provider && prevRef.current && !isUpgrading && !upgradeError) {
-      window.location.reload();
-    }
-    prevRef.current = isUpgrading;
-  }, [isUpgrading, upgradeError, isOwner, provider]);
+    if (upgradeSucceeded) window.location.reload();
+  }, [upgradeSucceeded]);
   return null;
 }

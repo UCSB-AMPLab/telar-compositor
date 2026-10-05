@@ -10,10 +10,16 @@
  * Web Crypto importKey only accepts PKCS#8, so PKCS#1 keys are wrapped into
  * a PKCS#8 PrivateKeyInfo at runtime before import.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
-import { githubHeaders } from "~/lib/github.server";
+import {
+  githubHeaders,
+  GitHubPermissionError,
+  GitHubTransientError,
+  isRateLimitRefusal,
+} from "~/lib/github.server";
+import { isPublishingRole } from "~/lib/publishing-roles";
 
 // ---------------------------------------------------------------------------
 // JWT generation
@@ -187,11 +193,56 @@ export async function getInstallationToken(
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Failed to get installation token: ${res.status} ${body}`);
+    const message = `Failed to get installation token: ${res.status} ${body}`;
+    if (res.status === 403 && isRateLimitRefusal(res.headers, body)) {
+      throw new GitHubTransientError(message, res.status);
+    }
+    // The installation is gone or no longer lets the App in: the author is
+    // told that, not to try again. A 401 is the App's own credentials being
+    // refused, which no author can fix, so it stays an ordinary failure.
+    if (res.status === 403 || res.status === 404) {
+      throw new GitHubPermissionError(message, res.status);
+    }
+    throw new Error(message);
   }
 
   const data = (await res.json()) as { token: string };
   return data.token;
+}
+
+/**
+ * The token a project-repo commit or read runs under. The installation
+ * token is the publishing roles' authority, and no role outside that set
+ * has its reach widened by it: for a role the set does not name, and for a
+ * null role, this returns the acting user's own token — a non-member gets
+ * no more access to the repository than their own GitHub account already
+ * has.
+ *
+ * For a publishing role, the installation token is minted wherever
+ * possible; the acting user's own token is a fallback ONLY for the
+ * convenor. No other role's OAuth token has write access to the convenor's
+ * repository and, on a private repo, it may have no read access either
+ * (GitHub's OAuth scopes grant nothing beyond what the authorizing user
+ * already has — see docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps),
+ * so a mint failure for any role but the convenor must surface as a failure
+ * rather than trade it for a confusing GitHub 403. The convenor fallback
+ * also keeps local development working when the App's credentials are not
+ * configured.
+ */
+export async function resolveProjectToken(
+  appId: string,
+  privateKeyPem: string,
+  installationId: number,
+  userToken: string,
+  role: string | null,
+): Promise<string> {
+  if (!isPublishingRole(role)) return userToken;
+  try {
+    return await getInstallationToken(appId, privateKeyPem, installationId);
+  } catch (err) {
+    if (role === "convenor") return userToken;
+    throw err;
+  }
 }
 
 export interface InstallationInfo {
@@ -205,17 +256,18 @@ export interface InstallationInfo {
   targetType: "User" | "Organization" | null;
 }
 
-/**
- * Reads an installation's GRANTED permissions + account type via the App JWT
- * (GET /app/installations/{id}). The permissions reflect what the installation
- * has actually accepted — not merely what the App requests — so it reveals the
- * workflows-write accept-gap. Throws on a non-ok response; callers fail open.
- */
-export async function getInstallationInfo(
+interface InstallationRecord {
+  permissions?: Record<string, string>;
+  target_type?: string;
+  account?: { login?: string } | null;
+}
+
+/** GET /app/installations/{id} via the App JWT. Throws on a non-ok response. */
+async function readInstallation(
   appId: string,
   privateKeyPem: string,
   installationId: number,
-): Promise<InstallationInfo> {
+): Promise<InstallationRecord> {
   const jwt = await signJwt(appId, privateKeyPem);
 
   const res = await fetch(
@@ -237,10 +289,34 @@ export async function getInstallationInfo(
     );
   }
 
-  const data = (await res.json()) as {
-    permissions?: Record<string, string>;
-    target_type?: string;
-  };
+  return (await res.json()) as InstallationRecord;
+}
+
+/**
+ * The login of the account an installation is on, or null when GitHub names
+ * none. Throws on a non-ok response.
+ */
+export async function getInstallationAccount(
+  appId: string,
+  privateKeyPem: string,
+  installationId: number,
+): Promise<string | null> {
+  const data = await readInstallation(appId, privateKeyPem, installationId);
+  return data.account?.login ?? null;
+}
+
+/**
+ * Reads an installation's GRANTED permissions + account type via the App JWT
+ * (GET /app/installations/{id}). The permissions reflect what the installation
+ * has actually accepted — not merely what the App requests — so it reveals the
+ * workflows-write accept-gap. Throws on a non-ok response; callers fail open.
+ */
+export async function getInstallationInfo(
+  appId: string,
+  privateKeyPem: string,
+  installationId: number,
+): Promise<InstallationInfo> {
+  const data = await readInstallation(appId, privateKeyPem, installationId);
 
   return {
     workflowsWrite: data.permissions?.workflows === "write",

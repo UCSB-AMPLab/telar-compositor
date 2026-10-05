@@ -7,9 +7,10 @@
  * Covers the seven tabs in order with Start leftmost (a Docs link is
  * present in the right area), no /dashboard or /homepage tab,
  * untinted tab icons (the active tab stays charcoal), and the
- * Publish tab being hidden for collaborators.
+ * Publish tab being hidden for a caller with no project membership
+ * (present for every project role alike).
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
@@ -32,18 +33,27 @@ vi.mock("~/hooks/use-collaboration", () => ({
   }),
 }));
 
-// The publish-tab gate keys off useIsConvenor(); default true so
-// the baseline includes Publish. Individual tests override it.
-const mockIsConvenor = vi.fn(() => true);
-vi.mock("~/hooks/use-role", () => ({
-  useIsConvenor: () => mockIsConvenor(),
-  useRole: () => (mockIsConvenor() ? "convenor" : "collaborator"),
-}));
+// The publish-tab gate keys off useIsPublisher(); default "convenor" so
+// the baseline includes Publish. Individual tests override the role.
+//
+// useIsPublisher delegates to the real isPublishingRole rather than
+// restating the membership set: a mock that restates it answers from its
+// own copy, so the tab gate would keep reporting the old set after the real
+// one changed.
+const mockRole = vi.fn<() => "convenor" | "collaborator" | "instructor" | null>(() => "convenor");
+vi.mock("~/hooks/use-role", async () => {
+  const { isPublishingRole } = await import("~/lib/publishing-roles");
+  return {
+    useIsConvenor: () => mockRole() === "convenor",
+    useIsPublisher: () => isPublishingRole(mockRole()),
+    useRole: () => mockRole(),
+  };
+});
 
-function renderTabNav() {
+function renderTabNav(props: { showCourseTab?: boolean } = {}) {
   return render(
     <MemoryRouter initialEntries={["/objects"]}>
-      <TabNav />
+      <TabNav {...props} />
     </MemoryRouter>,
   );
 }
@@ -61,7 +71,7 @@ const EXPECTED_TAB_KEYS = [
 
 describe("TabNav — seven-tab IA (Start leftmost)", () => {
   beforeEach(() => {
-    mockIsConvenor.mockReturnValue(true);
+    mockRole.mockReturnValue("convenor");
   });
 
   it("renders exactly seven primary tabs in order (Start · Objects · Stories · Glossary · Pages · Site settings · Publish)", () => {
@@ -126,8 +136,8 @@ describe("TabNav — seven-tab IA (Start leftmost)", () => {
     expect(activeLink?.className).toContain("border-charcoal");
   });
 
-  it("Publish tab is present when useIsConvenor() is true", () => {
-    mockIsConvenor.mockReturnValue(true);
+  it("Publish tab is present for the convenor", () => {
+    mockRole.mockReturnValue("convenor");
     const { container } = renderTabNav();
     const hrefs = Array.from(container.querySelectorAll("nav a[href]")).map((a) =>
       a.getAttribute("href"),
@@ -135,12 +145,78 @@ describe("TabNav — seven-tab IA (Start leftmost)", () => {
     expect(hrefs).toContain("/publish");
   });
 
-  it("Publish tab is absent when useIsConvenor() is false (collaborator)", () => {
-    mockIsConvenor.mockReturnValue(false);
+  it("Publish tab is present for a collaborator", () => {
+    mockRole.mockReturnValue("collaborator");
+    const { container } = renderTabNav();
+    const hrefs = Array.from(container.querySelectorAll("nav a[href]")).map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(hrefs).toContain("/publish");
+  });
+
+  it("Publish tab is present for an instructor", () => {
+    mockRole.mockReturnValue("instructor");
+    const { container } = renderTabNav();
+    const hrefs = Array.from(container.querySelectorAll("nav a[href]")).map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(hrefs).toContain("/publish");
+  });
+
+  it("Publish tab is absent for a caller with no membership", () => {
+    mockRole.mockReturnValue(null);
     const { container } = renderTabNav();
     const hrefs = Array.from(container.querySelectorAll("nav a[href]")).map((a) =>
       a.getAttribute("href"),
     );
     expect(hrefs).not.toContain("/publish");
+  });
+});
+
+/**
+ * The Course tab is the only way into `/course`, and a course that could be
+ * created and then never run is the reason it exists.
+ *
+ * It is off by default because both of its conditions are server-side: whether
+ * there is a course to run, and whether the session has answered the course
+ * password. The second is why an unconditional tab would be wrong rather than
+ * merely eager — `/course` answers a locked session with a bare 403, and the
+ * password is answered on the create-site form, so the tab would lead to a
+ * wall with no way past it.
+ */
+describe("TabNav — the Course tab", () => {
+  beforeEach(() => {
+    mockRole.mockReturnValue("convenor");
+  });
+
+  function tabHrefs(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll("nav a[href]"))
+      .map((a) => a.getAttribute("href") ?? "")
+      .filter((href) => href.startsWith("/") && !href.includes("?"));
+  }
+
+  it("is absent by default", () => {
+    const { container } = renderTabNav();
+    expect(tabHrefs(container)).not.toContain("/course");
+  });
+
+  it("appears when the shell says there is a course to run and the gate is open", () => {
+    const { container } = renderTabNav({ showCourseTab: true });
+    expect(tabHrefs(container)).toContain("/course");
+  });
+
+  it("sits last, after Publish", () => {
+    const { container } = renderTabNav({ showCourseTab: true });
+    const hrefs = tabHrefs(container);
+    expect(hrefs[hrefs.length - 1]).toBe("/course");
+  });
+
+  it("is offered to an instructor", () => {
+    // The screen decides standing for itself, and a course instructor is not
+    // the convenor of the site they are looking at. Hiding the tab by site
+    // role would hide the course from the people who run it.
+    mockRole.mockReturnValue("instructor");
+    const { container } = renderTabNav({ showCourseTab: true });
+    expect(tabHrefs(container)).toContain("/course");
   });
 });

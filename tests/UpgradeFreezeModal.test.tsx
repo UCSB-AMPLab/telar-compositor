@@ -23,7 +23,6 @@ describe("UpgradeFreezeModal", () => {
       <UpgradeFreezeModal
         isUpgrading={false}
         upgradeError={false}
-        isOwner={false}
         onDismiss={() => {}}
       />,
     );
@@ -35,7 +34,6 @@ describe("UpgradeFreezeModal", () => {
       <UpgradeFreezeModal
         isUpgrading={true}
         upgradeError={false}
-        isOwner={false}
         onDismiss={() => {}}
       />,
     );
@@ -43,26 +41,11 @@ describe("UpgradeFreezeModal", () => {
     expect(screen.getByText("upgrade_freeze_body_collaborator")).toBeTruthy();
   });
 
-  it("renders nothing when isOwner=true", () => {
-    // The wrapper passes through to FreezeModal, which returns null for
-    // owners regardless of isUpgrading.
-    const { container } = render(
-      <UpgradeFreezeModal
-        isUpgrading={true}
-        upgradeError={false}
-        isOwner={true}
-        onDismiss={() => {}}
-      />,
-    );
-    expect(container.firstChild).toBeNull();
-  });
-
   it("renders error state when upgradeError=true", () => {
     render(
       <UpgradeFreezeModal
         isUpgrading={false}
         upgradeError={true}
-        isOwner={false}
         onDismiss={() => {}}
       />,
     );
@@ -77,7 +60,6 @@ describe("UpgradeFreezeModal", () => {
       <UpgradeFreezeModal
         isUpgrading={false}
         upgradeError={true}
-        isOwner={false}
         onDismiss={onDismiss}
       />,
     );
@@ -90,7 +72,6 @@ describe("UpgradeFreezeModal", () => {
       <UpgradeFreezeModal
         isUpgrading={true}
         upgradeError={false}
-        isOwner={false}
         onDismiss={() => {}}
       />,
     );

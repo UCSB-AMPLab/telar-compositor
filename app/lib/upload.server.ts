@@ -10,23 +10,26 @@
  *   - arrayBufferToBase64: chunked ArrayBuffer → base64 string (safe for 25MB files)
  *   - validateUploadFile: checks MIME type and file size before upload
  *   - commitBinaryFileWithCsv: commits image + objects.csv via Git Data API (single image)
- *   - commitMultipleBinaryFilesWithCsv: commits N images + objects.csv in one Git commit
- *   - ACCEPTED_TYPES: Set of allowed MIME types (for client-side reuse)
+ *   - createImageBlobs: creates the images' blobs, ahead of the commit that names them
+ *   - commitMultipleBinaryFilesWithCsv: commits N images + objects.csv in one Git commit,
+ *     optionally on a head the caller read and from blobs it already created
  *   - MAX_SIZE_BYTES: maximum allowed file size (for client-side reuse)
+ *
+ * The accepted MIME types are not declared here: they are derived from
+ * UPLOAD_ACCEPTED_EXTENSIONS in `~/lib/file-types`, the one place that answers
+ * what an author may upload, so the client dialog and this server gate cannot
+ * disagree.
+ *
+ * @version v1.5.0-beta
  */
 
 import { githubHeaders } from "~/lib/github.server";
-import { StaleHeadError } from "~/lib/commit.server";
+import { StaleHeadError, cleanCommitContent } from "~/lib/commit.server";
+import { UPLOAD_ACCEPTED_MIME_TYPES } from "~/lib/file-types";
 
 // ---------------------------------------------------------------------------
 // Constants (exported for client-side reuse)
 // ---------------------------------------------------------------------------
-
-/**
- * Accepted image MIME types for upload.
- * Validated client-side before upload and server-side before commit.
- */
-export const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/tiff"]);
 
 /**
  * Maximum allowed file size in bytes (25MB).
@@ -78,11 +81,11 @@ function utf8ToBase64(str: string): string {
  *
  * Returns:
  *   - null if the file is valid
- *   - "invalid_format" if the MIME type is not in ACCEPTED_TYPES
+ *   - "invalid_format" if the MIME type is not in UPLOAD_ACCEPTED_MIME_TYPES
  *   - "file_too_large" if the file size exceeds MAX_SIZE_BYTES
  */
 export function validateUploadFile(file: { type: string; size: number }): string | null {
-  if (!ACCEPTED_TYPES.has(file.type)) {
+  if (!UPLOAD_ACCEPTED_MIME_TYPES.has(file.type)) {
     return "invalid_format";
   }
   if (file.size > MAX_SIZE_BYTES) {
@@ -104,6 +107,8 @@ interface CommitBinaryParams {
   imagePath: string;
   /** Base64-encoded image content */
   imageBase64: string;
+  /** The objects sheet's repository path: the file the site holds, whichever language its name is in. */
+  csvPath: string;
   /** Serialised objects.csv text content */
   csvContent: string;
   /** Commit message headline (will have " [skip ci]" appended) */
@@ -133,7 +138,7 @@ const GITHUB_API = "https://api.github.com";
  * Returns { newHeadSha } matching the new commit SHA.
  */
 export async function commitBinaryFileWithCsv(params: CommitBinaryParams): Promise<{ newHeadSha: string }> {
-  const { token, owner, repo, branch, imagePath, imageBase64, csvContent, commitMessage } = params;
+  const { token, owner, repo, branch, imagePath, imageBase64, csvPath, csvContent, commitMessage } = params;
   const base = `${GITHUB_API}/repos/${owner}/${repo}`;
   const headers = githubHeaders(token);
   const jsonHeaders = { ...headers, "Content-Type": "application/json" };
@@ -171,7 +176,7 @@ export async function commitBinaryFileWithCsv(params: CommitBinaryParams): Promi
 
   // Step 2: Create CSV blob
   // Encode UTF-8 CSV content as base64 for safe transmission
-  const csvBase64 = utf8ToBase64(csvContent);
+  const csvBase64 = utf8ToBase64(cleanCommitContent(csvPath, csvContent));
   const csvBlobRes = await fetch(`${base}/git/blobs`, {
     method: "POST",
     headers: jsonHeaders,
@@ -194,7 +199,7 @@ export async function commitBinaryFileWithCsv(params: CommitBinaryParams): Promi
       base_tree: treeSha,
       tree: [
         { path: imagePath, mode: "100644", type: "blob", sha: imageBlobSha },
-        { path: "telar-content/spreadsheets/objects.csv", mode: "100644", type: "blob", sha: csvBlobSha },
+        { path: csvPath, mode: "100644", type: "blob", sha: csvBlobSha },
       ],
     }),
   });
@@ -254,10 +259,63 @@ interface CommitMultipleBinaryParams {
   branch: string;
   /** Array of images to commit — processed sequentially to stay within CF Worker CPU limits */
   images: Array<{ imagePath: string; imageBase64: string }>;
+  /** The objects sheet's repository path: the file the site holds, whichever language its name is in. */
+  csvPath: string;
   /** Serialised objects.csv text content (merged, includes all new objects) */
   csvContent: string;
   /** Commit message headline (will have " [skip ci]" appended) */
   commitMessage: string;
+  /**
+   * The head the caller read the repository at. When given, the commit is
+   * built on it and refused as stale if the branch has moved since, so
+   * content assembled from an earlier read is never committed over a newer
+   * head. Without it the head is looked up here.
+   */
+  expectedHeadSha?: string;
+  /**
+   * The images' blobs, already created by `createImageBlobs`. Blobs depend on
+   * nothing in the branch, so a caller holding the operation lock can make
+   * them first and keep the lock only for the reads and the commit.
+   */
+  imageBlobs?: ImageBlobEntry[];
+}
+
+/** One image's blob, as a tree entry at its path. */
+export interface ImageBlobEntry {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
+}
+
+/**
+ * Create one blob per image, sequentially to stay within CF Worker CPU limits.
+ * A blob is addressed by its content and referenced by nothing until a tree
+ * names it, so creating one changes nothing in the repository.
+ */
+export async function createImageBlobs(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  images: Array<{ imagePath: string; imageBase64: string }>;
+}): Promise<ImageBlobEntry[]> {
+  const base = `${GITHUB_API}/repos/${params.owner}/${params.repo}`;
+  const jsonHeaders = { ...githubHeaders(params.token), "Content-Type": "application/json" };
+  const entries: ImageBlobEntry[] = [];
+  for (const { imagePath, imageBase64 } of params.images) {
+    const blobRes = await fetch(`${base}/git/blobs`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ content: imageBase64, encoding: "base64" }),
+    });
+    if (!blobRes.ok) {
+      const body = await blobRes.text();
+      throw new Error(`Failed to create image blob: ${blobRes.status} ${body}`);
+    }
+    const blob = (await blobRes.json()) as { sha: string };
+    entries.push({ path: imagePath, mode: "100644", type: "blob", sha: blob.sha });
+  }
+  return entries;
 }
 
 /**
@@ -283,19 +341,24 @@ interface CommitMultipleBinaryParams {
 export async function commitMultipleBinaryFilesWithCsv(
   params: CommitMultipleBinaryParams
 ): Promise<{ newHeadSha: string }> {
-  const { token, owner, repo, branch, images, csvContent, commitMessage } = params;
+  const { token, owner, repo, branch, images, csvPath, csvContent, commitMessage, expectedHeadSha, imageBlobs } = params;
   const base = `${GITHUB_API}/repos/${owner}/${repo}`;
   const headers = githubHeaders(token);
   const jsonHeaders = { ...headers, "Content-Type": "application/json" };
 
-  // Step 0: Fetch current HEAD SHA
-  const refRes = await fetch(`${base}/git/ref/heads/${branch}`, { headers });
-  if (!refRes.ok) {
-    const body = await refRes.text();
-    throw new Error(`Failed to fetch HEAD ref: ${refRes.status} ${body}`);
+  // Step 0: the head to build on — the caller's, or the current one
+  let headSha: string;
+  if (expectedHeadSha) {
+    headSha = expectedHeadSha;
+  } else {
+    const refRes = await fetch(`${base}/git/ref/heads/${branch}`, { headers });
+    if (!refRes.ok) {
+      const body = await refRes.text();
+      throw new Error(`Failed to fetch HEAD ref: ${refRes.status} ${body}`);
+    }
+    const refData = (await refRes.json()) as { object: { sha: string } };
+    headSha = refData.object.sha;
   }
-  const refData = (await refRes.json()) as { object: { sha: string } };
-  const headSha = refData.object.sha;
 
   // Step 0b: Fetch current tree SHA from the HEAD commit
   const commitDataRes = await fetch(`${base}/git/commits/${headSha}`, { headers });
@@ -306,25 +369,12 @@ export async function commitMultipleBinaryFilesWithCsv(
   const commitData = (await commitDataRes.json()) as { tree: { sha: string } };
   const treeSha = commitData.tree.sha;
 
-  // Step 1: Create image blobs sequentially (avoid parallel to stay within CF Worker CPU limits)
-  const imageBlobEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
-  for (const { imagePath, imageBase64 } of images) {
-    const blobRes = await fetch(`${base}/git/blobs`, {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({ content: imageBase64, encoding: "base64" }),
-    });
-    if (!blobRes.ok) {
-      const body = await blobRes.text();
-      throw new Error(`Failed to create image blob: ${blobRes.status} ${body}`);
-    }
-    const blob = (await blobRes.json()) as { sha: string };
-    imageBlobEntries.push({ path: imagePath, mode: "100644", type: "blob", sha: blob.sha });
-  }
+  // Step 1: the image blobs — the caller's, or created here
+  const imageBlobEntries = imageBlobs ?? await createImageBlobs({ token, owner, repo, images });
 
   // Step 2: Create CSV blob
   // Encode UTF-8 CSV content as base64 for safe transmission
-  const csvBase64 = utf8ToBase64(csvContent);
+  const csvBase64 = utf8ToBase64(cleanCommitContent(csvPath, csvContent));
   const csvBlobRes = await fetch(`${base}/git/blobs`, {
     method: "POST",
     headers: jsonHeaders,
@@ -346,7 +396,7 @@ export async function commitMultipleBinaryFilesWithCsv(
       base_tree: treeSha,
       tree: [
         ...imageBlobEntries,
-        { path: "telar-content/spreadsheets/objects.csv", mode: "100644", type: "blob", sha: csvBlob.sha },
+        { path: csvPath, mode: "100644", type: "blob", sha: csvBlob.sha },
       ],
     }),
   });

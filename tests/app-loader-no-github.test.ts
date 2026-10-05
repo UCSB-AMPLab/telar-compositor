@@ -22,7 +22,7 @@
  * Case (b): cold tag cache + /publish + convenor + below-latest version
  *   → exactly one allowed `fetchLatestRelease` and a throw redirect to /upgrade.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -35,13 +35,13 @@ import { deriveHeadDiverged, __resetTagCacheForTest, getCachedLatestTag } from "
 const mocks = vi.hoisted(() => ({
   // GitHub-touching fns — any call here is a request-path GitHub hit.
   getRepoHeadMock: vi.fn(async () => "remote-sha"),
-  checkRepoAvailabilityMock: vi.fn(async () => "available" as const),
+  checkRepoAvailabilityMock: vi.fn(async () => ({ availability: "available" as const, canonicalFullName: null })),
   computeFullSyncDiffMock: vi.fn(async () => ({})),
   hasDivergentChangesMock: vi.fn(() => false),
   fetchLatestReleaseMock: vi.fn(async () => ({ tagName: "v9.9.9" })),
   // membership / session / crypto
   getUserProjectsMock: vi.fn(async () => [] as unknown[]),
-  getUserRoleMock: vi.fn(async () => "convenor" as const),
+  getUserRoleMock: vi.fn(async (): Promise<string | null> => "convenor"),
   getPresenceColorMock: vi.fn(async () => "#E47A6F"),
   resolveActiveProjectMock: vi.fn(async () => null as unknown),
   decryptMock: vi.fn(async () => "decrypted-token"),
@@ -69,6 +69,10 @@ vi.mock("~/lib/membership.server", () => ({
   getUserRole: mocks.getUserRoleMock,
   getPresenceColor: mocks.getPresenceColorMock,
   resolveActiveProject: mocks.resolveActiveProjectMock,
+  // The real predicate: the mock stands in for the queries, not for the
+  // rule about which rows list.
+  listableProjects: (rows: Array<{ userRole: string; parent_project_id: number | null }>) =>
+    rows.filter((p) => !(p.userRole === "instructor" && p.parent_project_id != null)),
 }));
 
 vi.mock("~/lib/session.server", () => ({
@@ -264,5 +268,148 @@ describe("/_app loader — request-path GitHub discipline", () => {
     const res = thrown as Response;
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe(`/upgrade?from=${encodeURIComponent("/publish")}`);
+  });
+
+  // A collaborator whose upgrade the installation's missing workflows:write
+  // permission would refuse is never sent to /upgrade. On /objects nobody is
+  // redirected any more (see (d)); what this pins is that the loader still
+  // reports the state, since the Upload tab reads upgradeAwaitsConvenor to
+  // name whom to ask. See (e) for /publish.
+  it("(c) cold tag cache + /objects + collaborator + gh_workflows_write_missing=1 + below-latest version: no redirect, upgradeAwaitsConvenor true", async () => {
+    rowsByTable = {
+      projects: [PROJECT_ROW({ gh_workflows_write_missing: 1 })],
+      project_members: [
+        { userId: 1, role: "collaborator", githubId: 1, username: "tester", name: null, welcomedAt: "x", contributions: null, project_id: 1, n: 1 },
+      ],
+      // Below MIN_SUPPORTED_VERSION (v0.9.0-beta) as well as below the
+      // fixture's latest tag (v9.9.9) — needsUpgrade must be true for
+      // upgradeAwaitsConvenor's own `needsUpgrade &&` clause to matter.
+      project_config: [{ telar_version: "0.5.0", url: "https://alice.example", baseurl: "/site" }],
+    };
+    mocks.getUserProjectsMock.mockResolvedValue([
+      { id: 1, github_repo_full_name: "alice/site", userRole: "collaborator", user_id: 1 },
+    ]);
+    mocks.getUserRoleMock.mockResolvedValue("collaborator");
+
+    const data = await invoke(makeRequest("/objects"));
+
+    // No redirect was thrown — invoke() would have rejected past this point
+    // otherwise, since a throw inside the loader propagates out of invoke().
+    expect(data.needsUpgrade).toBe(true);
+    expect(data.upgradeAwaitsConvenor).toBe(true);
+  });
+
+  // Objects is not refused as a page: browsing and editing do not depend on
+  // the framework, and the one act there that does — uploading — is refused
+  // by its own action (readUploadRefusal). The page still checks the version on
+  // a cold cache, because the Upload tab reads needsUpgrade to say so before
+  // anyone tries.
+  it("(d) same project, but convenor on /objects: not redirected, and the version is still read", async () => {
+    rowsByTable = {
+      projects: [PROJECT_ROW({ gh_workflows_write_missing: 1 })],
+      project_members: [
+        { userId: 1, role: "convenor", githubId: 1, username: "tester", name: null, welcomedAt: "x", contributions: null, project_id: 1, n: 1 },
+      ],
+      project_config: [{ telar_version: "0.5.0", url: "https://alice.example", baseurl: "/site" }],
+    };
+    mocks.getUserProjectsMock.mockResolvedValue([
+      { id: 1, github_repo_full_name: "alice/site", userRole: "convenor", user_id: 1 },
+    ]);
+    mocks.getUserRoleMock.mockResolvedValue("convenor");
+
+    const data = await invoke(makeRequest("/objects"));
+
+    expect(mocks.fetchLatestReleaseMock).toHaveBeenCalledTimes(1);
+    expect(data.needsUpgrade).toBe(true);
+    expect(data.upgradeAwaitsConvenor).toBe(false);
+  });
+
+  // This collaborator has nothing to do on
+  // /publish — sent back to /objects (where disabled controls explain why),
+  // never to /upgrade, an upgrade they cannot complete.
+  it("(e) same project, /publish instead: redirected to /objects, not /upgrade", async () => {
+    rowsByTable = {
+      projects: [PROJECT_ROW({ gh_workflows_write_missing: 1 })],
+      project_members: [
+        { userId: 1, role: "collaborator", githubId: 1, username: "tester", name: null, welcomedAt: "x", contributions: null, project_id: 1, n: 1 },
+      ],
+      project_config: [{ telar_version: "0.5.0", url: "https://alice.example", baseurl: "/site" }],
+    };
+    mocks.getUserProjectsMock.mockResolvedValue([
+      { id: 1, github_repo_full_name: "alice/site", userRole: "collaborator", user_id: 1 },
+    ]);
+    mocks.getUserRoleMock.mockResolvedValue("collaborator");
+
+    let thrown: unknown;
+    try {
+      await invoke(makeRequest("/publish"));
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Response);
+    const res = thrown as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/objects");
+  });
+
+  // A failed lookup is unknown, not "no upgrade needed". Publish
+  // opens with its button disabled instead of redirecting, because the
+  // upgrade page cannot say what the site would be upgraded to either.
+  function convenorOnVersionedSite(telarVersion: string | null = "1.0.0") {
+    rowsByTable = {
+      projects: [PROJECT_ROW()],
+      project_members: [
+        { userId: 1, role: "convenor", githubId: 1, username: "tester", name: null, welcomedAt: "x", contributions: null, project_id: 1, n: 1 },
+      ],
+      project_config: [{ telar_version: telarVersion, url: "https://alice.example", baseurl: "/site" }],
+    };
+    mocks.getUserProjectsMock.mockResolvedValue([
+      { id: 1, github_repo_full_name: "alice/site", userRole: "convenor", user_id: 1 },
+    ]);
+    mocks.getUserRoleMock.mockResolvedValue("convenor");
+  }
+
+  it("(f) cold tag cache + /publish + a lookup that fails: no redirect, releaseUnknown", async () => {
+    convenorOnVersionedSite();
+    mocks.fetchLatestReleaseMock.mockRejectedValueOnce(new Error("GitHub API error fetching latest release: 502"));
+
+    const data = await invoke(makeRequest("/publish"));
+
+    expect(mocks.fetchLatestReleaseMock).toHaveBeenCalledTimes(1);
+    expect(data.releaseUnknown).toBe(true);
+    expect(data.needsUpgrade).toBe(false);
+    expect(data.latestTelarTag).toBeNull();
+  });
+
+  it("(g) a failure already in the cache reaches the loader's warm read", async () => {
+    convenorOnVersionedSite();
+    mocks.fetchLatestReleaseMock.mockRejectedValueOnce(new Error("GitHub API error fetching latest release: 502"));
+    await getCachedLatestTag("token", Date.now()); // records the failure
+    mocks.fetchLatestReleaseMock.mockClear();
+
+    const data = await invoke(makeRequest("/publish"));
+
+    expect(mocks.fetchLatestReleaseMock).not.toHaveBeenCalled();
+    expect(data.releaseUnknown).toBe(true);
+  });
+
+  it("(h) a failed lookup on a site with no recorded version is not unknown", async () => {
+    convenorOnVersionedSite(null);
+    mocks.fetchLatestReleaseMock.mockRejectedValueOnce(new Error("GitHub API error fetching latest release: 502"));
+
+    const data = await invoke(makeRequest("/publish"));
+
+    expect(data.releaseUnknown).toBe(false);
+  });
+
+  it("(i) a successful lookup leaves releaseUnknown false", async () => {
+    convenorOnVersionedSite("9.9.9");
+
+    const data = await invoke(makeRequest("/publish"));
+
+    expect(mocks.fetchLatestReleaseMock).toHaveBeenCalledTimes(1);
+    expect(data.releaseUnknown).toBe(false);
+    expect(data.needsUpgrade).toBe(false);
   });
 });

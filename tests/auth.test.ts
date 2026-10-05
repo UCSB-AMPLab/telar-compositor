@@ -2,9 +2,12 @@
  * Auth unit tests — GitHub OAuth flow.
  *
  * Tests: exchangeCodeForTokens, state validation (403 on mismatch),
- * maybeRefreshToken (near-expiry refresh, valid no-op, expired redirect).
+ * maybeRefreshToken (near-expiry refresh, valid no-op, expired redirect),
+ * and that no GitHub plan is read or stored.
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { exchangeCodeForTokens, maybeRefreshToken, fetchGitHubUser } from "~/lib/auth.server";
 
@@ -42,10 +45,12 @@ interface FakeUserRow {
   access_token_expires_at: string;
   refresh_token_expires_at: string;
   github_plan: string | null;
+  course_access: boolean;
   ui_locale: string | null;
   last_seen_release: string | null;
   created_at: string | null;
   updated_at: string | null;
+  deleted_at: string | null;
 }
 
 /** A minimal user row with valid (not near expiry) tokens */
@@ -61,10 +66,12 @@ function makeUser(overrides: Partial<FakeUserRow> = {}): FakeUserRow {
     access_token_expires_at: minutesFromNow(60), // valid for 60 min
     refresh_token_expires_at: minutesFromNow(60 * 24 * 180), // 180 days
     github_plan: null,
+    course_access: false,
     ui_locale: null,
     last_seen_release: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    deleted_at: null,
     ...overrides,
   };
 }
@@ -259,5 +266,34 @@ describe("maybeRefreshToken", () => {
     const response = thrownValue as Response;
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toContain("session_expired");
+  });
+});
+
+// Nothing uses a GitHub plan. The first test holds
+// that none is taken from GET /user. The second is a source guard on the two
+// files that set the column, not a check on the SQL: Drizzle names every
+// declared column in a whole-row insert whatever the code sets.
+describe("the GitHub plan", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  it("is not read from GET /user, even when GitHub sends one", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ id: 1, login: "tester", name: null, email: null, plan: { name: "pro" } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const user = await fetchGitHubUser("gho_testtoken");
+
+    expect(user).not.toHaveProperty("plan");
+  });
+
+  it("is named in neither the sign-in callback nor the account tombstone", () => {
+    for (const file of ["app/routes/_auth.callback.tsx", "app/lib/account-tombstone.server.ts"]) {
+      expect(readFileSync(resolve(process.cwd(), file), "utf8"), file).not.toContain("github_plan");
+    }
   });
 });

@@ -2,11 +2,12 @@
 /**
  * Pins the `UpgradePopover` body. Asserts: the title/sub from the
  * version props, a What's-new bullet list, a `Learn more →` linky, and the
- * convenor gate — `userRole="convenor"` renders the terracotta `Run upgrade`
- * CTA; `userRole="collaborator"` renders the inert cream `Convenor needs to
- * upgrade` line (bg-cream-dark / text-charcoal, NOT a button) and NO CTA.
+ * role gate — every project role (`convenor`, `collaborator`, `instructor`)
+ * renders the terracotta `Run upgrade` CTA; `userRole={null}` renders the
+ * inert cream `Convenor needs to upgrade` line (bg-cream-dark /
+ * text-charcoal, NOT a button) and NO CTA.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -81,8 +82,22 @@ describe("UpgradePopover", () => {
     expect(link).not.toBeNull();
   });
 
-  it("collaborator: renders the cream 'Convenor needs to upgrade' line and NO Run-upgrade", () => {
+  it("collaborator: renders the Run-upgrade terracotta CTA too, same as the convenor's", () => {
     const { container } = renderPopover({ ...baseProps, userRole: "collaborator" });
+    const link = container.querySelector('a[href="/upgrade"]');
+    expect(link).not.toBeNull();
+    expect(container.textContent).toContain("Run upgrade");
+  });
+
+  it("instructor: renders the Run-upgrade terracotta CTA too, same as the convenor's", () => {
+    const { container } = renderPopover({ ...baseProps, userRole: "instructor" });
+    const link = container.querySelector('a[href="/upgrade"]');
+    expect(link).not.toBeNull();
+    expect(container.textContent).toContain("Run upgrade");
+  });
+
+  it("no membership: renders the cream 'Convenor needs to upgrade' line and NO Run-upgrade", () => {
+    const { container } = renderPopover({ ...baseProps, userRole: null });
     const line = container.querySelector(".bg-cream-dark.text-charcoal");
     expect(line).not.toBeNull();
     expect(line?.textContent).toContain("Convenor needs to upgrade");

@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
-// CollaborationSidebar — pending-invites section (cancel-invite dispatch)
+/**
+ * CollaborationSidebar — pending-invites section (cancel-invite dispatch)
+ *
+ * @version v1.5.0-beta
+ */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
@@ -23,6 +27,8 @@ const submitSpy = vi.fn();
 vi.mock("react-router", () => ({
   useFetcher: () => ({
     submit: submitSpy,
+    // The panel loads the contribution record on open through a fetcher.
+    load: vi.fn(),
     state: "idle",
     formData: undefined,
     data: undefined,
@@ -40,15 +46,22 @@ const mockContextValue: CollaborationContextValue = {
   provider: null,
   connected: true,
   connectionStatus: "connected",
+  admissionEpoch: 1,
   isPublishing: false,
   isBuilding: false,
   publishError: false,
-  setIsPublishing: vi.fn(),
+  publishHeldByOther: false,
+  publishHeldBy: null,
+  dismissPublishError: vi.fn(),
   publishSha: null,
   publishCommitUrl: null,
   isUpgrading: false,
   upgradeError: false,
-  setIsUpgrading: vi.fn(),
+  upgradeHeldByOther: false,
+  upgradeHeldBy: null,
+  dismissUpgradeError: vi.fn(),
+  upgradeSucceeded: false,
+  objectsHeldBy: null,
   remoteCollaborators: [],
   lastEditorByField: new Map(),
   undoManager: null,

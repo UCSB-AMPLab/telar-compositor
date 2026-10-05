@@ -4,9 +4,9 @@ import {
   validateUploadFile,
   commitBinaryFileWithCsv,
   commitMultipleBinaryFilesWithCsv,
-  ACCEPTED_TYPES,
   MAX_SIZE_BYTES,
 } from "~/lib/upload.server";
+import { UPLOAD_ACCEPTED_MIME_TYPES, storedExtensionFor } from "~/lib/file-types";
 import { StaleHeadError } from "~/lib/commit.server";
 
 const TOKEN = "test-token-xyz";
@@ -171,8 +171,12 @@ describe("validateUploadFile", () => {
     expect(validateUploadFile({ type: "image/gif", size: 1024 })).toBe("invalid_format");
   });
 
-  it("Test 8: returns 'invalid_format' for application/pdf", () => {
-    expect(validateUploadFile({ type: "application/pdf", size: 1024 })).toBe("invalid_format");
+  it("Test 8: returns null for application/pdf", () => {
+    expect(validateUploadFile({ type: "application/pdf", size: 1024 })).toBeNull();
+  });
+
+  it("Test 8b: returns null for image/webp", () => {
+    expect(validateUploadFile({ type: "image/webp", size: 1024 })).toBeNull();
   });
 
   it("Test 9: returns 'file_too_large' for a file with size 26MB", () => {
@@ -183,12 +187,27 @@ describe("validateUploadFile", () => {
     expect(validateUploadFile({ type: "image/jpeg", size: 25 * 1024 * 1024 })).toBeNull();
   });
 
-  it("Test 11: ACCEPTED_TYPES set contains exactly jpeg, png, tiff", () => {
-    expect(ACCEPTED_TYPES.has("image/jpeg")).toBe(true);
-    expect(ACCEPTED_TYPES.has("image/png")).toBe(true);
-    expect(ACCEPTED_TYPES.has("image/tiff")).toBe(true);
-    expect(ACCEPTED_TYPES.has("image/gif")).toBe(false);
-    expect(ACCEPTED_TYPES.size).toBe(3);
+  it("accepts mp3, ogg, and m4a under both MIME types browsers report for it, with the real validator", () => {
+    for (const type of ["audio/mpeg", "audio/ogg", "audio/mp4", "audio/x-m4a"]) {
+      expect(validateUploadFile({ type, size: 1024 })).toBeNull();
+    }
+    expect(storedExtensionFor("audio/x-m4a")).toBe("m4a");
+    expect(validateUploadFile({ type: "audio/wav", size: 1024 })).toBe("invalid_format");
+  });
+
+  it("Test 11: the accepted MIME set is exactly jpeg, png, webp, tiff, pdf, mp3, ogg, m4a", () => {
+    expect([...UPLOAD_ACCEPTED_MIME_TYPES].sort()).toEqual([
+      "application/pdf",
+      "audio/mp4",
+      "audio/mpeg",
+      "audio/ogg",
+      "audio/x-m4a",
+      "image/jpeg",
+      "image/png",
+      "image/tiff",
+      "image/webp",
+    ]);
+    expect(UPLOAD_ACCEPTED_MIME_TYPES.has("image/gif")).toBe(false);
   });
 
   it("Test 12: MAX_SIZE_BYTES equals 25 * 1024 * 1024", () => {
@@ -212,6 +231,7 @@ describe("commitBinaryFileWithCsv", () => {
     branch: BRANCH,
     imagePath: "telar-content/objects/my-image/my-image.jpg",
     imageBase64: "SGVsbG8=",
+    csvPath: "telar-content/spreadsheets/objects.csv",
     csvContent: "object_id,title\nmy-image,My Image",
     commitMessage: "Add image via Telar Compositor",
   };
@@ -269,6 +289,18 @@ describe("commitBinaryFileWithCsv", () => {
 
     const result = await commitBinaryFileWithCsv(BASE_PARAMS);
     expect(result.newHeadSha).toBe("newcommit678");
+  });
+
+  it("writes the objects sheet at the path it is given: a site whose sheet is objetos.csv gets no objects.csv", async () => {
+    const { mockFetch } = makeUploadFetch();
+    globalThis.fetch = mockFetch;
+
+    await commitBinaryFileWithCsv({ ...BASE_PARAMS, csvPath: "telar-content/spreadsheets/objetos.csv" });
+
+    const treeBody = JSON.parse(mockFetch.mock.calls[4][1].body);
+    const paths = treeBody.tree.map((entry: { path: string }) => entry.path);
+    expect(paths).toContain("telar-content/spreadsheets/objetos.csv");
+    expect(paths).not.toContain("telar-content/spreadsheets/objects.csv");
   });
 
   it("Test 18: tree contains both image and CSV entries with correct paths", async () => {
@@ -413,6 +445,7 @@ describe("commitMultipleBinaryFilesWithCsv", () => {
       { imagePath: "telar-content/objects/image-one/image-one.jpg", imageBase64: "aW1hZ2Uх" },
       { imagePath: "telar-content/objects/image-two/image-two.png", imageBase64: "aW1hZ2V5" },
     ],
+    csvPath: "telar-content/spreadsheets/objects.csv",
     csvContent: "object_id,title\nimage-one,Image One\nimage-two,Image Two",
     commitMessage: "Add image-one, image-two via Telar Compositor",
   };
@@ -456,6 +489,18 @@ describe("commitMultipleBinaryFilesWithCsv", () => {
     expect(paths).toContain("telar-content/objects/image-one/image-one.jpg");
     expect(paths).toContain("telar-content/objects/image-two/image-two.png");
     expect(paths).toContain("telar-content/spreadsheets/objects.csv");
+  });
+
+  it("writes the objects sheet at the path it is given for several images too", async () => {
+    const { mockFetch } = makeMultiUploadFetch({ imageCount: 2 });
+    globalThis.fetch = mockFetch;
+
+    await commitMultipleBinaryFilesWithCsv({ ...TWO_IMAGE_PARAMS, csvPath: "telar-content/spreadsheets/objetos.csv" });
+
+    const treeCall = mockFetch.mock.calls.find((call: unknown[]) => (call[0] as string).includes("/git/trees"))!;
+    const paths = JSON.parse(treeCall[1].body).tree.map((e: { path: string }) => e.path);
+    expect(paths).toContain("telar-content/spreadsheets/objetos.csv");
+    expect(paths).not.toContain("telar-content/spreadsheets/objects.csv");
   });
 
   it("Test 23: commit message includes [skip ci]", async () => {
@@ -519,5 +564,46 @@ describe("commitMultipleBinaryFilesWithCsv", () => {
       expect(entry.mode).toBe("100644");
       expect(entry.type).toBe("blob");
     }
+  });
+});
+
+describe("commitMultipleBinaryFilesWithCsv on a head and blobs the caller holds", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const PARAMS = {
+    token: TOKEN,
+    owner: OWNER,
+    repo: REPO,
+    branch: BRANCH,
+    images: [{ imagePath: "telar-content/objects/image-one/image-one.jpg", imageBase64: "aW1hZ2Uх" }],
+    csvPath: "telar-content/spreadsheets/objects.csv",
+    csvContent: "object_id,title\nimage-one,Image One",
+    commitMessage: "Add image-one via Telar Compositor",
+  };
+
+  it("builds on the caller's head without looking the head up, and creates only the CSV blob", async () => {
+    const { mockFetch, calls, callDetails } = makeMultiUploadFetch({ imageCount: 0 });
+    globalThis.fetch = mockFetch;
+    await commitMultipleBinaryFilesWithCsv({
+      ...PARAMS,
+      expectedHeadSha: "head123",
+      imageBlobs: [{ path: "telar-content/objects/image-one/image-one.jpg", mode: "100644", type: "blob", sha: "given-blob" }],
+    });
+    expect(calls.some((url) => url.includes("/git/ref/heads/"))).toBe(false);
+    expect(calls.filter((url) => url.includes("/git/blobs"))).toHaveLength(1);
+    const tree = JSON.parse(String(callDetails.find((c) => c.url.includes("/git/trees"))!.init!.body));
+    expect(tree.tree.map((e: { sha: string }) => e.sha)).toEqual(["given-blob", "csvblob999"]);
+    const commit = JSON.parse(String(callDetails.find((c) => c.url.endsWith("/git/commits") && c.init?.method === "POST")!.init!.body));
+    expect(commit.parents).toEqual(["head123"]);
+  });
+
+  it("is refused as stale when the branch has moved past the caller's head", async () => {
+    const { mockFetch } = makeMultiUploadFetch({ refStatus: 422, imageCount: 0 });
+    globalThis.fetch = mockFetch;
+    await expect(
+      commitMultipleBinaryFilesWithCsv({ ...PARAMS, expectedHeadSha: "head123", imageBlobs: [] }),
+    ).rejects.toBeInstanceOf(StaleHeadError);
   });
 });

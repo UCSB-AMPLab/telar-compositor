@@ -1,20 +1,22 @@
 // @vitest-environment jsdom
 
 /**
- * This file pins the four role × state renders of the Start page and its
+ * This file pins the role × state renders of the Start page and its
  * Atelier components (role gating).
  *
- * The four variants:
+ * The four base variants:
  *   - convenor × empty:        first-run "Set up your project" checklist
  *   - convenor × populated:    welcome strip + workflow map (live counts)
  *   - collaborator × empty:    "Today, three things to get started" checklist
- *   - collaborator × populated: welcome strip, Publish tile LOCKED (no action)
+ *   - collaborator × populated: welcome strip + workflow map, Publish live
+ *     (convenor and collaborator share the Publish tile)
  *
- * Gating is don't-render (never render-then-disable): the collaborator Publish
- * tile is locked (no Link, no `disabled` button); empty views render the
+ * An instructor is carried through the Publish-tile cases specifically: the
+ * tile is live for every project role, and gating stays don't-render
+ * (never render-then-disable) wherever it applies. Empty views render the
  * role-specific checklist instead of the descriptive summary.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import type { ReactElement } from "react";
@@ -25,22 +27,40 @@ import { WelcomeStrip } from "~/components/features/start/WelcomeStrip";
 import { WorkflowMap } from "~/components/features/start/WorkflowMap";
 import StartPage from "~/routes/_app.start";
 
-// Controllable role for useIsConvenor / useRole.
-let mockIsConvenor = true;
-vi.mock("~/hooks/use-role", () => ({
-  useIsConvenor: () => mockIsConvenor,
-  useRole: () => (mockIsConvenor ? "convenor" : "collaborator"),
-}));
+// Controllable role for useIsConvenor / useIsPublisher / useRole.
+//
+// useIsPublisher delegates to the real isPublishingRole rather than
+// restating the membership set: a mock that restates it answers from its
+// own copy, so the tile would keep rendering against the old set after the
+// real one changed.
+let mockRole: "convenor" | "collaborator" | "instructor" | null = "convenor";
+vi.mock("~/hooks/use-role", async () => {
+  const { isPublishingRole } = await import("~/lib/publishing-roles");
+  return {
+    useIsConvenor: () => mockRole === "convenor",
+    useIsPublisher: () => isPublishingRole(mockRole),
+    useRole: () => mockRole,
+  };
+});
 
 // Keep the real react-router exports (MemoryRouter, Link) but stub the shell
 // loader read so the page's Publish "N to ship" count is controllable. Also
 // stub useFetcher — the OrphanRecoveryCard mounts one, and MemoryRouter is not
 // a data router (the card's submit wiring is covered by its own test).
 let mockShellData: { unpublishedCount?: number } | null = { unpublishedCount: 3 };
+// The shell's status poll reads through `fetch` in a data router; this page
+// test has neither, and the poll has not answered.
+let mockPoll: { unpublishedCount?: number } | undefined;
+vi.mock("~/hooks/use-github-status-poll", () => ({ useGithubStatusPoll: () => mockPoll }));
+
 vi.mock("react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-router")>();
   return {
     ...actual,
+    // A plain form: the real one needs the data router the app has and this page test lacks.
+    Form: ({ children, method, ...rest }: React.FormHTMLAttributes<HTMLFormElement>) => (
+      <form method={method} {...rest}>{children}</form>
+    ),
     useRouteLoaderData: () => mockShellData,
     useFetcher: () => ({ state: "idle", data: undefined, submit: vi.fn(), load: vi.fn() }),
   };
@@ -106,6 +126,7 @@ const I18N_MAP: Record<string, string> = {
   "pill.convenor_only": "Convenor-only",
   "pill.nothing_to_publish": "Nothing to publish yet",
   "pill.to_ship": "{{N}} to ship",
+  "pill.to_ship_pending": "Changes to push",
   "pill.objects_unused": "{{N}} · {{U}} unused",
   "pill.stories_drafts": "{{N}} · {{D}} drafts",
   "pill.terms": "{{N}} terms",
@@ -167,10 +188,10 @@ function renderWelcome(role: "convenor" | "collaborator", state: "populated" | "
 }
 
 function renderMap(
-  role: "convenor" | "collaborator",
+  role: "convenor" | "collaborator" | "instructor",
   state: "populated" | "empty",
 ) {
-  mockIsConvenor = role === "convenor";
+  mockRole = role;
   return render(
     <MemoryRouter>
       <WorkflowMap
@@ -184,7 +205,7 @@ function renderMap(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockIsConvenor = true;
+  mockRole = "convenor";
 });
 
 // ---------------------------------------------------------------------------
@@ -205,6 +226,12 @@ describe("WelcomeStrip — four role × state renders", () => {
     expect(screen.getByText("A descriptive project summary.")).toBeTruthy();
     expect(screen.getByText("You · Convenor")).toBeTruthy();
     expect(screen.queryByText("Set up your project — three things first")).toBeNull();
+  });
+
+  it("convenor × populated: the Publish pill shows the live count, not the loader's estimate", () => {
+    const { container } = renderPage("convenor", "populated", { shellCount: 8, livePoll: { unpublishedCount: 4 } });
+    expect(screen.getByText("4 to ship")).toBeTruthy();
+    expect(container.textContent).not.toContain("8 to ship");
   });
 
   it("collaborator × empty: renders the 'Today, three things to get started' checklist", () => {
@@ -235,12 +262,19 @@ describe("WorkflowMap — Publish tile lock (don't-render gating)", () => {
     expect(publishLink).not.toBeNull();
   });
 
-  it("collaborator × populated: Publish tile is LOCKED — no /publish link, no disabled button", () => {
+  it("collaborator × populated: Publish tile is a live link too", () => {
     const { container } = renderMap("collaborator", "populated");
-    expect(screen.getByText("Convenor-only")).toBeTruthy();
-    // Don't-render the action: no navigation target to /publish.
-    expect(container.querySelector('a[href="/publish"]')).toBeNull();
-    // And never a disabled button (don't-render, not render-then-disable).
+    expect(screen.getByText("3 to ship")).toBeTruthy();
+    const publishLink = container.querySelector('a[href="/publish"]');
+    expect(publishLink).not.toBeNull();
+  });
+
+  it("instructor × populated: Publish tile is a live link too", () => {
+    const { container } = renderMap("instructor", "populated");
+    expect(screen.getByText("3 to ship")).toBeTruthy();
+    const publishLink = container.querySelector('a[href="/publish"]');
+    expect(publishLink).not.toBeNull();
+    // Gating stays don't-render: never a rendered-then-disabled affordance.
     expect(container.querySelector("button[disabled]")).toBeNull();
     expect(container.querySelector("button[aria-disabled='true']")).toBeNull();
   });
@@ -279,9 +313,9 @@ describe("WorkflowMap — Publish tile lock (don't-render gating)", () => {
 // ---------------------------------------------------------------------------
 
 function makeLoaderData(
-  role: "convenor" | "collaborator",
+  role: "convenor" | "collaborator" | "instructor",
   state: "populated" | "empty",
-  opts?: { orphanStoryIds?: string[]; otherProjects?: unknown[]; activity?: unknown[] },
+  opts?: { orphanStoryCount?: number; otherProjects?: unknown[]; activity?: unknown[] },
 ) {
   return {
     project: { id: 1, github_repo_full_name: "alice/telar-site" },
@@ -293,18 +327,19 @@ function makeLoaderData(
     summary: "A descriptive project summary.",
     state,
     activity: opts?.activity ?? [],
-    orphanStoryIds: opts?.orphanStoryIds ?? [],
+    orphanStoryCount: opts?.orphanStoryCount ?? 0,
     otherProjects: opts?.otherProjects ?? [],
   };
 }
 
 function renderPage(
-  role: "convenor" | "collaborator",
+  role: "convenor" | "collaborator" | "instructor",
   state: "populated" | "empty",
-  opts?: { orphanStoryIds?: string[]; otherProjects?: unknown[]; activity?: unknown[] },
+  opts?: { livePoll?: { unpublishedCount?: number } | null; shellCount?: number; orphanStoryCount?: number; otherProjects?: unknown[]; activity?: unknown[] },
 ) {
-  mockIsConvenor = role === "convenor";
-  mockShellData = { unpublishedCount: 3 };
+  mockRole = role;
+  mockShellData = { unpublishedCount: opts?.shellCount ?? 3 };
+  mockPoll = opts?.livePoll === null ? undefined : (opts?.livePoll ?? { unpublishedCount: 3 });
   // Route.ComponentProps — the page reads `loaderData`; other fields unused.
   const Page = StartPage as unknown as (p: { loaderData: unknown }) => ReactElement;
   return render(
@@ -337,9 +372,15 @@ describe("StartPage — four role × state renders", () => {
     const { container } = renderPage("convenor", "populated");
     expect(screen.getByText("A descriptive project summary.")).toBeTruthy();
     expect(screen.getByText("How the compositor works")).toBeTruthy();
-    // Publish "N to ship" sourced from the shell unpublishedCount (3).
+    // Publish "N to ship" is the live count (3).
     expect(screen.getByText("3 to ship")).toBeTruthy();
     expect(container.querySelector('a[href="/publish"]')).not.toBeNull();
+  });
+
+  it("convenor × populated: the Publish pill has no number until the live count answers", () => {
+    const { container } = renderPage("convenor", "populated", { livePoll: null });
+    expect(screen.getByText("Changes to push")).toBeTruthy();
+    expect(container.textContent).not.toContain("to ship");
   });
 
   it("collaborator × empty: renders the 'Today, three things to get started' checklist", () => {
@@ -348,11 +389,17 @@ describe("StartPage — four role × state renders", () => {
     expect(screen.getByText("You · Collaborator")).toBeTruthy();
   });
 
-  it("collaborator × populated: no convenor-only affordances — Publish locked, no disabled buttons", () => {
+  it("collaborator × populated: Publish is a live link, same as the convenor's", () => {
     const { container } = renderPage("collaborator", "populated");
-    expect(screen.getByText("Convenor-only")).toBeTruthy();
-    // Don't-render the action: no /publish link, no disabled affordance, no banner.
-    expect(container.querySelector('a[href="/publish"]')).toBeNull();
+    expect(screen.getByText("3 to ship")).toBeTruthy();
+    expect(container.querySelector('a[href="/publish"]')).not.toBeNull();
+  });
+
+  it("instructor × populated: Publish is a live link, same as the convenor's", () => {
+    const { container } = renderPage("instructor", "populated");
+    expect(screen.getByText("3 to ship")).toBeTruthy();
+    expect(container.querySelector('a[href="/publish"]')).not.toBeNull();
+    // Gating stays don't-render: never a rendered-then-disabled affordance.
     expect(container.querySelector("button[disabled]")).toBeNull();
     expect(container.querySelector("[role='alert']")).toBeNull();
   });
@@ -386,23 +433,23 @@ describe("StartPage — rail + ribbon gating", () => {
   });
 
   it("convenor × populated × orphans-exist: renders the recovery card", () => {
-    renderPage("convenor", "populated", { orphanStoryIds: ["s1", "s2"] });
+    renderPage("convenor", "populated", { orphanStoryCount: 2 });
     expect(screen.getByText("Needs your attention")).toBeTruthy();
   });
 
   it("convenor × populated × no orphans: recovery card absent", () => {
-    renderPage("convenor", "populated", { orphanStoryIds: [] });
+    renderPage("convenor", "populated", { orphanStoryCount: 0 });
     expect(screen.queryByText("Needs your attention")).toBeNull();
   });
 
   it("collaborator × populated: recovery card absent even when orphans exist", () => {
-    renderPage("collaborator", "populated", { orphanStoryIds: ["s1", "s2"] });
+    renderPage("collaborator", "populated", { orphanStoryCount: 2 });
     expect(screen.queryByText("Needs your attention")).toBeNull();
   });
 
-  it("empty state: recovery card absent even for a convenor with orphans", () => {
-    renderPage("convenor", "empty", { orphanStoryIds: ["s1"] });
-    expect(screen.queryByText("Needs your attention")).toBeNull();
+  it("empty state: recovery card shown for a convenor with orphans (a site with only the template's pages)", () => {
+    renderPage("convenor", "empty", { orphanStoryCount: 1 });
+    expect(screen.getByText("Needs your attention")).toBeTruthy();
   });
 
   it("populated state: other-projects ribbon renders when other projects exist", () => {

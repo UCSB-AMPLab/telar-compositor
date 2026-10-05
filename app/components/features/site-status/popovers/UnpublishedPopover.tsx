@@ -14,7 +14,7 @@
  * client bundle. The popover is a pure renderer — the pill fetches the summary
  * on open and passes it down.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { Link } from "react-router";
@@ -26,11 +26,10 @@ import {
   Settings,
   ArrowRight,
   Upload,
-  Info,
   type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useIsConvenor } from "~/hooks/use-role";
+import { useIsPublisher } from "~/hooks/use-role";
 import type { ChangeSummary } from "~/lib/publish.server";
 import { settingsChangeI18nKey, SETTINGS_CHANGE_FALLBACK_KEY } from "~/lib/settings-change-i18n";
 
@@ -85,7 +84,7 @@ function fmtTime(iso: string | null | undefined, locale: string): string {
 function buildSections(
   summary: ChangeSummary,
   resolveSetting: (entry: { key: string; label: string; value?: string }) => string,
-  labels: { landingPage: string; navigation: string },
+  labels: { landingPage: string; navigation: string; objectsOrder: string },
 ): ManifestSection[] {
   const titleOr = (title: string | null, fallback: string) =>
     title && title.trim().length > 0 ? title : fallback;
@@ -116,6 +115,9 @@ function buildSections(
       title: titleOr(o.title, o.object_id),
       disposition: "modified" as const,
     })),
+    ...(summary.objectOrder.changed
+      ? [{ key: "object-order", title: labels.objectsOrder, disposition: "modified" as const }]
+      : []),
   ];
 
   // Glossary
@@ -188,16 +190,16 @@ export function UnpublishedPopover({ summary, lastPublishedAt, className = "" }:
     t(`publish:auto_commit.${settingsChangeI18nKey(entry)}`, {
       defaultValue: t(`publish:auto_commit.${SETTINGS_CHANGE_FALLBACK_KEY}`),
     });
-  // Convenors get the Publish navigation CTA; collaborators (who can never
-  // reach /publish — the tab is hidden and the route redirects them) get a
-  // non-actionable "Ask convenor to publish" note instead. This is the
-  // collaborator's only publish-related affordance now that the Publish tab is
-  // gone. Informational only — no server action.
-  const isConvenor = useIsConvenor();
+  // Every project role gets the Publish navigation CTA. A caller with no
+  // project membership can never reach /publish — the tab is hidden and the
+  // route redirects them — so for them the footer is omitted rather than
+  // offering a link that bounces.
+  const isPublisher = useIsPublisher();
 
   const sections = buildSections(summary, resolveSetting, {
     landingPage: t("unpublished.landing_page"),
     navigation: t("unpublished.navigation"),
+    objectsOrder: t("unpublished.objects_order"),
   });
   const total = totalChanges(sections);
   const title =
@@ -229,11 +231,10 @@ export function UnpublishedPopover({ summary, lastPublishedAt, className = "" }:
         ))}
       </div>
 
-      {/* Footer: convenor gets the review-link + Publish CTA; collaborators get
-          a non-actionable "Ask convenor to publish" note. Both the review link
-          and the Publish CTA navigate to /publish, which a collaborator cannot
-          reach, so the whole footer differs by role. */}
-      {isConvenor ? (
+      {/* Footer: the review link and the Publish CTA both navigate to
+          /publish, which a caller with no project membership cannot reach,
+          so the footer is present only for a member. */}
+      {isPublisher && (
         <div
           className="border-t border-border bg-cream flex items-center justify-between"
           style={{ padding: "11px 14px 12px" }}
@@ -254,16 +255,6 @@ export function UnpublishedPopover({ summary, lastPublishedAt, className = "" }:
             <Upload className="w-3.5 h-3.5" aria-hidden="true" />
             {t("unpublished.publish")}
           </Link>
-        </div>
-      ) : (
-        <div
-          className="border-t border-border bg-cream flex items-center gap-1.5"
-          style={{ padding: "11px 14px 12px" }}
-        >
-          <Info className="w-3.5 h-3.5 shrink-0 text-fg-muted" aria-hidden="true" />
-          <span className="font-body text-fg-muted" style={{ fontSize: "12.5px" }}>
-            {t("common:role.ask_convenor_publish")}
-          </span>
         </div>
       )}
     </div>
