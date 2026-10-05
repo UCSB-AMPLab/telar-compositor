@@ -16,24 +16,23 @@
  *     as disabled). A failed or null fetch fails open to the D1 value —
  *     a transient GitHub outage must not flip the displayed state.
  *   - A D1 repair alone is insufficient: the same warm Y.Doc that caused
- *     the strand would clobber it again, so the heal must also reset the
- *     collaboration doc (resetCollabDocIfBlobExists, the onboarding
- *     repair's guard).
+ *     the strand would clobber it again. So the heal goes through the
+ *     document (`repairSiteConfig`), which loses no editor's changes;
+ *     any member who opens settings may trigger it, since it only brings
+ *     the flag in line with the repository.
  *
  * The common case (D1 already false) costs nothing: no GitHub read, no
  * D1 write. Reverse drift (repo re-enabled by hand while D1 says false)
  * is deliberately out of scope — writing D1 `true` has behavioural
  * consequences beyond display (start-page nudge, upgrade gating).
  *
- * @version v1.4.3-beta
+ * @version v1.5.0-beta
  */
 
-import { eq } from "drizzle-orm";
-import { project_config } from "~/db/schema";
 import type { getDb } from "~/lib/db.server";
 import { getFileContent } from "~/lib/github.server";
 import { isGoogleSheetsEnabled } from "~/lib/commit.server";
-import { resetCollabDocIfBlobExists } from "~/lib/collab-reset.server";
+import { repairSiteConfig, type ConfigRepairEnv } from "~/lib/config-repair.server";
 
 /**
  * Returns the effective "Sheets enabled" state to render, healing D1 and
@@ -44,7 +43,7 @@ import { resetCollabDocIfBlobExists } from "~/lib/collab-reset.server";
  */
 export async function reconcileSheetsFlagFromRepo(
   db: ReturnType<typeof getDb>,
-  env: Parameters<typeof resetCollabDocIfBlobExists>[1],
+  env: ConfigRepairEnv,
   opts: {
     token: string;
     owner: string;
@@ -64,15 +63,8 @@ export async function reconcileSheetsFlagFromRepo(
   if (content === null) return true;
   if (isGoogleSheetsEnabled(content)) return true;
 
-  try {
-    await db
-      .update(project_config)
-      .set({ google_sheets_enabled: false, updated_at: new Date().toISOString() })
-      .where(eq(project_config.project_id, opts.projectId));
-    await resetCollabDocIfBlobExists(db, env, opts.projectId);
-  } catch {
-    // The repair failed but the repo truth is known — display it; the
-    // stale D1 row is retried on the next settings-page load.
-  }
+  // Never throws. A repair that does not land is retried on the next
+  // settings-page load; the repo truth is known, so it is what is displayed.
+  await repairSiteConfig(db, env, opts.projectId, { google_sheets_enabled: false });
   return false;
 }

@@ -7,9 +7,10 @@
  * `userId` (same pattern as `api.welcome-ack.tsx`) — resource routes do not sit
  * under the layout's authMiddleware.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
+import { liveAccount } from "~/lib/account-tombstone.server";
 import { eq } from "drizzle-orm";
 import type { Route } from "./+types/api.release-ack";
 import { getDb } from "~/lib/db.server";
@@ -28,7 +29,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   await db
     .update(users)
     .set({ last_seen_release: CURRENT_RELEASE.id })
-    .where(eq(users.id, Number(userId)));
+    .where(liveAccount(Number(userId)));
 
   return { ok: true };
 }

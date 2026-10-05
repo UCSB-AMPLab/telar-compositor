@@ -53,7 +53,9 @@ export const authMiddleware: MiddlewareFunction = async ({ request, context }, n
     .where(eq(users.id, Number(userId)))
     .limit(1);
 
-  if (userRows.length === 0) {
+  // A deleted account's row is a tombstone, not an account: a cookie left
+  // open in another browser signs out like one for a row that is gone.
+  if (userRows.length === 0 || userRows[0].deleted_at) {
     throw redirect("/signin", {
       headers: {
         "Set-Cookie": await sessionStorage.destroySession(session),

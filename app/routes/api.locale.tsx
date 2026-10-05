@@ -15,9 +15,10 @@
  * failures are caught and logged; the cookie + redirect still
  * happen so the UI never split-brains on cookie vs D1.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
+import { liveAccount } from "~/lib/account-tombstone.server";
 import { redirect } from "react-router";
 import { eq } from "drizzle-orm";
 import type { Route } from "./+types/api.locale";
@@ -56,7 +57,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       await db
         .update(users)
         .set({ ui_locale: locale })
-        .where(eq(users.id, Number(userId)));
+        .where(liveAccount(Number(userId)));
     }
   } catch (err) {
     console.error("[api.locale] D1 write failed:", err);

@@ -3,7 +3,7 @@
  * deletion cascades to avoid FK violations (activity_log.project_id → projects
  * and activity_log.actor_user_id → users are both NOT NULL FKs enforced by D1).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 import { describe, it, expect, vi } from "vitest";
 
@@ -24,20 +24,25 @@ function makeDb() {
   const db: {
     visited: string[];
     delete: ReturnType<typeof vi.fn>;
+    insert: ReturnType<typeof vi.fn>;
     select: ReturnType<typeof vi.fn>;
     batch: ReturnType<typeof vi.fn>;
   } = {
     visited,
     delete: vi.fn((table: unknown) => {
       visited.push(tableNameOf(table));
-      return { where: vi.fn().mockResolvedValue(undefined) };
+      return { where: vi.fn(() => Object.assign(Promise.resolve(undefined), { returning: vi.fn(async () => []) })) };
+    }),
+    insert: vi.fn((table: unknown) => {
+      visited.push(tableNameOf(table));
+      return { select: vi.fn(() => ({})) };
     }),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn().mockResolvedValue([{ id: 1 }]),
       })),
     })),
-    batch: vi.fn().mockResolvedValue([]),
+    batch: vi.fn().mockResolvedValue([[], []]),
   };
   return db;
 }
@@ -71,7 +76,7 @@ describe("unlinkProjectCascade — activity_log present and ordered before proje
   it("deletes activity_log (scoped by project_id) and does so before the projects row delete", async () => {
     const db = makeDb();
 
-    const { unlinkProjectCascade } = await import("~/routes/onboarding");
+    const { unlinkProjectCascade } = await import("~/lib/project-unlink.server");
     await unlinkProjectCascade(db, 99);
 
     expect(db.visited).toContain("activity_log");
@@ -95,7 +100,7 @@ describe("unlinkProjectCascade — activity_log present and ordered before proje
 describe("project cascades — project_pages present and ordered before projects", () => {
   it("unlinkProjectCascade deletes project_pages before the projects row delete", async () => {
     const db = makeDb();
-    const { unlinkProjectCascade } = await import("~/routes/onboarding");
+    const { unlinkProjectCascade } = await import("~/lib/project-unlink.server");
     await unlinkProjectCascade(db, 99);
 
     expect(db.visited).toContain("project_pages");
@@ -119,26 +124,30 @@ describe("project cascades — project_pages present and ordered before projects
 });
 
 // ---------------------------------------------------------------------------
-// (c) account delete-account batch — activity_log scoped by actor_user_id,
-//     ordered before the users row delete
+// (c) account delete-account batch — activity_log is kept as the projects'
+//     history, and the users row becomes a tombstone rather than going
 //
 // The account route uses db.batch([...]) directly (not deleteProjectCascade).
-// We assert via the SQL strings that makeDeleteBuilder() produces — the same
-// pattern used by the FK-ordering test in tests/account-actions.test.ts.
+// We assert via the SQL strings the builders below produce — the same
+// pattern used by the batch-order test in tests/account-actions.test.ts.
 // ---------------------------------------------------------------------------
 
 // Mirrors the makeDeleteBuilder / db mock from account-actions.test.ts, but
 // without the full route wiring — we only need to inspect the batch contents.
 function makeDeleteBuilder(table: string) {
-  return {
+  const builder: Record<string, unknown> = {
     table,
     toSQL: () => ({ sql: `delete from ${table}`, params: [] as never[] }),
     then: (resolve: (v: undefined) => unknown) => resolve(undefined),
+    // The membership delete names the rows it removed.
+    returning: () => builder,
   };
+  return builder;
 }
 
 const accountMocks = vi.hoisted(() => ({
-  dbBatchMock: vi.fn(async () => undefined),
+  // The batch's results in order; the second is the memberships deleted.
+  dbBatchMock: vi.fn(async (): Promise<unknown> => [[], []]),
   dbSelectMock: vi.fn(),
   destroySessionMock: vi.fn(
     async () => "__compositor_session=; Max-Age=0; Path=/; HttpOnly",
@@ -173,10 +182,21 @@ vi.mock("~/lib/github.server", () => ({
 
 vi.mock("~/lib/db.server", () => ({
   getDb: vi.fn(() => ({
+    update: vi.fn((t: unknown) => ({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          ...makeDeleteBuilder(tableNameOf(t)),
+          toSQL: () => ({ sql: `update ${tableNameOf(t)}`, params: [] as never[] }),
+        })),
+      })),
+    })),
     delete: vi.fn((t: unknown) => {
       const name = tableNameOf(t);
       return { where: vi.fn(() => makeDeleteBuilder(name)) };
     }),
+    insert: vi.fn((t: unknown) => ({
+      select: vi.fn(() => ({ toSQL: () => ({ sql: `insert into ${tableNameOf(t)}`, params: [] as never[] }) })),
+    })),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(async () => accountMocks.dbSelectMock()),
@@ -248,12 +268,13 @@ function makeFormRequest(body: Record<string, string>): Request {
   });
 }
 
-describe("account delete-account batch — activity_log scoped by actor_user_id, before users", () => {
-  it("batch includes activity_log delete (actor_user_id) ordered before the users delete", async () => {
-    // Two SELECTs: race-guard → []; solo-cascade scan → [].
-    accountMocks.dbSelectMock.mockReturnValueOnce([]).mockReturnValueOnce([]);
+describe("account delete-account batch — the account's activity stays", () => {
+  it("deletes no activity_log rows, and marks the users row rather than deleting it", async () => {
+    // The collaborator race-guard, the solo projects, and the memberships the
+    // evictions after the batch are read from.
+    accountMocks.dbSelectMock.mockReturnValueOnce([]).mockReturnValueOnce([]).mockReturnValueOnce([]);
     accountMocks.dbBatchMock.mockReset();
-    accountMocks.dbBatchMock.mockResolvedValue(undefined);
+    accountMocks.dbBatchMock.mockResolvedValue([[], []]);
 
     const ctx = makeContext(7);
     const req = makeFormRequest({ intent: "delete-account" });
@@ -265,13 +286,10 @@ describe("account delete-account batch — activity_log scoped by actor_user_id,
       Array<{ toSQL: () => { sql: string } }>,
     ])[0];
 
-    // There must be an activity_log delete in the batch.
+    // The account's activity is the history of the projects it worked on.
     const sqlStrings = ops.map((op) => op.toSQL().sql);
-    const actLogIdx = sqlStrings.findIndex((s) => /activity_log/i.test(s));
-    const usersIdx = sqlStrings.findIndex((s) => /\busers\b/i.test(s));
-
-    expect(actLogIdx).toBeGreaterThanOrEqual(0);
-    expect(usersIdx).toBeGreaterThanOrEqual(0);
-    expect(actLogIdx).toBeLessThan(usersIdx);
+    expect(sqlStrings.some((s) => /activity_log/i.test(s))).toBe(false);
+    expect(sqlStrings).toContain("update users");
+    expect(sqlStrings.some((s) => /delete from users/i.test(s))).toBe(false);
   });
 });

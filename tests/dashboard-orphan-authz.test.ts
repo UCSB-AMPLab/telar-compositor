@@ -8,7 +8,7 @@
  *
  * Mocking strategy mirrors `tests/dashboard-reorder-authz.test.ts`.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -100,6 +100,7 @@ vi.mock("~/lib/membership.server", () => ({
 }));
 
 vi.mock("~/lib/sync.server", () => ({
+  checkRepairingLegacyIds: vi.fn(async (_env: unknown, _project: unknown, _user: unknown, run: () => Promise<unknown>) => run()),
   computeFullSyncDiff: vi.fn(async () => ({})),
   applyFullSyncChanges: vi.fn(async () => undefined),
 }));
@@ -132,6 +133,9 @@ import { requireOwner, resolveActiveProject } from "~/lib/membership.server";
 
 function buildRequest(formFields: Record<string, string>): Request {
   const form = new URLSearchParams();
+  // The page-site gate (resolvePageProject) compares this against the mocked
+  // resolveActiveProject's id (1); callers may override it via formFields.
+  form.set("siteId", "1");
   for (const [key, value] of Object.entries(formFields)) {
     form.set(key, value);
   }
