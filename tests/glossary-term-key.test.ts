@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { termKey, type TermItem } from "~/routes/_app.glossary";
+import { termKey, type TermItem } from "~/lib/glossary-terms";
 
 function term(overrides: Partial<TermItem>): TermItem {
   return {
@@ -21,6 +21,7 @@ function term(overrides: Partial<TermItem>): TermItem {
     title: "",
     term_id: "",
     definition: "",
+    kind: "",
     yMap: {} as TermItem["yMap"],
     ...overrides,
   };

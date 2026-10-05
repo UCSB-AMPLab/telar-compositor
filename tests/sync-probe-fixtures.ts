@@ -6,7 +6,7 @@
  * Pure data builders and mock-DB factories only — no describe/it, no github
  * mock (each test file owns its own vi.mock).
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { vi } from "vitest";
@@ -49,6 +49,7 @@ export function probeSequentialMockDb(responses: unknown[]): MockDb {
 
   db.select = vi.fn(() => terminal());
   db.from = vi.fn(() => terminal());
+  db.innerJoin = vi.fn(() => terminal());
   db.where = vi.fn(() => terminal());
   db.limit = vi.fn(() => terminal());
   db.orderBy = vi.fn(() => terminal());
@@ -57,6 +58,8 @@ export function probeSequentialMockDb(responses: unknown[]): MockDb {
   db.insert = vi.fn(() => terminal());
   db.values = vi.fn(() => terminal());
   db.delete = vi.fn(() => terminal());
+  // A compare-and-set head write reports its row changed: no other writer here.
+  db.returning = vi.fn(() => terminal(() => [{ id: 1 }]));
 
   return db as unknown as MockDb;
 }
@@ -100,6 +103,7 @@ export function createTrackedMockDb({
 
   db.select = vi.fn(() => terminal());
   db.from = vi.fn(() => terminal());
+  db.innerJoin = vi.fn(() => terminal());
   db.where = vi.fn(() =>
     terminal(() => {
       if (pendingSet !== null) {
@@ -128,6 +132,8 @@ export function createTrackedMockDb({
     return terminal();
   });
   db.delete = vi.fn(() => terminal());
+  // A compare-and-set head write reports its row changed: no other writer here.
+  db.returning = vi.fn(() => terminal(() => [{ id: 1 }]));
 
   return db as unknown as MockDb;
 }
@@ -231,17 +237,21 @@ export function expectedObjectRepoValue(name: string): unknown {
 // --- stories ---------------------------------------------------------------
 
 export function storyCsvHeader(f: FieldDecl): string {
+  // extra_columns is structural (json-spread-columns): probed through one custom column.
+  if (f.name === "extra_columns") return "curator";
   if ("excluded" in f.publish) throw new Error(`${f.name}: sync field with no publish key`);
   return f.publish.key;
 }
 
 export function storyBaseCell(name: string): string {
   if (name === "private" || name === "show_sections") return ""; // yes-empty: false
+  if (name === "extra_columns") return "CURATOR-BASE";
   return `base-${name}`;
 }
 
 export function storyMutatedCell(name: string): string {
   if (name === "private" || name === "show_sections") return "yes";
+  if (name === "extra_columns") return "CURATOR-MUT";
   return `repo-${name}`;
 }
 
@@ -268,6 +278,7 @@ export function d1StoryRow(overrides: Record<string, unknown> = {}): Record<stri
   };
   for (const f of storySyncFields) {
     if (f.name === "private" || f.name === "show_sections") row[f.name] = false;
+    else if (f.name === "extra_columns") row.extra_columns = JSON.stringify({ curator: "CURATOR-BASE" });
     else row[f.name] = `base-${f.name}`;
   }
   return { ...row, ...overrides };
@@ -293,19 +304,26 @@ export function configYamlKey(f: FieldDecl): string {
  * fields probe false -> true, unquoted-int fields 4 -> 7, everything else a
  * base-/repo- string pair.
  */
-export function configValueKind(f: FieldDecl): "bool" | "int" | "string" {
+export function configValueKind(f: FieldDecl): "bool" | "int" | "kinds" | "string" {
   const pub = f.publish;
   if (!("excluded" in pub)) {
     if (pub.encoding === "unquoted-bool") return "bool";
     if (pub.encoding === "unquoted-int") return "int";
+    if (pub.encoding === "glossary-kinds-yml") return "kinds";
   }
   return "string";
+}
+
+/** The glossary kinds as canonical JSON, which is also valid YAML flow. */
+export function kindsValue(tag: string): string {
+  return JSON.stringify([{ id: tag, label: `${tag} label`, heading: `${tag} heading`, values: [] }]);
 }
 
 export function configBaseValue(f: FieldDecl): string {
   const kind = configValueKind(f);
   if (kind === "bool") return "false";
   if (kind === "int") return "4";
+  if (kind === "kinds") return kindsValue("base");
   return `base-${f.name}`;
 }
 
@@ -313,6 +331,7 @@ export function configMutatedValue(f: FieldDecl): string {
   const kind = configValueKind(f);
   if (kind === "bool") return "true";
   if (kind === "int") return "7";
+  if (kind === "kinds") return kindsValue("repo");
   return `repo-${f.name}`;
 }
 
@@ -351,6 +370,7 @@ export function d1ConfigRow(overrides: Record<string, unknown> = {}): Record<str
     const kind = configValueKind(f);
     if (kind === "bool") row[f.name] = false; // real D1 boolean
     else if (kind === "int") row[f.name] = 4; // real D1 number
+    else if (kind === "kinds") row[f.name] = kindsValue("base");
     else row[f.name] = `base-${f.name}`;
   }
   return { ...row, ...overrides };
@@ -358,12 +378,30 @@ export function d1ConfigRow(overrides: Record<string, unknown> = {}): Record<str
 
 // --- glossary ----------------------------------------------------------------
 
+/** CSV header for a glossary sync field: its own name, except extra_columns,
+ * which is structural (json-spread-columns) and is probed through a single
+ * custom column, exactly as objectCsvHeader does. */
+export function glossaryCsvHeader(f: FieldDecl): string {
+  if (f.name === "extra_columns") return "source_note";
+  return f.name;
+}
+
+export function glossaryBaseCell(name: string): string {
+  if (name === "extra_columns") return "NOTE-BASE";
+  return `base-${name}`;
+}
+
+export function glossaryMutatedCell(name: string): string {
+  if (name === "extra_columns") return "NOTE-MUT";
+  return `repo-${name}`;
+}
+
 export function glossaryCsv(mutatedField?: string): string {
-  const headers = ["term_id", ...glossarySyncFields.map((f) => f.name)];
+  const headers = ["term_id", ...glossarySyncFields.map(glossaryCsvHeader)];
   const cells = [
     "enc",
     ...glossarySyncFields.map((f) =>
-      f.name === mutatedField ? `repo-${f.name}` : `base-${f.name}`,
+      f.name === mutatedField ? glossaryMutatedCell(f.name) : glossaryBaseCell(f.name),
     ),
   ];
   return [headers.join(","), cells.join(",")].join("\n");
@@ -376,8 +414,23 @@ export function d1GlossaryRow(): Record<string, unknown> {
     term_id: "enc",
     updated_at: null,
   };
-  for (const f of glossarySyncFields) row[f.name] = `base-${f.name}`;
+  for (const f of glossarySyncFields) {
+    if (f.name === "extra_columns") row.extra_columns = JSON.stringify({ source_note: "NOTE-BASE" });
+    else row[f.name] = `base-${f.name}`;
+  }
   return row;
+}
+
+/** Expected repo-side value as reported by the glossary diff / written by apply. */
+export function expectedGlossaryRepoValue(name: string): string {
+  if (name === "extra_columns") return JSON.stringify({ source_note: "NOTE-MUT" });
+  return `repo-${name}`;
+}
+
+/** Expected D1-side value as reported by the glossary diff. */
+export function expectedGlossaryD1Value(name: string): string {
+  if (name === "extra_columns") return JSON.stringify({ source_note: "NOTE-BASE" });
+  return `base-${name}`;
 }
 
 /** "related_terms" -> "RelatedTerms" (the GlossarySyncDiff changed-item key stem). */
@@ -391,7 +444,7 @@ export function pascalCase(name: string): string {
 /**
  * An all-empty ThreeWaySelections (every conflict defaults to keep-mine /
  * keep-deleted). Shared by the modal-builder and apply-seam pins so neither
- * re-declares the shape (avoids duplicate helper bodies).
+ * re-declares the shape (debt gate: no duplicate helper bodies).
  */
 export function emptyThreeWaySelections(): ThreeWaySelections {
   return {
@@ -403,6 +456,8 @@ export function emptyThreeWaySelections(): ThreeWaySelections {
     configChoices: {},
     glossaryChangedChoices: {},
     glossaryRestore: {},
+    storyContentChoices: {},
+    pageContentChoices: {},
   };
 }
 
@@ -415,7 +470,13 @@ export const emptyChanges = () => ({
     removedObjectIds: [] as string[],
     unregisteredObjectIds: [] as string[],
   },
-  stories: { accept: [] as string[], reject: [] as string[], insertNew: [] as string[] },
+  stories: {
+    accept: [] as string[], reject: [] as string[], insertNew: [] as string[],
+    fieldChoices: {} as Record<string, Record<string, "repo" | "d1">>,
+  },
   config: { accept: [] as string[], reject: [] as string[] },
-  glossary: { accept: [] as string[], reject: [] as string[], insertNew: [] as string[] },
+  glossary: {
+    accept: [] as string[], reject: [] as string[], insertNew: [] as string[],
+    fieldChoices: {} as Record<string, Record<string, "repo" | "d1">>,
+  },
 });

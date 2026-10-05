@@ -17,7 +17,7 @@
  *     `entity_id` is a bare slug or numeric id. We show a translated "untitled"
  *     placeholder instead of leaking that id.
  *
- * @version v1.3.6-beta
+ * @version v1.5.0-beta
  */
 
 import type { RecentActivityRow } from "~/lib/activity.server";
@@ -54,6 +54,10 @@ export const CONFIG_FIELD_I18N_PATH: Record<string, string> = {
   collection_mode: "config:sections.collection_interface.field_collection_mode",
   featured_count: "config:sections.collection_interface.field_featured_count",
   story_key: "config:sections.story_protection.field_story_key",
+  // Named by its D1 column, as a sync diff names a field. The label is the
+  // glossary editor's own title for the kinds, so a route that does not load
+  // the `glossary` namespace shows the generic settings noun instead.
+  glossary_kinds_json: "glossary:kinds_title",
 };
 
 /**

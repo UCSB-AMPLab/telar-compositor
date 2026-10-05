@@ -4,9 +4,9 @@
  *
  * Left sidebar: a `?q=` filter input above "New term", then the
  * alphabetically sorted term list. Right editor: the term title, an
- * editable rename-aware `term_id`, a "Used in" trace section, the
- * definition (a Markdown editor with `[[term]]` chips), and a live
- * themed reader-preview pane.
+ * editable rename-aware `term_id`, a "Used in" trace section, the definition
+ * (a Markdown editor with `[[term]]` chips), and a live themed reader-preview
+ * pane.
  *
  * The route stays a thin shell over a set of pure helper libs that carry
  * the real logic: the `?q=` substring filter, the on-demand "Used in"
@@ -22,25 +22,33 @@
  * quick-create) are role-gated in the UI; the server-side gates remain
  * the real boundary.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { eq } from "drizzle-orm";
 import { redirect, useSearchParams, useOutletContext } from "react-router";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import * as Y from "yjs";
-import { Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Route } from "./+types/_app.glossary";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { project_members, project_config } from "~/db/schema";
-import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
+import { resolveActiveProjectFromRequest, resolvePageProject, siteChangedAnswer } from "~/lib/active-project.server";
 import { slugifyTermId } from "~/lib/slug";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { GlossaryEmptyState } from "~/components/features/glossary/GlossaryEmptyState";
+import { GlossaryAddressNotice, sharedAddressOf } from "~/components/features/glossary/GlossaryAddressNotice";
+import { sharedGlossaryAddresses } from "~/lib/glossary-addresses";
+import { readTermKind, readTermText, termKey, type TermItem } from "~/lib/glossary-terms";
+import { kindLabelOf } from "~/lib/glossary-kinds";
+import { readGlossaryKinds } from "~/lib/glossary-kinds.server";
+import { saveGlossaryKinds } from "~/lib/glossary-kinds-save.server";
+import { GlossaryKindSelect, KindCaption, useGlossaryKinds } from "~/components/features/glossary/GlossaryKindSelect";
+import { EditKindsButton, GlossaryKindsDialog } from "~/components/features/glossary/GlossaryKindsDialog";
 import { UsedInPanel } from "~/components/features/glossary/UsedInPanel";
 import { RenameImpactPanel } from "~/components/features/glossary/RenameImpactPanel";
 import { GlossaryPreviewPane } from "~/components/features/glossary/GlossaryPreviewPane";
@@ -50,7 +58,7 @@ import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useIsConvenor } from "~/hooks/use-role";
 import { useToast } from "~/hooks/use-toast";
 import { getYText } from "~/lib/yjs-helpers";
-import { matchesTermFilter } from "~/lib/glossary-filter";
+import { listsTerm, matchesTermFilter } from "~/lib/glossary-filter";
 import {
   isSlugLocked,
   effectiveSlug,
@@ -104,39 +112,63 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     userRole,
     memberIds: memberRows.map((m) => m.userId),
     theme: config?.theme ?? null,
+    // The site's own kinds as stored, null while the config is their source.
+    // A save of the kinds names this text as the list it replaces.
+    storedGlossaryKinds: config?.glossary_kinds_json ?? null,
+    // Not awaited: the page renders while the site's files are read, and the
+    // kind choice appears when they arrive.
+    glossaryKinds: readGlossaryKinds(env, user.encrypted_access_token, activeProject, config?.glossary_kinds_json ?? null),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Action
+// ---------------------------------------------------------------------------
+
+/** A form field holding JSON, parsed; undefined when absent or not JSON. */
+function jsonField(formData: FormData, name: string): unknown {
+  const value = formData.get(name);
+  try {
+    return typeof value === "string" ? JSON.parse(value) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `save-kinds` stores the site's own glossary kinds (`glossary-kinds-save.server.ts`):
+ * `kinds` is the list as JSON, `base` the stored text the page read, absent
+ * when it read null, and then `seenRepo` the `repoSite` of the kinds it showed.
+ */
+export async function action({ request, context }: Route.ActionArgs) {
+  const user = context.get(userContext);
+  if (!user) throw new Response("Unauthorized", { status: 401 });
+  const env = context.cloudflare.env as Env;
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+  if (intent !== "save-kinds") throw new Response("Bad request", { status: 400 });
+
+  const resolved = await resolvePageProject(request, env, user.id, formData);
+  if (resolved.kind === "site_changed") return siteChangedAnswer(intent, resolved.currentSiteName);
+  if (resolved.kind === "no_project") throw redirect("/dashboard");
+  const { project, userRole } = resolved;
+  const base = formData.get("base");
+  const seenRepo = formData.get("seenRepo");
+  const result = await saveGlossaryKinds(getDb(env.DB), {
+    projectId: project.id,
+    role: userRole,
+    base: typeof base === "string" ? base : null,
+    seenRepo: typeof seenRepo === "string" ? seenRepo : null,
+    headSha: project.head_sha,
+    kinds: jsonField(formData, "kinds"),
+    readRepoKinds: () => readGlossaryKinds(env, user.encrypted_access_token, project),
+  });
+  return { intent, ...result };
 }
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export interface TermItem {
-  _id: number | null;
-  _temp_id: string | null;
-  title: string;
-  term_id: string;
-  definition: string;
-  yMap: Y.Map<unknown>;
-}
-
-/**
- * Stable key for React and selection tracking.
- *
- * Prefer `_temp_id` whenever it exists: a term created in this session keeps its
- * `_temp_id` for the lifetime of the doc, but its `_id` flips from null to a real
- * number the moment the snapshot first persists it (collaboration.ts backfill).
- * Keying on `_id` would change the term's identity mid-edit, so `selectedKey`
- * (captured before the backfill) would stop matching, `selectedTerm` would resolve
- * to null, and the open definition editor would unmount — discarding everything
- * typed after the backfill and leaving only the first character or two in the
- * Y.Text (telar-compositor#26). `_temp_id` is immutable across that backfill, so it
- * keeps the selection — and the editor — stable. Terms loaded from D1 carry no
- * `_temp_id` and key stably on `id:`.
- */
-export function termKey(t: TermItem): string {
-  return t._temp_id ? `tmp:${t._temp_id}` : `id:${t._id}`;
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -145,6 +177,8 @@ export function termKey(t: TermItem): string {
 export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("glossary");
   const { project, currentUserId, userRole, theme } = loaderData;
+
+  const kinds = useGlossaryKinds(loaderData.glossaryKinds);
 
   const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
 
@@ -155,6 +189,8 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
 
   // Selected term key (id: or tmp: prefix)
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  const [kindsOpen, setKindsOpen] = useState(false);
 
   // Delete modal state
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -201,27 +237,35 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
     return () => glossaryArray.unobserveDeep(bump);
   }, [ydoc]);
 
+  // The shared addresses, read in the document's order (the array's), which is
+  // the order the site keeps the first id in.
+  const sharedAddresses = useMemo(() => {
+    if (!ydoc) return [];
+    const glossaryArray = ydoc.getArray<Y.Map<unknown>>("glossary");
+    const rows = glossaryArray.toArray().map((m) => ({
+      term_id: (m.get("term_id") as string | undefined) ?? null,
+      title: readTermText(m, "title"),
+    }));
+    return sharedGlossaryAddresses(rows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ydoc, termVersion]);
+
   const sortedTerms = useMemo<TermItem[]>(() => {
     if (!ydoc) return [];
     const glossaryArray = ydoc.getArray<Y.Map<unknown>>("glossary");
     const items: TermItem[] = [];
     for (let i = 0; i < glossaryArray.length; i++) {
       const m = glossaryArray.get(i);
-      const rawTitle = m.get("title");
-      const title = rawTitle instanceof Y.Text
-        ? rawTitle.toString()
-        : typeof rawTitle === "string" ? rawTitle : "";
-      const rawDef = m.get("definition");
-      const definition = rawDef instanceof Y.Text
-        ? rawDef.toString()
-        : typeof rawDef === "string" ? rawDef : "";
+      if (!listsTerm(m.get("term_id"))) continue;
+      const title = readTermText(m, "title");
       const term_id = (m.get("term_id") as string | undefined) ?? slugifyTermId(title);
       items.push({
         _id: (m.get("_id") as number | null) ?? null,
         _temp_id: (m.get("_temp_id") as string | null) ?? null,
         title,
         term_id,
-        definition,
+        definition: readTermText(m, "definition"),
+        kind: readTermKind(m),
         yMap: m,
       });
     }
@@ -454,12 +498,9 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
   // Render
   // ------------------------------------------------------------------
 
-  // Before Yjs connects, ydoc is null — show a minimal layout
-  const glossaryArray = ydoc?.getArray<Y.Map<unknown>>("glossary");
-  const termCount = glossaryArray?.length ?? 0;
-
-  // Empty state — show when Yjs is ready and there are no terms
-  if (ydoc && termCount === 0) {
+  // Empty state — show when Yjs is ready and no term is listed. Held terms
+  // (`listsTerm`) are in the array but never shown, so they do not count.
+  if (ydoc && sortedTerms.length === 0) {
     return (
       <div className={`h-[calc(100dvh-160px)] flex items-center justify-center ${isPublishing ? "opacity-50 pointer-events-none" : ""}`}>
         <GlossaryEmptyState onCreateNew={handleAddTerm} />
@@ -524,6 +565,14 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                     }`}
                   >
                     {term.title || t("untitled_term")}
+                    <KindCaption kinds={kinds} value={term.kind} />
+                    {sharedAddressOf(sharedAddresses, term.term_id.trim()) && (
+                      <AlertTriangle
+                        className="inline-block w-3.5 h-3.5 ml-1.5 align-text-bottom text-amber-600"
+                        role="img"
+                        aria-label={t("address_shared_marker")}
+                      />
+                    )}
                   </button>
                   {/* Trash icon — convenor-only, visible on hover */}
                   {isConvenor && (
@@ -567,6 +616,13 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                   inputClassName="font-heading text-xl font-semibold text-charcoal rounded-md border border-gray-200 px-3 py-2 bg-surface hover:border-gray-300 focus:border-anil-deep"
                 />
 
+                <GlossaryKindSelect
+                  kinds={kinds}
+                  value={selectedTerm.kind}
+                  onChange={(id) => selectedTerm.yMap.set("kind", id)}
+                  labelAction={<EditKindsButton kinds={kinds} onClick={() => setKindsOpen(true)} />}
+                />
+
                 {/* TERM ID — editable, rename-aware */}
                 <div className="mt-4">
                   <label
@@ -593,6 +649,12 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                     </p>
                   )}
 
+                  <GlossaryAddressNotice
+                    shared={sharedAddressOf(sharedAddresses, selectedTerm.term_id.trim())}
+                    termId={selectedTerm.term_id.trim()}
+                    className="mt-2 max-w-md"
+                  />
+
                   {/* Rename impact panel — refs>0 AND slug changes */}
                   {renameImpact && (
                     <RenameImpactPanel
@@ -604,6 +666,7 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                     />
                   )}
                 </div>
+
 
                 {/* USED IN — on-demand trace */}
                 <UsedInPanel
@@ -645,12 +708,21 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                 theme={theme}
                 termVersion={termVersion}
                 titleLabel={selectedTerm.title}
+                kindLabel={kindLabelOf(kinds, selectedTerm.kind)}
                 className="m-6 ml-0"
               />
             </div>
           </div>
         )}
       </main>
+
+      <GlossaryKindsDialog
+        open={kindsOpen}
+        onClose={() => setKindsOpen(false)}
+        kinds={kinds}
+        stored={loaderData.storedGlossaryKinds}
+        ydoc={ydoc}
+      />
 
       {/* Delete confirmation modal */}
       <DeleteConfirmationModal

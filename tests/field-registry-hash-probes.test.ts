@@ -28,7 +28,7 @@
  *   - Step and layer fields live inside the story fixture and land in the
  *     stories bucket, matching their registry declarations.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -128,6 +128,7 @@ function baseFixtures(): Fixtures {
         image_available: true,
         missing_from_repo: false,
         origin: "repo",
+        course_project_id: null,
         updated_at: null,
       },
     ],
@@ -163,6 +164,7 @@ function baseFixtures(): Fixtures {
       show_link_on_homepage: true,
       show_sample_on_homepage: false,
       collection_mode: false,
+      skip_stories: false,
       featured_count: 4,
       story_key: "secret-key",
       navigation_json: JSON.stringify([{ label: "Home", url: "/" }]),
@@ -281,6 +283,8 @@ const VALUE_OVERRIDES: Record<string, unknown> = {
   "steps.kind": "section",
   "config.lang": "es",
   "config.navigation_json": JSON.stringify([{ label: "Inicio", url: "/" }]),
+  // The kinds column is read only as a list; any other JSON is no kinds at all.
+  "config.glossary_kinds_json": JSON.stringify([{ id: "place", label: "Place", heading: "Places", values: [] }]),
   "objects.extra_columns": '{"accession_number":"ACC-2"}',
 };
 
