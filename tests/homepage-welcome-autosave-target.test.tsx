@@ -20,7 +20,7 @@
  * Mock strategy mirrors tests/homepage-live-lang.test.tsx (the proven scaffold
  * for rendering the landing editor in jsdom).
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -87,6 +87,8 @@ vi.mock("~/hooks/use-collaborative-text", () => ({
   useCollaborativeText: (_yText: unknown, initialValue: string) => ({
     value: initialValue,
     handleChange: vi.fn(),
+    currentValue: () => initialValue,
+    lastWriteIsOwn: () => false,
   }),
 }));
 

@@ -8,7 +8,7 @@
  *
  * Also covers: authorship indicator show/hide behaviour.
  *
- * @version v1.0.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -34,6 +34,8 @@ vi.mock("~/hooks/use-collaborative-text", () => ({
   useCollaborativeText: (_yText: unknown, initialValue: string) => ({
     value: initialValue,
     handleChange: vi.fn(),
+    currentValue: () => initialValue,
+    lastWriteIsOwn: () => false,
   }),
 }));
 

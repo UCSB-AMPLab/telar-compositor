@@ -5,7 +5,9 @@
  * Covers the IDOR guard added by `requireProjectMember`: a signed-in user
  * who forges a `layerId` (layer intents) or `stepId` (step intents) for an
  * entity in a project they are NOT a member of must receive 403, and the
- * corresponding `db.update` must not run. Happy paths verify legitimate
+ * corresponding `db.update` must not run. The step intents throw the 403; the
+ * layer intents answer it as `{ ok: false }` with the status, so the editor
+ * stays open, and a request with nobody signed in still throws 401. Happy paths verify legitimate
  * same-project edits still succeed.
  *
  * Mocking strategy mirrors `tests/homepage-autosave-landing.test.ts`: stub
@@ -30,10 +32,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 // db.update(layers).set(...).where(...) — captured for "no mutation on 403"
-// and "called once on happy path" assertions.
+// and "called once on happy path" assertions. The terminator reports one
+// affected row, because a conditional UPDATE that matches none is a conflict
+// and these cases are about the membership gate, not about conflicts.
 const updateMock = vi.fn(() => ({
   set: vi.fn(() => ({
-    where: vi.fn(async () => undefined),
+    where: vi.fn(async () => ({ meta: { changes: 1 } })),
   })),
 }));
 
@@ -67,6 +71,8 @@ function makeDbMock() {
   return {
     select: selectMock,
     update: updateMock,
+    // The layer saves send the layer row and the story's timestamp as one batch.
+    batch: vi.fn(async (queries: unknown[]) => Promise.all(queries)),
     insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
     delete: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
   };
@@ -126,7 +132,7 @@ function buildRequest(formFields: Record<string, string>): Request {
 function buildContext(
   overrides: Partial<{ user: unknown; env: Record<string, unknown> }> = {},
 ) {
-  const user = overrides.user ?? { id: 7, encrypted_access_token: "enc-token" };
+  const user = "user" in overrides ? overrides.user : { id: 7, encrypted_access_token: "enc-token" };
   const env = {
     ENCRYPTION_KEY: "key",
     SESSION_SECRET: "sess-secret",
@@ -147,6 +153,24 @@ beforeEach(() => {
   // Default: layer 99 belongs to project 42 (matches default membership).
   layerProjectLimitMock.mockImplementation(async () => [{ projectId: 42 }]);
 });
+
+/**
+ * A layer save answers its refusal as data, not a thrown Response, so the
+ * editor stays open: `{ ok: false, intent, reason }` with the gate's status.
+ */
+async function expectRefusal(
+  pending: Promise<unknown>,
+  status: number,
+  reason: string,
+  intent: string,
+): Promise<void> {
+  const answer = (await pending) as {
+    data: { ok: boolean; intent: string; reason: string };
+    init: ResponseInit | null;
+  };
+  expect(answer.init?.status).toBe(status);
+  expect(answer.data).toMatchObject({ ok: false, intent, reason });
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -171,9 +195,7 @@ describe("stories action: save-layer / autosave-layer (IDOR guard)", () => {
       params: { storyId: "test-story" },
     } as never);
 
-    await expect(result).rejects.toBeInstanceOf(Response);
-    const err = (await result.catch((e: unknown) => e)) as Response;
-    expect(err.status).toBe(403);
+    await expectRefusal(result, 403, "forbidden", "autosave-layer");
 
     // Critical: the layer mutation must not have run.
     expect(updateMock).not.toHaveBeenCalled();
@@ -195,9 +217,7 @@ describe("stories action: save-layer / autosave-layer (IDOR guard)", () => {
       params: { storyId: "test-story" },
     } as never);
 
-    await expect(result).rejects.toBeInstanceOf(Response);
-    const err = (await result.catch((e: unknown) => e)) as Response;
-    expect(err.status).toBe(403);
+    await expectRefusal(result, 403, "forbidden", "save-layer");
 
     expect(updateMock).not.toHaveBeenCalled();
   });
@@ -273,9 +293,7 @@ describe("stories action: save-layer / autosave-layer (IDOR guard)", () => {
       params: { storyId: "test-story" },
     } as never);
 
-    await expect(result).rejects.toBeInstanceOf(Response);
-    const err = (await result.catch((e: unknown) => e)) as Response;
-    expect(err.status).toBe(400);
+    await expectRefusal(result, 400, "bad-request", "autosave-layer");
 
     // The layer-project lookup must not have been invoked, and neither the
     // membership check nor the mutation should run.
@@ -298,15 +316,49 @@ describe("stories action: save-layer / autosave-layer (IDOR guard)", () => {
       params: { storyId: "test-story" },
     } as never);
 
-    await expect(result).rejects.toBeInstanceOf(Response);
-    const err = (await result.catch((e: unknown) => e)) as Response;
-    expect(err.status).toBe(404);
+    await expectRefusal(result, 404, "not-found", "autosave-layer");
 
     // Lookup did run, but membership check and mutation must not have.
     expect(layerProjectLimitMock).toHaveBeenCalledTimes(1);
     expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
   });
+
+  it("answers a save-layer for a layer that no longer exists as a refused save", async () => {
+    layerProjectLimitMock.mockImplementationOnce(async () => []);
+
+    const result = action({
+      request: buildRequest({
+        intent: "save-layer",
+        layerId: "999999",
+        content: "x",
+        buttonLabel: "y",
+      }),
+      context: buildContext(),
+      params: { storyId: "test-story" },
+    } as never);
+
+    await expectRefusal(result, 404, "not-found", "save-layer");
+    expect(vi.mocked(requireProjectMember)).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["save-layer", "autosave-layer"])(
+    "still throws 401 on %s when nobody is signed in, and writes nothing",
+    async (intent) => {
+      const result = action({
+        request: buildRequest({ intent, layerId: "99", field: "content", value: "x" }),
+        context: buildContext({ user: null }),
+        params: { storyId: "test-story" },
+      } as never);
+
+      await expect(result).rejects.toBeInstanceOf(Response);
+      const err = (await result.catch((e: unknown) => e)) as Response;
+      expect(err.status).toBe(401);
+      expect(layerProjectLimitMock).not.toHaveBeenCalled();
+      expect(updateMock).not.toHaveBeenCalled();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -373,6 +425,7 @@ describe("stories action: capture-position / change-object (IDOR guard)", () => 
         y: "0.8",
         zoom: "2.5",
         page: "3",
+        expectedObjectId: "obj-legit",
       }),
       context: buildContext(),
       params: { storyId: "test-story" },
