@@ -22,7 +22,7 @@
  * dedicated versionChange detector, never the managed-field diff) — plus
  * the semantic (key-order-insensitive) comparison of extra_columns.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -31,16 +31,37 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock setup (same harness as tests/sync.server.test.ts)
 // ---------------------------------------------------------------------------
 
-vi.mock("~/lib/github.server", () => ({
-  getFileContent: vi.fn(),
-  getRepoTree: vi.fn(),
-  getRepoHead: vi.fn(),
-  graphqlGitHub: vi.fn(),
-  githubHeaders: vi.fn(() => ({})),
-  decodeGitHubContent: vi.fn((s: string) => s),
+// These probes test field mapping; finishing pending object operations before
+// a sync is tested in sync-finishes-pending-ops.test.ts.
+vi.mock("~/lib/pending-object-ops.server", async (orig) => ({
+  ...((await orig()) as Record<string, unknown>),
+  completePendingObjectOps: vi.fn(async () => ({ ok: true, applied: false, outcomes: new Map() })),
 }));
+vi.mock("~/lib/freeze-lease.server", () => ({
+  controlFreezeLease: vi.fn(async () => "applied"),
+  newFreezeOperationId: vi.fn(() => "lease-1"),
+}));
+// objects.csv is read strictly at a head; the cases here state the
+// sheet through getFileContent, so the strict read answers from it: null is
+// a missing file.
+vi.mock("~/lib/github.server", () => {
+  const getFileContent = vi.fn();
+  return {
+    getFileContent,
+    getFileAtRef: vi.fn(async (...args: unknown[]) => {
+      const content = await getFileContent(...args.slice(0, 4));
+      return content == null ? { status: "absent" } : { status: "ok", content };
+    }),
+    getRepoTree: vi.fn(),
+    getRepoHead: vi.fn(),
+    graphqlGitHub: vi.fn(),
+    githubHeaders: vi.fn(() => ({})),
+    decodeGitHubContent: vi.fn((s: string) => s),
+  };
+});
 
 import * as githubServer from "~/lib/github.server";
+import { syncIngestRecorder } from "./helpers/sync-ingest-recorder";
 import {
   computeSyncDiff,
   computeFullSyncDiff,
@@ -55,16 +76,21 @@ import { getEntity, type FieldDecl } from "../app/lib/field-registry";
 
 // Shared registry-derived families, fixture builders, mock-DB factories, and
 // emptyChanges live in a non-test module so the three-way probe file can reuse
-// them without re-declaring a single helper body.
+// them without re-declaring a single helper (the debt gate forbids duplicate
+// helper bodies).
 import {
   MockDb, probeSequentialMockDb, createTrackedMockDb, syncOf, syncFamily,
   objectSyncFields, storySyncFields, configSyncFields, glossarySyncFields,
   PROJECT_ID, TOKEN, OWNER, REPO, objectCsvHeader, objectBaseCell, objectMutatedCell,
   probeObjectsCsv, d1ObjectRow, expectedObjectRepoValue, storyCsvHeader, storyBaseCell,
   storyMutatedCell, projectCsv, d1StoryRow, configYamlKey, configValueKind,
-  configBaseValue, configMutatedValue, configYml, d1ConfigRow, glossaryCsv,
-  d1GlossaryRow, pascalCase, emptyChanges,
+  configBaseValue, configMutatedValue, kindsValue, configYml, d1ConfigRow, glossaryCsv,
+  d1GlossaryRow, expectedGlossaryRepoValue, expectedGlossaryD1Value,
+  pascalCase, emptyChanges,
 } from "./sync-probe-fixtures";
+
+/** The owner who accepted the sync; the route resolves them server-side. */
+const PROBE_ACTOR_ID = 7;
 
 
 // ---------------------------------------------------------------------------
@@ -303,50 +329,54 @@ describe("registry sync probes — glossary diff (computeGlossarySyncDiff)", () 
       expect(result.changed).toHaveLength(1);
       const changed = result.changed[0] as unknown as Record<string, unknown>;
       expect(changed.term_id).toBe("enc");
-      expect(changed[`repo${stem}`]).toBe(`repo-${field.name}`);
-      expect(changed[`d1${stem}`]).toBe(`base-${field.name}`);
+      expect(changed[`repo${stem}`]).toBe(expectedGlossaryRepoValue(field.name));
+      expect(changed[`d1${stem}`]).toBe(expectedGlossaryD1Value(field.name));
     });
   }
 });
 
 // ---------------------------------------------------------------------------
-// 5. Apply-side probes — accepting a repo change writes the repo value
+// 5. Apply-side probes — accepting a repo change sends the repo value
 // ---------------------------------------------------------------------------
 
 describe("registry sync probes — objects apply (applySyncChanges)", () => {
+  // The commit the objects check was read at, and GitHub's head at the apply.
+  const checkedHead = "e".repeat(40);
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue(checkedHead);
   });
 
   for (const field of objectSyncFields) {
-    it(`objects.${field.name}: accepting the repo value writes it into the D1 update payload`, async () => {
+    it(`objects.${field.name}: accepting the repo value writes it into the ingest's update`, async () => {
       vi.mocked(githubServer.getFileContent).mockResolvedValue(probeObjectsCsv(field.name));
 
-      let captured: Record<string, unknown> | null = null;
-      const mockDb = createTrackedMockDb({
-        responses: [[d1ObjectRow()]],
-        onUpdate: (_table, set) => {
-          captured = set as Record<string, unknown>;
-        },
-      });
+      const mockDb = createTrackedMockDb({ responses: [[d1ObjectRow()]] });
+      const ingest = syncIngestRecorder();
 
       await applySyncChanges(
         PROJECT_ID,
         {
           newObjectIds: [],
           changedObjectIds: ["obj-1"],
+          changedDocIds: { "obj-1": 1 },
           fieldChoices: { "obj-1": { [field.name]: "repo" } },
+          fieldsSeen: { "obj-1": { [field.name]: null } },
           removedObjectIds: [],
           unregisteredObjectIds: [],
+          headSha: checkedHead,
         },
         TOKEN,
         OWNER,
         REPO,
         mockDb,
+        ingest.env,
+        PROBE_ACTOR_ID,
       );
 
-      expect(captured).not.toBeNull();
+      const captured = ingest.fieldsFor("obj-1");
+      expect(captured).toBeDefined();
       const written = captured![field.name];
       if (field.name === "extra_columns") {
         expect(JSON.parse(String(written))).toEqual({ accession_number: "ACC-MUT" });
@@ -378,7 +408,7 @@ describe("registry sync probes — resolve payload (resolveFullSyncPayload)", ()
     const itemKey = syncOf(field)?.itemKey ?? field.name;
     const expected =
       field.name === "private" || field.name === "show_sections" ? true : `repo-${field.name}`;
-    it(`stories.${field.name}: resolve emits payload.stories.update["${itemKey}"] = ${JSON.stringify(expected)}`, async () => {
+    it(`stories.${field.name}: resolve carries ${JSON.stringify(expected)} at "${itemKey}" (payload or residue)`, async () => {
       vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
         if (path === "telar-content/spreadsheets/objects.csv") return "";
         if (path === "telar-content/spreadsheets/project.csv") return projectCsv(field.name);
@@ -387,22 +417,50 @@ describe("registry sync probes — resolve payload (resolveFullSyncPayload)", ()
 
       const changes = emptyChanges();
       changes.stories.accept = ["my-story"];
-      const { payload } = await resolveFullSyncPayload(
-        PROJECT_ID, changes, TOKEN, OWNER, REPO, resolveDb(),
+      changes.stories.fieldChoices = { "my-story": { [itemKey]: "repo" } };
+      const { payload, residue } = await resolveFullSyncPayload(
+        PROJECT_ID, changes, TOKEN, OWNER, REPO, resolveDb(), PROBE_ACTOR_ID,
       );
 
-      expect(payload.stories.update).toHaveLength(1);
-      const upd = payload.stories.update[0] as unknown as Record<string, unknown>;
-      expect(upd.storyId).toBe("my-story");
-      expect(upd[itemKey]).toBe(expected);
+      if (field.name === "extra_columns") {
+        // D1-only (never in the Y.Doc), like the glossary's: it rides the residue.
+        const r = residue.storyD1Update.find((x) => x.storyId === "my-story");
+        expect(r, "extra_columns missing from residue").toBeDefined();
+        expect(JSON.parse(String(r!.extraColumns))).toEqual({ curator: "CURATOR-MUT" });
+        expect(payload.stories.update).toHaveLength(0);
+      } else {
+        expect(payload.stories.update).toHaveLength(1);
+        const upd = payload.stories.update[0] as unknown as Record<string, unknown>;
+        expect(upd.storyId).toBe("my-story");
+        expect(upd[itemKey]).toBe(expected);
+      }
     });
   }
+
+  it("stories insertNew: the custom project.csv columns ride the residue, written after the insert", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return projectCsv("extra_columns");
+      return null;
+    });
+
+    const changes = emptyChanges();
+    changes.stories.insertNew = ["my-story"];
+    const { residue } = await resolveFullSyncPayload(
+      PROJECT_ID, changes, TOKEN, OWNER, REPO, resolveDb(), PROBE_ACTOR_ID,
+    );
+
+    const r = residue.storyD1Insert.find((x) => x.storyId === "my-story");
+    expect(r, "extra_columns missing from the insert residue").toBeDefined();
+    expect(JSON.parse(String(r!.extraColumns))).toEqual({ curator: "CURATOR-MUT" });
+  });
 
   for (const field of configSyncFields) {
     // The resolve path coerces per D1 column type: booleans land as true,
     // featured_count as the integer, strings verbatim.
     const kind = configValueKind(field);
-    const expected = kind === "bool" ? true : kind === "int" ? 7 : `repo-${field.name}`;
+    const expected =
+      kind === "bool" ? true : kind === "int" ? 7 : kind === "kinds" ? kindsValue("repo") : `repo-${field.name}`;
     it(`config.${field.name}: resolve emits payload.config { key, value: ${JSON.stringify(expected)} }`, async () => {
       vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
         if (path === "telar-content/spreadsheets/objects.csv") return "";
@@ -412,10 +470,16 @@ describe("registry sync probes — resolve payload (resolveFullSyncPayload)", ()
 
       const changes = emptyChanges();
       changes.config.accept = [field.name];
-      const { payload } = await resolveFullSyncPayload(
-        PROJECT_ID, changes, TOKEN, OWNER, REPO, resolveDb(),
+      const { payload, residue } = await resolveFullSyncPayload(
+        PROJECT_ID, changes, TOKEN, OWNER, REPO, resolveDb(), PROBE_ACTOR_ID,
       );
 
+      if (kind === "kinds") {
+        // D1 only: the column never rides the shared document's payload.
+        expect(payload.config.find((c) => c.key === field.name)).toBeUndefined();
+        expect(residue.glossaryKindsAccept).toBe(expected);
+        return;
+      }
       const entry = payload.config.find((c) => c.key === field.name);
       expect(entry, `config.${field.name} missing from payload.config`).toBeDefined();
       expect(entry!.value).toBe(expected);
@@ -432,15 +496,17 @@ describe("registry sync probes — resolve payload (resolveFullSyncPayload)", ()
 
       const changes = emptyChanges();
       changes.glossary.accept = ["enc"];
+      changes.glossary.fieldChoices = { enc: { [field.name]: "repo" } };
       const { payload, residue } = await resolveFullSyncPayload(
-        PROJECT_ID, changes, TOKEN, OWNER, REPO, resolveDb(),
+        PROJECT_ID, changes, TOKEN, OWNER, REPO, resolveDb(), PROBE_ACTOR_ID,
       );
 
-      if (field.name === "related_terms") {
-        // related_terms is D1-only (never in the Y.Doc) — it rides the residue.
-        const r = residue.relatedTermsUpdate.find((x) => x.termId === "enc");
-        expect(r, "related_terms missing from residue").toBeDefined();
-        expect(r!.relatedTerms).toBe("repo-related_terms");
+      if (field.name === "related_terms" || field.name === "extra_columns") {
+        // Both are D1-only (never in the Y.Doc) — they ride the residue.
+        const r = residue.glossaryD1Update.find((x) => x.termId === "enc");
+        expect(r, `${field.name} missing from residue`).toBeDefined();
+        const written = field.name === "related_terms" ? r!.relatedTerms : r!.extraColumns;
+        expect(written).toBe(expectedGlossaryRepoValue(field.name));
       } else {
         expect(payload.glossary.update).toHaveLength(1);
         const upd = payload.glossary.update[0] as unknown as Record<string, unknown>;
@@ -462,7 +528,7 @@ describe("registry sync probes — L-bug pins (action side)", () => {
     vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
   });
 
-  it("L1: an inserted object is queued for origin = \"repo\" in the residue", async () => {
+  it("L1: an inserted object carries origin = \"repo\" on the insert", async () => {
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
       if (path === "telar-content/spreadsheets/objects.csv") {
         return ["object_id,title", "new-obj,New Object"].join("\n");
@@ -472,12 +538,11 @@ describe("registry sync probes — L-bug pins (action side)", () => {
 
     const changes = emptyChanges();
     changes.objects.newObjectIds = ["new-obj"];
-    const { payload, residue } = await resolveFullSyncPayload(
-      PROJECT_ID, changes, TOKEN, OWNER, REPO, probeSequentialMockDb([[], []]),
+    const { payload } = await resolveFullSyncPayload(
+      PROJECT_ID, changes, TOKEN, OWNER, REPO, probeSequentialMockDb([[], []]), PROBE_ACTOR_ID,
     );
 
-    expect(payload.objects.insert.map((o) => o.object_id)).toContain("new-obj");
-    expect(residue.originRepo).toContain("new-obj");
+    expect(payload.objects.insert.map((o) => [o.object_id, o.origin])).toContainEqual(["new-obj", "repo"]);
   });
 
   it("L3: the version heal fires on \"ahead\" with no optional parameter", async () => {
@@ -495,6 +560,7 @@ describe("registry sync probes — L-bug pins (action side)", () => {
       REPO,
       // objects = [], project_config with an older version.
       probeSequentialMockDb([[], [{ id: 1, project_id: PROJECT_ID, telar_version: "1.0.0" }]]),
+      PROBE_ACTOR_ID,
     );
 
     expect(residue.telarVersionHeal).toBe("9.9.9");
@@ -512,8 +578,9 @@ describe("registry sync probes — L-bug pins (action side)", () => {
 
     const changes = emptyChanges();
     changes.stories.accept = ["my-story"];
+    changes.stories.fieldChoices = { "my-story": { title: "repo", subtitle: "repo" } };
     const { payload } = await resolveFullSyncPayload(
-      PROJECT_ID, changes, TOKEN, OWNER, REPO, probeSequentialMockDb([[], []]),
+      PROJECT_ID, changes, TOKEN, OWNER, REPO, probeSequentialMockDb([[], []]), PROBE_ACTOR_ID,
     );
 
     expect(payload.stories.update).toHaveLength(1);

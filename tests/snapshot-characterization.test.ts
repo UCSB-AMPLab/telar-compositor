@@ -8,13 +8,21 @@
  * reproduce it byte-for-byte. If a snapshot changes, the refactor changed
  * behaviour and is wrong.
  *
+ * A deliberate change to what the snapshot writes regenerates the golden and
+ * says so where the change is recorded — every entity's INSERT and UPDATE
+ * carries `order_key`, the column that holds that entity's place, and each
+ * published rank (`"order"`, `step_number`, `layer_number`) is bound from the
+ * rank in that ordering rather than from the Y.Array index. The nulls the
+ * golden records for `order_key` are this fixture's Y.Maps, which carry no
+ * key: the DO's load-time backfill mints them, and the fixture bypasses it.
+ *
  * Reads (`.all()` SELECTs) are NOT recorded — only writes, which is what
  * "byte-identical D1 writes" means. The yjs_state blob's binary bind is
  * normalised to a marker (its bytes depend on Y.Doc clientID randomness and are
  * out of scope for this refactor, which never touches blob encoding); its SQL
  * and position in the stream ARE pinned.
  *
- * @version v1.3.5-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -36,6 +44,11 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 import { ProjectCollaborationDO } from "../workers/collaboration";
+import { serializeStory } from "~/lib/publish.server";
+import { parseTelarCsv } from "~/lib/import.server";
+import { markLoaded } from "./helpers/claimed-document";
+import { trackBaseRow } from "./helpers/base-row";
+import { checkD1Bind } from "./helpers/d1-memory";
 
 const TEST_PROJECT_ID = 42;
 
@@ -91,7 +104,7 @@ interface RecordingStmt {
   sql: string;
   boundArgs: unknown[];
   bind(...args: unknown[]): RecordingStmt;
-  run(): Promise<{ meta: { last_row_id: number }; success: true }>;
+  run(): Promise<{ meta: { last_row_id: number; changes: number }; success: true }>;
   all<T = unknown>(): Promise<{ results: T[]; success: true }>;
   first<T = unknown>(): Promise<T | null>;
 }
@@ -157,11 +170,14 @@ function makeRecordingDb(
     return { results: [] };
   }
 
+  const row = trackBaseRow();
+
   function prepare(sql: string): RecordingStmt {
     const stmt: RecordingStmt = {
       sql,
       boundArgs: [],
       bind(...args: unknown[]) {
+        checkD1Bind(sql, args);
         stmt.boundArgs = args;
         return stmt;
       },
@@ -170,12 +186,13 @@ function makeRecordingDb(
           throw new Error("UNIQUE constraint failed (injected)");
         }
         ops.push({ op: "run", sql, binds: stmt.boundArgs.map(normaliseBind) });
+        row.note(sql);
         // An explicit-id INSERT (`INSERT INTO <t> (id, …)`) reports its explicit
         // id as last_row_id (real-SQLite semantics); autoincrement uses the
         // counter.
         const explicitId = /^INSERT INTO \w+ \(id,/.test(sql) ? Number(stmt.boundArgs[0]) : null;
         const rid = explicitId !== null && Number.isFinite(explicitId) ? explicitId : (lastRowId += 1);
-        return { meta: { last_row_id: rid }, success: true as const };
+        return { meta: { last_row_id: rid, changes: 1 }, success: true as const };
       },
       async all<T = unknown>() {
         return { results: resolveSelect(sql, stmt.boundArgs).results as T[], success: true as const };
@@ -190,7 +207,7 @@ function makeRecordingDb(
         if (/SELECT id FROM project_landing WHERE project_id/.test(sql)) {
           return (seed.landingMissing ? null : { id: 1 }) as T | null;
         }
-        return null as T | null;
+        return (row.read(sql) ?? null) as T | null;
       },
     };
     return stmt;
@@ -226,7 +243,13 @@ function makeCtx() {
     blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
     storage: {
       getAlarm: async () => (alarms.length ? alarms[alarms.length - 1] : null),
+      // The loader and the snapshot read the generation from storage, and a
+      // load lists the log prefix before it tags an untagged blob.
+      get: async (key: string) => (key === "docGeneration" ? 0 : undefined),
+      put: async () => {},
+      list: async () => new Map(),
       setAlarm: async (t: number) => { alarms.push(t); },
+      delete: async () => 0,
     },
     acceptWebSocket: vi.fn(),
   };
@@ -245,7 +268,11 @@ function makeDo(
     env as unknown as Env,
   );
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
-  (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+  markLoaded(doInstance);
+  // The generation the socket fixtures below are attached to. The message
+  // handler compares the two before it touches the document, so the cache has
+  // to hold the number the attachments claim.
+  (doInstance as unknown as { docGeneration: number }).docGeneration = 0;
   const ydoc = (doInstance as unknown as { ydoc: Y.Doc }).ydoc;
   return { doInstance, db, ydoc };
 }
@@ -269,6 +296,17 @@ function makeStory(fields: Record<string, unknown>): Y.Map<unknown> {
   return m;
 }
 
+/**
+ * The config a document built from a `project_config` row carries.
+ *
+ * The six convenor-only keys are seeded because `buildFromD1Rows` seeds them
+ * whenever the row exists, and these snapshots pin the healthy statement. A
+ * live document can reach an absence at one of the six — the guard's revert
+ * for an edit inside a planted shared value deletes the whole key — and the
+ * snapshot reads that absence as a value it cannot read and leaves the column
+ * out of the UPDATE, which is a different statement. The column matrix suite
+ * pins that one.
+ */
 function seedConfig(ydoc: Y.Doc) {
   const config = ydoc.getMap<unknown>("config");
   ydoc.transact(() => {
@@ -277,6 +315,12 @@ function seedConfig(ydoc: Y.Doc) {
     config.set("author", new Y.Text("Author"));
     config.set("email", new Y.Text("a@b.c"));
     config.set("lang", "en");
+    config.set("baseurl", "");
+    config.set("url", "");
+    config.set("story_key", "");
+    config.set("google_sheets_published_url", "");
+    config.set("google_sheets_enabled", false);
+    config.set("include_demo_content", false);
   }, null);
 }
 
@@ -419,6 +463,12 @@ describe("doSnapshot characterization — Scenario 4: contributions + activity",
     const fieldSets = (doInstance as unknown as { userFieldSets: Map<number, Set<string>> })
       .userFieldSets;
     fieldSets.set(7, new Set(["stories:11:title"]));
+    // And the stamp the same handler takes, because the two are produced
+    // together and `last_active` is no longer the snapshot's clock. Chosen
+    // deliberately unlike the frozen clock below, so the pinned output shows
+    // which one reached the row.
+    const lastEditAt = (doInstance as unknown as { lastEditAt: Map<number, string> }).lastEditAt;
+    lastEditAt.set(7, "2025-12-25T09:30:00.000Z");
     const newSessions = (doInstance as unknown as { newSessions: Set<number> }).newSessions;
     newSessions.add(7);
 
@@ -634,7 +684,14 @@ describe("doSnapshot Fix A — stranded objects", () => {
     expect(ydoc.getArray<Y.Map<unknown>>("objects").get(0).get("_id")).toBe(555);
   });
 
-  it("skips a pending object even when its _id is stale (no insert)", async () => {
+  it("re-INSERTs a pending object whose _id is stale — the skip needs a null _id too", async () => {
+    // The pending skip covers exactly one state: a never-persisted IIIF row
+    // whose manifest has not validated yet, which always carries `_id: null`.
+    // A row that has an `_id` has been persisted, so it stays in reconciliation
+    // whatever a client writes into the client-writable `_validation_state`
+    // field — otherwise writing "pending" onto it would park it outside both
+    // its UPDATE and the orphan sweep. Stale `_id` with no live same-key row
+    // therefore takes the ordinary re-INSERT branch here.
     const seed = emptySeed();
     const { doInstance, db, ydoc } = makeDo(seed);
     seedConfig(ydoc);
@@ -642,9 +699,11 @@ describe("doSnapshot Fix A — stranded objects", () => {
 
     await snapshot(doInstance);
 
-    expect(
-      db.ops.some((op) => op.op === "run" && /INSERT INTO objects/.test((op as { sql: string }).sql)),
-    ).toBe(false);
+    const insert = db.ops.find(
+      (op) => op.op === "run" && /^INSERT INTO objects \(id,/.test((op as { sql: string }).sql),
+    ) as { binds: unknown[] } | undefined;
+    expect(insert).toBeDefined();
+    expect(insert!.binds[0]).toBe(88);
   });
 });
 
@@ -909,7 +968,8 @@ const messageSync = 0; // mirrors the constant in workers/collaboration.ts
 
 /** A fake hibernation socket whose attachment getUserContext(ws) accepts. */
 function fakeEditorSocket(userId: number, role: "convenor" | "collaborator" = "collaborator") {
-  const attachment = { userId, projectId: TEST_PROJECT_ID, role };
+  // Admitted just now, so the membership recheck is not yet due.
+  const attachment = { userId, projectId: TEST_PROJECT_ID, role, generation: 0, membershipCheckedAt: Date.now() };
   return {
     attachment,
     send: vi.fn(),
@@ -1089,7 +1149,9 @@ describe("snapshotToD1 persists slug renames on the in-place UPDATE", () => {
 
     const upd = batchStatements(db).find((s) => /UPDATE glossary_terms SET/.test(s.sql));
     expect(upd).toBeDefined();
-    expect(upd!.sql).toMatch(/term_id\s*=\s*\?/);
+    // The key is written through the UNIQUE-index guard, which
+    // takes the new value as its one bind.
+    expect(upd!.sql).toMatch(/term_id\s*=\s*\(SELECT CASE [^,]*\(SELECT \? AS k\)/);
     expect(upd!.binds).toContain("maize-corn");
     // the renamed slug must be a plain string, not "[object Object]"
     expect(upd!.binds.some((b) => b === "maize-corn" && typeof b === "string")).toBe(true);
@@ -1115,12 +1177,40 @@ describe("snapshotToD1 persists slug renames on the in-place UPDATE", () => {
 
     const upd = batchStatements(db).find((s) => /UPDATE objects SET/.test(s.sql));
     expect(upd).toBeDefined();
-    expect(upd!.sql).toMatch(/object_id\s*=\s*\?/);
+    // The key is written through the UNIQUE-index guard, which
+    // takes the new value as its one bind.
+    expect(upd!.sql).toMatch(/object_id\s*=\s*\(SELECT CASE [^,]*\(SELECT \? AS k\)/);
     expect(upd!.binds).toContain("clay-pot-2");
     expect(upd!.binds[upd!.binds.length - 1]).toBe(77);
   });
 
-  it("stories UPDATE does NOT write story_id (intentional — UNIQUE index + atomic batch)", async () => {
+  it("stories UPDATE writes the story_id the document holds, so a renamed story reaches D1", async () => {
+    const seed = emptySeed();
+    seed.storyIds = [11];
+    seed.storyKeyToId = new Map([["s1", 11]]);
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    ydoc.transact(() => {
+      ydoc
+        .getArray<Y.Map<unknown>>("stories")
+        .push([makeStory({ _id: 11, story_id: "fluidity-of-process", title: "Story One" })]);
+    }, null);
+
+    await snapshot(doInstance);
+
+    const stories = batchStatements(db).filter((s) => /^UPDATE stories SET/.test(s.sql));
+    // The file the story was last written to is recorded first, while the row
+    // still holds the old ID.
+    expect(stories[0].sql).toMatch(/^UPDATE stories SET source_path = CASE/);
+    expect(stories[0].binds).toEqual([11, "fluidity-of-process"]);
+    const upd = stories[1];
+    expect(upd).toBeDefined();
+    expect(upd!.sql).toMatch(/story_id = COALESCE\(NULLIF\(\?, ''\), story_id\)/);
+    expect(upd!.binds).toContain("fluidity-of-process");
+    expect(upd!.binds[upd!.binds.length - 1]).toBe(11);
+  });
+
+  it("stories UPDATE keeps D1's story_id when the document states no key", async () => {
     const seed = emptySeed();
     seed.storyIds = [11];
     const { doInstance, db, ydoc } = makeDo(seed);
@@ -1128,23 +1218,24 @@ describe("snapshotToD1 persists slug renames on the in-place UPDATE", () => {
     ydoc.transact(() => {
       ydoc
         .getArray<Y.Map<unknown>>("stories")
-        .push([makeStory({ _id: 11, story_id: "s1", title: "Story One" })]);
+        .push([makeStory({ _id: 11, story_id: "", title: "Story One" })]);
     }, null);
 
     await snapshot(doInstance);
 
     const upd = batchStatements(db).find((s) => /UPDATE stories SET/.test(s.sql));
     expect(upd).toBeDefined();
-    expect(upd!.sql).not.toMatch(/story_id/);
+    const at = upd!.sql.slice(0, upd!.sql.indexOf("story_id = ")).split("?").length - 1;
+    expect(upd!.binds[at]).toBe("");
   });
 });
 
 // ---------------------------------------------------------------------------
-// deduplicateYArray re-key mode (glossary) — fixes the LIVE data-loss bug where
-// two distinct-_id same-term_id Y.Maps (the prod "untitled-term" x2 shape) had
-// the loser DELETED from the Y.Array and its D1 row orphan-deleted. Glossary
-// must RE-KEY the loser (preserve both terms); stories/pages/objects keep
-// delete semantics; exact-_id duplicates still collapse.
+// deduplicateYArray — the LIVE data-loss shape is two distinct-_id same-term_id
+// Y.Maps (the prod "untitled-term" x2), where deleting the loser from the
+// Y.Array has the orphan sweep delete its D1 row. Every same-key loser that is
+// its own entity is RE-KEYED, in every root; only an exact-_id duplicate — one
+// persisted row claimed twice — collapses.
 // ---------------------------------------------------------------------------
 function makeGlossaryTerm(id: number | null, termId: string, title: string, def = "def"): Y.Map<unknown> {
   const m = new Y.Map<unknown>();
@@ -1154,12 +1245,12 @@ function makeGlossaryTerm(id: number | null, termId: string, title: string, def 
   m.set("definition", new Y.Text(def));
   return m;
 }
-function dedup(doInstance: unknown, arr: string, key: string, mode?: string): boolean {
-  return (doInstance as { deduplicateYArray: (a: string, k: string, m?: string) => boolean })
-    .deduplicateYArray(arr, key, mode);
+function dedup(doInstance: unknown, arr: string, key: string): boolean {
+  return (doInstance as { deduplicateYArray: (a: string, k: string) => boolean })
+    .deduplicateYArray(arr, key);
 }
 
-describe("deduplicateYArray re-key mode (glossary)", () => {
+describe("deduplicateYArray — who keeps the key, and what happens to the loser", () => {
   it("re-keys a distinct-_id same-term_id loser instead of deleting it", () => {
     const { doInstance, ydoc } = makeDo(emptySeed());
     ydoc.transact(() => {
@@ -1169,7 +1260,7 @@ describe("deduplicateYArray re-key mode (glossary)", () => {
       ]);
     }, null);
 
-    const didRekey = dedup(doInstance, "glossary", "term_id", "re-key");
+    const didRekey = dedup(doInstance, "glossary", "term_id");
 
     const g = ydoc.getArray<Y.Map<unknown>>("glossary");
     expect(g.length).toBe(2); // BOTH preserved (not deleted)
@@ -1181,7 +1272,7 @@ describe("deduplicateYArray re-key mode (glossary)", () => {
     expect(didRekey).toBe(true);
   });
 
-  it("still DELETES exact-_id duplicates even in re-key mode (same persisted row)", () => {
+  it("still DELETES exact-_id duplicates (the same persisted row twice)", () => {
     const { doInstance, ydoc } = makeDo(emptySeed());
     ydoc.transact(() => {
       ydoc.getArray<Y.Map<unknown>>("glossary").push([
@@ -1190,12 +1281,35 @@ describe("deduplicateYArray re-key mode (glossary)", () => {
       ]);
     }, null);
 
-    dedup(doInstance, "glossary", "term_id", "re-key");
+    dedup(doInstance, "glossary", "term_id");
 
     expect(ydoc.getArray("glossary").length).toBe(1); // collapsed
   });
 
-  it("delete mode is unchanged for stories (a same-story_id loser is deleted)", () => {
+  it("RE-KEYS an UNSAVED same-story_id loser rather than dropping it", () => {
+    // An `_id: null` twin is unsaved, not empty: before a project's first
+    // snapshot every map carries one, so a null says where D1 has got to and
+    // nothing about whether someone is writing the story (R2-2).
+    const { doInstance, ydoc } = makeDo(emptySeed());
+    ydoc.transact(() => {
+      ydoc.getArray<Y.Map<unknown>>("stories").push([
+        makeStory({ _id: 11, story_id: "dup", title: "A" }),
+        makeStory({ _id: null, story_id: "dup", title: "B" }),
+      ]);
+    }, null);
+
+    dedup(doInstance, "stories", "story_id");
+
+    const s = ydoc.getArray<Y.Map<unknown>>("stories");
+    expect(s.length).toBe(2);
+    expect(s.get(0).get("story_id")).toBe("dup");
+    expect(String(s.get(1).get("title"))).toBe("B");
+    expect(s.get(1).get("story_id")).not.toBe("dup");
+  });
+
+  it("RE-KEYS a persisted same-story_id loser rather than deleting it", () => {
+    // Two distinct live rows. Deleting the loser drops its Y.Map and the orphan
+    // sweep then deletes its D1 row, so every root re-keys this case.
     const { doInstance, ydoc } = makeDo(emptySeed());
     ydoc.transact(() => {
       ydoc.getArray<Y.Map<unknown>>("stories").push([
@@ -1204,9 +1318,12 @@ describe("deduplicateYArray re-key mode (glossary)", () => {
       ]);
     }, null);
 
-    dedup(doInstance, "stories", "story_id"); // default delete mode
+    const didRekey = dedup(doInstance, "stories", "story_id");
 
-    expect(ydoc.getArray("stories").length).toBe(1);
+    const s = ydoc.getArray<Y.Map<unknown>>("stories");
+    expect(s.length).toBe(2);
+    expect(new Set([s.get(0).get("story_id"), s.get(1).get("story_id")]).size).toBe(2);
+    expect(didRekey).toBe(true);
   });
 
   it("LIVE BUG regression: a full snapshot does NOT orphan-delete either duplicate term's D1 row", async () => {
@@ -1228,5 +1345,219 @@ describe("deduplicateYArray re-key mode (glossary)", () => {
       .map((s) => s.binds[0]);
     expect(deletedIds).not.toContain(144);
     expect(deletedIds).not.toContain(153);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A step seeded from the one before it
+// ---------------------------------------------------------------------------
+
+/**
+ * The seeded object, page and framing are ordinary step values, so both
+ * snapshot paths must carry them: the INSERT that first writes the step, and
+ * the UPDATE that follows any later edit of it. What matters is not that the
+ * values appear somewhere among the binds but that each lands in ITS OWN
+ * column, which is why every assertion here reads the statement's own SQL for
+ * the column order and names the column: `x` and `y` swapped would satisfy a
+ * membership check and publish a step framed on the wrong axis.
+ *
+ * The chain is then followed to its end. A page choice writes the page and
+ * nulls the framing; the persisted values those writes produce are fed to the
+ * publish serializer, so the row an author would find in `story.csv` is
+ * asserted from what D1 actually received, and a step nobody touched publishes
+ * a byte-identical row across the edit.
+ */
+describe("doSnapshot — a step seeded from the one before it", () => {
+  /** Each column of a statement mapped to the value bound to it. */
+  function bindsByColumn(sql: string, binds: unknown[]): Record<string, unknown> {
+    const insert = /INSERT INTO \w+ \(([^)]+)\) VALUES/.exec(sql);
+    if (insert) {
+      const columns = insert[1].split(",").map((c) => c.trim());
+      return Object.fromEntries(columns.map((c, i) => [c, binds[i]]));
+    }
+    const update = /UPDATE \w+ SET ([\s\S]+) WHERE (\w+) = \?$/.exec(sql);
+    if (!update) throw new Error(`neither an INSERT nor an UPDATE: ${sql}`);
+    // Every assignment in the SET clause binds exactly one value, including the
+    // two written through COALESCE; the WHERE takes the last bind.
+    const columns = [...update[1].matchAll(/(\w+)\s*=/g)].map((m) => m[1]);
+    const byColumn = Object.fromEntries(columns.map((c, i) => [c, binds[i]]));
+    byColumn[update[2]] = binds[columns.length];
+    return byColumn;
+  }
+
+  /** The step rows the publish serializer takes, from what D1 was given. */
+  function publishedRow(persisted: Record<string, unknown>) {
+    return {
+      step_number: persisted.step_number as number,
+      kind: persisted.kind as "media" | "section",
+      object_id: persisted.object_id as string,
+      question: (persisted.question as string) ?? "",
+      answer: (persisted.answer as string) ?? "",
+      alt_text: (persisted.alt_text as string) ?? "",
+      clip_start: (persisted.clip_start as string) ?? "",
+      clip_end: (persisted.clip_end as string) ?? "",
+      loop: (persisted.loop as string) ?? "",
+      layers: [],
+      x: persisted.x as number | null,
+      y: persisted.y as number | null,
+      zoom: persisted.zoom as number | null,
+      page: persisted.page as string | null,
+    };
+  }
+
+  function seededStepMap(fields: Record<string, unknown>): Y.Map<unknown> {
+    const step = new Y.Map<unknown>();
+    step.set("_id", fields._id ?? null);
+    step.set("step_number", fields.step_number ?? 1);
+    step.set("kind", "media");
+    step.set("object_id", fields.object_id ?? "manuscript-01");
+    step.set("page", fields.page ?? null);
+    step.set("x", fields.x ?? null);
+    step.set("y", fields.y ?? null);
+    step.set("zoom", fields.zoom ?? null);
+    step.set("question", new Y.Text((fields.question as string) ?? ""));
+    step.set("layers", new Y.Array<Y.Map<unknown>>());
+    return step;
+  }
+
+  function seedStory(ydoc: Y.Doc, storyId: number | null) {
+    const story = makeStory({ _id: storyId, story_id: "seeded-s", title: "Seeded" });
+    ydoc.getArray<Y.Map<unknown>>("stories").push([story]);
+    const steps = story.get("steps") as Y.Array<Y.Map<unknown>>;
+    const step = seededStepMap({
+      object_id: "manuscript-01", page: "3", x: 0.25, y: 0.75, zoom: 2.5,
+    });
+    steps.push([step]);
+    return step;
+  }
+
+  const stepInsert = (db: { ops: RecordedOp[] }) =>
+    db.ops.find(
+      (o) => o.op === "run" && /INSERT INTO steps/.test((o as { sql: string }).sql)
+    ) as { sql: string; binds: unknown[] } | undefined;
+
+  const stepUpdates = (db: { ops: RecordedOp[] }) => {
+    const batch = db.ops.find((o) => o.op === "batch") as
+      | { statements: Array<{ sql: string; binds: unknown[] }> }
+      | undefined;
+    return (batch?.statements ?? []).filter((s) => /UPDATE steps/.test(s.sql));
+  };
+
+  it("binds each seeded value to its own column on the INSERT", async () => {
+    const seed = emptySeed();
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    ydoc.transact(() => { seedStory(ydoc, null); }, null);
+
+    await snapshot(doInstance);
+
+    const insert = stepInsert(db);
+    expect(insert).toBeDefined();
+    const written = bindsByColumn(insert!.sql, insert!.binds);
+    expect(written.object_id).toBe("manuscript-01");
+    expect(written.page).toBe("3");
+    // Distinct values in the two coordinate columns: a swap fails here.
+    expect(written.x).toBe(0.25);
+    expect(written.y).toBe(0.75);
+    expect(written.zoom).toBe(2.5);
+  });
+
+  it("binds each seeded value to its own column on the UPDATE after an edit", async () => {
+    const seed = emptySeed();
+    seed.storyIds = [11];
+    seed.stepIdsByStory = new Map([[11, [21]]]);
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    let step!: Y.Map<unknown>;
+    ydoc.transact(() => { step = seedStory(ydoc, 11); }, null);
+    ydoc.transact(() => { step.set("_id", 21); }, null);
+
+    await snapshot(doInstance);
+
+    const update = stepUpdates(db)[0];
+    expect(update).toBeDefined();
+    const written = bindsByColumn(update.sql, update.binds);
+    expect(written.object_id).toBe("manuscript-01");
+    expect(written.page).toBe("3");
+    expect(written.x).toBe(0.25);
+    expect(written.y).toBe(0.75);
+    expect(written.zoom).toBe(2.5);
+    expect(written.id).toBe(21);
+  });
+
+  it("carries a page choice from the INSERT through the UPDATE to the published row", async () => {
+    const seed = emptySeed();
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+
+    // Two steps: the one the author will re-page, and a neighbour nobody touches.
+    let chosen!: Y.Map<unknown>;
+    let neighbour!: Y.Map<unknown>;
+    ydoc.transact(() => {
+      const story = makeStory({ _id: null, story_id: "seeded-s", title: "Seeded" });
+      ydoc.getArray<Y.Map<unknown>>("stories").push([story]);
+      const steps = story.get("steps") as Y.Array<Y.Map<unknown>>;
+      chosen = seededStepMap({
+        step_number: 1, object_id: "manuscript-01",
+        page: "3", x: 0.25, y: 0.75, zoom: 2.5, question: "First",
+      });
+      neighbour = seededStepMap({
+        step_number: 2, object_id: "atlas-02",
+        page: "2", x: 0.1, y: 0.2, zoom: 4, question: "Second",
+      });
+      steps.push([chosen, neighbour]);
+    }, null);
+
+    await snapshot(doInstance);
+
+    const inserts = db.ops.filter(
+      (o) => o.op === "run" && /INSERT INTO steps/.test((o as { sql: string }).sql)
+    ) as Array<{ sql: string; binds: unknown[] }>;
+    expect(inserts).toHaveLength(2);
+    const beforeRows = inserts.map((i) => publishedRow(bindsByColumn(i.sql, i.binds)));
+    const before = serializeStory(beforeRows, "seeded-s").csv;
+
+    // The step now exists in D1, so the second snapshot takes the UPDATE path.
+    const insertedIds = inserts.map(
+      (i) => bindsByColumn(i.sql, i.binds).step_number as number
+    );
+    expect(insertedIds).toEqual([1, 2]);
+    seed.storyIds = [ydoc.getArray<Y.Map<unknown>>("stories").get(0).get("_id") as number];
+    seed.stepIdsByStory = new Map([
+      [seed.storyIds[0], [chosen.get("_id") as number, neighbour.get("_id") as number]],
+    ]);
+    db.ops.length = 0;
+
+    // The author chooses page 7: the page is written and the framing cleared.
+    ydoc.transact(() => {
+      chosen.set("page", "7");
+      chosen.set("x", null);
+      chosen.set("y", null);
+      chosen.set("zoom", null);
+    }, null);
+    await snapshot(doInstance);
+
+    const updates = stepUpdates(db).map((s) => bindsByColumn(s.sql, s.binds));
+    expect(updates).toHaveLength(2);
+    const chosenRow = updates.find((u) => u.object_id === "manuscript-01")!;
+    expect(chosenRow.page).toBe("7");
+    expect(chosenRow.x).toBeNull();
+    expect(chosenRow.y).toBeNull();
+    expect(chosenRow.zoom).toBeNull();
+
+    // What D1 holds, published: the cleared framing takes the serializer's
+    // defaults, exactly as a step that was never captured publishes.
+    const after = serializeStory(updates.map(publishedRow), "seeded-s").csv;
+    const rows = parseTelarCsv(after);
+    expect(rows[0].page).toBe("7");
+    expect(rows[0].x).toBe("0.5");
+    expect(rows[0].y).toBe("0.5");
+    expect(rows[0].zoom).toBe("1");
+
+    // The neighbour was not touched, so its row is byte-identical across the edit.
+    const lineFor = (csv: string, question: string) =>
+      csv.split("\n").find((l) => l.includes(question));
+    expect(lineFor(after, "Second")).toBe(lineFor(before, "Second"));
+    expect(lineFor(after, "First")).not.toBe(lineFor(before, "First"));
   });
 });

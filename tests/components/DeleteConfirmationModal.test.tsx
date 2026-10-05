@@ -9,7 +9,7 @@
  * `confirmText`, no `destructiveColor`) still get the original
  * red button + Cancel-on-open focus.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -17,6 +17,8 @@ import { render, fireEvent, cleanup } from "@testing-library/react";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 
 vi.mock("react-i18next", () => ({
+  Trans: ({ i18nKey, values }: { i18nKey: string; values?: { value?: string } }) =>
+    i18nKey === "type_to_confirm_label" ? `Type ${values?.value} to confirm.` : i18nKey,
   useTranslation: () => ({
     t: (key: string, opts?: any) => {
       if (key === "delete_confirm_title") return `Delete ${opts?.label}?`;
@@ -25,7 +27,6 @@ vi.mock("react-i18next", () => ({
       if (key === "btn_undo_confirm") return "Undo";
       if (key === "delete_confirm_undo_title") return "Undo add?";
       if (key === "delete_confirm_undo_body") return "This will undo the add.";
-      if (key === "type_to_confirm_label") return `Type ${opts?.value} to confirm.`;
       if (key === "type_to_confirm_aria") return `Type ${opts?.value} to confirm`;
       if (key === "content_summary") return opts?.summary;
       if (key === "contributor_warning") return `Contains edits by ${opts?.names}`;
@@ -174,5 +175,35 @@ describe("DeleteConfirmationModal — destructiveColor", () => {
     const deleteBtn = getByText("Delete");
     expect(deleteBtn.className).toContain("bg-red-600");
     expect(deleteBtn.className).not.toContain("bg-terracotta");
+  });
+});
+
+describe("DeleteConfirmationModal — input label", () => {
+  it("names the type-to-confirm input with the caller's label when one is given", () => {
+    const { getByLabelText } = render(
+      <DeleteConfirmationModal
+        open
+        onClose={() => {}}
+        onConfirm={() => {}}
+        entityType="project"
+        entityLabel="owner/repo"
+        confirmText="owner/repo"
+        inputAriaLabel="Project title confirmation"
+      />,
+    );
+    expect((getByLabelText("Project title confirmation") as HTMLInputElement).tagName).toBe("INPUT");
+  });
+  it("falls back to the generic label when none is given", () => {
+    const { getByLabelText } = render(
+      <DeleteConfirmationModal
+        open
+        onClose={() => {}}
+        onConfirm={() => {}}
+        entityType="project"
+        entityLabel="owner/repo"
+        confirmText="owner/repo"
+      />,
+    );
+    expect((getByLabelText("Type owner/repo to confirm") as HTMLInputElement).tagName).toBe("INPUT");
   });
 });

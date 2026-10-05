@@ -8,20 +8,26 @@
  * cell, and an accepted alt_text change writes the RAW repo cell, not
  * mapObjectsCsv's title fallback.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("~/lib/github.server", () => ({
-  getFileContent: vi.fn(),
-  getFileAtRef: vi.fn(),
-  getRepoTree: vi.fn(),
-  getRepoHead: vi.fn(),
-  graphqlGitHub: vi.fn(),
-  githubHeaders: vi.fn(() => ({})),
-  decodeGitHubContent: vi.fn((s: string) => s),
-}));
+vi.mock("~/lib/github.server", async () => {
+  const { strictReadsFromFileContent } = await import("./helpers/strict-sheet-read");
+  const getFileContent = vi.fn();
+  return {
+    getFileContent,
+    // objects.csv is read strictly at the sync's head, from the file the case
+    // serves through getFileContent.
+    getFileAtRef: vi.fn(strictReadsFromFileContent(getFileContent, async () => ({ status: "absent" }))),
+    getRepoTree: vi.fn(),
+    getRepoHead: vi.fn(),
+    graphqlGitHub: vi.fn(),
+    githubHeaders: vi.fn(() => ({})),
+    decodeGitHubContent: vi.fn((s: string) => s),
+  };
+});
 
 import * as githubServer from "~/lib/github.server";
 import type { FullSyncDiff } from "~/lib/sync.server";
@@ -37,6 +43,9 @@ import {
 } from "./sync-probe-fixtures";
 
 const OBJECTS_PATH = "telar-content/spreadsheets/objects.csv";
+
+/** The owner who accepted the sync; the route resolves them server-side. */
+const SEAM_ACTOR_ID = 7;
 
 /** A minimal three-way diff whose only content is one changed object. */
 function diffWithChangedObject(
@@ -59,7 +68,7 @@ function diffWithChangedObject(
         },
       ],
       missingObjects: [],
-      unregisteredFiles: [],
+      unregisteredFiles: [], reordered: null,
     },
     stories: { newStories: [], changedStories: [], missingStories: [] },
     config: { changedFields: [], versionChange: null },
@@ -67,6 +76,7 @@ function diffWithChangedObject(
     hasConflicts: false,
     classification: "three-way",
     suppressedEditorOnly: 0,
+    unreadableFiles: [],
   };
 }
 
@@ -97,7 +107,7 @@ describe("apply seam — suppressed fields are never written through", () => {
     );
 
     const { payload } = await resolveFullSyncPayload(
-      PROJECT_ID, changes, TOKEN, OWNER, REPO, seamDb(),
+      PROJECT_ID, changes, TOKEN, OWNER, REPO, seamDb(), SEAM_ACTOR_ID,
     );
 
     expect(payload.objects.update).toHaveLength(1);
@@ -123,7 +133,7 @@ describe("apply seam — suppressed fields are never written through", () => {
     );
 
     const { payload } = await resolveFullSyncPayload(
-      PROJECT_ID, changes, TOKEN, OWNER, REPO, seamDb(),
+      PROJECT_ID, changes, TOKEN, OWNER, REPO, seamDb(), SEAM_ACTOR_ID,
     );
 
     const fields = payload.objects.update[0].fields as Record<string, unknown>;
@@ -149,7 +159,7 @@ describe("apply seam — suppressed fields are never written through", () => {
     );
 
     const { payload } = await resolveFullSyncPayload(
-      PROJECT_ID, changes, TOKEN, OWNER, REPO, seamDb(),
+      PROJECT_ID, changes, TOKEN, OWNER, REPO, seamDb(), SEAM_ACTOR_ID,
     );
 
     const fields = payload.objects.update[0].fields as Record<string, unknown>;

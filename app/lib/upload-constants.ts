@@ -1,20 +1,19 @@
 /**
  * Upload constants shared between client and server.
  *
- * Extracted from upload.server.ts so they can be imported by client
- * components without pulling in server-only dependencies (githubHeaders,
- * StaleHeadError) through tree-shaking boundaries.
+ * Separate from upload.server.ts so client components can import them without
+ * pulling in server-only dependencies (githubHeaders, StaleHeadError) through
+ * tree-shaking boundaries.
+ *
+ * Which file types may be uploaded is not here: it is one of the three
+ * questions `~/lib/file-types` answers, and client and server both read
+ * UPLOAD_ACCEPTED_MIME_TYPES from there.
  *
  * Exports:
- *   - ACCEPTED_TYPES: Set of allowed MIME types
  *   - MAX_SIZE_BYTES: maximum allowed file size (25 MB)
+ *
+ * @version v1.5.0-beta
  */
-
-/**
- * Accepted image MIME types for upload.
- * Validated client-side before upload and server-side before commit.
- */
-export const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/tiff"]);
 
 /**
  * Maximum allowed file size in bytes (25 MB).

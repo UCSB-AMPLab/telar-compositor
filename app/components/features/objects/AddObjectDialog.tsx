@@ -5,8 +5,12 @@
  *   - IIIF manifest   : two-step fetch → metadata flow (folded from AddIiifDialog),
  *                       sharing the metadata block; raises an IIIF confirm payload
  *                       extended with `year`.
- *   - Upload image    : the per-file staged-queue flow preserved as-is, hidden
- *                       for collaborators. Raises UploadImageConfirmPayload[].
+ *   - Upload image    : the per-file staged-queue flow preserved as-is, shown
+ *                       to convenor and collaborator, hidden from instructor
+ *                       and a caller with no project membership (`canUpload`,
+ *                       from `~/lib/publishing-roles`, shared with the server
+ *                       gate on the `upload-image` action). Raises
+ *                       UploadImageConfirmPayload[].
  *   - External media  : the shared metadata block + a single URL input with
  *                       ~250 ms debounced recognition via detectMediaType.
  *                       The recognised-state pill is TEXT ONLY — the user-entered
@@ -18,23 +22,38 @@
  * its own per-file metadata.
  *
  * The last-used tab persists to localStorage per project, SSR-safe (try/catch,
- * read-on-mount / write-on-change). The restored value is guarded against role
- * so a collaborator never lands on the Upload tab.
+ * read-on-mount / write-on-change). The restored value is guarded against
+ * `canUpload`, so a caller without it never lands on the Upload tab.
  *
  * Tab labels collapse to a <select> below ~520px via Tailwind prefixes.
  *
  * This dialog RAISES payloads via callback props; it does NOT call Yjs ops
  * directly (the route's handlers do that), mirroring the existing AddIiifDialog
  * / UploadImageDialog contract.
+ *
+ * The Upload tab previews only what `isBrowserRenderable` admits. Everything
+ * else gets FilePlaceholder and no object URL at all — see that component for
+ * why the narrow set is the safe one.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router";
 import { Upload, ChevronLeft, X } from "lucide-react";
 import { Dialog } from "~/components/ui/Dialog";
 import { slugify } from "~/lib/slugify";
 import { detectMediaType, type MediaType } from "~/lib/media-type";
-import { ACCEPTED_TYPES, MAX_SIZE_BYTES } from "~/lib/upload-constants";
+import { MAX_SIZE_BYTES } from "~/lib/upload-constants";
+import {
+  UPLOAD_ACCEPTED_MIME_TYPES,
+  UPLOAD_ACCEPT_ATTRIBUTE,
+  UPLOAD_ACCEPTED_FORMAT_LIST,
+  isBrowserRenderable,
+  formatLabelFor,
+  uploadFileExtension,
+} from "~/lib/file-types";
 import type { IiifFetchResult, IiifMetadata } from "~/lib/iiif-types";
 import type { UploadImageConfirmPayload } from "~/lib/upload-types";
 
@@ -73,8 +92,17 @@ interface Props {
   onClose: () => void;
   /** Project id — keys the per-project last-used-tab localStorage entry. */
   projectId: number | string;
-  /** Convenor gate — hides the Upload tab + guards the restored tab. */
-  isConvenor: boolean;
+  /** Publishing-role gate — hides the Upload tab + guards the restored
+   *  tab for a caller with no membership. */
+  canUpload: boolean;
+  /** Non-null disables the Upload tab's functional controls in place of
+   *  offering them and letting the server refuse the write — the tab stays
+   *  visible (canUpload is still true) with this reason shown instead of
+   *  the upload flow. Null when uploading is available. */
+  uploadDisabledReason: string | null;
+  /** Where the remedy for `uploadDisabledReason` happens, when it happens in
+   *  the Compositor. Null when the remedy is someone else's to perform. */
+  uploadDisabledAction?: { href: string; label: string } | null;
 
   // --- IIIF tab ---
   fetchResult: IiifFetchResult | null;
@@ -86,6 +114,9 @@ interface Props {
   onUploadConfirm: (payloads: UploadImageConfirmPayload[]) => void;
   isUploading: boolean;
   uploadError: string | null;
+  /** Where the remedy for `uploadError` happens, when the refusal has one the
+   *  reader can perform. Follows from the refusal itself, not the notice. */
+  uploadErrorAction?: { href: string; label: string } | null;
   existingObjectIds: string[];
 
   // --- External-media tab ---
@@ -104,11 +135,36 @@ const inputClass =
 // Component
 // ---------------------------------------------------------------------------
 
+/** The Upload tab's content on a site where uploading is unavailable. */
+function UploadDisabledNotice({
+  reason,
+  action,
+}: {
+  reason: string;
+  action?: { href: string; label: string } | null;
+}) {
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+      <p className="font-body text-sm text-amber-900">{reason}</p>
+      {action && (
+        <Link
+          to={action.href}
+          className="inline-block mt-2 font-heading font-semibold text-sm text-amber-900 underline underline-offset-2 hover:opacity-80"
+        >
+          {action.label}
+        </Link>
+      )}
+    </div>
+  );
+}
+
 export function AddObjectDialog({
   open,
   onClose,
   projectId,
-  isConvenor,
+  canUpload,
+  uploadDisabledReason,
+  uploadDisabledAction,
   fetchResult,
   onFetchUrl,
   onIiifConfirm,
@@ -116,6 +172,7 @@ export function AddObjectDialog({
   onUploadConfirm,
   isUploading,
   uploadError,
+  uploadErrorAction,
   existingObjectIds,
   onExternalConfirm,
   isAdding,
@@ -151,18 +208,18 @@ export function AddObjectDialog({
       if (stored === "iiif" || stored === "external") {
         setTab(stored);
       } else if (stored === "upload") {
-        // Guard: collaborators must never land on Upload — fall back.
-        setTab(isConvenor ? "upload" : "iiif");
+        // Guard: a caller without canUpload must never land on Upload.
+        setTab(canUpload ? "upload" : "iiif");
       }
     } catch {
       // localStorage unavailable (SSR / private mode) — keep the default tab.
     }
-  }, [open, projectId, isConvenor]);
+  }, [open, projectId, canUpload]);
 
   const selectTab = useCallback(
     (next: AddObjectTab) => {
-      // Defence-in-depth: never select Upload for a collaborator.
-      const safe = next === "upload" && !isConvenor ? "iiif" : next;
+      // Defence-in-depth: never select Upload without canUpload.
+      const safe = next === "upload" && !canUpload ? "iiif" : next;
       setTab(safe);
       try {
         localStorage.setItem(`${TAB_STORAGE_PREFIX}${projectId}`, safe);
@@ -170,7 +227,7 @@ export function AddObjectDialog({
         // Ignore storage errors.
       }
     },
-    [projectId, isConvenor]
+    [projectId, canUpload]
   );
 
   // -------------------------------------------------------------------------
@@ -376,7 +433,7 @@ export function AddObjectDialog({
 
   const tabs: { key: AddObjectTab; label: string }[] = [
     { key: "iiif", label: t("tab_iiif") },
-    ...(isConvenor ? [{ key: "upload" as const, label: t("tab_upload") }] : []),
+    ...(canUpload ? [{ key: "upload" as const, label: t("tab_upload") }] : []),
     { key: "external", label: t("tab_external") },
   ];
 
@@ -540,11 +597,18 @@ export function AddObjectDialog({
           </div>
         )}
 
-        {tab === "upload" && isConvenor && (
+        {tab === "upload" && canUpload && uploadDisabledReason && (
+          // Shown in place of the upload flow, not alongside a refusal after
+          // the fact — see uploadDisabledReason's own doc comment.
+          <UploadDisabledNotice reason={uploadDisabledReason} action={uploadDisabledAction} />
+        )}
+
+        {tab === "upload" && canUpload && !uploadDisabledReason && (
           <UploadTabBody
             onConfirm={onUploadConfirm}
             isUploading={isUploading}
             uploadError={uploadError}
+            uploadErrorAction={uploadErrorAction ?? null}
             existingObjectIds={existingObjectIds}
             onDirtyChange={setUploadDirty}
           />
@@ -640,19 +704,62 @@ const MAX_BATCH = 10;
 
 interface StagedImage {
   payload: UploadImageConfirmPayload;
-  previewUrl: string;
+  /** null for a file the browser is not asked to render — see FilePlaceholder. */
+  previewUrl: string | null;
+}
+
+/**
+ * Stand-in for a staged file the dialog does not render.
+ *
+ * Two constraints make this the shape rather than an `<img>` with a fallback.
+ * A PDF cannot render in an `<img>` at all and a TIFF renders in no browser but
+ * Safari, so an unconditional preview shows a broken image for formats upload
+ * accepts. And the only thing that would keep a rendered SVG safe is `<img>`'s
+ * restricted mode — a guarantee that would live entirely in an unwritten tag
+ * choice. Refusing to render anything outside BROWSER_RENDERABLE_EXTENSIONS,
+ * and never creating an object URL for it, makes "the Compositor never renders
+ * an author's own file" true by construction.
+ */
+function FilePlaceholder({
+  file,
+  className,
+  showName,
+}: {
+  file: File;
+  className: string;
+  showName: boolean;
+}) {
+  const { t } = useTranslation("objects");
+  const format = formatLabelFor(uploadFileExtension(file));
+  return (
+    <div
+      title={file.name}
+      className={`${className} flex flex-col items-center justify-center gap-0.5 rounded-lg border border-gray-200 bg-gray-50 px-1 text-center`}
+    >
+      <span className="font-body text-[10px] leading-tight text-gray-500">
+        {t("upload_preview_unavailable", { format })}
+      </span>
+      {showName && (
+        <span className="font-body text-[10px] leading-tight text-gray-400 w-full truncate">
+          {file.name}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function UploadTabBody({
   onConfirm,
   isUploading,
   uploadError,
+  uploadErrorAction,
   existingObjectIds,
   onDirtyChange,
 }: {
   onConfirm: (payloads: UploadImageConfirmPayload[]) => void;
   isUploading: boolean;
   uploadError: string | null;
+  uploadErrorAction: { href: string; label: string } | null;
   existingObjectIds: string[];
   onDirtyChange: (dirty: boolean) => void;
 }) {
@@ -694,7 +801,10 @@ function UploadTabBody({
   }, []);
 
   function loadFileForEditing(file: File) {
-    const url = URL.createObjectURL(file);
+    // No object URL is created for a file that will not be rendered: the
+    // placeholder needs none, and a URL that exists is a URL something can
+    // later be tempted to put in a tag.
+    const url = isBrowserRenderable(file) ? URL.createObjectURL(file) : null;
     setSelectedFile(file);
     setPreviewUrl(url);
     const nameWithoutExt = file.name.replace(/\.[^.]+$/, "");
@@ -719,8 +829,8 @@ function UploadTabBody({
     }
     const valid: File[] = [];
     for (const file of files) {
-      if (!ACCEPTED_TYPES.has(file.type)) {
-        setValidationError(t("upload_error_format"));
+      if (!UPLOAD_ACCEPTED_MIME_TYPES.has(file.type)) {
+        setValidationError(t("upload_error_format", { formats: UPLOAD_ACCEPTED_FORMAT_LIST }));
         return;
       }
       if (file.size > MAX_SIZE_BYTES) {
@@ -803,7 +913,9 @@ function UploadTabBody({
   }
 
   function handleAddToBatch() {
-    if (!selectedFile || !title.trim() || !previewUrl) return;
+    // No previewUrl condition: a file with no preview is still a file that may
+    // be staged and committed.
+    if (!selectedFile || !title.trim()) return;
     const payload: UploadImageConfirmPayload = {
       file: selectedFile,
       // Normalise the user-typed id — "Mission Bell #2" must become
@@ -836,7 +948,7 @@ function UploadTabBody({
   function handleRemoveStaged(index: number) {
     setStagedImages((prev) => {
       const removed = prev[index];
-      URL.revokeObjectURL(removed.previewUrl);
+      if (removed.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       const next = prev.filter((_, i) => i !== index);
       if (next.length === 0) setStep(1);
       return next;
@@ -906,7 +1018,9 @@ function UploadTabBody({
                 <Upload size={24} className="text-gray-400" />
                 <p className="font-body text-sm text-charcoal">{t("upload_drop_primary")}</p>
                 <p className="font-body text-xs text-gray-400">{t("upload_drop_secondary")}</p>
-                <p className="font-body text-xs text-gray-400 mt-1">{t("upload_drop_hint")}</p>
+                <p className="font-body text-xs text-gray-400 mt-1">
+                  {t("upload_drop_hint", { formats: UPLOAD_ACCEPTED_FORMAT_LIST })}
+                </p>
               </>
             )}
           </div>
@@ -914,7 +1028,7 @@ function UploadTabBody({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".jpg,.jpeg,.png,.tif,.tiff"
+            accept={UPLOAD_ACCEPT_ATTRIBUTE}
             multiple
             className="hidden"
             onChange={handleInputChange}
@@ -942,12 +1056,14 @@ function UploadTabBody({
             </p>
           )}
 
-          {previewUrl && (
+          {previewUrl ? (
             <img
               src={previewUrl}
               alt={title || selectedFile.name}
               className="w-24 h-24 object-cover rounded-lg border border-gray-200"
             />
+          ) : (
+            <FilePlaceholder file={selectedFile} className="w-24 h-24" showName />
           )}
 
           <div>
@@ -1087,11 +1203,22 @@ function UploadTabBody({
           </p>
           {stagedImages.map((staged, i) => (
             <div key={i} className="flex items-center gap-3 p-2 rounded-lg border border-gray-100">
-              <img
-                src={staged.previewUrl}
-                alt={staged.payload.title}
-                className="w-12 h-12 object-cover rounded border border-gray-200 flex-shrink-0"
-              />
+              {staged.previewUrl ? (
+                <img
+                  src={staged.previewUrl}
+                  alt={staged.payload.title}
+                  className="w-12 h-12 object-cover rounded border border-gray-200 flex-shrink-0"
+                />
+              ) : (
+                // The row already carries the file's title beside this box, so
+                // the placeholder shows the format only and keeps the name in
+                // its tooltip — 48px has no room for both.
+                <FilePlaceholder
+                  file={staged.payload.file}
+                  className="w-12 h-12 flex-shrink-0"
+                  showName={false}
+                />
+              )}
               <span className="font-body text-sm text-charcoal flex-1 truncate">
                 {staged.payload.title}
               </span>
@@ -1173,6 +1300,14 @@ function UploadTabBody({
 
         {uploadError && (
           <p className="font-body text-sm text-red-600 text-center w-full">{uploadError}</p>
+        )}
+        {uploadError && uploadErrorAction && (
+          <Link
+            to={uploadErrorAction.href}
+            className="block text-center font-heading font-semibold text-sm text-charcoal underline underline-offset-2 hover:opacity-80"
+          >
+            {uploadErrorAction.label}
+          </Link>
         )}
       </div>
     </div>

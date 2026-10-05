@@ -8,10 +8,11 @@
  *   - update-object action: alt_text persistence
  *   - commit-objects action: server-side URL recheck
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
+import type { Mock } from "vitest";
 import { deriveStatus } from "~/lib/iiif-types";
 import { generateUniqueObjectSlug } from "~/lib/slugify";
 import type { SiteUrlCheck } from "~/lib/commit.server";
@@ -231,8 +232,14 @@ async function simulateCommitObjectsUrlFix(opts: {
   formDisableSheets?: string;
   initialConfig: string | null;
   urlCheck: SiteUrlCheck;
-  getFileContent: ReturnType<typeof vi.fn>;
-  verifySiteUrl: ReturnType<typeof vi.fn>;
+  // Written out rather than left as the bare mock type: that type carries no
+  // call signature, so the calls below would not typecheck.
+  getFileContent: Mock<
+    (token: string, owner: string, repo: string, path: string) => Promise<string | null>
+  >;
+  verifySiteUrl: Mock<
+    (token: string, owner: string, repo: string, config: string) => Promise<SiteUrlCheck>
+  >;
 }) {
   // 1. Mirror the production reads. Note: fixUrl/pagesUrl from formData are
   //    DROPPED — only disableSheets remains client-driven.
@@ -533,7 +540,8 @@ describe("commit-objects action: route-file contract guards", () => {
   it("calls getFileContent(..., \"_config.yml\") exactly once inside `case \"commit-objects\"`", () => {
     const slice = commitObjectsCaseSlice(readObjectsRoute());
     const matches = slice.match(
-      /getFileContent\([^)]*["']_config\.yml["']\s*\)/g,
+      // A ref may follow the path: the action reads at the head it commits on.
+      /getFileContent\([^)]*["']_config\.yml["'](\s*,[^,)]+)?\s*\)/g,
     );
     expect(matches?.length ?? 0).toBe(1);
   });
