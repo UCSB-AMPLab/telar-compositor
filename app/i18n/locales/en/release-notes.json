@@ -1,21 +1,26 @@
 {
-  "v1_3_2_beta": {
-    "title": "What's improved",
+  "v1_5_0_beta": {
+    "title": "What's new",
     "features_label": "New features",
     "features": [
-      "An optional intro paragraph for your stories section"
+      "Course projects: students join with a code and share the course's objects, and instructors and staff have their own codes. Please contact us if you are an instructor and would like to try this feature.",
+      "A record of who made and wrote what in each project, which everyone in the project can see and download",
+      "Every member of a site can publish, upload objects and upgrade",
+      "The story editor shows each step as the published story will lay it out",
+      "Glossary entries have kinds, and a layer panel can show an entry as a callout beside the text",
+      "Change a story's or an object's ID, edit custom object fields, and upload audio, PDF and WEBP objects",
+      "Answers are measured in lines as you write, and layer panels have a Footnote button"
     ],
     "fixes_label": "Fixes",
     "fixes": [
-      "Object details like credit, source, and type now save reliably",
-      "Uploading images is more dependable — a failed upload can be retried safely, with no duplicates",
-      "Clearer messages when an image can't be uploaded, instead of a generic \"check your connection\"",
-      "Object handling is steadier — typed IDs are tidied automatically, and objects no longer briefly disappear after collaborative edits",
-      "Framework upgrades no longer stall when a GitHub permission is still pending"
+      "Edits made on GitHub are read before a publish instead of being overwritten",
+      "Published files keep their own columns, layout and front matter",
+      "Collaborators stay connected, and a save that fails comes back the next time you open the field",
+      "Upgrades list every change they make and leave your own settings alone"
     ],
-    "thanks_label": "Thanks to",
-    "thanks_suffix": "for reporting bugs and issues.",
-    "thanks_cta": "You can help us make Telar and the compositor better by reporting any issues you find too, using the bug button",
+    "thanks_label": "Thanks to the INT 138LA students at UCSB and the participants in the UT Austin workshop on September 14, and especially to",
+    "thanks_suffix": "for reporting bugs.",
+    "thanks_cta": "You can help us make Telar and the Compositor better by reporting any issues you find too, using the bug button",
     "dismiss": "Got it"
   }
 }
