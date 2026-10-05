@@ -17,8 +17,10 @@
  *   - a set suppression flag (Stories' reorder guard) fires nothing
  *   - first mount with a populated list fires nothing (no prior keys to diff)
  *   - several simultaneous deletions fire one toast each
+ *   - a different project's list (a new scope) fires nothing, and a removal
+ *     within the new scope still fires
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -37,7 +39,11 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: stableT }),
 }));
 
+import { readFileSync } from "fs";
+import { join } from "path";
+import * as Y from "yjs";
 import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
+import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 
 interface Row {
   id: number;
@@ -56,7 +62,7 @@ describe("useRemoteDeleteToast", () => {
 
   it("fires one generic destructive toast when an item disappears", () => {
     const { rerender } = renderHook(
-      ({ items }) => useRemoteDeleteToast({ items, enabled: true, getLabel }),
+      ({ items }) => useRemoteDeleteToast({ items, enabled: true, scope: 1, getLabel }),
       {
         initialProps: {
           items: [
@@ -83,7 +89,7 @@ describe("useRemoteDeleteToast", () => {
 
   it("fires nothing when a new item's id is backfilled (stable _tempId key)", () => {
     const { rerender } = renderHook(
-      ({ items }) => useRemoteDeleteToast({ items, enabled: true, getLabel }),
+      ({ items }) => useRemoteDeleteToast({ items, enabled: true, scope: 1, getLabel }),
       {
         initialProps: {
           // Freshly created: id 0, UUID _tempId.
@@ -99,7 +105,7 @@ describe("useRemoteDeleteToast", () => {
 
   it("fires nothing for a reorder-shaped change (same keys, new order) without a suppression flag", () => {
     const { rerender } = renderHook(
-      ({ items }) => useRemoteDeleteToast({ items, enabled: true, getLabel }),
+      ({ items }) => useRemoteDeleteToast({ items, enabled: true, scope: 1, getLabel }),
       {
         initialProps: {
           items: [
@@ -110,7 +116,7 @@ describe("useRemoteDeleteToast", () => {
         },
       },
     );
-    // A reorder swaps positions and — as cloneYMap does — hands back brand-new
+    // The old clone-based reorder swapped positions and handed back brand-new
     // object identities, but each carries the same _id and _tempId. keyFor keys
     // on _tempId, so the key set is unchanged and nothing reads as a deletion.
     // No suppressRef is passed: this pins that the guard is not load-bearing
@@ -129,7 +135,7 @@ describe("useRemoteDeleteToast", () => {
     const suppressRef = { current: true };
     const { rerender } = renderHook(
       ({ items }) =>
-        useRemoteDeleteToast({ items, enabled: true, getLabel, suppressRef }),
+        useRemoteDeleteToast({ items, enabled: true, scope: 1, getLabel, suppressRef }),
       {
         initialProps: {
           items: [
@@ -153,6 +159,7 @@ describe("useRemoteDeleteToast", () => {
           { id: 2, object_id: "b", title: "B", _tempId: "uuid-B" },
         ] as Row[],
         enabled: true,
+        scope: 1,
         getLabel,
       }),
     );
@@ -161,7 +168,7 @@ describe("useRemoteDeleteToast", () => {
 
   it("fires one toast per item for several simultaneous deletions", () => {
     const { rerender } = renderHook(
-      ({ items }) => useRemoteDeleteToast({ items, enabled: true, getLabel }),
+      ({ items }) => useRemoteDeleteToast({ items, enabled: true, scope: 1, getLabel }),
       {
         initialProps: {
           items: [
@@ -183,7 +190,7 @@ describe("useRemoteDeleteToast", () => {
 
   it("fires nothing when disabled, even as items change", () => {
     const { rerender } = renderHook(
-      ({ items }) => useRemoteDeleteToast({ items, enabled: false, getLabel }),
+      ({ items }) => useRemoteDeleteToast({ items, enabled: false, scope: 1, getLabel }),
       {
         initialProps: {
           items: [
@@ -196,4 +203,71 @@ describe("useRemoteDeleteToast", () => {
     rerender({ items: [{ id: 1, object_id: "a", title: "A", _tempId: "uuid-A" }] });
     expect(showToastMock).not.toHaveBeenCalled();
   });
+
+  it("fires nothing when the page's document is replaced by another project's, through the real array mirror", () => {
+    // The route's wiring: the list is mirrored from the document's array, and
+    // the document is the toast's scope, as the objects, stories and pages
+    // routes pass them.
+    const docA = new Y.Doc();
+    const docB = new Y.Doc();
+    for (const [id, title] of [["a", "Old A"], ["b", "Old B"]]) {
+      const m = new Y.Map<unknown>();
+      m.set("object_id", id);
+      m.set("title", title);
+      m.set("_temp_id", `uuid-${id}`);
+      docA.getArray<Y.Map<unknown>>("objects").push([m]);
+    }
+    const toRow = (m: Y.Map<unknown>, i: number): Row => ({
+      id: i,
+      object_id: m.get("object_id") as string,
+      title: m.get("title") as string,
+      _tempId: m.get("_temp_id") as string,
+    });
+    const { rerender } = renderHook(
+      ({ doc }) => {
+        const items = useYjsArraySync(doc.getArray<Y.Map<unknown>>("objects"), toRow);
+        useRemoteDeleteToast({ items: items ?? [], enabled: items !== null, scope: doc, getLabel });
+      },
+      { initialProps: { doc: docA } },
+    );
+    rerender({ doc: docB });
+    rerender({ doc: docB });
+    expect(showToastMock).not.toHaveBeenCalled();
+  });
+
+  it("fires nothing when the scope changes along with the list", () => {
+    const { rerender } = renderHook(
+      ({ items, scope }) => useRemoteDeleteToast({ items, enabled: true, scope, getLabel }),
+      {
+        initialProps: {
+          scope: 1,
+          items: [
+            { id: 1, object_id: "a", title: "A", _tempId: "uuid-A" },
+            { id: 2, object_id: "b", title: "B", _tempId: "uuid-B" },
+          ] as Row[],
+        },
+      },
+    );
+    // The other project's list shares no keys with the first.
+    rerender({ scope: 2, items: [{ id: 9, object_id: "z", title: "Z", _tempId: "uuid-Z" }] });
+    expect(showToastMock).not.toHaveBeenCalled();
+
+    // Within the new scope a removal is still a deletion.
+    rerender({ scope: 2, items: [] });
+    expect(showToastMock).toHaveBeenCalledOnce();
+    expect(showToastMock.mock.calls[0][0].message).toContain("Z");
+  });
+});
+
+// The routes are what pick the scope: a project id would arrive before the
+// project's document does, and the previous document's rows would then read
+// as deletions. Each list route must scope the hook to its document.
+describe("the list routes' scope for useRemoteDeleteToast", () => {
+  for (const route of ["_app.objects.tsx", "_app.stories.tsx", "_app.pages.tsx"]) {
+    it(`${route} scopes it to the shared document`, () => {
+      const src = readFileSync(join(__dirname, "..", "app", "routes", route), "utf-8");
+      const call = src.slice(src.indexOf("useRemoteDeleteToast({"), src.indexOf("useRemoteDeleteToast({") + 400);
+      expect(call).toContain("scope: ydoc,");
+    });
+  }
 });

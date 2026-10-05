@@ -7,17 +7,45 @@
  */
 
 import { Package } from "lucide-react";
+import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 
 interface ObjectsEmptyStateProps {
   onSync: () => void;
   onAddIiif: () => void;
+  /**
+   * The shared document has not synced yet, so an empty list means "not loaded",
+   * not "no objects". The invitations to sync or add are withheld.
+   */
+  awaitingSync?: boolean;
 }
 
-export function ObjectsEmptyState({ onSync, onAddIiif }: ObjectsEmptyStateProps) {
+/** Says why the loader's list is read-only until the shared document syncs. */
+export function ObjectsLoadingNote({ awaiting }: { awaiting: boolean }) {
   const { t } = useTranslation("objects");
+  if (!awaiting) return null;
+  return (
+    <p role="status" className="font-body text-sm text-gray-500 px-4 py-2 border-b border-gray-100">
+      {t("loading_state")}
+    </p>
+  );
+}
+
+export function ObjectsEmptyState({ onSync, onAddIiif, awaitingSync = false }: ObjectsEmptyStateProps) {
+  const { t } = useTranslation("objects");
+  const { t: tCommon } = useTranslation("common");
+
+  if (awaitingSync) {
+    return (
+      <div role="status" className="flex flex-col items-center justify-center py-20 text-center">
+        <span className="inline-block w-2 h-2 rounded-full bg-gray-300 animate-pulse mb-3" aria-hidden="true" />
+        <p className="font-body text-sm text-gray-500">{t("loading_state")}</p>
+      </div>
+    );
+  }
 
   return (
+    <>
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <div className="w-14 h-14 rounded-full bg-anil flex items-center justify-center mb-4">
         <Package className="w-6 h-6 text-charcoal" />
@@ -45,5 +73,18 @@ export function ObjectsEmptyState({ onSync, onAddIiif }: ObjectsEmptyStateProps)
         </button>
       </div>
     </div>
+    {/* Safety net: a low-key hint pointing a user who skipped onboarding back
+        to Site settings (/config) to finish setup. The empty_body copy names
+        Site settings inline; the trailing link is the navigable target. */}
+    <p className="font-body text-xs text-fg-muted text-center max-w-sm mx-auto -mt-12 mb-12">
+      {tCommon("objects.empty_body")}{" "}
+      <Link
+        to="/config"
+        className="font-semibold text-anil-ink hover:underline whitespace-nowrap"
+      >
+        {tCommon("nav.config")} →
+      </Link>
+    </p>
+    </>
   );
 }

@@ -18,10 +18,12 @@
  * snapshot UPDATE's bind list. If you add a column to pushObjectUpdate, add it
  * here (and to the test's canonical list) in the same change.
  *
- * @version v1.3.2-beta
+ * @version v1.5.0-beta
  */
 
 import * as Y from "yjs";
+import { ORDER_KEY } from "./field-order";
+import { applyCustomBlob } from "./object-custom-map";
 
 /** Collaboratively-edited text fields — stored as Y.Text so getYText() binds. */
 export const OBJECT_YTEXT_KEYS = [
@@ -75,6 +77,14 @@ export interface ObjectYMapFields {
   /** "pending" IIIF objects are skipped by the snapshot until validated. */
   validationState: "pending" | "valid";
   origin: string;
+  /**
+   * Where the object sorts — a fractional index (app/lib/order-key.ts), not a
+   * position. Required rather than defaulted: the only correct value depends on
+   * the array the object is about to join, which this factory cannot see, and a
+   * guessed one would silently land every new object at the head of the list.
+   * Callers mint it with `nextOrderKeyAfterLast(objectsArray)`.
+   */
+  orderKey: string;
 }
 
 /**
@@ -82,6 +92,11 @@ export interface ObjectYMapFields {
  * text fields as Y.Text (empty when not provided), passthroughs as plain
  * values — so the snapshot writes faithfully and every field is editable
  * immediately, without waiting for a DO reload to backfill missing keys.
+ *
+ * One deliberate exception: `course_project_id`. This factory builds objects a
+ * site makes for itself, and an unmarked object carries no marker key at all —
+ * absence, not a null value, is what "unmarked" means, and the delete gate
+ * reads it that way. Only the DO's preload ingest sets the key.
  */
 export function makeObjectYMap(fields: ObjectYMapFields): Y.Map<unknown> {
   const map = new Y.Map<unknown>();
@@ -108,5 +123,7 @@ export function makeObjectYMap(fields: ObjectYMapFields): Y.Map<unknown> {
   map.set("_validation_state", fields.validationState);
   map.set("origin", fields.origin);
   map.set("missing_from_repo", false);
+  map.set(ORDER_KEY, fields.orderKey);
+  applyCustomBlob(map, fields.extraColumns ?? "");
   return map;
 }
