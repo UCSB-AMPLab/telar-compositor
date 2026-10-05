@@ -31,7 +31,7 @@
  *   video     ← 9-5-video-audio.md      (/docs/the-compositor/video-audio/)
  *   sync      ← 9-7-sync-updates.md     (/docs/the-compositor/sync-updates/)
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 /** A single vendored doc slice. */
@@ -665,7 +665,7 @@ Cuando estés listo, el Compositor publica un sitio Telar completo en GitHub Pag
 
 ## Empieza aquí
 
-Ve a [compositor.telar.org](https://compositor.telar.org) e inicia sesión con tu cuenta de GitHub. El Compositor te pedirá instalar la aplicación Telar Compositor en GitHub — esto le da permiso para crear y administrar repositorios en tu nombre.
+Ve a [compositor.telar.org](https://compositor.telar.org) e inicia sesión con tu cuenta de GitHub. El Compositor te pedirá instalar la App de GitHub del Compositor de Telar. Al instalarla, le das permiso para crear y administrar repositorios en tu nombre.
 
 Una vez que hayas iniciado sesión, tienes dos opciones:
 
@@ -782,6 +782,8 @@ New to markdown? These resources will help:
 ## Panel Content Methods
 
 You can provide panel content in three ways:
+
+> The three methods that follow describe authoring in a spreadsheet. In the Compositor, the panel title has its own field, and anything pasted into the **Content** field — a \`---\` block included — is published as part of the panel's text, not read as a title.
 
 ### Method 1: Entering Text Directly
 

@@ -1,3 +1,9 @@
+// wrangler.jsonc
+//
+// The production Worker's bindings, and the template the staging config and
+// the workers project's own config are held against.
+//
+// @version v1.5.0-beta
 {
   "name": "telar-compositor",
   "compatibility_date": "2025-03-14",
@@ -23,6 +29,9 @@
   "migrations": [
     { "tag": "v1", "new_classes": ["ProjectCollaborationDO"] }
   ],
+  // The deployed version's id, tag and timestamp, so a diagnostic read can
+  // name the build the object is running.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "assets": {
     "run_worker_first": ["/ws/"]
   },
