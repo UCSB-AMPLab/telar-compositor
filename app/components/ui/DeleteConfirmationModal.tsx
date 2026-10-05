@@ -23,12 +23,13 @@
  * set, in which case focus moves to the type-to-confirm input so
  * the user can start typing immediately.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { useEscapeToClose } from "~/hooks/use-escape-to-close";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
 
 export type DeletableEntityType =
   | "story"
@@ -104,6 +105,12 @@ export interface DeleteConfirmationModalProps {
    * own ("Delete project" / "Leave project").
    */
   confirmLabel?: string;
+  /**
+   * Accessible name of the type-to-confirm input. Default is the generic
+   * `structural:type_to_confirm_aria`; a caller whose entity has its own
+   * wording passes it here.
+   */
+  inputAriaLabel?: string;
 }
 
 export function DeleteConfirmationModal({
@@ -121,12 +128,14 @@ export function DeleteConfirmationModal({
   bodyText,
   typeInstructionOverride,
   confirmLabel: confirmLabelOverride,
+  inputAriaLabel,
 }: DeleteConfirmationModalProps) {
   const { t } = useTranslation("structural");
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [typed, setTyped] = useState("");
 
+  useOverlayOpen(open);
   // Close on Escape
   useEscapeToClose((e) => {
     e.preventDefault();
@@ -220,11 +229,14 @@ export function DeleteConfirmationModal({
           <div className="mt-4">
             <label className="block">
               <span className="font-body text-sm text-charcoal">
-                {typeInstructionOverride ??
-                  t("type_to_confirm_label", {
-                    defaultValue: "Type {{value}} to confirm.",
-                    value: confirmText,
-                  })}
+                {typeInstructionOverride ?? (
+                  <Trans
+                    t={t}
+                    i18nKey="type_to_confirm_label"
+                    values={{ value: confirmText }}
+                    components={[<strong key="v" className="font-semibold" />]}
+                  />
+                )}
               </span>
               <input
                 ref={inputRef}
@@ -232,10 +244,7 @@ export function DeleteConfirmationModal({
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
                 className="mt-1 w-full rounded border border-gray-300 px-3 py-2 font-body text-sm text-charcoal"
-                aria-label={t("type_to_confirm_aria", {
-                  defaultValue: "Type {{value}} to confirm",
-                  value: confirmText,
-                })}
+                aria-label={inputAriaLabel ?? t("type_to_confirm_aria", { value: confirmText })}
                 autoComplete="off"
                 spellCheck={false}
               />

@@ -4,7 +4,7 @@
  * must NOT throw in those cases — it must resolve with empty
  * installations and repos so the repo-connect CTA remains reachable.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -98,7 +98,6 @@ function makeContext(opts: { userId: number }) {
         github_login: "tester",
         github_name: "Tester",
         github_email: null,
-        github_plan: "free",
         encrypted_access_token: "encrypted",
         created_at: null,
         ui_locale: null,
@@ -120,7 +119,6 @@ type LoaderData = {
     github_login: string;
     github_name: string | null;
     github_email: string | null;
-    github_plan: string | null;
   };
   repos: unknown[];
   installations: unknown[];

@@ -8,7 +8,7 @@
  * (D1 is the cross-browser source of truth for language), creates
  * the session, and redirects to /dashboard.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { redirect } from "react-router";
@@ -86,7 +86,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         github_login: githubUser.login,
         github_name: githubUser.name,
         github_email: githubUser.email,
-        github_plan: githubUser.plan,
         encrypted_access_token: encAccessToken,
         encrypted_refresh_token: encRefreshToken,
         access_token_expires_at: accessTokenExpiresAt,
@@ -104,7 +103,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         github_login: githubUser.login,
         github_name: githubUser.name,
         github_email: githubUser.email,
-        github_plan: githubUser.plan,
         last_seen_release: CURRENT_RELEASE.id,
         encrypted_access_token: encAccessToken,
         encrypted_refresh_token: encRefreshToken,

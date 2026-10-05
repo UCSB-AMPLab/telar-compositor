@@ -10,6 +10,7 @@
  */
 
 import { useRef, useState, useCallback, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 
 interface ClipTimelineProps {
   /** Total video duration in seconds */
@@ -37,6 +38,7 @@ export function ClipTimeline({
   clipEnd,
   onClipChange,
 }: ClipTimelineProps) {
+  const { t } = useTranslation("editor");
   const barRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<"start" | "end" | "region" | null>(null);
   const [dragOffset, setDragOffset] = useState(0);
@@ -170,12 +172,12 @@ export function ClipTimeline({
         </span>
         {showSaved && (
           <span className="font-mono text-xs text-qolle-deep">
-            ✓ Clip saved
+            ✓ {t("media.clip_saved")}
           </span>
         )}
         {!showSaved && hasClip && (
           <span className="font-mono text-xs text-charcoal/40">
-            {formatTime(localEnd - localStart)} clip
+            {t("media.clip_length", { duration: formatTime(localEnd - localStart) })}
           </span>
         )}
         <span className={`font-mono text-xs ${saved ? "text-qolle-deep" : "text-charcoal/50"}`}>

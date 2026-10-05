@@ -21,7 +21,7 @@
  * (never hardcoded hex); a neutral token background is used when a row has no
  * presence colour.
  *
- * @version v1.3.6-beta
+ * @version v1.5.0-beta
  */
 
 import { useTranslation } from "react-i18next";
@@ -101,7 +101,7 @@ function ActivityRow({
           style={bgStyle}
           aria-hidden="true"
         >
-          {initialsOf(row.actor_github_name)}
+          {initialsOf(row.actor_github_name || row.actor_github_login)}
         </span>
       </span>
 
