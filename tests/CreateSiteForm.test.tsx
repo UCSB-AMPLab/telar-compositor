@@ -70,6 +70,9 @@ const baseProps = {
   installationId: 42,
   onSelect: vi.fn(),
   onBack: vi.fn(),
+  // Unlocked: this file is about the identity form, and the gate only
+  // decides whether the kind choice above it renders.
+  kind: "site" as const,
 };
 
 describe("CreateSiteForm", () => {

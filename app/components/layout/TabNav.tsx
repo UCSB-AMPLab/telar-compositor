@@ -11,9 +11,12 @@
  * charcoal (active) text colour, so the bar reads as a clean uniform strip
  * rather than a row of per-content-type accent tints.
  *
- * The Publish tab is hidden from collaborators (the convenor-only publish
- * action is surfaced to them elsewhere); Start is always visible to both
- * roles. Save status lives in the Site Status pill in the header, not here.
+ * The Course tab is offered only where there is a course to run and the
+ * session has answered the course password; both are decided in the shell
+ * loader, since neither is knowable in the browser. The Publish tab is hidden
+ * from callers with no publishing role (`useIsPublisher`, the same gate the
+ * publish action's server side enforces); Start is always visible. Save
+ * status lives in the Site Status pill in the header, not here.
  * Presence dots: a coloured dot appears next to a tab label when a remote
  * collaborator is on that route.
  *
@@ -22,7 +25,7 @@
  * (structural) operations, distinct from the per-field undo inside text
  * editors.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -37,6 +40,7 @@ import {
   Upload,
   FileText,
   Globe,
+  GraduationCap,
   ArrowUpRight,
   Undo2,
   Redo2,
@@ -45,7 +49,7 @@ import {
 } from "lucide-react";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useUndoControls } from "~/hooks/use-undo-controls";
-import { useIsConvenor } from "~/hooks/use-role";
+import { useIsPublisher } from "~/hooks/use-role";
 
 interface Tab {
   key: string;
@@ -62,22 +66,38 @@ const tabs: Tab[] = [
   { key: "pages",    to: "/pages",    icon: FileText, labelKey: "nav.pages" },
   { key: "config",   to: "/config",   icon: Settings, labelKey: "nav.config" }, // label = "Site settings"
   { key: "publish",  to: "/publish",  icon: Upload,   labelKey: "nav.publish" },
+  // Rightmost, and conditional: a course is run from its own screen rather
+  // than from rights folded into the site tabs (ruling 16), so the tab is the
+  // one way in and is offered only where there is a course to run.
+  { key: "course",   to: "/course",   icon: GraduationCap, labelKey: "nav.course" },
 ];
 
 interface TabNavProps {
   className?: string;
   pagesUrl?: string | null;
+  /**
+   * Whether to offer the Course tab. Decided in the shell loader, which is
+   * the only place that can: it turns on both the password gate — a server
+   * value that never enters the client build — and whether there is a course
+   * to run at all.
+   */
+  showCourseTab?: boolean;
   /** Opens the shell DocsDrawer directly from the Docs link. */
   onOpenDoc?: (id: string) => void;
 }
 
-export function TabNav({ className = "", pagesUrl = null, onOpenDoc }: TabNavProps) {
+export function TabNav({
+  className = "",
+  pagesUrl = null,
+  showCourseTab = false,
+  onOpenDoc,
+}: TabNavProps) {
   const { t } = useTranslation("common");
   const { t: tCollab } = useTranslation("collaboration");
   const { t: tStructural } = useTranslation("structural");
   const { remoteCollaborators } = useCollaborationContext();
   const { canUndo, canRedo, undo, redo } = useUndoControls();
-  const isConvenor = useIsConvenor();
+  const isPublisher = useIsPublisher();
 
   // Horizontal-scroll affordance: when the tab strip overflows (narrow tablets
   // and phones, worse with longer Spanish labels) a right-edge fade signals
@@ -101,10 +121,13 @@ export function TabNav({ className = "", pagesUrl = null, onOpenDoc }: TabNavPro
     };
   }, [pagesUrl]);
 
-  // The Publish tab is hidden from collaborators (the "Ask convenor to
-  // publish" affordance lives in the Site Status popover instead). This is UX
-  // only — the server action stays convenor-gated.
-  const visibleTabs = tabs.filter((tab) => tab.key !== "publish" || isConvenor);
+  // The Publish tab is hidden from callers with no publishing role. This is UX
+  // only — the server action enforces the same `isPublishingRole` gate.
+  const visibleTabs = tabs.filter((tab) => {
+    if (tab.key === "publish") return isPublisher;
+    if (tab.key === "course") return showCourseTab;
+    return true;
+  });
 
   function getTabPresence(tabTo: string) {
     return remoteCollaborators.filter((c) => {

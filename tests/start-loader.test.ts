@@ -4,10 +4,11 @@
  * COUNT derivation.
  *
  * Covered behaviour:
- *   - Per-step COUNT derivation runs as independent count(*) queries via
- *     Promise.all: objects total + a single NOT EXISTS "unused" subquery,
- *     story total + story drafts (draft=true), terms, pages — never a
- *     5-term compound SELECT (D1 cap).
+ *   - Per-step COUNT derivation runs as independent queries via
+ *     Promise.all: objects total, the objects and the steps' object values
+ *     for the "unused" count (a step names its object as the published site
+ *     reads both, so `map` is a use of `map.jpg`), story total + story drafts
+ *     (draft=true), terms, pages — never a 5-term compound SELECT (D1 cap).
  *   - The Publish "N to ship" count is NOT recomputed here (the loader does
  *     not run the five-type unpublished spectrum); it is consumed from the
  *     _app shell loader's unpublishedCount by the page.
@@ -15,7 +16,7 @@
  *     /dashboard — no redirect loop).
  *   - The populated/empty state flag (empty = no objects, stories, pages).
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -35,6 +36,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("~/lib/membership.server", () => ({
   resolveActiveProject: mocks.resolveActiveProjectMock,
   getUserProjectsWithStats: mocks.getUserProjectsWithStatsMock,
+  // The real predicate: the mock stands in for the queries, not for the
+  // rule about which rows list.
+  listableProjects: (rows: Array<{ userRole: string; parent_project_id: number | null }>) =>
+    rows.filter((p) => !(p.userRole === "instructor" && p.parent_project_id != null)),
 }));
 
 vi.mock("~/lib/activity.server", () => ({
@@ -111,6 +116,7 @@ vi.mock("~/lib/db.server", () => {
       const result = resolveNext();
       const thenable = {
         limit: vi.fn(() => Promise.resolve(result)),
+        orderBy: vi.fn(() => Promise.resolve(result)),
         then: (onF: (v: unknown) => unknown) => Promise.resolve(result).then(onF),
       };
       return thenable;
@@ -127,7 +133,9 @@ vi.mock("~/lib/db.server", () => {
 });
 
 import { loader } from "../app/routes/_app.start";
+import { V121_BODIES, ACERCA_MD_FULL } from "~/lib/v130-ingest.server";
 import { userContext as userContextStub } from "~/middleware/auth.server";
+import { SheetUnreadableError } from "~/lib/unreadable-file.server";
 
 function makeContext(opts: { userId: number | null }) {
   const env = {
@@ -192,27 +200,37 @@ beforeEach(() => {
 });
 
 /**
- * Queue the seven loader queries' results in loader order:
- *   1 objects count, 2 objects-unused, 3 stories count, 4 story drafts,
- *   5 terms, 6 pages, 7 project_config row, 8 member rows.
+ * Queue the loader queries' results in loader order:
+ *   1 objects count, 2 object ids, 3 steps' object values, 4 stories count,
+ *   5 story drafts, 6 terms, 7 pages, 8 project_config row, 9 the pages that
+ *   could be the template's, 10 member rows.
+ * `objectsUnused` is met by `objects` ids of which that many have no step,
+ * unless the ids and the steps' values are given.
  */
 function queueCounts(opts: {
   objects: number;
   objectsUnused: number;
+  objectIds?: string[];
+  stepObjectIds?: Array<string | null>;
   stories: number;
   storyDrafts: number;
   terms: number;
   pages: number;
-  config?: { title: string | null; theme: string | null; google_sheets_enabled?: boolean } | null;
+  templatePages?: Array<{ slug: string; body: string }>;
+  config?: { title: string | null; theme: string | null; google_sheets_enabled?: boolean; telar_version?: string } | null;
   members?: Array<{ role: string; githubName: string | null; githubLogin: string }>;
 }) {
+  const objectIds = opts.objectIds ?? Array.from({ length: opts.objects }, (_, i) => `object-${i}`);
+  const stepObjectIds = opts.stepObjectIds ?? objectIds.slice(0, objectIds.length - opts.objectsUnused);
   dbState.queue.push([{ n: opts.objects }]);
-  dbState.queue.push([{ n: opts.objectsUnused }]);
+  dbState.queue.push(objectIds.map((object_id) => ({ object_id })));
+  dbState.queue.push(stepObjectIds.map((object_id) => ({ object_id })));
   dbState.queue.push([{ n: opts.stories }]);
   dbState.queue.push([{ n: opts.storyDrafts }]);
   dbState.queue.push([{ n: opts.terms }]);
   dbState.queue.push([{ n: opts.pages }]);
   dbState.queue.push(opts.config ? [opts.config] : []);
+  dbState.queue.push(opts.templatePages ?? []);
   dbState.queue.push(
     opts.members ?? [
       { role: "convenor", githubName: "Alice", githubLogin: "alice" },
@@ -221,7 +239,7 @@ function queueCounts(opts: {
 }
 
 describe("/start loader — per-step counts + state", () => {
-  it("derives objects 'N · U unused' via a single NOT EXISTS subquery", async () => {
+  it("derives objects 'N · U unused' from the objects no step of the project names", async () => {
     mocks.resolveActiveProjectMock.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
       userRole: "convenor",
@@ -232,11 +250,28 @@ describe("/start loader — per-step counts + state", () => {
 
     expect(data.counts.objects).toBe(10);
     expect(data.counts.objectsUnused).toBe(3);
-    // Exactly one of the recorded queries carries a NOT EXISTS subquery.
-    const notExistsQueries = dbState.selectCalls.filter((c) =>
-      c.sqlText.includes("NOT EXISTS"),
-    );
-    expect(notExistsQueries).toHaveLength(1);
+  });
+
+  it("counts a step naming map as a use of map.jpg, as the site reads it", async () => {
+    mocks.resolveActiveProjectMock.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
+      userRole: "convenor",
+    });
+    queueCounts({
+      objects: 2,
+      objectsUnused: 0,
+      objectIds: ["map.jpg", "colonial"],
+      stepObjectIds: ["map", null],
+      stories: 1,
+      storyDrafts: 0,
+      terms: 0,
+      pages: 0,
+      config: { title: "Site", theme: "default", telar_version: "1.7.0" },
+    });
+
+    const data = await callLoader(makeContext({ userId: 7 }));
+
+    expect(data.counts.objectsUnused).toBe(1);
   });
 
   it("does NOT recompute the Publish 'N to ship' five-type spectrum in this loader", async () => {
@@ -292,6 +327,38 @@ describe("/start loader — per-step counts + state", () => {
     expect(data.counts.configured).toBe(false);
   });
 
+  describe("pages the template ships", () => {
+    async function stateFor(pages: number, templatePages: Array<{ slug: string; body: string }>) {
+      mocks.resolveActiveProjectMock.mockResolvedValue({
+        project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
+        userRole: "convenor",
+      });
+      queueCounts({ objects: 0, objectsUnused: 0, stories: 0, storyDrafts: 0, terms: 0, pages, templatePages, config: null });
+      return callLoader(makeContext({ userId: 7 }));
+    }
+    const ACERCA_BODY = ACERCA_MD_FULL.replace(/^---\n[\s\S]*?\n---\n/, "");
+    const untouched = [
+      { slug: "about", body: V121_BODIES.about },
+      { slug: "acerca", body: ACERCA_BODY },
+    ];
+
+    it("still reads as empty when the only pages are the template's untouched ones", async () => {
+      const data = await stateFor(2, untouched);
+      expect(data.state).toBe("empty");
+      expect(data.counts.pages).toBe(2);
+    });
+
+    it("reads as populated once an author has written over a template page", async () => {
+      const data = await stateFor(1, [{ slug: "about", body: `${V121_BODIES.about}\n\nOur seminar.` }]);
+      expect(data.state).toBe("populated");
+    });
+
+    it("reads as populated when the site has a page that is not the template's", async () => {
+      const data = await stateFor(3, untouched);
+      expect(data.state).toBe("populated");
+    });
+  });
+
   it("flags state='populated' and configured=true when content + config exist", async () => {
     mocks.resolveActiveProjectMock.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
@@ -332,6 +399,58 @@ describe("/start loader — per-step counts + state", () => {
     expect(data.userRole).toBe("collaborator");
   });
 
+  it("excludes instructor rows from collaboratorCount (design §3 — staff, not group size)", async () => {
+    mocks.resolveActiveProjectMock.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
+      userRole: "convenor",
+    });
+    queueCounts({
+      objects: 5,
+      objectsUnused: 1,
+      stories: 3,
+      storyDrafts: 0,
+      terms: 2,
+      pages: 1,
+      config: { title: "My Site", theme: "default" },
+      members: [
+        { role: "convenor", githubName: "Alice", githubLogin: "alice" },
+        { role: "collaborator", githubName: "Bob", githubLogin: "bob" },
+        { role: "instructor", githubName: "Dana", githubLogin: "dana" },
+      ],
+    });
+
+    const data = await callLoader(makeContext({ userId: 7 }));
+
+    expect(data.convenorName).toBe("Alice");
+    // One collaborator + one instructor present, but the instructor must
+    // not count: 1, not 2.
+    expect(data.collaboratorCount).toBe(1);
+  });
+
+  it("a solo convenor's site with only an instructor row reports collaboratorCount = 0", async () => {
+    mocks.resolveActiveProjectMock.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
+      userRole: "convenor",
+    });
+    queueCounts({
+      objects: 0,
+      objectsUnused: 0,
+      stories: 0,
+      storyDrafts: 0,
+      terms: 0,
+      pages: 0,
+      config: null,
+      members: [
+        { role: "convenor", githubName: "Alice", githubLogin: "alice" },
+        { role: "instructor", githubName: "Dana", githubLogin: "dana" },
+      ],
+    });
+
+    const data = await callLoader(makeContext({ userId: 7 }));
+
+    expect(data.collaboratorCount).toBe(0);
+  });
+
   it("redirects a zero-project user to /onboarding (no /dashboard or /objects loop)", async () => {
     mocks.resolveActiveProjectMock.mockResolvedValue(null);
 
@@ -357,7 +476,7 @@ describe("/start loader — per-step counts + state", () => {
 
 type Plan04LoaderData = LoaderData & {
   activity: unknown[];
-  orphanStoryIds: string[];
+  orphanStoryCount: number;
   otherProjects: unknown[];
 };
 
@@ -422,10 +541,31 @@ describe("/start loader — activity + orphan gating + other projects", () => {
     const data = await callPlan04Loader(makeContext({ userId: 7 }));
 
     expect(mocks.scanRepoOrphanStoryIdsMock).toHaveBeenCalledTimes(1);
-    expect(data.orphanStoryIds).toEqual(["orphan-a", "orphan-b"]);
+    expect(data.orphanStoryCount).toBe(2);
+    expect("orphanStoryIds" in data).toBe(false);
   });
 
-  it("does NOT scan for orphans for a collaborator (orphanStoryIds stays [])", async () => {
+  it("scans for orphans on a site whose only pages are the template's, which reads as empty", async () => {
+    mocks.resolveActiveProjectMock.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
+      userRole: "convenor",
+    });
+    queueCounts({
+      objects: 0, objectsUnused: 0, stories: 0, storyDrafts: 0, terms: 0, pages: 1,
+      templatePages: [{ slug: "about", body: V121_BODIES.about }],
+      config: { title: "Site", theme: "default", google_sheets_enabled: false },
+    });
+    dbState.queue.push([]);
+    mocks.scanRepoOrphanStoryIdsMock.mockResolvedValue(["lost"]);
+
+    const data = await callPlan04Loader(makeContext({ userId: 7 }));
+
+    expect(data.state).toBe("empty");
+    expect(mocks.scanRepoOrphanStoryIdsMock).toHaveBeenCalledTimes(1);
+    expect(data.orphanStoryCount).toBe(1);
+  });
+
+  it("does NOT scan for orphans for a collaborator (orphanStoryCount stays 0)", async () => {
     mocks.resolveActiveProjectMock.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
       userRole: "collaborator",
@@ -435,10 +575,10 @@ describe("/start loader — activity + orphan gating + other projects", () => {
     const data = await callPlan04Loader(makeContext({ userId: 7 }));
 
     expect(mocks.scanRepoOrphanStoryIdsMock).not.toHaveBeenCalled();
-    expect(data.orphanStoryIds).toEqual([]);
+    expect(data.orphanStoryCount).toBe(0);
   });
 
-  it("does NOT scan for orphans in the empty state (orphanStoryIds stays [])", async () => {
+  it("does NOT scan for orphans in the empty state (orphanStoryCount stays 0)", async () => {
     mocks.resolveActiveProjectMock.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
       userRole: "convenor",
@@ -448,10 +588,10 @@ describe("/start loader — activity + orphan gating + other projects", () => {
     const data = await callPlan04Loader(makeContext({ userId: 7 }));
 
     expect(mocks.scanRepoOrphanStoryIdsMock).not.toHaveBeenCalled();
-    expect(data.orphanStoryIds).toEqual([]);
+    expect(data.orphanStoryCount).toBe(0);
   });
 
-  it("does NOT scan for orphans on a Sheets-backed project (orphanStoryIds stays [])", async () => {
+  it("does NOT scan for orphans on a Sheets-backed project (orphanStoryCount stays 0)", async () => {
     mocks.resolveActiveProjectMock.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
       userRole: "convenor",
@@ -461,7 +601,7 @@ describe("/start loader — activity + orphan gating + other projects", () => {
     const data = await callPlan04Loader(makeContext({ userId: 7 }));
 
     expect(mocks.scanRepoOrphanStoryIdsMock).not.toHaveBeenCalled();
-    expect(data.orphanStoryIds).toEqual([]);
+    expect(data.orphanStoryCount).toBe(0);
   });
 
   it("fails open to [] when the orphan scan throws", async () => {
@@ -475,6 +615,23 @@ describe("/start loader — activity + orphan gating + other projects", () => {
 
     const data = await callPlan04Loader(makeContext({ userId: 7 }));
 
-    expect(data.orphanStoryIds).toEqual([]);
+    expect(data.orphanStoryCount).toBe(0);
+  });
+
+  // The scan reads the ignore list strictly and refuses a failed read; the
+  // banner is a recovery affordance, so the front door shows none, and the
+  // restore reads the list again.
+  it("fails open to [] when the ignore list cannot be read", async () => {
+    mocks.resolveActiveProjectMock.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
+      userRole: "convenor",
+    });
+    queueCounts({ objects: 5, objectsUnused: 1, stories: 3, storyDrafts: 0, terms: 2, pages: 1, config: { title: "Site", theme: "default", google_sheets_enabled: false } });
+    dbState.queue.push([{ story_id: "s1" }]);
+    mocks.scanRepoOrphanStoryIdsMock.mockRejectedValue(new SheetUnreadableError(".compositor-ignored"));
+
+    const data = await callPlan04Loader(makeContext({ userId: 7 }));
+
+    expect(data.orphanStoryCount).toBe(0);
   });
 });

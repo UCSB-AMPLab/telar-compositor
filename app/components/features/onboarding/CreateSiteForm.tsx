@@ -12,10 +12,25 @@
  * identity helpers (`humanizeSlug`, `deriveSiteUrl`, theme metadata)
  * come from `~/lib/site-identity`.
  *
+ * Two of the fields are not about the repo. What is being created — a site
+ * or a course — and, for a site, the class code that joins it to a course
+ * both belong to the project row rather than to provisioning, so they are
+ * withheld from the `create-site` intent and travel instead on the repo
+ * handed to `onSelect`, the channel `origin` already uses. The import that
+ * follows is the only code that inserts a project row, and it is where both
+ * are spent.
+ *
+ * Only the first of those two is gated. A session that has not answered the
+ * course password is offered no course choice and the prompt instead; the
+ * class code is offered regardless, because entering one is joining a course
+ * rather than running one (ruling 20). Hiding the choice is presentation —
+ * the import action refuses a course on its own standing, so a form posting
+ * one anyway gains nothing.
+ *
  * Theme token: uses the `anil` accent (matches existing
  * `StepConnect` usage).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -32,12 +47,16 @@ import {
   type ThemeId,
 } from "~/lib/site-identity";
 import type { RepoWithInstallation } from "~/routes/onboarding";
+import type { ProjectKind } from "~/lib/import.server";
 
 interface CreateSiteFormProps {
   owner: string;
   installationId: number;
   onSelect: (repo: RepoWithInstallation) => void;
   onBack: () => void;
+  /** Whether this session has answered the course password. */
+  /** Decided on the previous screen, where the kinds are offered. */
+  kind: ProjectKind;
   className?: string;
 }
 
@@ -96,11 +115,13 @@ export function CreateSiteForm({
   installationId,
   onSelect,
   onBack,
+  kind,
   className = "",
 }: CreateSiteFormProps) {
   const { t, i18n } = useTranslation(["onboarding", "account"]);
 
   const [name, setName] = useState("");
+  const [courseCode, setCourseCode] = useState("");
   // Site identity collected up front (Screen 1). Title prefills from the
   // humanized slug until the user edits it; language defaults to the UI locale;
   // theme defaults to the template's `trama`; author defaults to the owner.
@@ -199,6 +220,18 @@ export function CreateSiteForm({
     }
   }, [availabilityFetcher.data, name]);
 
+  /**
+   * The two fields the import needs and provisioning does not. Both handoffs
+   * — the ordinary one and the one behind the grant-access prompt — build
+   * their repo from this, so the second can never drop what the first
+   * carried. An empty code is omitted rather than sent as "", so the action
+   * has one absence to test for.
+   */
+  const courseHandoffFields = (): Pick<RepoWithInstallation, "kind" | "courseCode"> => {
+    const code = kind === "site" ? courseCode.trim() : "";
+    return { kind, ...(code ? { courseCode: code } : {}) };
+  };
+
   // React to create-site fetcher responses in progress view.
   useEffect(() => {
     const data = createFetcher.data;
@@ -244,6 +277,7 @@ export function CreateSiteForm({
         installationId,
         createdThisRun: true,
         bornClean: createData.bornCleanOk === true,
+        ...courseHandoffFields(),
       };
       // Hold on the progress view if the language patch soft-failed so the
       // amber warning is actually readable. User confirms via "Continue".
@@ -490,6 +524,7 @@ export function CreateSiteForm({
                   installationId,
                   createdThisRun: true,
                   bornClean: createData.bornCleanOk === true,
+                  ...courseHandoffFields(),
                 };
                 onSelect(syntheticRepo);
               }}
@@ -512,10 +547,11 @@ export function CreateSiteForm({
   return (
     <div className={className}>
       <h3 className="font-heading font-semibold text-lg text-charcoal mb-4">
-        {t("create_site.form.title")}
+        {t(kind === "course" ? "create_site.form.title_course" : "create_site.form.title")}
       </h3>
 
       <form onSubmit={handleSubmit} className="space-y-4">
+
         <div>
           <label
             htmlFor="create-site-name"
@@ -693,6 +729,29 @@ export function CreateSiteForm({
           )}
         </div>
 
+        {/* Class code. Offered only when a site is being created: a course
+            cannot join a course, and the redemption would be refused with
+            `not_a_site` if it could be entered here. */}
+        {kind === "site" && (
+          <div>
+            <label htmlFor="create-site-course-code" className="block font-body text-sm text-charcoal mb-1">
+              {t("create_site.form.course_code_label")}
+            </label>
+            <input
+              id="create-site-course-code"
+              type="text"
+              value={courseCode}
+              onChange={(e) => setCourseCode(e.target.value)}
+              placeholder={t("create_site.form.course_code_placeholder") as string}
+              autoComplete="off"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-body text-charcoal placeholder-gray-400"
+            />
+            <p className="mt-1 font-body text-xs text-gray-500">
+              {t("create_site.form.course_code_hint")}
+            </p>
+          </div>
+        )}
+
         {/* Live URL preview. */}
         {name && (
           <div className="rounded-lg bg-cream-dark/60 px-3 py-2">
@@ -712,7 +771,7 @@ export function CreateSiteForm({
             loading={nameState.kind === "checking"}
             disabled={nameState.kind !== "available"}
           >
-            {t("create_site.form.submit")}
+            {t(kind === "course" ? "create_site.form.submit_course" : "create_site.form.submit")}
           </Button>
           <button
             type="button"

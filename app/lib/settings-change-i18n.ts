@@ -8,9 +8,13 @@
  * Value-dependent entries pick a variant:
  *  - `lang` → `change_language_to_<en|es>` (target language carried in `label`)
  *  - `collection_mode` → `change_collection_mode_<on|off>` (carried in `label`)
+ *  - `skip_stories` → `change_skip_stories_<on|off>` (carried in `label`): the
+ *    field publishes under `development-features:` but its copy is named for
+ *    the setting, so the summary reports it under the bare field name
  *  - nested boolean block fields (`story_interface.*`, `collection_interface.*`)
  *    → `change_<slug>_<on|off>`, chosen from the post-change boolean `value`
- *  - nested non-boolean block fields (e.g. `featured_count`) → `change_<slug>`
+ *  - nested non-boolean block fields (e.g. `featured_count`) → `change_<slug>`;
+ *    `glossary.kinds` is one, its value a JSON list → `change_glossary_kinds`
  *  - everything else (`title`, `url`, `telar_theme`, …) → `change_<key>`
  *
  * Dots are flattened to underscores: i18next treats "." as a key separator, so
@@ -19,7 +23,7 @@
  * the `SETTINGS_CHANGE_FALLBACK_KEY` string so an unmapped future field degrades
  * to "update a setting" instead of leaking a raw key into a commit message.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 export interface SettingsChangeEntry {
   key: string;
@@ -33,6 +37,7 @@ export function settingsChangeI18nKey(entry: SettingsChangeEntry): string {
   const { key, label, value } = entry;
   if (key === "lang") return `change_language_to_${label ?? ""}`;
   if (key === "collection_mode") return `change_collection_mode_${label ?? ""}`;
+  if (key === "skip_stories") return `change_skip_stories_${label ?? ""}`;
   if (key.includes(".")) {
     const slug = key.replace(/\./g, "_");
     if (value === "true" || value === "false") {

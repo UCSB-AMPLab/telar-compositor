@@ -10,7 +10,7 @@
  * RouterContext stub; assert on the recorded mock calls and the action's
  * return value.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -25,9 +25,20 @@ const mocks = vi.hoisted(() => ({
   deleteProjectCascadeMock: vi.fn(),
   getUserProjectsWithStatsMock: vi.fn(),
   listUserInstallationsMock: vi.fn(),
+  // leave-project's instructor-on-child exit refusal. Defaults keep every
+  // existing leave-project test on its prior behaviour (not instructor, not
+  // refused); the dedicated describe block below overrides them per-case.
+  getUserRoleMock: vi.fn(
+    async (): Promise<"convenor" | "collaborator" | "instructor" | null> =>
+      "collaborator",
+  ),
+  isMembershipExitRefusedMock: vi.fn(async () => false),
   // delete-account intent additions.
-  dbBatchMock: vi.fn(async () => undefined),
-  dbSelectMock: vi.fn(),
+  // The batch's results in order; the first is the memberships deleted.
+  dbBatchMock: vi.fn(async (): Promise<unknown> => [[]]),
+  // A SELECT answers with rows, and an empty set when a test has not said
+  // otherwise — never undefined, which D1 does not return.
+  dbSelectMock: vi.fn((): unknown[] => []),
   destroySessionMock: vi.fn(
     async () => "__compositor_session=; Max-Age=0; Path=/; HttpOnly",
   ),
@@ -43,6 +54,8 @@ vi.mock("~/lib/membership.server", () => ({
   requireOwner: mocks.requireOwnerMock,
   requireProjectMember: mocks.requireProjectMemberMock,
   getUserProjectsWithStats: mocks.getUserProjectsWithStatsMock,
+  getUserRole: mocks.getUserRoleMock,
+  isMembershipExitRefused: mocks.isMembershipExitRefusedMock,
 }));
 
 vi.mock("~/lib/import.server", () => ({
@@ -61,9 +74,11 @@ vi.mock("~/lib/github.server", () => ({
 // thenable-on-await AND carries a .toSQL() method whose .sql string
 // includes the table name (so Test E can assert FK ordering).
 function makeDeleteBuilder(table: string) {
-  const builder = {
+  const builder: Record<string, unknown> = {
     table,
     toSQL: () => ({ sql: `delete from ${table}`, params: [] }),
+    // The membership delete names the rows it removed.
+    returning: () => builder,
     // Thenable so `await db.delete(...).where(...)` (the leave-project path)
     // still resolves cleanly without firing the batch.
     then: (resolve: (v: undefined) => unknown) => resolve(undefined),
@@ -87,6 +102,19 @@ vi.mock("~/lib/db.server", () => ({
       const name = getDrizzleTableName(t);
       return {
         where: vi.fn(() => makeDeleteBuilder(name)),
+      };
+    }),
+    // A membership's end records its repository access for withdrawal.
+    insert: vi.fn((t: unknown) => ({
+      select: vi.fn(() => ({ ...makeDeleteBuilder(getDrizzleTableName(t)), toSQL: () => ({ sql: `insert into ${getDrizzleTableName(t)}`, params: [] }) })),
+    })),
+    // delete-account turns the users row into a tombstone rather than deleting it.
+    update: vi.fn((t: unknown) => {
+      const name = getDrizzleTableName(t);
+      return {
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({ ...makeDeleteBuilder(name), toSQL: () => ({ sql: `update ${name}`, params: [] }) })),
+        })),
       };
     }),
     // delete-account race-guard SELECT — chainable .from().where() that
@@ -200,7 +228,7 @@ beforeEach(() => {
 describe("/account action — delete-project intent", () => {
   it("convenor: cascades D1 (deleteProjectCascade) then RPCs DO /notify-deleted; returns { ok: true, intent: 'delete-project' }", async () => {
     requireOwnerMock.mockResolvedValue(undefined);
-    deleteProjectCascadeMock.mockResolvedValue(undefined);
+    deleteProjectCascadeMock.mockResolvedValue([]);
     const ctx = makeContext({ userId: 7 });
     const req = makeFormRequest({ intent: "delete-project", projectId: "42" });
 
@@ -246,7 +274,7 @@ describe("/account action — delete-project intent", () => {
 
   it("DO RPC failure does not roll back D1 cascade (acceptable degradation)", async () => {
     requireOwnerMock.mockResolvedValue(undefined);
-    deleteProjectCascadeMock.mockResolvedValue(undefined);
+    deleteProjectCascadeMock.mockResolvedValue([]);
     const ctx = makeContext({
       userId: 7,
       doResponse: async () => {
@@ -340,6 +368,66 @@ describe("/account action — leave-project intent", () => {
     };
 
     expect(res.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// leave-project intent — instructor-on-child exit refusal (design §5)
+// ---------------------------------------------------------------------------
+
+describe("/account action — leave-project intent refuses instructor-on-child exits", () => {
+  it("instructor on a project with a parent: refused before any row is deleted, no DO RPC", async () => {
+    requireProjectMemberMock.mockResolvedValue(undefined);
+    mocks.getUserRoleMock.mockResolvedValueOnce("instructor");
+    mocks.isMembershipExitRefusedMock.mockResolvedValueOnce(true);
+    const ctx = makeContext({ userId: 7 });
+    const req = makeFormRequest({ intent: "leave-project", projectId: "42" });
+
+    const res = (await action({ request: req, context: ctx } as never)) as {
+      ok: boolean;
+      intent: string;
+      error?: string;
+    };
+
+    expect(res.ok).toBe(false);
+    expect(res.intent).toBe("leave-project");
+    expect(res.error).toBe("instructor_on_child");
+    expect(doFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("instructor on a project with NO parent (e.g. the course project itself): leave proceeds normally", async () => {
+    requireProjectMemberMock.mockResolvedValue(undefined);
+    mocks.getUserRoleMock.mockResolvedValueOnce("instructor");
+    mocks.isMembershipExitRefusedMock.mockResolvedValueOnce(false);
+    const ctx = makeContext({ userId: 7 });
+    const req = makeFormRequest({ intent: "leave-project", projectId: "42" });
+
+    const res = (await action({ request: req, context: ctx } as never)) as {
+      ok: boolean;
+      intent: string;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(res.intent).toBe("leave-project");
+    expect(doFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("collaborator on a project with a parent: never refused (only instructor rows are checked)", async () => {
+    requireProjectMemberMock.mockResolvedValue(undefined);
+    mocks.getUserRoleMock.mockResolvedValueOnce("collaborator");
+    // isMembershipExitRefused's own contract returns false for any
+    // non-instructor role; the mock mirrors that here.
+    mocks.isMembershipExitRefusedMock.mockResolvedValueOnce(false);
+    const ctx = makeContext({ userId: 7 });
+    const req = makeFormRequest({ intent: "leave-project", projectId: "42" });
+
+    const res = (await action({ request: req, context: ctx } as never)) as {
+      ok: boolean;
+      intent: string;
+    };
+
+    expect(res.ok).toBe(true);
+    expect(res.intent).toBe("leave-project");
   });
 });
 
@@ -444,12 +532,13 @@ describe("/account action — unknown intent", () => {
 describe("/account action — delete-account intent", () => {
   beforeEach(() => {
     mocks.dbBatchMock.mockReset();
-    mocks.dbBatchMock.mockResolvedValue(undefined);
+    mocks.dbBatchMock.mockResolvedValue([[], []]);
     mocks.dbSelectMock.mockReset();
+    mocks.dbSelectMock.mockReturnValue([]);
     mocks.destroySessionMock.mockClear();
     mocks.getSessionMock.mockClear();
     mocks.deleteProjectCascadeMock.mockReset();
-    mocks.deleteProjectCascadeMock.mockResolvedValue(undefined);
+    mocks.deleteProjectCascadeMock.mockResolvedValue([]);
   });
 
   it("happy path: race-guard sees 0 convened projects → batch(4) → 302 redirect + Set-Cookie", async () => {
@@ -471,9 +560,8 @@ describe("/account action — delete-account intent", () => {
     // Set-Cookie is whatever destroySession returned.
     expect(r.headers.get("Set-Cookie")).toContain("Max-Age=0");
 
-    // batch called exactly once with four operations (invites, members,
-    // activity_log, users — activity_log added to unblock FK violation on
-    // actor_user_id → users).
+    // batch called exactly once with four operations: the withdrawals, the
+    // memberships, the redemption attempts, and the account row made a tombstone.
     expect(mocks.dbBatchMock).toHaveBeenCalledTimes(1);
     const ops = (mocks.dbBatchMock.mock.calls[0] as unknown as [
       Array<{ toSQL: () => { sql: string } }>,
@@ -558,7 +646,7 @@ describe("/account action — delete-account intent", () => {
     expect(mocks.destroySessionMock).not.toHaveBeenCalled();
   });
 
-  it("FK ordering: batch ops are passed in [project_invites, project_members, activity_log, users] order", async () => {
+  it("batch order: the withdrawals are recorded, the memberships and redemption attempts go, then the account becomes a tombstone; activity stays", async () => {
     mocks.dbSelectMock.mockReturnValueOnce([]).mockReturnValueOnce([]);
     const ctx = makeContext({ userId: 7 });
     const req = makeFormRequest({ intent: "delete-account" });
@@ -571,13 +659,30 @@ describe("/account action — delete-account intent", () => {
     ])[0];
     expect(ops).toHaveLength(4);
 
-    // Per-index SQL substring assertions. A misordered cascade MUST fail
-    // this test (project_invites, project_members, and activity_log all
-    // FK-reference users.id, so users MUST be the last op).
-    expect(ops[0].toSQL().sql).toMatch(/project_invites/i);
-    expect(ops[1].toSQL().sql).toMatch(/project_members/i);
-    expect(ops[2].toSQL().sql).toMatch(/activity_log/i);
-    expect(ops[3].toSQL().sql).toMatch(/\busers\b/i);
+    // The withdrawals read the memberships, so they come before the delete;
+    // the memberships go before the row is marked, since migration 0057
+    // refuses any membership naming a tombstone. The account's activity is
+    // the projects' history and is not deleted.
+    expect(ops[0].toSQL().sql).toMatch(/insert into repo_access_withdrawals/i);
+    expect(ops[1].toSQL().sql).toMatch(/delete from project_members/i);
+    expect(ops[2].toSQL().sql).toMatch(/delete from code_redemption_attempts/i);
+    expect(ops[3].toSQL().sql).toMatch(/^update users$/i);
+    for (const op of ops) expect(op.toSQL().sql).not.toMatch(/activity_log/i);
+  });
+
+  it("does not delete invites by created_by/used_by — the FKs clear attribution themselves", async () => {
+    mocks.dbSelectMock.mockReturnValueOnce([]).mockReturnValueOnce([]);
+    const ctx = makeContext({ userId: 7 });
+    const req = makeFormRequest({ intent: "delete-account" });
+
+    await action({ request: req, context: ctx } as never);
+
+    const ops = (mocks.dbBatchMock.mock.calls[0] as unknown as [
+      Array<{ toSQL: () => { sql: string } }>,
+    ])[0];
+    for (const op of ops) {
+      expect(op.toSQL().sql).not.toMatch(/project_invites/i);
+    }
   });
 });
 
@@ -588,12 +693,13 @@ describe("/account action — delete-account intent", () => {
 describe("/account action — delete-account intent (solo-cascade)", () => {
   beforeEach(() => {
     mocks.dbBatchMock.mockReset();
-    mocks.dbBatchMock.mockResolvedValue(undefined);
+    mocks.dbBatchMock.mockResolvedValue([[], []]);
     mocks.dbSelectMock.mockReset();
+    mocks.dbSelectMock.mockReturnValue([]);
     mocks.destroySessionMock.mockClear();
     mocks.getSessionMock.mockClear();
     mocks.deleteProjectCascadeMock.mockReset();
-    mocks.deleteProjectCascadeMock.mockResolvedValue(undefined);
+    mocks.deleteProjectCascadeMock.mockResolvedValue([]);
   });
 
   it("(a): zero solo projects — deleteProjectCascade never called; main batch fires once", async () => {

@@ -17,7 +17,7 @@
  * Copy guard: only the user's real `github_repo_full_name` from the loader is
  * rendered. No mock/placeholder repo or owner names.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 import { useState } from "react";
@@ -28,7 +28,7 @@ import { useTranslation } from "react-i18next";
 export interface ProjectSwitcherProject {
   id: number;
   github_repo_full_name: string;
-  userRole: "convenor" | "collaborator";
+  userRole: "convenor" | "collaborator" | "instructor";
   ownerLogin?: string;
   /** Members excluding the owner. When 0, the role badge is hidden — the
    * Convenor/Collaborator distinction has no meaning on a solo project. */
@@ -44,13 +44,18 @@ export interface ProjectSwitcherProps {
   className?: string;
 }
 
-/** Per-project role badge — caracol for convenor, cream-dark for collaborator. */
-function RoleBadge({ role }: { role: "convenor" | "collaborator" }) {
+/**
+ * Per-project role badge — caracol for convenor, amber for instructor,
+ * cream-dark for collaborator.
+ */
+function RoleBadge({ role }: { role: "convenor" | "collaborator" | "instructor" }) {
   const { t } = useTranslation("common");
   const cls =
     role === "convenor"
       ? "bg-caracol-pale text-caracol"
-      : "bg-cream-dark text-charcoal";
+      : role === "instructor"
+        ? "bg-amber-100 text-amber-800"
+        : "bg-cream-dark text-charcoal";
   return (
     <span
       className={`inline-flex items-center font-heading font-semibold uppercase rounded-pill ${cls}`}
@@ -82,11 +87,11 @@ export function ProjectSwitcher({
   };
 
   return (
-    <div className={`relative min-w-0 ${className}`}>
+    <div className={`relative flex min-w-0 ${className}`}>
       <button
         type="button"
         onClick={() => setInternalOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 font-mono text-xs text-white hover:bg-white/20 transition-colors max-w-[140px] sm:max-w-[220px]"
+        className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 font-mono text-xs text-white hover:bg-white/20 transition-colors min-w-0 max-w-[140px] sm:max-w-[220px]"
         aria-haspopup="true"
         aria-expanded={dropdownOpen}
       >

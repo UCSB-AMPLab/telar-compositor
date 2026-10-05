@@ -15,7 +15,7 @@
  * in workers/collaboration.ts pushObjectUpdate), with Y.Text for
  * collaboratively-edited text fields and plain values for passthroughs.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -62,11 +62,28 @@ describe("makeObjectYMap", () => {
         objectId: "test-object",
         validationState: "valid",
         origin: "compositor",
+        orderKey: "a01",
       })
     );
     for (const col of SNAPSHOT_UPDATE_COLUMNS) {
       expect(map.has(col), `factory must set "${col}" — an absent key is erased in D1 by the next snapshot`).toBe(true);
     }
+  });
+
+  it("never sets the course marker — a site-made object is unmarked", () => {
+    // The one column the factory deliberately leaves alone. Absence, not a
+    // null value, is what "this site made it" means, and the delete gate reads
+    // it that way; setting the key here would mark every new object as
+    // undeletable course content.
+    const map = attach(
+      makeObjectYMap({
+        objectId: "site-made",
+        validationState: "valid",
+        origin: "compositor",
+        orderKey: "a01",
+      }),
+    );
+    expect(map.has("course_project_id")).toBe(false);
   });
 
   it("exports key lists that exactly cover the snapshot UPDATE columns", () => {
@@ -88,6 +105,7 @@ describe("makeObjectYMap", () => {
         objectType: "map",
         subjects: "cartography",
         altText: "A described map",
+        orderKey: "a01",
       })
     );
     for (const key of OBJECT_YTEXT_KEYS) {
@@ -108,6 +126,7 @@ describe("makeObjectYMap", () => {
         origin: "repo",
         title: "Title",
         altText: "Real alt text",
+        orderKey: "a01",
       })
     );
     expect((map.get("alt_text") as Y.Text).toString()).toBe("Real alt text");
@@ -122,6 +141,7 @@ describe("makeObjectYMap", () => {
         objectId: "obj-1",
         validationState: "pending",
         origin: "iiif",
+        orderKey: "a01",
       })
     );
     expect(map.get("_id")).toBe(42);
@@ -135,7 +155,7 @@ describe("makeObjectYMap", () => {
 
   it("defaults: null _id, generated _temp_id, empty strings, featured/image_available false", () => {
     const map = attach(
-      makeObjectYMap({ objectId: "min", validationState: "valid", origin: "compositor" })
+      makeObjectYMap({ objectId: "min", validationState: "valid", origin: "compositor", orderKey: "a01" })
     );
     expect(map.get("_id")).toBeNull();
     expect(typeof map.get("_temp_id")).toBe("string");

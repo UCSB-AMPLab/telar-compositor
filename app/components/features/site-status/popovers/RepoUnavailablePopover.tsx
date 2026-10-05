@@ -15,7 +15,7 @@
  * (the identity's warmest attention colour; no alarm-red). `popover`
  * namespace. Light mode only; lucide-react only; `~/` imports.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
@@ -26,7 +26,7 @@ const MANAGE_ACCESS_URL = "https://github.com/settings/installations";
 
 export interface RepoUnavailablePopoverProps {
   repoFullName: string | null;
-  userRole: "convenor" | "collaborator" | null;
+  userRole: "convenor" | "collaborator" | "instructor" | null;
   className?: string;
 }
 

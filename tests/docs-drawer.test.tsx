@@ -12,7 +12,7 @@
  *   - Wiring: a WorkflowTile docs footer and a WelcomeStrip orientation chip
  *     open the drawer without navigating.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -188,6 +188,29 @@ describe("FromTheDocs — role×state reading list", () => {
     // The tiles are buttons, not links (the only link is the hint's docs URL,
     // which the i18n mock collapses to plain text).
     expect(container.querySelector("a[href]")).toBeNull();
+  });
+
+  it("instructors read the collaborator lists in both states", () => {
+    const onOpenDoc = vi.fn();
+    for (const state of ["empty", "populated"] as const) {
+      const instructor = render(
+        <MemoryRouter>
+          <FromTheDocs role="instructor" state={state} onOpenDoc={onOpenDoc} />
+        </MemoryRouter>,
+      );
+      const collaborator = render(
+        <MemoryRouter>
+          <FromTheDocs role="collaborator" state={state} onOpenDoc={onOpenDoc} />
+        </MemoryRouter>,
+      );
+      const ids = (r: ReturnType<typeof render>) =>
+        Array.from(r.container.querySelectorAll("[data-doc-tile]")).map((t) =>
+          t.getAttribute("data-doc-tile"),
+        );
+      expect(ids(instructor)).toEqual(ids(collaborator));
+      instructor.unmount();
+      collaborator.unmount();
+    }
   });
 
   it("empty · collaborator reading list = [intro, narrative, stories, markdown, glossary]", () => {

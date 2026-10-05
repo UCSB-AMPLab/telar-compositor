@@ -3,6 +3,8 @@
  *
  * Used by both server-side (i18next.server.ts) and client-side (i18next.client.ts)
  * setup to keep language configuration in one place.
+ *
+ * @version v1.5.0-beta
  */
 
 export const supportedLanguages = ["en", "es"] as const;
@@ -34,5 +36,7 @@ export const namespaces = [
   "start",
   "project_switcher",
   "release-notes",
+  "course",
+  "contributions",
 ] as const;
 

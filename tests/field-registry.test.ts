@@ -7,7 +7,7 @@
  * column collisions, no silent exclusions (every exclusion carries a reason),
  * and structural encodings only where the harness expects them.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -55,6 +55,7 @@ describe("field registry self-checks", () => {
           field.ydoc.coldLoad,
           field.ydoc.update,
           field.ydoc.writeback,
+          field.ydoc.factory,
         ]) {
           if (mech !== undefined) {
             expect(
@@ -72,6 +73,29 @@ describe("field registry self-checks", () => {
         }
       }
     }
+  });
+
+  it("the factory exclusions are exactly the known set (no silent opt-out)", () => {
+    // A `factory` deviation takes a field out of the client-factory key-set
+    // probes in field-registry-do-probes.test.ts — the one coverage family a
+    // declaration can switch off rather than redirect. Enumerating the known
+    // exclusions here means a future field cannot quietly join them: adding
+    // one fails this test until someone states, in this list, why the client
+    // must never set that key.
+    //
+    // objects.course_project_id: an object a site makes for itself carries no
+    // course marker at all, and the delete gate reads absence — not a null —
+    // as "ordinary site object". Setting the key in the factory would mark
+    // every new object as undeletable course content.
+    //
+    // glossary.kind: a new entry has no kind until the author picks one, and
+    // the snapshot's INSERT binds NULL for a missing key, which the framework
+    // reads as term; the cleared value "" is the author's, set by the editor.
+    const declared: string[] = [];
+    for (const { entity, field } of allFields) {
+      if (!isExcluded(field.ydoc) && field.ydoc.factory) declared.push(`${entity}.${field.name}`);
+    }
+    expect(declared.sort()).toEqual(["glossary.kind", "objects.course_project_id"]);
   });
 
   it("publish keys collide only through structural encodings", () => {
@@ -139,7 +163,11 @@ describe("field registry self-checks", () => {
           ).toBeGreaterThan(0);
         }
       }
-      if (!isExcluded(field.publish) && field.publish.key.startsWith("(")) {
+      // glossary.kind is the one placeholder key with a generic encoding: it is
+      // written as a kept column under whichever header the file holds (`kind`
+      // or `tipo`), so it has no fixed key, and the round-trip harness carries
+      // its value verbatim.
+      if (!isExcluded(field.publish) && field.publish.key.startsWith("(") && label !== "glossary.kind") {
         const shapeLevel =
           STRUCTURAL_ENCODINGS.has(field.publish.encoding) || field.publish.encoding === "md-body";
         expect(shapeLevel, `${label} uses a placeholder publish key without a structural encoding`).toBe(

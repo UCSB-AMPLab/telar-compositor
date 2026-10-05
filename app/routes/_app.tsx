@@ -13,30 +13,48 @@
  * refreshed out-of-band by the Site Status pill polling
  * `/api/site-status?payload=gh-status` (see `github-status.server.ts`).
  *
- * One exception: the convenor upgrade gate may fetch the global latest
- * Telar tag synchronously when the in-isolate cache is cold AND the
- * current path is gated (`/publish`, `/objects`). On a cold cache +
- * non-gated route the fetch is skipped and `needsUpgrade` stays `false`
- * (provisional) until the pill's poll warms the cache. The gate is
- * fail-closed: a below-minimum convenor on a gated route cannot slip
- * through on a cold isolate.
+ * One exception: the upgrade-nag gate (any publishing role) may fetch
+ * the global latest Telar tag synchronously when the in-isolate cache is
+ * cold AND the current path is gated (`/publish`, `/objects`). On a cold
+ * cache + non-gated route the fetch is skipped and `needsUpgrade` stays
+ * `false` (provisional) until the pill's poll warms the cache. The gate is
+ * fail-closed: a publishing role on a gated route cannot slip past a
+ * behind-latest site on a cold isolate — except a collaborator whose
+ * upgrade the installation's missing `workflows: write` permission would
+ * refuse outright (`upgradeAwaitsConvenor`, `gh_workflows_write_missing`):
+ * that collaborator keeps Objects (disabled upload/commit controls there
+ * explain why) rather than looping on an upgrade only the convenor can
+ * grant, and is sent from Publish back to Objects rather than to Upgrade,
+ * since they have nothing to do on either. A release lookup that failed is
+ * not a redirect: the loader reports `releaseUnknown` and Publish opens with
+ * its button disabled (the publish action refuses on the same reading).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { redirect, Outlet, useFetcher, useLocation, useNavigation, useSearchParams } from "react-router";
-import { eq, and, gt, inArray, isNull, sql } from "drizzle-orm";
+import { eq, and, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Route } from "./+types/_app";
 import { authMiddleware, userContext } from "~/middleware/auth.server";
+import { handoffRedirectMiddleware } from "~/middleware/handoff.server";
+import { WelcomeModal } from "~/components/features/site-status/WelcomeModal";
+import { readOwnRepoAccess } from "~/lib/own-repo-access.server";
+import { SiteChangedWatcher } from "~/components/features/site-status/SiteChangedNotice";
+import { PageSiteProvider } from "~/lib/page-site";
+import { SiteStatusProvider } from "~/components/features/site-status/SiteStatusProvider";
 import { getDb } from "~/lib/db.server";
 import { projects, project_config, project_members, project_invites, users, stories, objects, project_pages, glossary_terms } from "~/db/schema";
-import { getUserRole, getPresenceColor, getUserProjects } from "~/lib/membership.server";
+import { getUserRole, getPresenceColor, getUserProjects, listableProjects, hasCourseStanding } from "~/lib/membership.server";
+import { isPublishingRole } from "~/lib/publishing-roles";
+import { isLegacyInviteToken } from "~/lib/join-codes.server";
 import { createSessionStorage } from "~/lib/session.server";
-import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
+import { isHandoffSite, resolveActiveProjectFromRequest, siteHint } from "~/lib/active-project.server";
 import { decrypt } from "~/lib/crypto.server";
-import { deriveHeadDiverged, getCachedLatestTagIfWarm, getCachedLatestTag, deriveWorkflowsApproval, type WorkflowsApproval } from "~/lib/github-status.server";
-import { compareTelarVersion } from "~/lib/upgrade.server";
+import { deriveHeadDiverged, readWarmLatestTag, readLatestTag, deriveWorkflowsApproval, type LatestTagRead, type WorkflowsApproval } from "~/lib/github-status.server";
+import type { OwnRepoAccess } from "~/lib/repo-access";
+import { compareTelarVersion } from "~/lib/telar-version";
+import { deriveUpgradeAwaitsConvenor, standingFromLatest } from "~/lib/upgrade-gate.server";
 import { shouldShowReleaseNote, shouldShowWorkflowsModal } from "~/lib/release-notes";
 import { Header } from "~/components/layout/Header";
 import { CollaborationProvider, useCollaborationContext, useSetAwarenessLocation } from "~/hooks/use-collaboration";
@@ -49,15 +67,59 @@ import { BugReportPanel } from "~/components/features/bug-report/BugReportPanel"
 import { WhatsNewModal } from "~/components/features/release/WhatsNewModal";
 import { WorkflowsPermissionModal } from "~/components/features/upgrade/WorkflowsPermissionModal";
 import { TabNav } from "~/components/layout/TabNav";
+import { mayUseCourses } from "~/lib/course-gate.server";
 import { DocsDrawer } from "~/components/features/start/DocsDrawer";
 import { isDocId, type DocId } from "~/lib/docs-content";
 import { Footer } from "~/components/layout/Footer";
 import { ReloadOnUpgradeComplete } from "~/components/layout/ReloadOnUpgradeComplete";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, Bug, Loader2, Users } from "lucide-react";
+import { readAnotherPage } from "~/lib/unreachable-write";
+import { TabSiteGate } from "~/lib/use-reconcile-tab-site";
+import type { ShouldRevalidateFunctionArgs } from "react-router";
 
-export const middleware = [authMiddleware];
+export const middleware = [authMiddleware, handoffRedirectMiddleware];
 export const handle = { i18n: ["common", "upgrade", "collaboration", "bug-report", "account", "release-notes"] };
+
+/** The upgrade-nag gate: redirect a publishing role off a gated path when the
+ *  framework is behind, unless their upgrade only the convenor can complete
+ *  (see deriveUpgradeAwaitsConvenor in ~/lib/upgrade-gate.server). */
+function shouldRedirectToUpgrade(
+  needsUpgrade: boolean,
+  userRole: string | null,
+  onGated: boolean,
+  upgradeAwaitsConvenor: boolean,
+): boolean {
+  return needsUpgrade && isPublishingRole(userRole) && onGated && !upgradeAwaitsConvenor;
+}
+
+/** A collaborator awaiting the convenor (see deriveUpgradeAwaitsConvenor)
+ *  keeps Objects — disabled controls there explain why — but has nothing to
+ *  do on Publish: send them back to Objects rather than looping them to
+ *  /upgrade, an upgrade they cannot complete either. */
+function shouldRedirectPublishToObjects(
+  onPublish: boolean,
+  upgradeAwaitsConvenor: boolean,
+): boolean {
+  return onPublish && upgradeAwaitsConvenor;
+}
+
+/**
+ * The latest release as this load may read it: warm cache first, which holds
+ * a recent failure as well as a success; on a cold cache, the one allowed
+ * lookup, and only on a path that checks the version. undefined is a cold
+ * cache on any other path, read as provisional.
+ */
+async function readLoaderRelease(
+  onVersionChecked: boolean,
+  encryptedToken: string,
+  env: Env,
+): Promise<LatestTagRead | undefined> {
+  const warm = readWarmLatestTag(Date.now());
+  if (warm || !onVersionChecked) return warm;
+  const token = await decrypt(encryptedToken, env.ENCRYPTION_KEY);
+  return readLatestTag(token, Date.now(), env.TELAR_RELEASE_TAG);
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);
@@ -69,22 +131,36 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   let headDiverged = false;
   let activeProjectId: number | null = null;
+  // The site the hand-off cookie named, when the render used it.
+  let handoffSite: number | undefined;
   let needsUpgrade = false;
   let latestTelarTag: string | null = null;
   let isBelowMinimum = false;
-  let userRole: "convenor" | "collaborator" | null = null;
+  let upgradeAwaitsConvenor = false;
+  // The latest release could not be read for a site with a recorded version.
+  // Publish opens with its button disabled rather than redirecting, and the
+  // Objects writes refuse on the same reading in their actions.
+  let releaseUnknown = false;
+  let userRole: "convenor" | "collaborator" | "instructor" | null = null;
   let presenceColor: string | null = null;
   let pagesUrl: string | null = null;
   let repoUnavailable = false;
   let repoFullName: string | null = null;
+  // The site's `telar_version` as D1 holds it, for bug reports.
+  let siteTelarVersion: string | null = null;
   let workflowsApproval: WorkflowsApproval = { needed: false, url: null };
-  // Full project set for the header project switcher.
-  // Enriched with ownerLogin exactly as _app.dashboard.tsx does so the switcher
-  // can show "owner/repo" for shared projects. Returned on BOTH loader paths.
+  // The header project switcher's list. Enriched with ownerLogin exactly as
+  // _app.dashboard.tsx does so the switcher can show "owner/repo" for shared
+  // projects. Returned on BOTH loader paths.
+  //
+  // Not the caller's full membership set: a child site the caller holds only
+  // an instructor row on is left out (ruling 18). Nothing here decides
+  // access — the active project is resolved from the full set below, so the
+  // project on screen may well be one this list does not name.
   let allProjects: Array<{
     id: number;
     github_repo_full_name: string;
-    userRole: "convenor" | "collaborator";
+    userRole: "convenor" | "collaborator" | "instructor";
     ownerLogin?: string;
     collaboratorCount: number;
   }> = [];
@@ -102,32 +178,51 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     userId: number;
     githubId: number;
     username: string;
-    role: "convenor" | "collaborator";
+    role: "convenor" | "collaborator" | "instructor";
     contributions: { fields_edited: number; sessions: number; stories_edited: string[]; objects_edited: string[]; last_active: string | null } | null;
   }> = [];
   let sidebarSeats = { used: 0, limit: 5 };
-  let sidebarPendingInvites: Array<{ id: number; createdBy: number }> = [];
+  // True when the active project IS a course project (kind === "course") —
+  // as opposed to an ordinary site, whether or not it's enrolled in one.
+  // Drives MemberRow's kebab visibility for instructor rows (design §5:
+  // course-management, including staff removal, belongs to the course
+  // project's own member list, never a child's).
+  let sidebarIsCourseProject = false;
+  // Whether to offer the Course tab. The screen is reachable only from here,
+  // so without it a course could be created and then never run.
+  //
+  // Two conditions, and the gate is one of them because `/course` answers a
+  // locked session with a bare 403: a tab that led there would be a dead end,
+  // and the password is answered on the create-site form, not on the wall it
+  // would put up. The other is that there is a course to run — the active
+  // project either IS one, or is a site enrolled in one, which is the same
+  // pair of cases the screen itself resolves.
+  let showCourseTab = false;
+  let sidebarPendingInvites: Array<{ id: number; createdBy: number | null }> = [];
   // "You've been added to a project" one-time welcome: true when the active
   // project's membership for THIS user is a collaborator with welcomed_at null.
   let needsWelcome = false;
   let welcomeProject = "";
   let welcomeConvenor = "";
+  let welcomeAccess: OwnRepoAccess | null = null;
 
   try {
     const db = getDb(env.DB);
 
-    // Collaborator route-guard (defence-in-depth UX). This is a SEPARATE check
-    // from GATED_PATHS below, and it runs FIRST so
-    // a collaborator who direct-navs to a convenor-only destination is bounced
-    // to /objects with a ?denied= reason the toast can read. It does NOT replace
-    // the server-side action gates on /publish and /upgrade — those stay intact.
+    // Route-guard (defence-in-depth UX). This is a SEPARATE check from
+    // GATED_PATHS below, and it runs FIRST so a caller who direct-navs to a
+    // destination their role cannot use is bounced to /objects with a
+    // ?denied= reason the toast can read. It does NOT replace the
+    // server-side action gates on /publish and /upgrade — those stay intact.
+    // A publishing role (isPublishingRole, shared with the server gate)
+    // passes; a caller the role lookup answers nothing for is bounced.
     {
       const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
       if (resolved) {
         const guardRole = await getUserRole(db, resolved.project.id, user.id);
         const guardUrl = new URL(request.url);
         if (
-          guardRole === "collaborator" &&
+          !isPublishingRole(guardRole) &&
           (guardUrl.pathname.startsWith("/publish") ||
             guardUrl.pathname.startsWith("/upgrade"))
         ) {
@@ -150,7 +245,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       for (const row of ownerRows) {
         ownerLoginMap[row.id] = row.github_login;
       }
-      allProjects = userProjects.map((p) => ({
+      // Suppression is applied here and nowhere else in this loader: the
+      // switcher is a list, and everything below still resolves the active
+      // project from the full membership set (ruling 22).
+      allProjects = listableProjects(userProjects).map((p) => ({
         id: p.id,
         github_repo_full_name: p.github_repo_full_name,
         userRole: p.userRole,
@@ -158,13 +256,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         collaboratorCount: 0,
       }));
 
-      // Attach a per-project collaboratorCount (members minus the owner) using
-      // ONE grouped COUNT query over the user's project IDs — cheap and indexed.
+      // Attach a per-project collaboratorCount (members minus the owner,
+      // minus any instructor rows — instructors are staff, not group size:
+      // a teacher enrolled in five sites must not inflate all five badges)
+      // using ONE grouped COUNT query over the user's project IDs — cheap
+      // and indexed.
       const projectIds = allProjects.map((p) => p.id);
       const memberCountRows = await db
         .select({ project_id: project_members.project_id, n: sql<number>`count(*)` })
         .from(project_members)
-        .where(inArray(project_members.project_id, projectIds))
+        .where(
+          and(
+            inArray(project_members.project_id, projectIds),
+            ne(project_members.role, "instructor"),
+          ),
+        )
         .groupBy(project_members.project_id);
       const countByProject = new Map(memberCountRows.map((r) => [r.project_id, Number(r.n)]));
       allProjects = allProjects.map((p) => ({
@@ -176,7 +282,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Get the active project from session (same pattern as _app.objects.tsx)
     const sessionStorage = createSessionStorage(env.SESSION_SECRET);
     const session = await sessionStorage.getSession(request.headers.get("Cookie"));
-    const sessionActiveId = session.get("activeProjectId") as number | undefined;
+    const hint = siteHint(request, session.get("activeProjectId"));
+    handoffSite = hint.handoffSite;
+    const sessionActiveId = hint.siteId as number | undefined;
 
     if (sessionActiveId) {
       activeProjectId = Number(sessionActiveId);
@@ -223,10 +331,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         userId: m.userId,
         githubId: m.githubId,
         username: m.username,
-        role: m.role as "convenor" | "collaborator",
+        role: m.role as "convenor" | "collaborator" | "instructor",
         contributions: m.contributions ? JSON.parse(m.contributions) : null,
       }));
-      sidebarSeats = { used: memberRows.length, limit: 5 };
+      // Seat figure: convenor + collaborators against the display-only
+      // limit of five, instructor rows excluded (design §3 — "the seat
+      // display keeps its current form ... with instructor rows excluded
+      // from the count").
+      sidebarSeats = {
+        used: memberRows.filter((m) => m.role !== "instructor").length,
+        limit: 5,
+      };
 
       // Pending invitations (unused invite rows) so the sidebar can offer
       // convenors the cancel affordance beside where invites are sent.
@@ -235,10 +350,30 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       // convenor-gated server-side, so collaborators have no reason to see
       // pending-invite ids or their creators.
       if (userRole === "convenor") {
-        const inviteRows = await db
-          .select({ id: project_invites.id, createdBy: project_invites.created_by })
-          .from(project_invites)
-          .where(and(eq(project_invites.project_id, activeProjectId), isNull(project_invites.used_by)));
+        // `used_at` is the consumed flag, not `used_by`: the latter is
+        // ON DELETE SET NULL, so a redeemer's account deletion would put a
+        // spent invite back in this panel with a live cancel button.
+        const inviteRows = (
+          await db
+            .select({
+              id: project_invites.id,
+              createdBy: project_invites.created_by,
+              token: project_invites.token,
+            })
+            .from(project_invites)
+            .where(
+              and(
+                eq(project_invites.project_id, activeProjectId),
+                isNull(project_invites.used_at),
+                isNull(project_invites.revoked_at),
+              ),
+            )
+        )
+          // Only single-use invitation links are pending invitations. A
+          // reusable course code is standing infrastructure — it would sit
+          // here all term beside a destructive cancel affordance.
+          .filter((row) => isLegacyInviteToken(row.token))
+          .map((row) => ({ id: row.id, createdBy: row.createdBy }));
         sidebarPendingInvites = inviteRows;
       }
 
@@ -251,7 +386,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         needsWelcome = true;
         welcomeConvenor = convenorRow?.name || convenorRow?.username || "";
         welcomeProject =
-          allProjects.find((p) => p.id === activeProjectId)?.github_repo_full_name ?? "";
+          userProjects.find((p) => p.id === activeProjectId)?.github_repo_full_name ?? "";
+        welcomeAccess = await readOwnRepoAccess(db, activeProjectId, user.id);
       }
 
       // Cheap full-spectrum unpublished count. Counts entities
@@ -296,6 +432,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       // No projects at all — skip project-specific checks
       return {
         user: {
+          id: user.id,
           github_id: user.github_id,
           github_login: user.github_login,
           github_name: user.github_name,
@@ -303,9 +440,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         },
         headDiverged: false,
         activeProjectId: null,
+        siteFromHandoff: false,
         needsUpgrade: false,
         latestTelarTag: null,
         isBelowMinimum: false,
+        releaseUnknown: false,
         userRole: null,
         presenceColor: null,
         pagesUrl: null,
@@ -316,8 +455,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         needsReleaseNote: false,
         welcomeProject: "",
         welcomeConvenor: "",
+        welcomeAccess: null,
         repoUnavailable: false,
         repoFullName: null,
+        siteTelarVersion: null,
         needsWorkflowsApproval: false,
         workflowsApprovalUrl: null,
         activeProjectShared: false,
@@ -340,12 +481,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           installation_id: projects.installation_id,
           gh_workflows_write_missing: projects.gh_workflows_write_missing,
           gh_install_target_type: projects.gh_install_target_type,
+          kind: projects.kind,
+          parent_project_id: projects.parent_project_id,
         })
         .from(projects)
         .where(eq(projects.id, activeProjectId));
 
       const project = projectRows[0];
       pagesUrl = project?.github_pages_url ?? null;
+      sidebarIsCourseProject = project?.kind === "course";
+      showCourseTab = mayUseCourses(user) && (await hasCourseStanding(db, project, user.id));
 
       if (project && project.github_repo_full_name) {
         repoFullName = project.github_repo_full_name;
@@ -356,6 +501,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           baseurl: project_config.baseurl,
         }).from(project_config).where(eq(project_config.project_id, activeProjectId));
         const siteVersion = configRows[0]?.telar_version ?? null;
+        siteTelarVersion = siteVersion;
         const configUrl = configRows[0]?.url ?? null;
         const configBaseurl = configRows[0]?.baseurl ?? "";
         if (configUrl) {
@@ -384,23 +530,40 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         // Upgrade: derive from the global tag cache vs telar_version.
         // Warm cache → no fetch. Cold cache → fetch ONLY on gated routes (fail-closed).
         const url = new URL(request.url);
-        const GATED_PATHS = ["/publish", "/objects"];
+        // Two lists, because checking the version and refusing the page are
+        // separate decisions. Objects reads the version so its Upload tab can
+        // say a site is behind on the first load; only Publish is refused as
+        // a page, because on Objects the one act that needs a current
+        // framework is the upload, which its action refuses itself
+        // (readUploadGate).
+        const VERSION_CHECKED_PATHS = ["/publish", "/objects"];
+        const GATED_PATHS = ["/publish"];
+        const onVersionChecked = VERSION_CHECKED_PATHS.some((p) => url.pathname.startsWith(p));
         const onGated = GATED_PATHS.some((p) => url.pathname.startsWith(p));
-        let tag = getCachedLatestTagIfWarm(Date.now());
-        if (tag === undefined && onGated) {
-          const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-          tag = await getCachedLatestTag(token, Date.now()); // one allowed fetch: gated route, cold cache
-        }
-        // cold cache + non-gated route: skip — leave needsUpgrade=false provisional until the pill poll warms the cache
-        if (tag !== undefined) {
-          const cmp = compareTelarVersion(siteVersion, tag ?? null);
+        const onPublish = url.pathname.startsWith("/publish");
+        const latest = await readLoaderRelease(onVersionChecked, user.encrypted_access_token, env);
+        // A cold cache on a path that does not check the version leaves
+        // needsUpgrade false, provisional until the pill's poll warms it.
+        if (latest !== undefined) {
+          const tag = latest.ok ? latest.tag : null;
+          const cmp = compareTelarVersion(siteVersion, tag);
           needsUpgrade = cmp.needsUpgrade;
           isBelowMinimum = cmp.isBelowMinimum;
-          latestTelarTag = tag ?? null;
+          latestTelarTag = tag;
         }
+        releaseUnknown = standingFromLatest(siteVersion, latest) === "unknown";
 
-        if (needsUpgrade && userRole === "convenor" && onGated) {
+        upgradeAwaitsConvenor = deriveUpgradeAwaitsConvenor(
+          needsUpgrade,
+          userRole,
+          project.gh_workflows_write_missing,
+        );
+
+        if (shouldRedirectToUpgrade(needsUpgrade, userRole, onGated, upgradeAwaitsConvenor)) {
           throw redirect(`/upgrade?from=${encodeURIComponent(url.pathname)}`);
+        }
+        if (shouldRedirectPublishToObjects(onPublish, upgradeAwaitsConvenor)) {
+          throw redirect("/objects");
         }
       }
     }
@@ -418,6 +581,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   return {
     user: {
+      id: user.id,
       github_id: user.github_id,
       github_login: user.github_login,
       github_name: user.github_name,
@@ -425,9 +589,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     },
     headDiverged,
     activeProjectId,
+    siteFromHandoff: isHandoffSite(handoffSite, activeProjectId),
     needsUpgrade,
     latestTelarTag,
     isBelowMinimum,
+    upgradeAwaitsConvenor,
+    releaseUnknown,
     userRole,
     presenceColor,
     pagesUrl,
@@ -437,12 +604,16 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     sidebarMembers,
     sidebarPendingInvites,
     sidebarSeats,
+    sidebarIsCourseProject,
+    showCourseTab,
     needsWelcome,
     needsReleaseNote,
     welcomeProject,
     welcomeConvenor,
+    welcomeAccess,
     repoUnavailable,
     repoFullName,
+    siteTelarVersion,
     needsWorkflowsApproval: workflowsApproval.needed,
     workflowsApprovalUrl: workflowsApproval.url,
     activeProjectShared: sidebarSeats.used > 1,
@@ -450,39 +621,34 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 /**
- * CollaborationOverlay — renders the PublishFreezeModal inside CollaborationProvider.
+ * CollaborationOverlay — the freeze modals and the post-upgrade reload.
  * Must be a child of CollaborationProvider so it can call useCollaborationContext.
- * The dismiss handler clears publishError via the awareness field on the local client.
+ * Each modal shows only for an operation another user holds; see
+ * `~/lib/freeze-view`.
  */
-function CollaborationOverlay({ userRole }: { userRole: "convenor" | "collaborator" | null }) {
-  const { isPublishing, publishError, isUpgrading, upgradeError, provider } = useCollaborationContext();
-  const isOwner = userRole === "convenor";
-
-  function handlePublishDismiss() {
-    // Clear the publishError awareness field on this client
-    provider?.awareness.setLocalStateField("publishError", false);
-  }
-
-  function handleUpgradeDismiss() {
-    // Clear the upgradeError awareness field on this client
-    provider?.awareness.setLocalStateField("upgradeError", false);
-  }
+function CollaborationOverlay() {
+  const {
+    publishHeldByOther,
+    publishError,
+    dismissPublishError,
+    upgradeHeldByOther,
+    upgradeError,
+    dismissUpgradeError,
+  } = useCollaborationContext();
 
   return (
     <>
       <PublishFreezeModal
-        isPublishing={isPublishing}
+        isPublishing={publishHeldByOther}
         publishError={publishError}
-        isOwner={isOwner}
-        onDismiss={handlePublishDismiss}
+        onDismiss={dismissPublishError}
       />
       <UpgradeFreezeModal
-        isUpgrading={isUpgrading}
+        isUpgrading={upgradeHeldByOther}
         upgradeError={upgradeError}
-        isOwner={isOwner}
-        onDismiss={handleUpgradeDismiss}
+        onDismiss={dismissUpgradeError}
       />
-      <ReloadOnUpgradeComplete isOwner={isOwner} />
+      <ReloadOnUpgradeComplete />
     </>
   );
 }
@@ -543,21 +709,24 @@ function LocationAwarenessSync() {
   return null;
 }
 
+/** Another page is always read, whatever a story write's answer held back (`readAnotherPage`). */
+export function shouldRevalidate(args: ShouldRevalidateFunctionArgs) {
+  return readAnotherPage(args);
+}
+
 export default function AppLayout({ loaderData }: Route.ComponentProps) {
-  const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarPendingInvites, sidebarSeats, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor, needsWorkflowsApproval, workflowsApprovalUrl } = loaderData;
+  const { user, activeProjectId, userRole, presenceColor, pagesUrl, environment, sidebarMembers, sidebarPendingInvites, sidebarSeats, sidebarIsCourseProject, showCourseTab, needsWelcome, needsReleaseNote, welcomeProject, welcomeConvenor, welcomeAccess, needsWorkflowsApproval, workflowsApprovalUrl } = loaderData;
   const { t: tCollab } = useTranslation("collaboration");
   const location = useLocation();
   // Story editor route (`/stories/:id`, not the `/stories` list). There the tab
   // nav is dead weight mid-edit, so it's hidden on a landscape phone to reclaim
   // vertical space — the editor breadcrumb's "Start" link remains the way out.
   const isStoryEditor = /^\/stories\/[^/]+/.test(location.pathname);
-  const welcomeFetcher = useFetcher();
   const releaseFetcher = useFetcher();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [betaAck, setBetaAck] = useState(false);
   const [betaPromptOpen, setBetaPromptOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
-  const [welcomeOpen, setWelcomeOpen] = useState(needsWelcome);
   const [releaseNoteOpen, setReleaseNoteOpen] = useState(needsReleaseNote);
   const [workflowsModalOpen, setWorkflowsModalOpen] = useState(
     shouldShowWorkflowsModal(needsWorkflowsApproval, needsWelcome, needsReleaseNote),
@@ -622,16 +791,21 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
   }
 
   return (
+    <TabSiteGate activeProjectId={activeProjectId} siteFromHandoff={loaderData.siteFromHandoff}>
     <CollaborationProvider
       projectId={activeProjectId}
+      userId={user.id}
       userGithubId={user.github_id}
       userName={user.github_name || user.github_login}
       presenceColor={presenceColor ?? null}
     >
+      <PageSiteProvider activeProjectId={activeProjectId}>
+      <SiteStatusProvider>
       <ToastProvider>
         <NavigationOverlay />
         <LocationAwarenessSync />
         <UndoFeedback />
+        <SiteChangedWatcher />
         <div className="min-h-screen flex flex-col bg-cream">
           <Header
             user={user}
@@ -644,6 +818,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           />
           <TabNav
             pagesUrl={pagesUrl ?? null}
+            showCourseTab={showCourseTab}
             onOpenDoc={openDoc}
             className={isStoryEditor ? "landscape-compact:hidden" : ""}
           />
@@ -659,6 +834,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           members={sidebarMembers ?? []}
           pendingInvites={sidebarPendingInvites ?? []}
           seats={sidebarSeats ?? { used: 0, limit: 5 }}
+          isCourseProject={sidebarIsCourseProject ?? false}
           triggerRef={usersIconRef}
         />
         <DocsDrawer
@@ -667,7 +843,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           onClose={() => setOpenDocId(null)}
           onOpenDoc={openDoc}
         />
-        <CollaborationOverlay userRole={userRole} />
+        <CollaborationOverlay />
         {/* Open-beta collaboration notice — shown once per session before the
             sidebar opens (replaces the closed-beta password gate). */}
         {betaPromptOpen && (
@@ -719,56 +895,16 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           </div>
         )}
 
-        {/* "You've been added to a project" — one-time landing welcome for a
-            newly-added collaborator. "Got it" stamps welcomed_at server-side
-            (via /api/welcome-ack) so it shows only once. */}
-        {welcomeOpen && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50"
-            onClick={() => setWelcomeOpen(false)}
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="collab-welcome-title"
-              onClick={(e) => e.stopPropagation()}
-              className="bg-cream rounded-xl p-6 shadow-lg w-[360px] max-w-[90vw] flex flex-col gap-3"
-            >
-              <div className="flex h-11 w-11 items-center justify-center rounded-pill bg-caracol-pale text-caracol">
-                <Users className="h-5 w-5" aria-hidden="true" />
-              </div>
-              <h2 id="collab-welcome-title" className="font-heading text-lg font-semibold text-charcoal">
-                {tCollab("welcome_added_title", { project: welcomeProject })}
-              </h2>
-              <p className="font-body text-sm leading-relaxed text-charcoal/70">
-                {tCollab("welcome_added_body", { convenor: welcomeConvenor })}
-              </p>
-              <div className="mt-1 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWelcomeOpen(false);
-                    setBugReportOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-heading text-sm font-semibold text-anil-ink hover:bg-anil-pale transition-colors"
-                >
-                  <Bug className="h-3.5 w-3.5" aria-hidden="true" />
-                  {tCollab("beta_report")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    welcomeFetcher.submit({}, { method: "post", action: "/api/welcome-ack" });
-                    setWelcomeOpen(false);
-                  }}
-                  className="rounded-lg bg-terracotta px-4 py-1.5 font-heading text-sm font-semibold text-cream hover:bg-terracotta-deep transition-colors"
-                >
-                  {tCollab("beta_ack")}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* One-time landing welcome for a newly-added collaborator; it
+            acknowledges itself through /api/welcome-ack. */}
+        <WelcomeModal
+          needsWelcome={needsWelcome}
+          siteId={activeProjectId}
+          project={welcomeProject}
+          convenor={welcomeConvenor}
+          loaderAccess={welcomeAccess}
+          onReport={() => setBugReportOpen(true)}
+        />
 
         {/* Once-per-release "What's new" announcement. Dismiss stamps
             last_seen_release via /api/release-ack so it shows only once. */}
@@ -797,8 +933,15 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           onClose={() => setBugReportOpen(false)}
           mode="default"
           userLogin={user.github_login}
+          repoFullName={loaderData.repoFullName ?? undefined}
+          telarVersion={loaderData.siteTelarVersion ?? undefined}
+          headDiverged={loaderData.headDiverged}
+          projectId={activeProjectId ?? undefined}
         />
       </ToastProvider>
+      </SiteStatusProvider>
+      </PageSiteProvider>
     </CollaborationProvider>
+    </TabSiteGate>
   );
 }

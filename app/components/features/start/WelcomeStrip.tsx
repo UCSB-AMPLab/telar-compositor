@@ -2,7 +2,7 @@
  * WelcomeStrip — the Start-tab welcome card.
  *
  * Populated state: eyebrow, project title, summary, a role chip (convenor =
- * caracol; collaborator = cream-dark/charcoal), a convened-by meta line, and
+ * caracol; instructor = amber; collaborator = cream-dark/charcoal), a convened-by meta line, and
  * the orientation action chips (tour / what-is-compositor / what-is-IIIF).
  *
  * Empty (first-run) state: the role-specific 3-step setup checklist in an
@@ -15,7 +15,7 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { BookOpen, Map, Users, Github } from "lucide-react";
@@ -24,7 +24,7 @@ import { useTranslation } from "react-i18next";
 export interface WelcomeStripProps {
   projectName: string;
   summary: string;
-  role: "convenor" | "collaborator";
+  role: "convenor" | "collaborator" | "instructor";
   convenorName: string;
   collaboratorCount: number;
   createdYear: number;
@@ -33,7 +33,50 @@ export interface WelcomeStripProps {
   onOpenDoc?: (docKey: string) => void;
   /** Open the collaboration sidebar (convenor-only "Add collaborators" pill). */
   onAddCollaborators?: () => void;
+  /**
+   * Whether the Course tab is shown to this person. The instructor's steps
+   * send them there, so an instructor without it gets the collaborator's.
+   */
+  courseTab?: boolean;
   className?: string;
+}
+
+type Translate = (key: string) => string;
+
+/**
+ * The role-specific first-run checklist. An instructor's own steps point at the
+ * Course tab, so they show only where that tab is offered; without it the
+ * instructor gets the collaborator's. Literal keys, so the catalogue scan can
+ * see each one.
+ */
+function checklistFor(t: Translate, role: WelcomeStripProps["role"], courseTab: boolean) {
+  const checklists = {
+    convenor: {
+      heading: t("checklist.convenor_heading"),
+      steps: [
+        t("checklist.convenor_step1"),
+        t("checklist.convenor_step2"),
+        t("checklist.convenor_step3"),
+      ],
+    },
+    collaborator: {
+      heading: t("checklist.collaborator_heading"),
+      steps: [
+        t("checklist.collaborator_step1"),
+        t("checklist.collaborator_step2"),
+        t("checklist.collaborator_step3"),
+      ],
+    },
+    instructor: {
+      heading: t("checklist.instructor_heading"),
+      steps: [
+        t("checklist.instructor_step1"),
+        t("checklist.instructor_step2"),
+        t("checklist.instructor_step3"),
+      ],
+    },
+  };
+  return checklists[role === "instructor" && !courseTab ? "collaborator" : role];
 }
 
 export function WelcomeStrip({
@@ -46,6 +89,7 @@ export function WelcomeStrip({
   state,
   onOpenDoc,
   onAddCollaborators,
+  courseTab = false,
   className = "",
 }: WelcomeStripProps) {
   const { t } = useTranslation("start");
@@ -63,27 +107,16 @@ export function WelcomeStrip({
   // Role chip — token pairs.
   const roleChipClass = isConvenor
     ? "bg-caracol-pale text-caracol"
-    : "bg-cream-dark text-charcoal";
-  const roleChipLabel = isConvenor ? t("role_chip.convenor") : t("role_chip.collaborator");
+    : role === "instructor"
+      ? "bg-amber-100 text-amber-800"
+      : "bg-cream-dark text-charcoal";
+  const roleChipLabel = isConvenor
+    ? t("role_chip.convenor")
+    : role === "instructor"
+      ? t("role_chip.instructor")
+      : t("role_chip.collaborator");
 
-  // Role-specific checklist (empty state).
-  const checklist = isConvenor
-    ? {
-        heading: t("checklist.convenor_heading"),
-        steps: [
-          t("checklist.convenor_step1"),
-          t("checklist.convenor_step2"),
-          t("checklist.convenor_step3"),
-        ],
-      }
-    : {
-        heading: t("checklist.collaborator_heading"),
-        steps: [
-          t("checklist.collaborator_step1"),
-          t("checklist.collaborator_step2"),
-          t("checklist.collaborator_step3"),
-        ],
-      };
+  const checklist = checklistFor(t, role, courseTab);
 
   return (
     <section

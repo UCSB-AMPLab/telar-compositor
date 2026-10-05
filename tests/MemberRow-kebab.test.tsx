@@ -7,7 +7,7 @@
  * Tests: always-visible icon, dropdown open/close, Remove callback,
  * defence-in-depth isConvenor guard, outside-click dismissal.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -72,6 +72,66 @@ describe("MemberRow kebab menu", () => {
     const removeItem = screen.getByRole("menuitem");
     fireEvent.click(removeItem);
     expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  // ---------------------------------------------------------------------
+  // Instructor rows — the kebab shows only on the course project itself
+  // (design §5: course-management, including removing staff, belongs to
+  // the course project's own member list; instructor membership on a
+  // child is tied to the course and can only end by leaving it).
+  // ---------------------------------------------------------------------
+
+  it("hides the kebab for an instructor row when isCourseProject is false (a child site)", () => {
+    render(
+      <MemberRow
+        {...defaultProps}
+        role="instructor"
+        isConvenor={true}
+        isCourseProject={false}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /row_menu_aria/i })).toBeNull();
+  });
+
+  it("shows the kebab for an instructor row when isCourseProject is true (the course project's own list)", () => {
+    render(
+      <MemberRow
+        {...defaultProps}
+        role="instructor"
+        isConvenor={true}
+        isCourseProject={true}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /row_menu_aria/i })).toBeTruthy();
+  });
+
+  it("defaults isCourseProject to false — an instructor row's kebab does not show when the prop is simply omitted", () => {
+    render(<MemberRow {...defaultProps} role="instructor" isConvenor={true} />);
+    expect(screen.queryByRole("button", { name: /row_menu_aria/i })).toBeNull();
+  });
+
+  it("a collaborator row's kebab is unaffected by isCourseProject — still shows regardless", () => {
+    render(
+      <MemberRow
+        {...defaultProps}
+        role="collaborator"
+        isConvenor={true}
+        isCourseProject={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /row_menu_aria/i })).toBeTruthy();
+  });
+
+  it("an instructor row on the course project still hides the kebab for a non-convenor viewer", () => {
+    render(
+      <MemberRow
+        {...defaultProps}
+        role="instructor"
+        isConvenor={false}
+        isCourseProject={true}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /row_menu_aria/i })).toBeNull();
   });
 
   it("menu closes on outside click", () => {
