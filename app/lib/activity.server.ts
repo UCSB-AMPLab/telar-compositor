@@ -23,7 +23,7 @@
  * never a client-supplied request field — the spoofing mitigation lives at
  * the call sites, this module just persists whatever id it is handed.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { eq, desc, sql } from "drizzle-orm";
@@ -158,7 +158,9 @@ export async function getRecentActivity(
         entity_label: activity_log.entity_label,
         created_at: activity_log.created_at,
         actor_user_id: activity_log.actor_user_id,
-        actor_github_id: users.github_id,
+        // A deleted account keeps its name on its activity but has no GitHub
+        // id to fetch an avatar by: its row holds the negated row id.
+        actor_github_id: sql<number | null>`CASE WHEN ${users.deleted_at} IS NULL THEN ${users.github_id} END`,
         actor_github_login: users.github_login,
         actor_github_name: users.github_name,
       })

@@ -1,0 +1,14 @@
+-- Story files the Compositor read on a site it has not yet published.
+--
+-- @version v1.5.0-beta
+--
+-- story_files_to_delete_json: NULL, or a JSON array of {"path": "<repo path>",
+-- "sha": "<blob sha>"}: each story CSV the import or a sync read from
+-- telar-content/spreadsheets/, at the path and blob the Compositor read it at,
+-- recorded only while the project has no publish snapshot. A story the
+-- repository side removed drops its entry. The next publish deletes, with its
+-- layer files, the file of each entry whose story D1 no longer holds, only
+-- while the file at that path still has that blob; a changed file is left and
+-- the publish's checks name it. The record is cleared once the publish's
+-- commit lands.
+ALTER TABLE projects ADD COLUMN story_files_to_delete_json text;

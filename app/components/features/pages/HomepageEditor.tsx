@@ -14,7 +14,7 @@
  * The component bundles the live-language observer (config.lang → placeholders),
  * the stories-showcase drag-and-drop, and the featured-objects derivation.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useTranslation } from "react-i18next";
@@ -37,8 +37,9 @@ import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
 import { InlineHtmlEditor } from "~/components/ui/InlineHtmlEditor";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
+import { configFrameworkVersion, thumbnailInfoJsonUrl } from "~/lib/object-id";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
-import { reorderInPlace } from "~/hooks/use-structural-ops";
+import { reorderByOrderKey } from "~/lib/story-order";
 import { getYText } from "~/lib/yjs-helpers";
 import { LANDING_LABELS, V121_FRONTMATTER_DEFAULTS, WELCOME_BODY_LOCALISED } from "~/lib/v130-framework-labels";
 import * as Y from "yjs";
@@ -68,6 +69,7 @@ export interface HomepageObjectItem {
   thumbnail: string | null;
   image_available: boolean | null;
   featured: boolean | null;
+  source_url?: string | null;
 }
 
 /**
@@ -88,6 +90,7 @@ export interface HomepageEditorData {
     title?: string | null;
     description?: string | null;
     featured_count?: number | null;
+    telar_version?: string | null;
   } | null;
   landing: {
     welcome_body?: string | null;
@@ -100,7 +103,7 @@ export interface HomepageEditorData {
   storyStepCounts: Record<number, number>;
   storyCoverMap: Record<
     number,
-    { thumbnail: string | null; objectId: string; imageAvailable: boolean | null }
+    { thumbnail: string | null; objectId: string; imageAvailable: boolean | null; sourceUrl: string | null }
   >;
   objects: HomepageObjectItem[];
   siteBaseUrl: string | null;
@@ -110,15 +113,18 @@ export interface HomepageEditorData {
 function HomepageObjectCard({
   obj,
   siteBaseUrl,
+  frameworkVersion,
 }: {
   obj: HomepageObjectItem;
   siteBaseUrl: string | null;
+  frameworkVersion: string | null;
 }) {
   const { t } = useTranslation(["homepage", "common"]);
-  const needsResolve = !obj.thumbnail && obj.image_available && siteBaseUrl;
-  const infoJsonUrl = needsResolve
-    ? `${siteBaseUrl}/iiif/objects/${obj.object_id}/info.json`
-    : null;
+  const infoJsonUrl = thumbnailInfoJsonUrl(
+    { objectId: obj.object_id, thumbnail: obj.thumbnail, imageAvailable: obj.image_available, sourceUrl: obj.source_url },
+    siteBaseUrl,
+    frameworkVersion,
+  );
   const resolvedUrl = useIiifThumbnail(infoJsonUrl, 300);
 
   const storedThumb = obj.thumbnail
@@ -192,6 +198,7 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
     objects: projectObjects,
     siteBaseUrl,
   } = data;
+  const frameworkVersion = configFrameworkVersion(config);
 
   // Site-locale (config.lang) drives the v1.3.0 framework preview content
   // and the localised landing-field placeholders, NOT the user's UI locale
@@ -254,13 +261,14 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
     const newOrder = arrayMove(items, oldIndex, newIndex);
 
     setItems(newOrder);
-    // Reorder the `stories` Y.Array to match. Without this the next snapshot
-    // rewrites `stories.order` from the (unchanged) Y.Array index and clobbers
-    // the D1 write below back to the old order. The homepage list is the full
-    // stories set ordered by `order`, so these indices map 1:1 to the Y.Array.
+    // Write the moved story's place into the doc. Without this the next
+    // snapshot rewrites `stories.order` from the document's own ordering and
+    // clobbers the D1 write below back to the old order. The homepage list is
+    // the full stories set ordered by `order`, which is the dense rank of the
+    // document ordering, so these indices are the document's display indices.
     if (ydoc) {
       ydoc.transact(() => {
-        reorderInPlace(ydoc.getArray<Y.Map<unknown>>("stories"), oldIndex, newIndex);
+        reorderByOrderKey(ydoc.getArray<Y.Map<unknown>>("stories"), oldIndex, newIndex);
       });
     }
     fetcher.submit(
@@ -361,7 +369,9 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
             object_id: o.object_id,
             title: o.title,
             thumbnail: o.thumbnail,
+            source_url: o.source_url ?? null,
           }))}
+          frameworkVersion={frameworkVersion}
         />
       </DashboardPreviewSection>
 
@@ -426,6 +436,7 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
                     lastSynced={project.last_synced_at ?? null}
                     coverInfo={storyCoverMap[story.id]}
                     siteBaseUrl={siteBaseUrl}
+                    frameworkVersion={frameworkVersion}
                   />
                 ))}
               </div>
@@ -440,6 +451,7 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
                   isDragOverlay
                   coverInfo={storyCoverMap[activeStory.id]}
                   siteBaseUrl={siteBaseUrl}
+                  frameworkVersion={frameworkVersion}
                 />
               )}
             </DragOverlay>
@@ -502,12 +514,12 @@ export function HomepageEditor({ data }: { data: HomepageEditorData }) {
           {displayObjects.length > 0 ? (
             <div className="grid grid-cols-3 md:grid-cols-5 gap-3 pt-2">
               {displayObjects.map((obj) => (
-                <HomepageObjectCard key={obj.id} obj={obj} siteBaseUrl={siteBaseUrl} />
+                <HomepageObjectCard key={obj.id} obj={obj} siteBaseUrl={siteBaseUrl} frameworkVersion={frameworkVersion} />
               ))}
             </div>
           ) : (
             <p className="font-body text-sm text-gray-400 italic pt-2">
-              No objects yet — use the Objects tab to add images to your collection.
+              {tHome("no_objects")}
             </p>
           )}
         </div>

@@ -1,32 +1,45 @@
 /**
- * This file renders the editor panel for step 0 of a story — the
- * title card. Where the author edits the headline, subtitle, and
- * byline that appear above the first scrolling step.
+ * The title card (step 0) on the framing stage: the story intro as the
+ * published page draws it (`.story-intro`, `.intro-floating-card`, from the
+ * framework's story layout and `_story.scss`), with the title, subtitle and
+ * byline edited in place.
  *
- * Renders inline-editable title, subtitle, and byline fields that
- * write directly to Yjs Y.Text instances via `InlineTextField`.
- * Falls back to `initialValue` (from D1 SSR render) when `yText` is
- * null (pre-connection).
+ * With the story's section list turned on, the intro takes the layer 2 panel's
+ * colour (`.story-intro--toc`) and lists the section cards' titles under
+ * "Sections" (`.intro-toc`), as the layout lists every step with no object
+ * and a question. The list is read from the section cards, so a section's
+ * title is edited on its own card, not here. The scroll hint is the one the
+ * published page shows for the layout: the arrow-key hint on a horizontal
+ * layout, the button hint on a vertical one, where the page always navigates
+ * with buttons.
  *
- * Each field has a pencil icon that darkens on hover with a "Click
- * to edit" affordance.
+ * The title, subtitle and byline write to the story's Y.Text as they are
+ * typed; before the document connects there is no save for them, as there is
+ * none in the route. The byline shows its Markdown rendered, as the published
+ * intro prints it (`bylineHtml`), and is edited as the text it is typed as.
  *
- * @version v1.3.7-beta
+ * The story's ID and the switch for the section list are the editor's own
+ * and have no place on the published intro: `TitleCardSettings` holds them,
+ * beside the stage rather than on it.
+ *
+ * @version v1.5.0-beta
  */
 
-import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { PencilLine } from "lucide-react";
-import * as Y from "yjs";
-import { InlineTextField } from "~/components/ui/InlineTextField";
+import type * as Y from "yjs";
+import { InPlaceText } from "~/components/ui/InPlaceText";
+import { bylineHtml } from "~/lib/card-markdown";
+import { StoryIdField } from "~/components/features/editor/StoryIdField";
+import type { LayoutMode } from "~/lib/framing-stage";
 
-interface TitleCardViewProps {
+/** The title card's data and what it does, as the route holds them. */
+export interface TitleCardData {
   story: {
     id: number;
     title: string | null;
     subtitle: string | null;
     byline: string | null;
-    order: number | null;
     show_sections: boolean;
   };
   storyId: string;
@@ -35,14 +48,19 @@ interface TitleCardViewProps {
   bylineYText: Y.Text | null;
   /** Number of kind='section' steps in this story — controls helper-text visibility */
   sectionCardCount: number;
+  /** The titles the published intro lists under "Sections": each section card with one, in order. */
+  sectionTitles: readonly string[];
   /** Called immediately on toggle; writes to the story Y.Map.show_sections boolean */
   onToggleShowSections: (value: boolean) => void;
+  /** Every story's ID in the document, for the ID field's uniqueness check. */
+  storyIds: readonly string[];
+  canRenameId: boolean;
+  onRenameId: (newId: string) => void;
 }
 
 /**
- * ShowSectionsSwitch — slimmer inline variant of ToggleField sized for the
- * centred max-w-lg title card chrome. Reuses the same role="switch" /
- * aria-checked semantics as ToggleField.
+ * ShowSectionsSwitch — slimmer inline variant of ToggleField. Reuses the same
+ * role="switch" / aria-checked semantics as ToggleField.
  */
 function ShowSectionsSwitch({
   checked,
@@ -73,34 +91,64 @@ function ShowSectionsSwitch({
   );
 }
 
-function EditableField({
-  children,
-  containerRef,
-  label,
-}: {
-  children: React.ReactNode;
-  containerRef: React.RefObject<HTMLDivElement | null>;
-  label: string;
-}) {
-  function focusField() {
-    const el = containerRef.current?.querySelector("input, textarea") as HTMLElement | null;
-    el?.focus();
-  }
-
+/** The story's ID and the section list's switch, in a bar above the stage. */
+export function TitleCardSettings({
+  story,
+  storyId,
+  sectionCardCount,
+  onToggleShowSections,
+  storyIds,
+  canRenameId,
+  onRenameId,
+}: TitleCardData) {
+  const { t } = useTranslation("editor");
   return (
-    <div className="group/field relative" ref={containerRef}>
-      <button
-        type="button"
-        onClick={focusField}
-        className="absolute top-0 right-0 flex items-center gap-1 cursor-pointer"
-      >
-        <span className="font-body text-xs text-gray-400 opacity-0 group-hover/field:opacity-100 pointer-coarse:opacity-100 transition-opacity">
-          {label}
-        </span>
-        <PencilLine className="w-3.5 h-3.5 text-gray-300 group-hover/field:text-charcoal transition-colors" />
-      </button>
-      {children}
+    <div data-testid="title-card-settings" className="shrink-0 flex flex-wrap items-start gap-x-8 gap-y-3 bg-white px-4 py-3 border-b border-gray-200">
+      <div className="min-w-48 flex-1">
+        <StoryIdField key={storyId} storyId={storyId} storyIds={storyIds} canRename={canRenameId} onRename={onRenameId} />
+      </div>
+      <div className="flex-1 min-w-48">
+        <div className="flex items-center gap-3">
+          <span className="font-body text-sm text-charcoal">{t("title_card.show_sections_label")}</span>
+          <ShowSectionsSwitch
+            checked={story.show_sections}
+            onChange={onToggleShowSections}
+            ariaLabel={t("title_card.show_sections_label")}
+          />
+        </div>
+        {sectionCardCount === 0 && (
+          <p className="font-body text-xs text-gray-400 mt-2">{t("title_card.show_sections_empty_helper")}</p>
+        )}
+      </div>
     </div>
+  );
+}
+
+/** The section titles under "Sections", as the published intro lists them. */
+function IntroToc({ titles }: { titles: readonly string[] }) {
+  const { t } = useTranslation("editor");
+  if (titles.length === 0) return null;
+  return (
+    <nav className="intro-toc" aria-label={t("stage.sections_heading")}>
+      <p className="intro-toc-heading">{t("stage.sections_heading")}</p>
+      <ul>
+        {titles.map((title, i) => (
+          <li key={i}>
+            <span className="intro-toc-link">{title}</span>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+/** The editor's hint under a card's content: what clicking does. */
+export function StageIntroHint({ text }: { text: string }) {
+  return (
+    <span data-testid="intro-edit-hint" aria-hidden="true" className="stage-intro-hint font-body">
+      <PencilLine className="w-3 h-3" aria-hidden="true" />
+      {text}
+    </span>
   );
 }
 
@@ -110,88 +158,51 @@ export function TitleCardView({
   titleYText,
   subtitleYText,
   bylineYText,
-  sectionCardCount,
-  onToggleShowSections,
-}: TitleCardViewProps) {
+  sectionTitles,
+  layoutMode,
+}: Pick<TitleCardData, "story" | "storyId" | "titleYText" | "subtitleYText" | "bylineYText" | "sectionTitles"> & {
+  /** The published page's layout for the author's window, which decides the scroll hint. */
+  layoutMode: LayoutMode;
+}) {
   const { t } = useTranslation("editor");
-  const titleRef = useRef<HTMLDivElement>(null);
-  const subtitleRef = useRef<HTMLDivElement>(null);
-  const bylineRef = useRef<HTMLDivElement>(null);
+  const toc = story.show_sections;
+  const introField = (name: "title" | "subtitle" | "byline", placeholder: string, label: string) => ({
+    target: `story:${storyId}:${name}`,
+    fieldKey: `story-${storyId}-${name}`,
+    placeholder,
+    label,
+  });
 
   return (
-    <div className="px-8 py-12 flex flex-col items-center justify-center min-h-full">
-      <div className="w-full max-w-lg rounded-lg bg-white px-6 py-8 shadow-sm border border-gray-100 space-y-6">
-        {/* Title */}
-        <div>
-          {story.order != null && (
-            <span className="block font-heading text-sm font-semibold text-gray-400 mb-6">
-              {t("title_card.story_number", { number: story.order + 1 })}
-            </span>
-          )}
-          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
-            {t("title_card.title_label")}
-          </span>
-          <EditableField containerRef={titleRef} label={t("step.click_to_edit")}>
-            <InlineTextField
-              initialValue={story.title ?? ""}
-              yText={titleYText}
-              placeholder={t("title_card.title_placeholder")}
-              inputClassName="font-heading text-3xl font-semibold text-charcoal"
-              fieldKey={`story-${storyId}-title`}
-            />
-          </EditableField>
+    <div data-testid="story-intro" className={`story-intro${toc ? " story-intro--toc" : ""}`}>
+      <div className="intro-floating-card">
+        <h1 className="intro-title">
+          <InPlaceText
+            {...introField("title", t("title_card.title_placeholder"), t("title_card.title_label"))}
+            yText={titleYText}
+            initialValue={story.title ?? ""}
+          />
+        </h1>
+        <h2 className="intro-subtitle">
+          <InPlaceText
+            {...introField("subtitle", t("title_card.subtitle_placeholder"), t("title_card.subtitle_label"))}
+            yText={subtitleYText}
+            initialValue={story.subtitle ?? ""}
+          />
+        </h2>
+        <div className="intro-byline">
+          <InPlaceText
+            {...introField("byline", t("title_card.byline_placeholder"), t("title_card.byline_label"))}
+            yText={bylineYText}
+            initialValue={story.byline ?? ""}
+            renderValue={(value) => <span dangerouslySetInnerHTML={{ __html: bylineHtml(value) }} />}
+          />
         </div>
-
-        {/* Subtitle */}
-        <div>
-          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
-            {t("title_card.subtitle_label")}
-          </span>
-          <EditableField containerRef={subtitleRef} label={t("step.click_to_edit")}>
-            <InlineTextField
-              initialValue={story.subtitle ?? ""}
-              yText={subtitleYText}
-              placeholder={t("title_card.subtitle_placeholder")}
-              inputClassName="font-body text-lg text-gray-600"
-              fieldKey={`story-${storyId}-subtitle`}
-            />
-          </EditableField>
+        {toc && <IntroToc titles={sectionTitles} />}
+        <div className="intro-hint">
+          <small>{t(layoutMode === "vertical" ? "stage.scroll_hint_mobile" : "stage.scroll_hint")}</small>
         </div>
-
-        {/* Byline */}
-        <div>
-          <span className="font-body text-xs font-medium text-gray-500 uppercase tracking-wider">
-            {t("title_card.byline_label")}
-          </span>
-          <EditableField containerRef={bylineRef} label={t("step.click_to_edit")}>
-            <InlineTextField
-              initialValue={story.byline ?? ""}
-              yText={bylineYText}
-              placeholder={t("title_card.byline_placeholder")}
-              inputClassName="font-body text-base text-gray-500"
-              fieldKey={`story-${storyId}-byline`}
-            />
-          </EditableField>
-        </div>
-
-        {/* show_sections toggle — inline below byline */}
-        <div className="border-t border-gray-100 pt-4">
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-body text-sm text-charcoal flex-1">
-              {t("title_card.show_sections_label")}
-            </span>
-            <ShowSectionsSwitch
-              checked={story.show_sections}
-              onChange={onToggleShowSections}
-              ariaLabel={t("title_card.show_sections_label")}
-            />
-          </div>
-          {sectionCardCount === 0 && (
-            <p className="font-body text-xs text-gray-400 mt-2">
-              {t("title_card.show_sections_empty_helper")}
-            </p>
-          )}
-        </div>
+        <StageIntroHint text={t("stage.edit_hint_title")} />
       </div>
     </div>
   );

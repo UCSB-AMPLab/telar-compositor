@@ -8,7 +8,7 @@
  * "convened by …" line. With collaborators present (collaboratorCount>0) both
  * the chip and the full convened-by line must appear.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -78,5 +78,40 @@ describe("WelcomeStrip — shared project (collaboratorCount=2)", () => {
     expect(container.textContent).toContain("count=2");
     expect(container.textContent).toContain("convenor=Alice");
     expect(container.textContent).not.toContain("welcome.created_year");
+  });
+});
+
+describe("WelcomeStrip — the role chip names the role", () => {
+  it.each(["convenor", "collaborator", "instructor"] as const)("labels a %s as that role", (role) => {
+    const { container } = render(<WelcomeStrip {...BASE_PROPS} role={role} collaboratorCount={2} />);
+    expect(container.textContent).toContain(`role_chip.${role}`);
+    for (const other of ["convenor", "collaborator", "instructor"].filter((r) => r !== role)) {
+      expect(container.textContent).not.toContain(`role_chip.${other}`);
+    }
+  });
+});
+
+describe("WelcomeStrip — the first-run checklist follows the role", () => {
+  const ROLES = ["convenor", "collaborator", "instructor"] as const;
+
+  it.each(ROLES)("shows only the %s heading and steps", (role) => {
+    const { container } = render(
+      <WelcomeStrip {...BASE_PROPS} role={role} state="empty" collaboratorCount={2} courseTab />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain(`checklist.${role}_heading`);
+    for (const n of [1, 2, 3]) expect(text).toContain(`checklist.${role}_step${n}`);
+    for (const other of ROLES.filter((r) => r !== role)) {
+      expect(text).not.toContain(`checklist.${other}_`);
+    }
+  });
+
+  it("gives an instructor without the Course tab the collaborator's steps, which do not send them there", () => {
+    const { container } = render(
+      <WelcomeStrip {...BASE_PROPS} role="instructor" state="empty" collaboratorCount={2} />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("checklist.collaborator_heading");
+    expect(text).not.toContain("checklist.instructor_");
   });
 });

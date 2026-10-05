@@ -6,6 +6,7 @@
  * D1. Refresh token expiry triggers a redirect to /signin?reason=session_expired.
  */
 
+import { liveAccount } from "~/lib/account-tombstone.server";
 import { redirect } from "react-router";
 import { encrypt, decrypt } from "~/lib/crypto.server";
 import { getDb } from "~/lib/db.server";
@@ -30,7 +31,6 @@ export interface GitHubUser {
   login: string;
   name: string | null;
   email: string | null;
-  plan: string | null;
 }
 
 // 30-minute threshold — refresh if token expires within this window
@@ -164,8 +164,12 @@ export async function maybeRefreshToken(
       refresh_token_expires_at: newRefreshExpiresAt,
       updated_at: new Date().toISOString(),
     })
-    .where(eq(users.id, user.id))
+    .where(liveAccount(user.id))
     .returning();
+
+  // The account was deleted while GitHub answered: the tokens are not written
+  // back into its tombstone, and the session ends.
+  if (!updatedUser) throw redirect("/signin?reason=session_expired");
 
   return updatedUser;
 }
@@ -195,7 +199,6 @@ export async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> 
     login: string;
     name: string | null;
     email: string | null;
-    plan?: { name: string } | null;
   };
 
   return {
@@ -203,6 +206,5 @@ export async function fetchGitHubUser(accessToken: string): Promise<GitHubUser> 
     login: data.login,
     name: data.name,
     email: data.email,
-    plan: data.plan?.name ?? null,
   };
 }

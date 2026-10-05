@@ -1,5 +1,5 @@
 {
-  "title": "Site Configuration",
+  "title": "Site settings",
   "intro": "Configure your site here — its name, theme, language, and description, plus author details, hosting, and how your stories and collection appear to readers.",
   "account_link_note": "For your user account settings, such as the interface language, <1>go to your account</1>.",
   "save": "Save Changes",
@@ -10,6 +10,10 @@
     "message": "You have unsaved changes. Are you sure you want to leave this page?",
     "stay": "Stay",
     "leave": "Leave"
+  },
+  "read_only": {
+    "title": "View only",
+    "body": "Only the site's convenor can change these settings."
   },
   "sections": {
     "site_settings": {
@@ -25,6 +29,7 @@
       "field_theme": "Theme",
       "field_theme_help": "Choose a color theme for your site.",
       "refresh_themes": "Refresh themes from repository",
+      "refresh_themes_failed": "We couldn't refresh your themes from GitHub. Try again in a moment.",
       "theme_alert": {
         "title_unrecognised": "We didn't recognise this theme",
         "body_unrecognised": "Your site config sets the theme to {{value}}, but we couldn't find a matching theme in your repository. Pick one of your themes below to update the setting.",
@@ -59,7 +64,9 @@
       "field_collection_mode": "Show objects first on homepage (collection mode)",
       "field_collection_mode_help": "When enabled, your homepage shows objects with large thumbnails first and stories below. When disabled (default), stories appear first.",
       "field_featured_count": "Featured Count",
-      "field_featured_count_help": "Number of featured objects to display."
+      "field_featured_count_help": "Number of featured objects to display.",
+      "field_skip_stories": "Skip stories on homepage",
+      "field_skip_stories_help": "Remove the stories section from your homepage entirely, leaving only the collection. Typical for course galleries."
     },
     "story_protection": {
       "title": "Story Protection",
@@ -68,7 +75,7 @@
     },
     "google_sheets": {
       "title": "Google Sheets Integration",
-      "disabled_notice": "Google Sheets has been disabled. The compositor manages your content directly.",
+      "disabled_notice": "Google Sheets has been disabled. The Compositor manages your content directly.",
       "enabled_notice": "Google Sheets is currently the content source. Changes made here will be overwritten on next sync."
     }
   },
@@ -86,5 +93,22 @@
   "remove_link_aria": "Remove link",
   "themes_none": "No themes found in this repository.",
   "empty_no_project": "Connect a project first to configure your site.",
-  "connect_repo_cta": "Connect a Repository"
+  "connect_repo_cta": "Connect a Repository",
+  "course": {
+    "section_title": "Course",
+    "join_label": "Join a course",
+    "join_placeholder": "Class code",
+    "join_button": "Join",
+    "join_hint": "Enter the class code from your instructor to attach this site to their course.",
+    "current": "This site is part of {{course}}.",
+    "leave_button": "Leave course",
+    "leave_title": "Leave {{course}}?",
+    "leave_body": "Your site keeps the objects it received from the course; they become ordinary objects you can edit or delete. The course staff will be removed from your team.",
+    "leave_confirm": "Leave course",
+    "leave_cancel": "Stay",
+    "convenor_only": "Only the site's convenor can join or leave a course.",
+    "left": "This site is no longer part of a course.",
+    "join_failed": "This site did not join the course. Enter the code again \u2014 trying twice duplicates nothing.",
+    "leave_failed": "This site is still in the course. Try leaving again."
+  }
 }

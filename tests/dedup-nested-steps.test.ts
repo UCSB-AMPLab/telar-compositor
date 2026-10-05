@@ -2,13 +2,16 @@
  * Pins the server-side deduplication of nested `steps` (and `layers`) arrays
  * inside each story's Y.Map.
  *
- * Background: `reorderInPlace` on the client is clone-delete-insert, which
+ * Background: reordering used to be clone-delete-insert on the client, which
  * is not CRDT-safe. Two collaborators reordering the same step concurrently
- * can leave two Y.Maps sharing the same `_id` in the story's `steps` array.
- * `deduplicateNestedStepArrays` heals this on every snapshot, mirroring the
- * top-level `deduplicateYArray` calls for stories/objects/glossary/pages.
+ * could leave two Y.Maps sharing the same `_id` in the story's `steps` array.
+ * Reordering is now a field write (`order_key`) that duplicates nothing, but
+ * `deduplicateNestedStepArrays` stays: it heals whatever a document already
+ * carries from before the change, and any duplicate a restore or ingest
+ * produces. It mirrors the top-level `deduplicateYArray` calls for
+ * stories/objects/glossary/pages.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -39,6 +42,8 @@ function makeMinimalDO() {
     storage: {
       getAlarm: async () => null,
       setAlarm: async () => {},
+      list: async () => new Map(),
+      delete: async () => 0,
     },
     acceptWebSocket: vi.fn(),
   };

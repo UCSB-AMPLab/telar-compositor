@@ -20,7 +20,7 @@
  * `cloudflare:workers` so DurableObject is a plain class and the DO
  * receives the test ctx/env via super().
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -45,6 +45,10 @@ vi.mock("cloudflare:workers", () => ({
 import { ProjectCollaborationDO } from "../workers/collaboration";
 import { signInternalMarker, verifyInternalMarker } from "../workers/auth";
 import { buildActivityRows } from "../workers/collaboration-helpers";
+import { makeGate, makeGateState, fetchAsRuntime } from "./helpers/do-gate";
+import { generateKeyBetween, isValidOrderKey } from "~/lib/order-key";
+import { markLoaded } from "./helpers/claimed-document";
+import { checkD1Bind } from "./helpers/d1-memory";
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -59,6 +63,7 @@ interface FakeSocket {
   close: ReturnType<typeof vi.fn>;
   serializeAttachment: ReturnType<typeof vi.fn>;
   deserializeAttachment: () => FakeSocket["attachment"];
+  readyState?: number;
 }
 
 function fakeSocket(
@@ -82,20 +87,30 @@ function fakeSocket(
  * blockConcurrencyWhile → ensureDocLoaded → DB.prepare which we don't
  * stub). We then append sockets after construction; the new endpoints
  * call ctx.getWebSockets() at request time so they pick up the live list.
+ *
+ * The gate models Cloudflare's semantics (see tests/helpers/do-gate.ts): an
+ * exception escaping a `blockConcurrencyWhile` callback discards the instance,
+ * so any Response the handler goes on to build is never sent. `gate` carries
+ * that outcome; pair it with `fetchAsRuntime` on any path where a throw is in
+ * play.
  */
 function makeCtxWithSockets(sockets: FakeSocket[]) {
   const live: FakeSocket[] = [];
+  const gate = makeGateState();
   const ctx = {
     getWebSockets: () => live,
-    blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
+    blockConcurrencyWhile: makeGate(gate),
     storage: {
       getAlarm: async () => null,
       setAlarm: async () => {},
+      list: async () => new Map(),
+      delete: async () => 0,
     },
     acceptWebSocket: vi.fn(),
   };
   return {
     ctx,
+    gate,
     /** Call AFTER `new ProjectCollaborationDO(ctx, env)` to populate sockets. */
     populate: () => {
       live.push(...sockets);
@@ -104,8 +119,24 @@ function makeCtxWithSockets(sockets: FakeSocket[]) {
 }
 
 function makeEnv() {
+  // A D1 that answers reads with nothing. /restore-orphans asks D1 which
+  // story_ids it already holds before building any Y.Map, so the route needs a
+  // binding even in the suites that stub the snapshot itself away.
+  const DB = {
+    prepare: (sql: string) => ({
+      bind: (...args: unknown[]) => {
+        checkD1Bind(sql, args);
+        return {
+          async run() { return { meta: { last_row_id: 1, changes: 1 }, success: true as const }; },
+          async all() { return { results: [], success: true as const }; },
+          async first() { return null; },
+        };
+      },
+    }),
+    async batch() { return []; },
+  };
   return {
-    DB: {} as unknown,
+    DB: DB as unknown,
     SESSION_SECRET: TEST_SECRET,
     COLLABORATION: {} as unknown,
   };
@@ -369,7 +400,7 @@ describe("verifyInternalMarker (direct)", () => {
 // needing a real D1 mock. The Y.doc itself is the real Y.Doc the DO
 // constructs in its constructor.
 function makeDoWithStubs(sockets: FakeSocket[] = []) {
-  const { ctx, populate } = makeCtxWithSockets(sockets);
+  const { ctx, gate, populate } = makeCtxWithSockets(sockets);
   const env = makeEnv();
   const doInstance = new ProjectCollaborationDO(
     ctx as unknown as DurableObjectState,
@@ -381,13 +412,13 @@ function makeDoWithStubs(sockets: FakeSocket[] = []) {
   // Replace ensureDocLoaded with a no-op that marks the doc as loaded —
   // unit tests do not touch D1.
   (doInstance as unknown as { ensureDocLoaded: () => Promise<void> }).ensureDocLoaded = async () => {
-    (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+    markLoaded(doInstance);
   };
   // Spy snapshotToD1 to be a no-op so the test does not require a DB stub.
   const snapshotSpy = vi
     .spyOn(doInstance as unknown as { snapshotToD1: () => Promise<void> }, "snapshotToD1")
     .mockResolvedValue(undefined);
-  return { doInstance, snapshotSpy };
+  return { doInstance, gate, snapshotSpy };
 }
 
 describe("collaboration DO — POST /restore-orphans (hotfix)", () => {
@@ -470,7 +501,7 @@ describe("collaboration DO — POST /restore-orphans (hotfix)", () => {
     expect(storyMap.get("private")).toBe(false);
     expect(storyMap.get("draft")).toBe(true);
     expect(storyMap.get("show_sections")).toBe(false);
-    expect(typeof storyMap.get("order")).toBe("number");
+    expect(isValidOrderKey(storyMap.get("order_key"))).toBe(true);
 
     const stepsArr = storyMap.get("steps") as Y.Array<Y.Map<unknown>>;
     expect(stepsArr.length).toBe(0);
@@ -653,7 +684,7 @@ describe("collaboration DO — POST /restore-orphans (hotfix)", () => {
     existing.set("title", new Y.Text("Existing"));
     existing.set("subtitle", new Y.Text(""));
     existing.set("byline", new Y.Text(""));
-    existing.set("order", 0);
+    existing.set("order_key", generateKeyBetween(null, null));
     existing.set("private", false);
     existing.set("draft", false);
     existing.set("show_sections", false);
@@ -676,8 +707,12 @@ describe("collaboration DO — POST /restore-orphans (hotfix)", () => {
     // Restored at index 1, draft=true.
     expect(storiesArr.get(1).get("story_id")).toBe("draft-new");
     expect(storiesArr.get(1).get("draft")).toBe(true);
-    // Order column on restored should be greater than existing's.
-    expect(storiesArr.get(1).get("order")).toBeGreaterThan(0);
+    // The restored story sorts after the existing one: it carries a bigger
+    // fractional index, which is the only thing that decides the list order.
+    const existingKey = storiesArr.get(0).get("order_key") as string;
+    const restoredKey = storiesArr.get(1).get("order_key") as string;
+    expect(isValidOrderKey(restoredKey)).toBe(true);
+    expect(restoredKey > existingKey).toBe(true);
   });
 
   it("broadcasts a syncStep2 update to all connected websockets after mutation", async () => {
@@ -795,11 +830,15 @@ describe("buildActivityRows — snapshot activity emit", () => {
 
 describe("collaboration DO — POST /snapshot", () => {
   it("returns 500 with body 'snapshot_failed' when snapshotToD1 throws", async () => {
-    const { doInstance, snapshotSpy } = makeDoWithStubs();
+    const { doInstance, gate, snapshotSpy } = makeDoWithStubs();
     snapshotSpy.mockRejectedValueOnce(new Error("D1_ERROR: batch failed"));
 
     const req = await makeRequest("/snapshot", "POST");
-    const res = await doInstance.fetch(req);
+    // Driven through fetchAsRuntime: a 500 built by a catch OUTSIDE the gate is
+    // never sent, because the instance that built it was already discarded.
+    // Reading it off doInstance.fetch directly is what made this assertion pass
+    // against a path production cannot reach.
+    const res = await fetchAsRuntime(doInstance, gate, req);
 
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("snapshot_failed");
@@ -838,7 +877,7 @@ describe("collaboration DO — webSocketClose last-disconnect snapshot", () => {
   it("does not reject when the last-disconnect snapshot throws", async () => {
     // No sockets populated → ctx.getWebSockets().length === 0 after close,
     // so the last-disconnect snapshot branch runs.
-    const { doInstance, snapshotSpy } = makeDoWithStubs([]);
+    const { doInstance, gate, snapshotSpy } = makeDoWithStubs([]);
     snapshotSpy.mockRejectedValueOnce(new Error("D1_ERROR: batch failed"));
 
     // Standalone socket with an attachment that has NO awarenessClientId,
@@ -848,6 +887,50 @@ describe("collaboration DO — webSocketClose last-disconnect snapshot", () => {
     await expect(
       doInstance.webSocketClose(ws as unknown as WebSocket, 1000),
     ).resolves.toBeUndefined();
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+    expect(gate.terminated).toBe(false);
+  });
+
+  // Under hibernation the closing socket is still listed by getWebSockets()
+  // while its own close handler runs, in a closing or closed state.
+  const OPEN = 1;
+  const CLOSING = 2;
+  const CLOSED = 3;
+
+  it.each([
+    ["clean close (1005)", 1005, CLOSING],
+    ["abnormal close (1006)", 1006, CLOSED],
+  ])("drains when the closing socket is the only one listed: %s", async (_name, code, state) => {
+    const closing = fakeSocket(1);
+    closing.readyState = state;
+    const { doInstance, snapshotSpy } = makeDoWithStubs([closing]);
+
+    await doInstance.webSocketClose(closing as unknown as WebSocket, code);
+
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not drain while another socket is open", async () => {
+    const closing = fakeSocket(1);
+    closing.readyState = CLOSING;
+    const other = fakeSocket(2);
+    other.readyState = OPEN;
+    const { doInstance, snapshotSpy } = makeDoWithStubs([closing, other]);
+
+    await doInstance.webSocketClose(closing as unknown as WebSocket, 1005);
+
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it("drains when the only other listed socket is closing", async () => {
+    const closing = fakeSocket(1);
+    closing.readyState = CLOSING;
+    const other = fakeSocket(2);
+    other.readyState = CLOSING;
+    const { doInstance, snapshotSpy } = makeDoWithStubs([closing, other]);
+
+    await doInstance.webSocketClose(closing as unknown as WebSocket, 1005);
+
     expect(snapshotSpy).toHaveBeenCalledTimes(1);
   });
 });

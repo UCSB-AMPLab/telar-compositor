@@ -4,7 +4,8 @@
     "published": "Última publicación: {{time}}",
     "commit": "commit {{sha}}",
     "synced": "Sincronizado desde el repositorio {{time}}",
-    "view_site": "Ver el sitio publicado"
+    "view_site": "Ver el sitio publicado",
+    "saved_state_size": "La copia guardada de este proyecto ocupa {{size}}. Por encima de 2 MB, el proyecto ya no se puede publicar."
   },
   "unpublished": {
     "title_one": "1 cambio sin publicar",
@@ -15,10 +16,11 @@
       "objects": "Objetos",
       "glossary": "Glosario",
       "pages": "Páginas",
-      "settings": "Ajustes del sitio"
+      "settings": "Configuración del sitio"
     },
     "landing_page": "Página de inicio",
     "navigation": "Navegación",
+    "objects_order": "Orden de los objetos",
     "modified": "modificado",
     "added": "agregado",
     "review": "Revisar todos los cambios",
@@ -32,7 +34,8 @@
     "changed": "{{n}} cambiado",
     "removed": "{{n}} eliminado",
     "keep_mine": "Mantener mi versión",
-    "review": "Revisar cambios"
+    "review": "Revisar cambios",
+    "accept_divergence_stale": "GitHub cambió mientras revisabas las diferencias, así que no guardamos tu elección. Vuelve a revisar los cambios para ver los más recientes."
   },
   "publishing": {
     "title": "Publicando… {{step}} de {{total}}",
@@ -66,8 +69,49 @@
   },
   "repo_unavailable": {
     "title": "No se puede acceder al repositorio",
-    "body": "Telar no puede acceder al repositorio de este proyecto ({{repo}}). Puede que lo hayan eliminado, le hayan cambiado el nombre o lo hayan hecho privado, o que la aplicación haya perdido el acceso. Tu trabajo está a salvo: se guarda aparte del repositorio.",
+    "body": "Telar no puede acceder al repositorio de este proyecto ({{repo}}). Puede que lo hayan eliminado, le hayan cambiado el nombre o lo hayan hecho privado, o que la App de GitHub haya perdido el acceso. Tu trabajo está a salvo: se guarda aparte del repositorio.",
     "manage_cta": "Gestionar el acceso en GitHub",
     "collaborator_note": "Pídele a quien coordina el proyecto que vuelva a conectar el repositorio."
+  },
+  "site_status": {
+    "halted": {
+      "title": "Se dejaron de guardar los cambios",
+      "body": "Los cambios de este proyecto ya no se están guardando. Lo que edites ahora no se va a conservar.",
+      "reason": {
+        "enforcement_failed": "No se pudo deshacer un cambio de forma segura.",
+        "fence_refused": "Otra copia del proyecto se hizo cargo de guardar los cambios.",
+        "apply_failed": "No se pudo aplicar un cambio de forma segura.",
+        "log_corrupt": "No se pudo leer la copia guardada.",
+        "bad_halt": "No se pudo leer el estado guardado.",
+        "other": "Los cambios dejaron de guardarse."
+      },
+      "since": "Desde {{time}}",
+      "ask_convenor": "Pídele a quien coordina que restaure el proyecto.",
+      "restore_button": "Restaurar la última versión guardada",
+      "restore_cost": "Se perderán los cambios hechos desde la última versión guardada. Quienes estén editando volverán a conectarse.",
+      "restore_confirm": "Restaurar ahora",
+      "restored": "Se restauró. Reconectando…",
+      "restored_short": "Se restauró.",
+      "restored_halted_again": "Se restauró, pero los cambios dejaron de guardarse otra vez: {{reason}}",
+      "stale": "El proyecto cambió mientras confirmabas. Revisa cómo está e intenta de nuevo.",
+      "uncertain": "Puede que la restauración no haya terminado. Revisa cómo está el proyecto e intenta de nuevo.",
+      "retry": "No se pudo restaurar. Intenta de nuevo.",
+      "failed": "No se pudo restaurar ({{status}}).",
+      "unreadable_state": "En este momento no se pudo saber si los cambios se están guardando.",
+      "observed": "Última revisión: estado {{generation}}",
+      "check_again": "Revisar de nuevo"
+    }
+  },
+  "repo_invitation": {
+    "title": "Invitación al repositorio",
+    "body": "GitHub te envió una invitación al repositorio de este proyecto. Acéptala aquí para terminar de unirte.",
+    "accept": "Aceptar invitación",
+    "lapsed": "Tu invitación al repositorio venció, así que ya no se puede aceptar. Quien coordina el proyecto puede enviarte una nueva.",
+    "changed": "Tu invitación cambió, así que no se aceptó. Cierra esto y vuelve a abrirlo.",
+    "fallback": "No pudimos aceptar la invitación desde aquí. Puedes aceptarla en GitHub.",
+    "fallback_link": "Abrir la invitación en GitHub",
+    "welcome_body": "{{convenor}} te agregó como colaborador/a. Acepta la invitación al repositorio de este proyecto para terminar de unirte.",
+    "welcome_email": "GitHub también te envía esta invitación por correo. No olvides aceptarla, aquí o desde ese correo.",
+    "later": "Más tarde"
   }
 }

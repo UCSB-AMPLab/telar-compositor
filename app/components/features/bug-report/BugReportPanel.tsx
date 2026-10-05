@@ -6,14 +6,20 @@
  *  - 480px max-width, max-h 80vh, role="dialog", Escape closes, Tab
  *    traps, initial focus on the first textarea, focus returns to
  *    triggerRef on close.
- *  - Three textareas (required-≥10 / optional-≤500 / optional-≤1000).
+ *  - Three textareas (required-≥10 / optional-≤500 / optional-≤1000),
+ *    then the optional recent-changes checkboxes.
  *  - Submit calls window.open(url, "_blank", "noopener,noreferrer")
  *    then showToast then onClose.
  *  - In mode="post-crash": panel intro and first-field label switch,
  *    and a captured boundary error is rendered pinned + unremovable
  *    in the AttachmentList.
+ *  - The repository is pinned: the issue body writes it whatever the
+ *    reporter removes.
+ *  - The repository's current name on GitHub is read when the panel
+ *    opens and attached only when it differs from the stored one; the
+ *    panel never waits for it.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -25,10 +31,29 @@ import {
   buildIssueBody,
   type FormInput,
   type Payload,
+  type RecentChange,
 } from "./build-issue-body";
 import { buildIssueUrl, deriveIssueTitle } from "./build-issue-url";
 import { getRecentErrors, type CapturedError } from "~/lib/error-capture";
-import { AttachmentList, type AttachmentItem } from "./AttachmentList";
+import { getLastPublishFailure } from "~/lib/publish-failure-capture";
+import { AttachmentList } from "./AttachmentList";
+import { buildAttachmentItems } from "./attachment-items";
+import { RecentChangesField } from "./RecentChangesField";
+import { useCurrentRepoName } from "./use-current-repo-name";
+
+/** What the `_app` loader knows about the active site, for the report. */
+export interface ReportSite {
+  /** Active project's GitHub repo ("owner/name"). Omitted when there's no
+   * active project (e.g. some post-crash contexts). */
+  repoFullName?: string;
+  /** The site's `telar_version` as the Compositor holds it. */
+  telarVersion?: string;
+  /** True when the repository has commits the Compositor didn't make. */
+  headDiverged?: boolean;
+  /** The project the report is about. Binds the name read and the last
+   * failed publish to this site. */
+  projectId?: number;
+}
 
 interface BugReportPanelProps {
   open: boolean;
@@ -42,6 +67,12 @@ interface BugReportPanelProps {
    * know which site/install it came from. Omitted when there's no active
    * project (e.g. some post-crash contexts). */
   repoFullName?: string;
+  /** The site's `telar_version`, when the loader has one. */
+  telarVersion?: string;
+  /** True when the repository has commits the Compositor didn't make. */
+  headDiverged?: boolean;
+  /** The project the report is about, when there is one. */
+  projectId?: number;
   /** When set (post-crash mode), the captured boundary error rendered pinned
    * + unremovable. */
   pinnedError?: CapturedError | null;
@@ -53,7 +84,12 @@ interface BugReportPanelProps {
  * buildPayload — snapshot the runtime context for inclusion in the issue body.
  * Called once at panel-open time.
  */
-export function buildPayload(repoFullName?: string): Payload {
+export function buildPayload(site: ReportSite = {}): Payload {
+  const { repoFullName, telarVersion, headDiverged, projectId } = site;
+  const failure = getLastPublishFailure(projectId);
+  const lastPublishFailure = failure
+    ? { error: failure.error, at: failure.at }
+    : undefined;
   const env =
     typeof document !== "undefined"
       ? (document.documentElement.dataset.env ?? "dev")
@@ -78,6 +114,9 @@ export function buildPayload(repoFullName?: string): Payload {
         : "en",
     timestamp: new Date().toISOString(),
     errors: getRecentErrors(),
+    ...(telarVersion ? { telarVersion } : {}),
+    ...(headDiverged ? { headDiverged: true as const } : {}),
+    ...(lastPublishFailure ? { lastPublishFailure } : {}),
   };
 }
 
@@ -112,6 +151,9 @@ export function BugReportPanel({
   mode,
   userLogin,
   repoFullName,
+  telarVersion,
+  headDiverged,
+  projectId,
   pinnedError,
   triggerRef,
 }: BugReportPanelProps) {
@@ -120,13 +162,22 @@ export function BugReportPanel({
   const [whatHappened, setWhatHappened] = useState("");
   const [expected, setExpected] = useState("");
   const [steps, setSteps] = useState("");
+  const [recentChanges, setRecentChanges] = useState<RecentChange[]>([]);
   const [removed, setRemoved] = useState<Set<string>>(new Set());
   const firstInputRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
+  const snapshot = useMemo<Payload | null>(
+    () =>
+      open
+        ? buildPayload({ repoFullName, telarVersion, headDiverged, projectId })
+        : null,
+    [open, repoFullName, telarVersion, headDiverged, projectId],
+  );
+  const githubFullName = useCurrentRepoName(open, projectId, repoFullName);
   const payload = useMemo<Payload | null>(
-    () => (open ? buildPayload(repoFullName) : null),
-    [open, repoFullName],
+    () => (snapshot && githubFullName ? { ...snapshot, githubFullName } : snapshot),
+    [snapshot, githubFullName],
   );
 
   // Escape closes.
@@ -194,6 +245,7 @@ export function BugReportPanel({
       whatHappened: trimmedWhat,
       expected: expected.trim(),
       steps: steps.trim(),
+      recentChanges,
     };
     const body = buildIssueBody(form, payload, removed, mode);
     const url = buildIssueUrl(body, deriveIssueTitle(trimmedWhat));
@@ -202,62 +254,7 @@ export function BugReportPanel({
     onClose();
   }
 
-  // Build attachment items list. Pinned error (post-crash) goes first.
-  const items: AttachmentItem[] = [];
-  if (pinnedError) {
-    items.push({
-      key: "__pinned",
-      label: t("attach_item_recent_error"),
-      value: pinnedError.message,
-      pinned: true,
-    });
-  }
-  if (payload) {
-    items.push({
-      key: "url",
-      label: t("attach_item_url"),
-      value: payload.url,
-    });
-    if (payload.repoFullName) {
-      items.push({
-        key: "repository",
-        label: t("attach_item_repository"),
-        value: payload.repoFullName,
-      });
-    }
-    items.push({
-      key: "buildSha",
-      label: t("attach_item_version"),
-      value: `${payload.buildSha} (${payload.environment})`,
-    });
-    items.push({
-      key: "browser",
-      label: t("attach_item_browser"),
-      value: payload.browser,
-    });
-    items.push({
-      key: "viewport",
-      label: t("attach_item_viewport"),
-      value: payload.viewport,
-    });
-    items.push({
-      key: "locale",
-      label: t("attach_item_locale"),
-      value: payload.locale,
-    });
-    items.push({
-      key: "timestamp",
-      label: t("attach_item_reported_at"),
-      value: payload.timestamp,
-    });
-    for (const [i, e] of payload.errors.entries()) {
-      items.push({
-        key: `error-${i}`,
-        label: t("attach_item_recent_error"),
-        value: e.message,
-      });
-    }
-  }
+  const items = buildAttachmentItems(payload, pinnedError, t);
 
   const intro =
     mode === "post-crash" ? t("crash_panel_intro") : t("panel_intro");
@@ -361,6 +358,11 @@ export function BugReportPanel({
           className="mt-1 w-full rounded border border-gray-300 px-2 py-1 font-body text-sm"
         />
         <p className="text-xs text-gray-500 mt-1">{t("field_steps_why")}</p>
+
+        <RecentChangesField
+          selected={recentChanges}
+          onChange={setRecentChanges}
+        />
 
         <div className="mt-4">
           <AttachmentList

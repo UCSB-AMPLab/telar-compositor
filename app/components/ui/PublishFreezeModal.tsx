@@ -12,14 +12,12 @@ import { FreezeModal } from "~/components/ui/FreezeModal";
 interface PublishFreezeModalProps {
   isPublishing: boolean;
   publishError: boolean;
-  isOwner: boolean;
   onDismiss: () => void;
 }
 
 export function PublishFreezeModal({
   isPublishing,
   publishError,
-  isOwner,
   onDismiss,
 }: PublishFreezeModalProps) {
   const { t } = useTranslation("collaboration");
@@ -27,11 +25,9 @@ export function PublishFreezeModal({
     <FreezeModal
       isActive={isPublishing}
       hasError={publishError}
-      isOwner={isOwner}
       onDismiss={onDismiss}
       labelId="publish-freeze-heading"
       heading={t("publish_freeze_heading")}
-      bodyOwner={t("publish_freeze_body_owner")}
       bodyCollaborator={t("publish_freeze_body_collaborator")}
       errorHeading={t("publish_freeze_error_heading")}
       errorBody={t("publish_freeze_error_body")}

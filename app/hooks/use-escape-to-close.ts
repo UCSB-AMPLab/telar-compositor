@@ -15,7 +15,10 @@
  * re-attached on every render just because the caller passed a fresh inline
  * closure (same latest-ref pattern as `useYjsArraySync`).
  *
- * @version v1.4.0-beta
+ * `useEscapeFirst` is the same for a menu that must close before anything
+ * else hears the key: see its own comment.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef } from "react";
@@ -34,5 +37,37 @@ export function useEscapeToClose(
     }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
+  }, [enabled]);
+}
+
+/**
+ * While `enabled` and `isTop()`, Escape calls `onEscape` before anything else
+ * hears it and goes no further: the listener is on the document in the
+ * capture phase, so it runs before a focused editor's own handlers, and it
+ * stops the event. For a toolbar menu opened with the pointer, which leaves
+ * focus in the editor (toolbar-press.ts): without it the editor would take
+ * the key (to narrow a selection, or to close the field it is in) and the
+ * menu would stay open, still counted as open (use-overlay-open.ts).
+ *
+ * `isTop` is the menu's place on the overlay stack (`useOverlayOpen`): while
+ * a dialog or popover opened above the menu is open, the key is left to it,
+ * and the menu closes on a later press. A key that is part of a composition
+ * is left alone.
+ */
+export function useEscapeFirst(onEscape: () => void, enabled: boolean, isTop: () => boolean): void {
+  const latest = useRef({ onEscape, isTop });
+  latest.current = { onEscape, isTop };
+
+  useEffect(() => {
+    if (!enabled) return;
+    function takeEscape(e: KeyboardEvent) {
+      if (e.key !== "Escape" || e.isComposing || e.keyCode === 229) return;
+      if (!latest.current.isTop()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      latest.current.onEscape();
+    }
+    document.addEventListener("keydown", takeEscape, true);
+    return () => document.removeEventListener("keydown", takeEscape, true);
   }, [enabled]);
 }

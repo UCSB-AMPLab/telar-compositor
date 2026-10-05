@@ -6,10 +6,16 @@
  * pulls from here so the Y.Doc-walking logic lives in one place instead of
  * being inlined everywhere a loader or hook needs it.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import * as Y from "yjs";
+
+/** A document value's text: a Y.Text's content, a plain string as it is, anything else empty. */
+export function textOf(value: unknown): string {
+  if (value instanceof Y.Text) return value.toString();
+  return typeof value === "string" ? value : "";
+}
 
 /**
  * findYMapById — find a Y.Map in a Y.Array by matching its "_id" key.
@@ -128,9 +134,14 @@ export function findYMapIndex(
  * tombstone issues that affect Y.Map reorders.
  *
  * Defensive: if a Y.Map ever ends up in the navigation array (legacy data
- * or future migration), we deep-clone via the same idiom as
- * `cloneYMap` in `use-structural-ops.ts` rather than reuse the reference,
+ * or future migration), we deep-clone it rather than reuse the reference,
  * which would re-attach a deleted node.
+ *
+ * The entity lists do NOT reorder this way — they write an `order_key` field
+ * and move nothing (app/lib/field-order.ts). Navigation can, because its
+ * entries are plain JSON in an unprotected array: the delete rule only ever
+ * looks at Y.Maps inside the protected entity arrays, so a nav reorder is
+ * invisible to it.
  *
  * Must be called inside a `ydoc.transact()` block. No-ops on identical
  * indices or out-of-range arguments.

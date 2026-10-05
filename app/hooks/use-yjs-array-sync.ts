@@ -5,7 +5,10 @@
  * subscribes with `observeDeep` so every nested mutation re-derives the plain
  * array, and tears the observer down on cleanup. When `yArray` is null (no
  * ydoc / D1-fallback render path) the hook returns null so callers can gate on
- * `result !== null` to choose the Yjs source over loader data.
+ * `result !== null` to choose the Yjs source over loader data. Rows mirrored
+ * from an earlier array are never returned for a new one: until the new
+ * array's first recompute the hook answers null, so a caller cannot read the
+ * previous document's rows as the current document's.
  *
  * The map function is held in a ref and read at recompute time, so the effect
  * depends only on `[yArray]` — passing a fresh inline `mapFn` each render does
@@ -13,7 +16,7 @@
  * the hand-written effects this hook replaces; callers relied on the observer
  * being wired exactly when the underlying Y.Array reference changed.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -23,7 +26,7 @@ export function useYjsArraySync<T>(
   yArray: Y.Array<Y.Map<unknown>> | null,
   mapFn: (item: Y.Map<unknown>, index: number) => T,
 ): T[] | null {
-  const [items, setItems] = useState<T[] | null>(null);
+  const [mirrored, setMirrored] = useState<{ source: Y.Array<Y.Map<unknown>>; items: T[] } | null>(null);
 
   // Latest-ref: keep the newest mapFn available to the observer without making
   // it an effect dependency (which would churn the observeDeep subscription).
@@ -32,7 +35,7 @@ export function useYjsArraySync<T>(
 
   useEffect(() => {
     if (!yArray) {
-      setItems(null);
+      setMirrored(null);
       return;
     }
     const recompute = () => {
@@ -40,12 +43,12 @@ export function useYjsArraySync<T>(
       for (let i = 0; i < yArray.length; i++) {
         next.push(mapRef.current(yArray.get(i), i));
       }
-      setItems(next);
+      setMirrored({ source: yArray, items: next });
     };
     recompute();
     yArray.observeDeep(recompute);
     return () => yArray.unobserveDeep(recompute);
   }, [yArray]);
 
-  return items;
+  return mirrored !== null && mirrored.source === yArray ? mirrored.items : null;
 }

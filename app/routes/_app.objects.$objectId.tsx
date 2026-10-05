@@ -5,41 +5,56 @@
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { eq, and } from "drizzle-orm";
+import { objectsSheetOrder } from "~/lib/objects.server";
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useFetcher, redirect, useRouteError, isRouteErrorResponse } from "react-router";
-import { ArrowLeft, Trash2, Video, Music } from "lucide-react";
+import { Link, useFetcher, useNavigate, redirect, useRouteError, isRouteErrorResponse } from "react-router";
+import { ArrowLeft, GraduationCap, Trash2, Video, Music } from "lucide-react";
 import type { Route } from "./+types/_app.objects.$objectId";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { objects, project_config, steps, stories } from "~/db/schema";
+import { readSiteTelarVersion } from "~/lib/site-version.server";
+import { objects, project_config, projects, steps, stories } from "~/db/schema";
 import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
+import { gatePageSite } from "~/lib/page-site-gate.server";
+import { setObjectFeatured } from "~/lib/object-featured.server";
+import { getUserRole } from "~/lib/membership.server";
+import { useSiteFetcher } from "~/lib/page-site";
 import { deriveStatus } from "~/lib/iiif-types";
 import { Switch } from "~/components/ui/Switch";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { InlineTextArea } from "~/components/ui/InlineTextArea";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
-import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { findYMapById, getYText } from "~/lib/yjs-helpers";
 import * as Y from "yjs";
+import { readProjectObjectsHeader } from "~/lib/objects-sheet-header.server";
+import { ObjectCustomFields } from "~/components/features/objects/ObjectCustomFields";
 import { IiifViewer } from "~/components/features/objects/IiifViewer";
 import { detectMediaType, extractVideoId } from "~/lib/media-type";
+import { iiifUrlsFor, isExternalSource, stepObjectResolver } from "~/lib/object-id";
 import { VideoEmbed } from "~/components/features/editor/VideoEmbed";
 import { AudioPlayer } from "~/components/features/editor/AudioPlayer";
 import { CommitAndBuildModal } from "~/components/features/objects/CommitAndBuildModal";
 import { decrypt } from "~/lib/crypto.server";
 import { recordError } from "~/lib/error-capture";
-import { getFileContent, getRepoTree, githubHeaders } from "~/lib/github.server";
-import { commitFilesToRepo, StaleHeadError, dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
-import { bumpProjectHead } from "~/lib/github-status.server";
+import { githubHeaders } from "~/lib/github.server";
+import { dispatchWorkflow, getJobSteps, mapStepsToBuildPhases } from "~/lib/commit.server";
+import { bumpProjectHeadFrom } from "~/lib/github-status.server";
 import type { WorkflowRun } from "~/lib/commit.server";
-import { getInstallationToken } from "~/lib/github-app.server";
-import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
-import { asc } from "drizzle-orm";
+import { resolveProjectToken } from "~/lib/github-app.server";
+import { deleteObjectWithRecord } from "~/lib/object-repo-delete.server";
+import type { RecordedDeleteResult } from "~/lib/object-repo-delete.server";
+import { removeThroughCommittedRecord, type RemovalTarget } from "~/lib/pending-object-ops.server";
+import { holdOperationLease } from "~/lib/operation-lease.server";
+import { readRepoWriteRefusal } from "~/lib/upgrade-gate.server";
+import { renameObjectFromPage } from "~/lib/object-rename.server";
+import { objectRenameFacts } from "~/lib/object-rename-id";
+import { REPO_WRITE_REFUSAL_KEYS } from "~/lib/repo-write-refusal-keys";
+import { ObjectIdField } from "~/components/features/objects/ObjectIdField";
 
 export const handle = { i18n: ["common", "objects"] };
 
@@ -85,32 +100,44 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
   const isMediaObject = loaderMediaType === "youtube" || loaderMediaType === "vimeo"
     || loaderMediaType === "google-drive" || loaderMediaType === "audio";
 
-  const isExternal =
-    object.source_url !== null &&
-    (object.source_url.startsWith("http://") ||
-      object.source_url.startsWith("https://"));
+  const isExternal = isExternalSource(object.source_url);
+  const frameworkVersion = config?.telar_version ?? null;
 
   let manifestUrl: string | null = null;
   let infoJsonUrl: string | null = null;
 
   if (!isMediaObject) {
-    if (isExternal) {
-      manifestUrl = object.source_url;
-    } else if (config?.url) {
-      const base = `${config.url}${config.baseurl ?? ""}`;
-      manifestUrl = `${base}/iiif/objects/${object.object_id}/manifest.json`;
-      infoJsonUrl = `${base}/iiif/objects/${object.object_id}/info.json`;
-    }
+    const siteBase = config?.url ? `${config.url}${config.baseurl ?? ""}` : null;
+    ({ manifestUrl, infoJsonUrl } = iiifUrlsFor(object, siteBase, frameworkVersion));
   }
 
-  // Fetch story usage for this object
-  const stepRefs = await db
-    .select({
-      story_id: steps.story_id,
-      step_number: steps.step_number,
-    })
-    .from(steps)
-    .where(eq(steps.object_id, object.object_id));
+  // The steps the site shows this object for: each step's `object` matched
+  // against every object of the project as the framework matches it, so a
+  // step naming `map` is a use of `map.jpg`. In objects.csv order, which
+  // decides the row a step shows where two share the site's id.
+  const [projectObjectIds, candidateSteps] = await Promise.all([
+    db
+      .select({ object_id: objects.object_id })
+      .from(objects)
+      .where(eq(objects.project_id, activeProject.id))
+      .orderBy(objectsSheetOrder()),
+    db
+      .select({
+        story_id: steps.story_id,
+        step_number: steps.step_number,
+        object_id: steps.object_id,
+      })
+      .from(steps)
+      .innerJoin(stories, eq(steps.story_id, stories.id))
+      .where(eq(stories.project_id, activeProject.id)),
+  ]);
+  const showsFor = stepObjectResolver(projectObjectIds, frameworkVersion);
+  const stepRefs = candidateSteps.filter((s) => showsFor(s.object_id)?.object_id === object.object_id);
+  const rename = objectRenameFacts(
+    object,
+    { sheet: projectObjectIds, d1: projectObjectIds, version: frameworkVersion },
+    candidateSteps.map((s) => s.object_id),
+  );
 
   const storyIds = [...new Set(stepRefs.map((r) => r.story_id))];
   let storyTitles: Record<number, string | null> = {};
@@ -132,12 +159,25 @@ export async function loader({ request, params, context }: Route.LoaderArgs) {
     ? `${config.url}${config.baseurl ?? ""}`
     : null;
 
+  // The sheet's header, for the order of the custom fields: one strict read of
+  // objects.csv at the recorded head, and null (the order the blobs imply) on
+  // any failure.
+  let sheetHeader: string[] | null = null;
+  try {
+    const sheetUserToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+    sheetHeader = await readProjectObjectsHeader(env, activeProject, sheetUserToken, userRole);
+  } catch {
+    sheetHeader = null;
+  }
+
   return {
     object,
+    sheetHeader,
     manifestUrl,
     infoJsonUrl,
     isExternal,
     usedInStories,
+    rename,
     siteBase,
     userRole,
     currentUserId: user.id,
@@ -157,24 +197,26 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
+  // Intents skipped by the page-site check below: each acts on the object
+  // row's own site.
+  const PAGE_SITE_EXEMPT = ["autosave-object-featured", "delete-object", "rename-object"];
+
+  // Every other intent acts on the session's site, and only when the page
+  // that posted it showed that site. `null` is the no-project case, which each
+  // intent answers in its own shape.
+  const gate = await gatePageSite(request, env, user.id, formData, intent, PAGE_SITE_EXEMPT);
+  if (gate.refused) return gate.refused;
+  const page = gate.page;
+
   switch (intent) {
-    case "autosave-object-featured": {
-      const entityId = Number(formData.get("entityId"));
-      const featured = formData.get("value") === "true";
-
-      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
-      if (!resolved) return { ok: false, error: "no_project" };
-
-      await db
-        .update(objects)
-        .set({
-          featured,
-          updated_at: new Date().toISOString(),
-        })
-        .where(and(eq(objects.id, entityId), eq(objects.project_id, resolved.project.id)));
-
+    case "autosave-object-featured":
+      await setObjectFeatured(
+        db,
+        user.id,
+        Number(formData.get("entityId")),
+        formData.get("value") === "true",
+      );
       return { ok: true, intent: "autosave-object-featured" };
-    }
 
     case "delete-object": {
       const objectDbId = Number(formData.get("objectDbId"));
@@ -189,95 +231,86 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
       if (!targetObject) throw redirect("/objects");
 
-      // Resolve the caller's active project — also verifies membership
-      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
-      if (!resolved) throw redirect("/objects");
+      // The object's own site, which is the one the page showed it on, and
+      // the caller's standing there. A course-derived object is its own
+      // `project_id`'s, never `course_project_id`'s. A caller with no
+      // membership on that site is sent back to the grid.
+      const [objectProject] = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.id, targetObject.project_id))
+        .limit(1);
+      if (!objectProject) throw redirect("/objects");
+      const objectRole = await getUserRole(db, objectProject.id, user.id);
+      if (objectRole === null) throw redirect("/objects");
+      const resolved = { project: objectProject, userRole: objectRole };
 
-      // Guard: only delete objects that belong to the caller's active project
-      if (targetObject.project_id !== resolved.project.id) throw redirect("/objects");
-
-      if (fromRepo) {
-        // Delete from repo: remove image folder + update objects.csv + commit.
-        // The whole region runs inside try/catch — decrypt, the CSV fetch and
-        // the D1 listing can throw, and an uncaught throw here became an
-        // opaque 500 instead of the structured delete_failed.
-        const activeProject = resolved.project;
-
-        try {
-          const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-          const [owner, repo] = activeProject.github_repo_full_name.split("/");
-
-          // Find files to delete in the object's folder
-          const objectFolderPath = `telar-content/objects/${targetObject.object_id}`;
-          const deletions: string[] = [];
-
-          try {
-            const { tree } = await getRepoTree(token, owner, repo);
-            for (const item of tree) {
-              if (item.path?.startsWith(objectFolderPath + "/") && item.type === "blob") {
-                deletions.push(item.path);
-              }
-            }
-          } catch {
-            // If tree fetch fails, we'll just update the CSV without deleting files
-          }
-
-          // Build updated objects.csv without this object
-          const remainingObjects = await db
-            .select()
-            .from(objects)
-            .where(and(
-              eq(objects.project_id, activeProject.id),
-              eq(objects.missing_from_repo, false),
-            ))
-            .orderBy(asc(objects.object_id));
-
-          const filteredObjects = remainingObjects.filter(
-            (o) => o.id !== objectDbId
-          );
-
-          const existingCsv = await getFileContent(
-            token, owner, repo, "telar-content/spreadsheets/objects.csv"
-          );
-          const updatedCsv = serializeObjectsCsv(filteredObjects.map(dbObjectToCsvRow), existingCsv ?? undefined);
-
-          // Repo WRITE on the App installation token (contents:write
-          // independent of the user's own GitHub access); user token is the
-          // local-dev fallback — matching the upload/commit flows.
-          let commitToken = token;
-          try {
-            commitToken = await getInstallationToken(
-              env.GITHUB_APP_ID,
-              env.GITHUB_PRIVATE_KEY,
-              activeProject.installation_id,
-            );
-          } catch {
-            // Installation token unavailable (local dev) — fall back to user token
-          }
-
-          // Commit: updated CSV + deletions
-          const result = await commitFilesToRepo(
-            commitToken, owner, repo, "main",
-            [{ path: "telar-content/spreadsheets/objects.csv", content: updatedCsv }],
-            `Remove ${targetObject.object_id} via Telar Compositor`,
-            undefined,                                         // messageBody
-            deletions.length > 0 ? deletions : undefined,     // deletions
-          );
-
-          // Update head_sha (also invalidates GitHub status cache)
-          await bumpProjectHead(db, activeProject.id, result.newHeadSha);
-        } catch (err) {
-          if (err instanceof StaleHeadError) {
-            return { ok: false, error: "stale_head" };
-          }
-          return { ok: false, error: "delete_failed" };
-        }
+      // Standing, not just membership — and two different standings, because
+      // the two buttons in the delete dialog are two different operations.
+      //
+      // Removing the object from the compositor is the collaborative
+      // document's own delete, whose model is stated in `use-structural-ops`
+      // and enforced in the Durable Object: the convenor deletes anything, a
+      // collaborator or instructor deletes only what they created. The grid
+      // honours exactly that, so the detail page must too, or the same object
+      // is deletable from the list and not from its own page.
+      //
+      // `fromRepo` is the narrower operation — it removes the object's image
+      // files and its objects.csv record from the published site — and the
+      // repository is the convenor's to change, so that half admits the
+      // convenor alone even on an object a collaborator created.
+      //
+      // The membership read above establishes membership only, so the role it
+      // reports is what these predicates read.
+      const isConvenor = resolved.userRole === "convenor";
+      const createdByCaller = targetObject.created_by === user.id;
+      if (fromRepo ? !isConvenor : !(isConvenor || createdByCaller)) {
+        return { ok: false, error: "forbidden", objectDbId };
       }
 
-      // Delete from D1 — scoped to the verified project
-      await db.delete(objects).where(and(eq(objects.id, objectDbId), eq(objects.project_id, resolved.project.id)));
-      throw redirect("/objects");
+      // Course items are undeletable on every path while the marker is set,
+      // the convenor included. Refused before the repo branch so a forbidden
+      // delete never commits a CSV rewrite it would then have to undo.
+      if (targetObject.course_project_id != null) {
+        return { ok: false, error: "course_item_delete_refused", objectDbId };
+      }
+
+      if (fromRepo) {
+        // The repository half rewrites objects.csv and the site rebuilds from
+        // it, so a site behind the latest release, or one whose release
+        // cannot be read, is refused before anything is read or committed.
+        const repoRefusal = await readRepoWriteRefusal(db, env, {
+          project: resolved.project,
+          userRole: resolved.userRole,
+          encryptedToken: user.encrypted_access_token,
+        });
+        if (repoRefusal) return { ok: false, error: repoRefusal, objectDbId };
+      }
+
+      // Both halves are done here, under the objects lease, before the
+      // answer: the removal goes through the collaboration object by the
+      // object's D1 id, which removes its Y.Map and lets the flush take the
+      // row. Waiting on the page for the document half left an object
+      // deleted from the repository and standing in the Compositor whenever
+      // the tab closed after the answer, and a publish that read D1 in
+      // between wrote its row back into objects.csv.
+      const target = { object_id: targetObject.object_id, doc_id: targetObject.id };
+      const held = await holdOperationLease(env, resolved.project.id, user.id, "objects", async (landed) => {
+        const answer = fromRepo
+          ? await deleteFromRepositoryAndDocument(env, db, user, resolved, target)
+          : await deleteFromDocument(env, db, resolved.project.id, user.id, target);
+        if (answer.ok) landed();
+        return answer;
+      });
+      if (held.refused) return { ok: false, error: "operation_in_progress", objectDbId };
+      if (!held.value.ok) return { ok: false, error: held.value.error, objectDbId };
+      // `pending`: the repository half is done and the document half is not
+      // yet; its record finishes it.
+      return { ok: true, intent: "delete-object", objectDbId, pending: held.value.pending };
     }
+
+    case "rename-object":
+      return renameFromForm(env, db, user, formData);
 
     case "poll-build": {
       const runIdParam = formData.get("runId") as string | null;
@@ -287,14 +320,25 @@ export async function action({ request, params, context }: Route.ActionArgs) {
 
       // Membership-aware (member-level: polling is read-only build status) —
       // no first-owned-project fallback.
-      const resolvedPoll = await resolveActiveProjectFromRequest(request, env, user.id);
+      const resolvedPoll = page;
       if (!resolvedPoll) {
         return { ok: false, intent: "poll-build", error: "no_project" };
       }
       const activeProjectPoll = resolvedPoll.project;
 
       try {
-        const tokenPoll = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        // A collaborator's own token may have no read access to a private
+        // repo — polling under it here would otherwise fail every attempt
+        // with poll_failed, matching the bug already fixed in
+        // _app.objects.tsx's own poll-build case.
+        const pollUserToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const tokenPoll = await resolveProjectToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          activeProjectPoll.installation_id,
+          pollUserToken,
+          resolvedPoll.userRole,
+        );
         const [ownerPoll, repoPoll] = activeProjectPoll.github_repo_full_name.split("/");
 
         const runId = Number(runIdParam);
@@ -327,26 +371,29 @@ export async function action({ request, params, context }: Route.ActionArgs) {
       // Membership-aware (member-level: the Generate-tiles button renders for
       // any project member; dispatching a rebuild is non-destructive) — no
       // first-owned-project fallback.
-      const resolved3 = await resolveActiveProjectFromRequest(request, env, user.id);
+      const resolved3 = page;
       if (!resolved3) {
         return { ok: false, intent: "dispatch-iiif", error: "no_project" };
       }
       const activeProject3 = resolved3.project;
 
       try {
+        // A collaborator's own token has no write access to the convenor's
+        // repository, and on a private repo may have no read access either —
+        // falling back to it unconditionally on a mint failure would trade a
+        // clear failure for a confusing GitHub error. The user token is a
+        // fallback for the convenor only, matching every other dispatch in
+        // this app.
         const token3 = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const [owner3, repo3] = activeProject3.github_repo_full_name.split("/");
 
-        let dispatchToken = token3;
-        try {
-          dispatchToken = await getInstallationToken(
-            env.GITHUB_APP_ID,
-            env.GITHUB_PRIVATE_KEY,
-            activeProject3.installation_id,
-          );
-        } catch {
-          // Fall back to user token
-        }
+        const dispatchToken = await resolveProjectToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          activeProject3.installation_id,
+          token3,
+          resolved3.userRole,
+        );
         const dispatch = await dispatchWorkflow(
           dispatchToken, owner3, repo3, "build.yml",
         );
@@ -373,23 +420,201 @@ export async function action({ request, params, context }: Route.ActionArgs) {
   }
 }
 
+/**
+ * The `rename-object` form, done on the server (`renameObjectFromPage`). An
+ * object or site that is gone, or a caller with no membership on it, is sent
+ * back to the grid, as the delete sends them.
+ */
+async function renameFromForm(
+  env: Env,
+  db: ReturnType<typeof getDb>,
+  user: { id: number; encrypted_access_token: string },
+  formData: FormData,
+) {
+  const answer = await renameObjectFromPage(env, db, user, {
+    objectDbId: Number(formData.get("objectDbId")),
+    shownObjectId: String(formData.get("shownObjectId") ?? ""),
+    newId: String(formData.get("newId") ?? ""),
+    disableSheets: formData.get("disableSheets") === "true",
+    confirmedFacts: String(formData.get("confirmedFacts") ?? ""),
+  });
+  if (answer === "not_found") throw redirect("/objects");
+  return answer;
+}
+
+// ---------------------------------------------------------------------------
+// Delete, on the server
+// ---------------------------------------------------------------------------
+
+type ServerDeleteAnswer = { ok: true; pending: boolean } | { ok: false; error: string };
+
+/**
+ * A deletion from the Compositor alone: the document half, as an operation
+ * of its own (`removeThroughCommittedRecord`).
+ */
+async function deleteFromDocument(
+  env: Env,
+  db: ReturnType<typeof getDb>,
+  projectId: number,
+  actorId: number,
+  target: RemovalTarget,
+): Promise<ServerDeleteAnswer> {
+  return removeThroughCommittedRecord(env, db, projectId, actorId, target);
+}
+
+/**
+ * A deletion from the repository: the repository half and the document half,
+ * under a `remove` record (`deleteObjectWithRecord`).
+ *
+ * decrypt and the installation-token lookup can throw. They answer
+ * `delete_failed` rather than escaping, because an uncaught throw reaches the
+ * client as an opaque 500 and the modal reads structured failures only. Both
+ * the read and the write run on the installation token: this branch is
+ * convenor-only, and the user token is a fallback for the convenor only,
+ * matching every other project-repo read and write in this app.
+ */
+async function deleteFromRepositoryAndDocument(
+  env: Env,
+  db: ReturnType<typeof getDb>,
+  user: { id: number; encrypted_access_token: string },
+  resolved: { project: { id: number; github_repo_full_name: string; installation_id: number }; userRole: string },
+  target: RemovalTarget,
+): Promise<ServerDeleteAnswer> {
+  let result: RecordedDeleteResult;
+  try {
+    const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+    const [owner, repo] = resolved.project.github_repo_full_name.split("/");
+    const repoToken = await resolveProjectToken(
+      env.GITHUB_APP_ID,
+      env.GITHUB_PRIVATE_KEY,
+      resolved.project.installation_id,
+      token,
+      resolved.userRole,
+    );
+    result = await deleteObjectWithRecord(env, db, resolved.project.id, user.id, {
+      readToken: repoToken,
+      commitToken: repoToken,
+      owner,
+      repo,
+      objectId: target.object_id,
+      d1FrameworkVersion: await readSiteTelarVersion(db, resolved.project.id),
+    }, target);
+  } catch {
+    return { ok: false, error: "delete_failed" };
+  }
+  if (!result.ok) return result;
+
+  // Recording the head sits outside the commit's failure handling on
+  // purpose: the repository WAS updated, and the next commit resolves the
+  // head afresh when no override is given, so a bookkeeping failure must not
+  // turn a landed commit into delete_failed. The head advances only from the
+  // revision the commit was built on: any other parent is a GitHub edit the
+  // Compositor has not read, left for the next refresh or check.
+  if (result.headSha !== null) {
+    try {
+      await bumpProjectHeadFrom(db, resolved.project.id, result.parentSha, result.headSha);
+    } catch (err) {
+      console.error(`delete-object: head bump failed after ${result.headSha}`, err);
+    }
+  }
+  return { ok: true, pending: result.pending };
+}
+
+// ---------------------------------------------------------------------------
+// Delete answer
+// ---------------------------------------------------------------------------
+
+/** The request one of the delete forms made, held until its answer arrives. */
+interface DeleteRequest {
+  objectDbId: number;
+  projectId: number;
+  fromRepo: boolean;
+}
+
+/** What the `delete-object` action answers, either half. */
+type DeleteAnswer =
+  | { ok: true; intent: "delete-object"; objectDbId: number; pending?: boolean }
+  | { ok: false; error: string; objectDbId: number };
+
+/** What the page does with one answer. */
+type DeleteOutcome =
+  | { kind: "ignore" }
+  | { kind: "message"; key: string }
+  | { kind: "leave" };
+
+/**
+ * The line a refused delete puts under the modal's description. The forbidden
+ * copy names the operation, because the two buttons take two different
+ * standings and only one of them is the convenor's alone.
+ */
+function deleteFailureKey(error: string, fromRepo: boolean): string {
+  if (error === "forbidden") {
+    return fromRepo ? "delete_forbidden_repo" : "delete_forbidden_compositor";
+  }
+  if (error === "stale_head") return "delete_stale_head";
+  if (error === "course_item_delete_refused") return "course_item_delete_refused";
+  if (error === "operation_in_progress") return "delete_operation_in_progress";
+  return REPO_WRITE_REFUSAL_KEYS.get(error) ?? "delete_failed";
+}
+
+/**
+ * Reads one answer against the request that produced it.
+ *
+ * An answer is acted on only when it belongs to this page's own request, for
+ * the object still displayed, in the project it was displayed under; anything
+ * else answers a page that has moved on and is ignored.
+ *
+ * The server has done both halves before it answers, so an accepted delete
+ * leaves the page. `pending` is the one accepted answer that stays: the
+ * Compositor half is still owed, after the repository half when there was
+ * one, and its record finishes it. Which message says so follows the form the
+ * page posted.
+ */
+function readDeleteAnswer(
+  answer: DeleteAnswer,
+  request: DeleteRequest | null,
+  displayed: { id: number; projectId: number },
+): DeleteOutcome {
+  if (!request) return { kind: "ignore" };
+  if (answer.objectDbId !== request.objectDbId) return { kind: "ignore" };
+  if (request.objectDbId !== displayed.id) return { kind: "ignore" };
+  if (request.projectId !== displayed.projectId) return { kind: "ignore" };
+
+  if (!answer.ok) {
+    return { kind: "message", key: deleteFailureKey(answer.error, request.fromRepo) };
+  }
+  if (answer.pending) {
+    return {
+      kind: "message",
+      key: request.fromRepo ? "delete_document_pending" : "delete_compositor_pending",
+    };
+  }
+  return { kind: "leave" };
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
-  const { object, manifestUrl, infoJsonUrl, isExternal, usedInStories, siteBase, userRole, currentUserId } =
+  const { object, sheetHeader, manifestUrl, infoJsonUrl, isExternal, usedInStories, rename, siteBase, userRole, currentUserId } =
     loaderData;
   const { t } = useTranslation("objects");
-  // Structural ops let the delete also remove the object's Y.Map — the primary
-  // delete signal. Without it the route action deletes the D1 row while the
-  // Y.Map survives, and the next snapshot re-INSERTs (resurrects) the object.
-  const ops = useStructuralOps(currentUserId, userRole);
+  const navigate = useNavigate();
+
+  // The same predicate the delete and rename actions apply, so the page never
+  // offers a gesture the server refuses: the convenor, or whoever created
+  // this object.
+  // The course-item case is handled separately below — a marked object is
+  // undeletable for everyone, the convenor included.
+  const canDeleteObject =
+    userRole === "convenor" || object.created_by === currentUserId;
   const deleteFetcher = useFetcher();
-  const dispatchFetcher = useFetcher();
+  const dispatchFetcher = useSiteFetcher();
   const featuredFetcher = useFetcher();
   const [featured, setFeatured] = useState(object.featured ?? false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteMessageKey, setDeleteMessageKey] = useState<string | null>(null);
   const [buildModalOpen, setBuildModalOpen] = useState(false);
   const [dispatchRunId, setDispatchRunId] = useState<number | null>(null);
   const [dispatchHtmlUrl, setDispatchHtmlUrl] = useState<string | null>(null);
@@ -422,6 +647,11 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
 
   const isDeleting = deleteFetcher.state !== "idle";
 
+  // A course item cannot be deleted by anyone while the marker is set, so the
+  // page offers no delete affordance at all — the DO would revert it and, on
+  // the third attempt in a minute, close the socket.
+  const isCourseItem = object.course_project_id != null;
+
   const isDispatching = dispatchFetcher.state !== "idle";
 
   // Handle dispatch result — open build modal with run ID
@@ -438,6 +668,45 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
       setBuildModalOpen(true);
     }
   }, [dispatchData]);
+
+  // The request the page made, and the answer it has already acted on. The
+  // once-guard is the response object's identity: the fetcher hands back the
+  // same `data` object across re-renders until the next submission replaces
+  // it, so comparing identity is what keeps one answer from being acted on
+  // twice.
+  const deleteRequestRef = useRef<DeleteRequest | null>(null);
+  const handledDeleteAnswerRef = useRef<DeleteAnswer | null>(null);
+  const deleteAnswer = deleteFetcher.data as DeleteAnswer | undefined;
+
+  function recordDeleteRequest(fromRepo: boolean) {
+    deleteRequestRef.current = {
+      objectDbId: object.id,
+      projectId: object.project_id,
+      fromRepo,
+    };
+    setDeleteMessageKey(null);
+  }
+
+  useEffect(() => {
+    if (!deleteAnswer) return;
+    if (handledDeleteAnswerRef.current === deleteAnswer) return;
+
+    const outcome = readDeleteAnswer(
+      deleteAnswer,
+      deleteRequestRef.current,
+      { id: object.id, projectId: object.project_id },
+    );
+    if (outcome.kind === "ignore") return;
+    handledDeleteAnswerRef.current = deleteAnswer;
+
+    if (outcome.kind === "message") {
+      setDeleteMessageKey(outcome.key);
+      return;
+    }
+
+    deleteRequestRef.current = null;
+    navigate("/objects");
+  }, [deleteAnswer, navigate, object.id, object.project_id]);
 
   function handleGenerateTiles() {
     dispatchFetcher.submit(
@@ -477,14 +746,26 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
         <span className="font-heading text-sm font-semibold text-charcoal truncate flex-1">
           {object.title || object.object_id}
         </span>
-        <button
-          type="button"
-          onClick={() => setShowDeleteConfirm(true)}
-          className="p-2 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-          title={t("delete_button")}
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+        {isCourseItem ? (
+          <span
+            className="inline-flex items-center gap-1.5 font-body text-xs rounded-full px-2.5 py-0.5 bg-anil-pale text-anil-ink"
+            title={t("course_item_delete_refused")}
+          >
+            <GraduationCap className="w-3 h-3 shrink-0" />
+            {t("course_item_badge")}
+          </span>
+        ) : canDeleteObject ? (
+          // Mirrors the action's predicate, and `canDeleteYMap`'s: the
+          // convenor, or whoever created this object.
+          <button
+            type="button"
+            onClick={() => setShowDeleteConfirm(true)}
+            className="p-2 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+            title={t("delete_button")}
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        ) : null}
       </div>
 
       {/* Audio: stacked layout (player top, metadata below) */}
@@ -537,17 +818,13 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
               {/* Status badge */}
               <StatusBadge status={status} />
 
-              {/* Object ID — read-only */}
-              <div>
-                <FieldLabel htmlFor="field-object-id">{t("upload_object_id")}</FieldLabel>
-                <p
-                  id="field-object-id"
-                  className="font-mono text-sm text-gray-500 bg-gray-100 px-3 py-2 rounded-lg truncate"
-                  title={object.object_id}
-                >
-                  {object.object_id}
-                </p>
-              </div>
+              <ObjectIdField
+                objectDbId={object.id}
+                objectId={object.object_id}
+                canRename={canDeleteObject}
+                isCourseItem={isCourseItem}
+                facts={rename}
+              />
 
               {/* Title */}
               <div>
@@ -713,6 +990,14 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 />
               </div>
 
+              {/* Custom columns of the sheet, in its order */}
+              <ObjectCustomFields
+                objectDbId={object.id}
+                storedBlob={object.extra_columns}
+                objectId={object.object_id}
+                sheetHeader={sheetHeader}
+              />
+
               {/* Accessibility section */}
               <hr className="border-gray-100 my-4" />
               <h3 className="font-heading font-semibold text-sm text-charcoal mb-1">
@@ -749,7 +1034,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                         key={i}
                         className="font-body text-xs text-gray-500 bg-gray-50 px-3 py-1.5 rounded"
                       >
-                        {t("used_in_step", { title: ref.storyTitle || t("common:untitled"), step: ref.stepNumber })}
+                        {t("used_in_step", { title: ref.storyTitle || t("untitled_story"), step: ref.stepNumber })}
                       </li>
                     ))}
                   </ul>
@@ -767,40 +1052,58 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                 <p className="font-body text-sm text-gray-600 mb-5">
                   {t("delete_description", { title: object.title || object.object_id })}
                 </p>
+                {deleteMessageKey && (
+                  <p className="font-body text-sm text-red-600 mb-5">
+                    {t(deleteMessageKey)}
+                    {deleteMessageKey === "repo_write_upgrade_required" && (
+                      <>
+                        {" "}
+                        <Link to="/upgrade?from=/objects" className="text-blue-600 hover:underline">
+                          {t("upload_upgrade_link")}
+                        </Link>
+                      </>
+                    )}
+                  </p>
+                )}
                 <div className="flex flex-col gap-2">
-                  {/* Remove from compositor only */}
-                  <deleteFetcher.Form
-                    method="post"
-                    onSubmit={() => ops?.deleteObject(object.id, null)}
-                  >
-                    <input type="hidden" name="intent" value="delete-object" />
-                    <input type="hidden" name="objectDbId" value={object.id} />
-                    <button
-                      type="submit"
-                      disabled={isDeleting}
-                      className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-red-300 text-red-700 rounded-full px-6 py-2.5 hover:bg-red-50 transition-colors disabled:text-fg-disabled"
-                    >
-                      {t("delete_remove_compositor")}
-                    </button>
-                  </deleteFetcher.Form>
-                  {/* Delete from repo — only for self-hosted objects */}
-                  {!isExternal && (
-                    <deleteFetcher.Form
-                      method="post"
-                      onSubmit={() => ops?.deleteObject(object.id, null)}
-                    >
-                      <input type="hidden" name="intent" value="delete-object" />
-                      <input type="hidden" name="objectDbId" value={object.id} />
-                      <input type="hidden" name="fromRepo" value="true" />
-                      <button
-                        type="submit"
-                        disabled={isDeleting}
-                        className="w-full font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors disabled:bg-disabled disabled:text-fg-disabled"
+                  {/* Both forms wait for the answer, which the effect above
+                      reads: the server does the whole deletion. */}
+                  <>
+                      {/* Remove from compositor only */}
+                      <deleteFetcher.Form
+                        method="post"
+                        onSubmit={() => recordDeleteRequest(false)}
                       >
-                        {t("delete_remove_repo")}
-                      </button>
-                    </deleteFetcher.Form>
-                  )}
+                        <input type="hidden" name="intent" value="delete-object" />
+                        <input type="hidden" name="objectDbId" value={object.id} />
+                        <button
+                          type="submit"
+                          disabled={isDeleting}
+                          className="w-full font-heading font-semibold text-sm uppercase tracking-wider border border-red-300 text-red-700 rounded-full px-6 py-2.5 hover:bg-red-50 transition-colors disabled:text-fg-disabled"
+                        >
+                          {t("delete_remove_compositor")}
+                        </button>
+                      </deleteFetcher.Form>
+                      {/* Delete from repo — self-hosted objects only, and the
+                          repo cleanup behind it is convenor-only. */}
+                      {!isExternal && userRole === "convenor" && (
+                        <deleteFetcher.Form
+                          method="post"
+                          onSubmit={() => recordDeleteRequest(true)}
+                        >
+                          <input type="hidden" name="intent" value="delete-object" />
+                          <input type="hidden" name="objectDbId" value={object.id} />
+                          <input type="hidden" name="fromRepo" value="true" />
+                          <button
+                            type="submit"
+                            disabled={isDeleting}
+                            className="w-full font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors disabled:bg-disabled disabled:text-fg-disabled"
+                          >
+                            {t("delete_remove_repo")}
+                          </button>
+                        </deleteFetcher.Form>
+                      )}
+                  </>
                   <button
                     type="button"
                     onClick={() => setShowDeleteConfirm(false)}

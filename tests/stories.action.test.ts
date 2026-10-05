@@ -10,7 +10,7 @@
  *   action returns `{ ok: false, ... }` rather than throwing — the client
  *   decides whether to navigate.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -72,6 +72,9 @@ import { signInternalMarker } from "../workers/auth";
 function buildRequest(intent: string): Request {
   const form = new URLSearchParams();
   form.set("intent", intent);
+  // Site-level intents are refused unless the posted siteId matches the
+  // session's active project (id 42 per the resolveActiveProject mock above).
+  form.set("siteId", "42");
   return new Request("https://compositor.telar.org/stories", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -13,7 +13,16 @@
  * `/ws/:projectId/reset` route in `workers/app.ts` can gate by
  * session + project membership before forwarding to the DO.
  *
- * @version v1.3.0-beta
+ * Also holds `isProjectId` and `parseCanonicalProjectId`: the worker entry
+ * names the collaboration Durable Object from a raw URL path segment
+ * (`idFromName` hashes whatever string it is given), while the DO itself
+ * re-derives the same id from that segment to gate membership and bind its
+ * own identity. Both reads have to agree on which strings count as a
+ * project id, or the two layers can be talking about different objects
+ * for the "same" project — kept here, imported by both, so there is one
+ * definition to agree with rather than two to keep in sync.
+ *
+ * @version v1.5.0-beta
  */
 
 /**
@@ -24,6 +33,41 @@ export function parseSessionCookie(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;
   const match = cookieHeader.match(/(?:^|;\s*)__compositor_session=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * A project id: a POSITIVE safe integer. Zero is not a row any project has,
+ * and a value outside the safe-integer range cannot round-trip through
+ * storage or a query parameter without loss.
+ */
+export function isProjectId(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
+}
+
+/**
+ * Parse a raw `/ws/:projectId` (or `/ws/:projectId/reset`) URL path segment,
+ * accepting ONLY the canonical decimal form of a project id: digits only, no
+ * leading zero, no sign, no surrounding whitespace, and nothing `Number`
+ * would round off or round-trip differently.
+ *
+ * `idFromName` hashes its input as an opaque string, so "2", "02" and "2abc"
+ * each name a DIFFERENT Durable Object. A lenient parse would blur that:
+ * `parseInt` reads a leading run of digits and stops, so `parseInt("2abc")`
+ * is `2` and `parseInt("02")` is `2` — both would be treated as project 2
+ * even though neither is the canonical spelling. `Number`, by contrast,
+ * requires the ENTIRE string to be numeric, so `Number("2abc")` is `NaN`
+ * (which happens to fail on its own) while `Number("02")` is still `2`.
+ * Requiring `^[1-9][0-9]*$` and rejecting a segment whose value doesn't
+ * round-trip through `String(Number(segment))` closes both parsers' gaps at
+ * once, so exactly one spelling is ever accepted, regardless of which
+ * lenient parser a future edit might reach for.
+ */
+export function parseCanonicalProjectId(segment: string | null | undefined): number | null {
+  if (segment === null || segment === undefined) return null;
+  if (!/^[1-9][0-9]*$/.test(segment)) return null;
+  const value = Number(segment);
+  if (String(value) !== segment) return null;
+  return isProjectId(value) ? value : null;
 }
 
 /** Server-side session lifetime window — matches the cookie maxAge (7 days). */
@@ -115,9 +159,15 @@ export async function getUserIdFromToken(
 }
 
 // ---------------------------------------------------------------------------
-// Internal-marker signing/verification for the worker -> DO /reset flow.
-// Internal-marker auth: workers/app.ts signs a HMAC marker the DO recomputes; the DO
-// rejects direct reaches that don't carry a fresh signed marker.
+// Internal-marker signing/verification.
+//
+// Originally the worker -> DO /reset flow: workers/app.ts signs a HMAC
+// marker the DO recomputes; the DO rejects direct reaches that don't carry
+// a fresh signed marker. The same op/projectId/userId binding, plus the
+// optional `detail` hash below, also binds a payload a client round-trips
+// through the browser to the context it was produced in (see
+// _app.upgrade.tsx's upgrade-prepare/upgrade-commit) — a signature minted
+// for one project, user, or payload cannot verify against another.
 // ---------------------------------------------------------------------------
 
 export interface SignedInternalMarker {
@@ -130,21 +180,27 @@ export interface SignedInternalMarker {
  * target. Both sign and verify derive the message through this one function so
  * the binding can never drift between the two sides.
  *
- * Shape: `<op>:<projectId>:<userId ?? "-">:<timestamp>`.
+ * Shape: `<op>:<projectId>:<userId ?? "-">:<timestamp>`, or with `detail` ---
+ * `<op>:<projectId>:<userId ?? "-">:<timestamp>:<detail>`.
  *
  * The userId is stringified so a number `5` mints `"5"` — the same string the
  * verifying side reads back from a `?userId=5` query param via
  * `URLSearchParams.get`. Operations with no per-user target use the literal
- * `"-"` on both sides.
+ * `"-"` on both sides. `detail` is omitted from the message entirely when not
+ * given, so every existing caller's signed shape is unchanged; a caller that
+ * does pass it (a hash covering a payload the marker is meant to bind) makes
+ * a signature minted over one payload unable to verify against another.
  */
 function internalMarkerMessage(
   op: string,
   projectId: number | string,
   userId: number | string | null | undefined,
   timestamp: number,
+  detail?: string,
 ): string {
   const userPart = userId === null || userId === undefined ? "-" : String(userId);
-  return `${op}:${projectId}:${userPart}:${timestamp}`;
+  const base = `${op}:${projectId}:${userPart}:${timestamp}`;
+  return detail === undefined ? base : `${base}:${detail}`;
 }
 
 /**
@@ -155,16 +211,20 @@ function internalMarkerMessage(
  * The marker signs `<op>:<projectId>:<userId ?? "-">:<timestamp>`, so a marker
  * minted for one op/user cannot be replayed against a different op/user within
  * the freshness window — the verifying side re-derives the same fields from its
- * own request and a mismatch produces a signature failure.
+ * own request and a mismatch produces a signature failure. Passing `detail`
+ * (see internalMarkerMessage) additionally binds the marker to a specific
+ * payload — a hash of it, typically — so a valid signature cannot be carried
+ * over to a payload it was not minted for.
  */
 export async function signInternalMarker(
   projectId: number,
   secret: string,
   op: string,
   userId?: number | string,
+  detail?: string,
 ): Promise<SignedInternalMarker> {
   const timestamp = Math.floor(Date.now() / 1000);
-  const message = internalMarkerMessage(op, projectId, userId, timestamp);
+  const message = internalMarkerMessage(op, projectId, userId, timestamp, detail);
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
@@ -181,20 +241,24 @@ export async function signInternalMarker(
 }
 
 /**
- * Verify a signed internal marker as forwarded to the DO. Reads the three
- * headers `X-Internal-Auth`, `X-Internal-Timestamp`, `X-Internal-Project`
- * from the request, recomputes the HMAC over
- * `<expectedOp>:<X-Internal-Project>:<expectedUserId ?? "-">:<ts>`, and checks
- * that the timestamp is within `maxAgeSeconds` of `now()`.
+ * Verify a signed internal marker. Reads the three headers `X-Internal-Auth`,
+ * `X-Internal-Timestamp`, `X-Internal-Project` from the request, recomputes
+ * the HMAC over `<expectedOp>:<X-Internal-Project>:<expectedUserId ?? "-">:<ts>`
+ * (plus `:<expectedDetail>` when given), and checks that the timestamp is
+ * within `maxAgeSeconds` of `now()`.
  *
- * The `expectedOp` and `expectedUserId` are supplied by the DO route from its
- * OWN request (e.g. the matched path and the `?userId=` query param), never
- * trusted from a header. A marker minted for a different op or a different
- * userId therefore recomputes to a different message and fails the signature
- * check — closing replay across operations and user targets.
+ * The `expectedOp`, `expectedUserId` and `expectedDetail` are supplied by the
+ * verifying caller from its OWN, independently-derived values (e.g. the
+ * matched route, the acting user's session id, a hash it recomputes from a
+ * payload in hand) — never trusted from a header or the payload itself. A
+ * marker minted for a different op, user, or payload therefore recomputes to
+ * a different message and fails the signature check — closing replay across
+ * operations, user targets, and payloads.
  *
  * Returns null if the marker is valid; otherwise a `Response` with the
- * appropriate 401 status the caller can return directly.
+ * appropriate 401 status and a body distinguishing a stale marker (timestamp
+ * outside the window) from an invalid one (signature mismatch — tampering,
+ * or a marker bound to a different op/user/payload) for logging.
  */
 export async function verifyInternalMarker(
   request: Request,
@@ -202,6 +266,7 @@ export async function verifyInternalMarker(
   expectedOp: string,
   expectedUserId?: number | string | null,
   maxAgeSeconds = 30,
+  expectedDetail?: string,
 ): Promise<Response | null> {
   const sigHex = request.headers.get("X-Internal-Auth");
   const ts = request.headers.get("X-Internal-Timestamp");
@@ -229,7 +294,7 @@ export async function verifyInternalMarker(
     false,
     ["verify"],
   );
-  const message = internalMarkerMessage(expectedOp, proj, expectedUserId, tsNum);
+  const message = internalMarkerMessage(expectedOp, proj, expectedUserId, tsNum, expectedDetail);
   const ok = await crypto.subtle.verify("HMAC", key, sigBytes, enc.encode(message));
   if (!ok) return new Response("Invalid internal marker", { status: 401 });
   return null;

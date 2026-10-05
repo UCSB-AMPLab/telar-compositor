@@ -6,18 +6,22 @@
  * with two onboarding CTAs.
  *
  * Each ProjectRow shows: title + role badge (Coordinador/a for
- * convenor, Colaborador/a for collaborator) + last-edited relative
- * timestamp + collaborator count (other-than-self) + Open link +
- * KebabMenu trigger with per-row Delete project / Leave actions.
+ * convenor, Docente for instructor, Colaborador/a for collaborator) +
+ * last-edited relative timestamp + collaborator count (other-than-self,
+ * instructor rows excluded — design §3) + Open link + KebabMenu trigger
+ * with per-row Delete project (convenor) / Leave (collaborator or
+ * instructor) actions. A leave attempt refused because the row is an
+ * instructor on a course-enrolled child site (design §5) surfaces its
+ * own explanatory toast rather than the generic failure copy.
  *
  * Relative time uses Intl.RelativeTimeFormat for ≤30 days; absolute
  * Intl.DateTimeFormat short date thereafter.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
-import { useEffect, useState } from "react";
-import { Link, useFetcher } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Form, Link, useFetcher } from "react-router";
 import { Trans, useTranslation } from "react-i18next";
 import { ExternalLink } from "lucide-react";
 import { Button } from "~/components/ui/Button";
@@ -26,7 +30,7 @@ import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal
 import { useToast } from "~/hooks/use-toast";
 import { formatRelative } from "~/lib/format-relative";
 
-type Role = "convenor" | "collaborator";
+type Role = "convenor" | "collaborator" | "instructor";
 
 export interface ConnectedSitesProject {
   id: number;
@@ -34,6 +38,8 @@ export interface ConnectedSitesProject {
   userRole: Role;
   last_edited_at: string | null;
   collaborator_count: number;
+  /** The course this site belongs to, or null for a site that is not in one. */
+  courseName?: string | null;
 }
 
 export interface ConnectedSitesCardProps {
@@ -57,6 +63,15 @@ export interface ConnectedSitesCardProps {
    * See _app.account.tsx for the lifted state owner.
    */
   onOpenDeleteProject?: (projectId: number) => void;
+  /**
+   * Deep-link target from the loader's `?remove=` query param (e.g.
+   * StepConnect's Unlink control). When it matches a row's id, that row's
+   * removal confirmation opens on first render — the delete-project modal
+   * via `onOpenDeleteProject` for a convenor row, the row-local leave
+   * modal for a collaborator or instructor row — and the row scrolls into
+   * view. Absent or non-matching: no row responds.
+   */
+  removeProjectId?: number | null;
 }
 
 /**
@@ -94,6 +109,8 @@ interface ProjectRowProps {
    * owner.
    */
   onOpenDeleteProject?: (projectId: number) => void;
+  /** See ConnectedSitesCardProps.removeProjectId. */
+  removeProjectId?: number | null;
 }
 
 /**
@@ -115,17 +132,24 @@ function ProjectRow({
   uiLocale,
   nowMs,
   onOpenDeleteProject,
+  removeProjectId,
 }: ProjectRowProps) {
   const { t } = useTranslation("account");
   const { showToast } = useToast();
+  const rowRef = useRef<HTMLLIElement>(null);
 
   const isConvenor = project.userRole === "convenor";
+  const isInstructor = project.userRole === "instructor";
   const roleLabel = isConvenor
     ? t("role_convenor")
-    : t("role_collaborator");
+    : isInstructor
+      ? t("role_instructor")
+      : t("role_collaborator");
   const badgeClass = isConvenor
     ? "bg-anil text-charcoal"
-    : "bg-cream-dark text-charcoal";
+    : isInstructor
+      ? "bg-amber-100 text-amber-800"
+      : "bg-cream-dark text-charcoal";
 
   const relative =
     formatLastEdited(project.last_edited_at, uiLocale, nowMs) ?? "—";
@@ -156,9 +180,34 @@ function ProjectRow({
   }>();
   const wsCount = wsCountFetcher.data?.count ?? null;
 
-  // Leave-project (collaborator) state + fetcher
+  // Leave-project (collaborator/instructor) state + fetcher
   const [leaveOpen, setLeaveOpen] = useState(false);
-  const leaveFetcher = useFetcher<{ ok: boolean; intent: string }>();
+  const leaveFetcher = useFetcher<{ ok: boolean; intent: string; error?: string }>();
+
+  // Deep-link arrival: when `removeProjectId` names this row, open its
+  // existing removal confirmation and bring it into view — the same states
+  // the kebab menu already drives, not a new dialog. Convenor rows defer to
+  // the route's lifted modal when provided (falling back to the row-local
+  // one otherwise, matching the kebab's own fallback); every other role
+  // opens the row-local leave modal. Depends only on the id pair so this
+  // fires once on arrival rather than on every re-render (onOpenDeleteProject
+  // is a fresh function identity each render — see kebabItems above).
+  useEffect(() => {
+    if (removeProjectId !== project.id) return;
+    if (isConvenor) {
+      if (onOpenDeleteProject) {
+        onOpenDeleteProject(project.id);
+      } else {
+        setDeleteOpen(true);
+      }
+    } else {
+      setLeaveOpen(true);
+    }
+    if (typeof rowRef.current?.scrollIntoView === "function") {
+      rowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [removeProjectId, project.id]);
 
   // Pre-flight live-WS-count fetch on convenor delete-modal open.
   // Informational only — convenor can confirm regardless of the count
@@ -204,8 +253,14 @@ function ProjectRow({
           type: "info",
         });
       } else {
+        // A refused instructor-on-child exit (design §5) gets its own
+        // explanatory copy; every other failure falls back to the generic
+        // retry message.
         showToast({
-          message: t("leave_project_toast_failure"),
+          message:
+            leaveFetcher.data.error === "instructor_on_child"
+              ? t("leave_refused_instructor")
+              : t("leave_project_toast_failure"),
           type: "destructive",
         });
       }
@@ -247,7 +302,7 @@ function ProjectRow({
   const [owner, repo] = (project.title || "/").split("/");
 
   return (
-    <li className="py-4 flex items-start gap-4">
+    <li ref={rowRef} className="py-4 flex items-start gap-4">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-base font-body font-medium text-charcoal truncate">
@@ -264,18 +319,31 @@ function ProjectRow({
             </span>
           )}
         </div>
+        {project.courseName && (
+          <p className="text-sm font-body text-gray-500 mt-1">
+            {t("row_part_of_course", { course: project.courseName })}
+          </p>
+        )}
         <p className="text-sm font-body text-gray-500 mt-1">{metadata}</p>
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        <Link
-          to={`/projects/${project.id}`}
-          aria-label={t("row_open_aria", { title: project.title })}
-          className="inline-flex items-center gap-1 text-sm font-body font-medium text-charcoal hover:text-terracotta transition-colors"
-        >
-          {t("row_open_link")}
-          <ExternalLink className="w-4 h-4" aria-hidden="true" />
-        </Link>
+        {/* Opens a row by making its project the active one, the same
+            mechanism as the header's project switcher and the onboarding
+            connected-sites list — a Form POST to the shared /dashboard
+            switch-project action. There is no /projects/:id route. */}
+        <Form method="post" action="/dashboard">
+          <input type="hidden" name="intent" value="switch-project" />
+          <input type="hidden" name="projectId" value={project.id} />
+          <button
+            type="submit"
+            aria-label={t("row_open_aria", { title: project.title })}
+            className="inline-flex items-center gap-1 text-sm font-body font-medium text-charcoal hover:text-terracotta transition-colors cursor-pointer"
+          >
+            {t("row_open_link")}
+            <ExternalLink className="w-4 h-4" aria-hidden="true" />
+          </button>
+        </Form>
 
         <KebabMenu
           items={kebabItems}
@@ -309,6 +377,7 @@ function ProjectRow({
           }
           contentSummary={buildActiveWarning(wsCount, t)}
           confirmLabel={t("delete_project_confirm_button")}
+          inputAriaLabel={t("delete_project_input_aria")}
           onConfirm={() => {
             deleteFetcher.submit(
               { intent: "delete-project", projectId: String(project.id) },
@@ -348,6 +417,7 @@ export function ConnectedSitesCard({
   uiLocale,
   nowMs,
   onOpenDeleteProject,
+  removeProjectId,
 }: ConnectedSitesCardProps) {
   const { t } = useTranslation("account");
 
@@ -370,6 +440,7 @@ export function ConnectedSitesCard({
                 uiLocale={uiLocale}
                 nowMs={nowMs}
                 onOpenDeleteProject={onOpenDeleteProject}
+                removeProjectId={removeProjectId}
               />
             ))}
           </ul>

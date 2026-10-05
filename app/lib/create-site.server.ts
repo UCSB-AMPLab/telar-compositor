@@ -19,7 +19,11 @@
  * Style mirrors `app/lib/github.server.ts`: raw fetch against
  * `https://api.github.com`, pinned API version header, throws on non-2xx.
  *
- * @version v1.4.1-beta
+ * The template CSVs trimmed here are read on the comma, which is the delimiter
+ * the framework's `pd.read_csv` gives the same file and the one `Papa.unparse`
+ * writes them back under.
+ *
+ * @version v1.5.0-beta
  */
 
 import Papa from "papaparse";
@@ -31,6 +35,9 @@ import {
   dispatchWorkflow,
 } from "~/lib/commit.server";
 import { configLineRegex } from "~/lib/config-yaml-block.server";
+import { devOnlyFilesToDelete } from "~/lib/dev-only-paths.server";
+import { encodeContentsPath } from "~/lib/github.server";
+import { reducedPageFileChanges } from "~/lib/page-frontmatter.server";
 
 // Constants
 export const TEMPLATE_OWNER = "ucsb-amplab";
@@ -38,23 +45,35 @@ export const TEMPLATE_REPO = "telar";
 
 const GITHUB_API = "https://api.github.com";
 
-// The template ships one starter story per language (verified against
-// ucsb-amplab/telar@main, 2026-06-28). A born-clean site keeps the story whose
-// language matches the site and prunes the other one.
+// The template ships one starter story per language plus a placeholder object,
+// as worked examples for people authoring the CSVs directly. A born-clean site
+// carries none of it: the compositor is the authoring surface, so seeded demo
+// content is only ever something the user has to delete by hand — and a starter
+// row dropped from project.csv while its CSV stays behind reads to the repo
+// scanner as an outside edit.
 const STORY_SLUG_BY_LOCALE = {
   en: "blank_template",
   es: "plantilla_en_blanco",
 } as const;
 
+/** Every starter story the template ships, in both languages. */
+export const STARTER_STORY_SLUGS: readonly string[] = Object.values(STORY_SLUG_BY_LOCALE);
+
+/** The placeholder object the template seeds, and the image backing it. */
+export const PLACEHOLDER_OBJECT_ID = "telar-placeholder";
+export const PLACEHOLDER_OBJECT_FILE = "telar-placeholder.png";
+
 export const SPREADSHEETS_DIR = "telar-content/spreadsheets";
 export const STORIES_TEXTS_DIR = "telar-content/texts/stories";
+export const OBJECTS_DIR = "telar-content/objects";
+const PAGE_TEXTS_DIR = "telar-content/texts/pages";
 
-/** The starter-story slug kept for a born-clean site of the given language. */
+/** The template's starter-story slug for the given language. */
 export function storySlugForLocale(locale: "en" | "es"): string {
   return STORY_SLUG_BY_LOCALE[locale];
 }
 
-/** The starter-story slug pruned from a born-clean site of the given language. */
+/** The template's starter-story slug for the other language. */
 export function otherStorySlug(locale: "en" | "es"): string {
   return STORY_SLUG_BY_LOCALE[locale === "en" ? "es" : "en"];
 }
@@ -428,7 +447,7 @@ export function buildBornCleanConfig(
  * any future terms) pass through untouched.
  */
 export function languageMatchGlossary(csv: string, locale: "en" | "es"): string {
-  const parsed = Papa.parse<string[]>(csv, { skipEmptyLines: false });
+  const parsed = Papa.parse<string[]>(csv, { skipEmptyLines: false, delimiter: "," });
   const rows = parsed.data;
   const header = rows[0] ?? [];
   const defIdx = header.findIndex((c) => c.trim() === "definition");
@@ -449,22 +468,46 @@ export function languageMatchGlossary(csv: string, locale: "en" | "es"): string 
 }
 
 /**
- * Drop the non-matching starter story's row from `project.csv`, keeping the
- * header, both `#` comment rows, and the language-matched story. Only the one
- * data row whose `story_id` is the other language's slug is removed.
+ * Drop every starter story row from `project.csv`, keeping the header and both
+ * `#` comment rows so the file still documents its own columns. A born-clean
+ * site starts with no stories at all; the framework renders an empty state and
+ * omits the Stories nav entry until the user adds one.
  */
-export function pruneProjectStories(csv: string, locale: "en" | "es"): string {
-  const parsed = Papa.parse<string[]>(csv, { skipEmptyLines: false });
+export function stripStarterStories(csv: string): string {
+  const parsed = Papa.parse<string[]>(csv, { skipEmptyLines: false, delimiter: "," });
   const rows = parsed.data;
   const header = rows[0] ?? [];
   const idIdx = header.findIndex((c) => c.trim() === "story_id");
   if (idIdx === -1) {
-    throw new GitHubError("pruneProjectStories: no 'story_id' column in project.csv");
+    throw new GitHubError("stripStarterStories: no 'story_id' column in project.csv");
   }
-  const drop = otherStorySlug(locale);
-  const kept = rows.filter((r) => r[idIdx] !== drop);
+  const starters = new Set(STARTER_STORY_SLUGS);
+  const kept = rows.filter((r) => !starters.has((r[idIdx] ?? "").trim()));
   if (kept.length === rows.length) {
-    throw new GitHubError(`pruneProjectStories: expected story row '${drop}' not found`);
+    throw new GitHubError("stripStarterStories: no starter story rows found in project.csv");
+  }
+  return Papa.unparse(kept, { newline: "\n" });
+}
+
+/**
+ * Drop the placeholder object's row from `objects.csv`, keeping the header and
+ * both `#` comment rows. Paired with deleting the image it points at — a row
+ * without its file renders a broken object, and a file without its row is dead
+ * weight in the repo.
+ */
+export function stripPlaceholderObject(csv: string): string {
+  const parsed = Papa.parse<string[]>(csv, { skipEmptyLines: false, delimiter: "," });
+  const rows = parsed.data;
+  const header = rows[0] ?? [];
+  const idIdx = header.findIndex((c) => c.trim() === "object_id");
+  if (idIdx === -1) {
+    throw new GitHubError("stripPlaceholderObject: no 'object_id' column in objects.csv");
+  }
+  const kept = rows.filter((r) => (r[idIdx] ?? "").trim() !== PLACEHOLDER_OBJECT_ID);
+  if (kept.length === rows.length) {
+    throw new GitHubError(
+      `stripPlaceholderObject: expected object row '${PLACEHOLDER_OBJECT_ID}' not found`,
+    );
   }
   return Papa.unparse(kept, { newline: "\n" });
 }
@@ -474,7 +517,7 @@ export function pruneProjectStories(csv: string, locale: "en" | "es"): string {
 // ---------------------------------------------------------------------------
 
 /** Read any repo file's decoded UTF-8 content via the contents API. */
-async function readRepoFile(
+export async function readRepoFile(
   token: string,
   owner: string,
   name: string,
@@ -492,7 +535,7 @@ async function readRepoFile(
   let res!: Response;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     res = await fetch(
-      `${GITHUB_API}/repos/${owner}/${encodeURIComponent(name)}/contents/${path}`,
+      `${GITHUB_API}/repos/${owner}/${encodeURIComponent(name)}/contents/${encodeContentsPath(path)}`,
       { method: "GET", headers: authHeaders(token) },
     );
     if (res.ok) break;
@@ -521,14 +564,14 @@ async function readRepoFile(
  * directory is absent (404) so a missing sister-dir degrades to "nothing extra
  * to delete" rather than failing the whole born-clean commit.
  */
-async function listRepoDir(
+export async function listRepoDir(
   token: string,
   owner: string,
   name: string,
   dir: string,
 ): Promise<string[]> {
   const res = await fetch(
-    `${GITHUB_API}/repos/${owner}/${encodeURIComponent(name)}/contents/${dir}`,
+    `${GITHUB_API}/repos/${owner}/${encodeURIComponent(name)}/contents/${encodeContentsPath(dir)}`,
     { method: "GET", headers: authHeaders(token) },
   );
   if (res.status === 404) return [];
@@ -538,6 +581,25 @@ async function listRepoDir(
   }
   const data = (await res.json()) as Array<{ type: string; path: string }>;
   return data.filter((e) => e.type === "file").map((e) => e.path);
+}
+
+/**
+ * The template's page files reduced to one file per page for the site's
+ * language: a site is in one language, and the template ships some pages in
+ * both.
+ */
+async function bornCleanPageChanges(
+  token: string,
+  owner: string,
+  name: string,
+  locale: "en" | "es",
+  readRetry: { intervalMs?: number },
+): Promise<ReturnType<typeof reducedPageFileChanges>> {
+  const paths = (await listRepoDir(token, owner, name, PAGE_TEXTS_DIR)).filter((path) => path.endsWith(".md"));
+  const contents = await Promise.all(
+    paths.map(async (path) => [path, await readRepoFile(token, owner, name, path, readRetry)] as const),
+  );
+  return reducedPageFileChanges(new Map(contents), locale);
 }
 
 export interface BornCleanSiteParams {
@@ -676,10 +738,11 @@ export async function commitBornCleanSite(
 
   // 1. Commit born-clean config + language-matched content in one atomic commit.
   try {
-    const [configBody, projectCsv, glossaryCsv] = await Promise.all([
+    const [configBody, projectCsv, glossaryCsv, objectsCsv] = await Promise.all([
       readRepoFile(token, owner, name, "_config.yml", readRetry),
       readRepoFile(token, owner, name, `${SPREADSHEETS_DIR}/project.csv`, readRetry),
       readRepoFile(token, owner, name, `${SPREADSHEETS_DIR}/glossary.csv`, readRetry),
+      readRepoFile(token, owner, name, `${SPREADSHEETS_DIR}/objects.csv`, readRetry),
     ]);
 
     // Idempotency guard for a retry after a commit that landed but whose
@@ -698,8 +761,17 @@ export async function commitBornCleanSite(
         "[commitBornCleanSite] config already born-clean; skipping re-commit (idempotent retry)",
       );
     } else {
-      const drop = otherStorySlug(locale);
-      const sisterFiles = await listRepoDir(token, owner, name, `${STORIES_TEXTS_DIR}/${drop}`);
+      // Every starter story goes, so both languages' panel directories are
+      // swept. listRepoDir yields [] for a directory the template does not
+      // carry, and commitFilesToRepo drops deletion paths that are already
+      // absent, so a partially-scrubbed repo still commits cleanly.
+      const starterTextFiles = (
+        await Promise.all(
+          STARTER_STORY_SLUGS.map((slug) =>
+            listRepoDir(token, owner, name, `${STORIES_TEXTS_DIR}/${slug}`),
+          ),
+        )
+      ).flat();
 
       config = buildBornCleanConfig(configBody, {
         owner,
@@ -710,8 +782,20 @@ export async function commitBornCleanSite(
         theme,
         author,
       });
-      const project = pruneProjectStories(projectCsv, locale);
+      const project = stripStarterStories(projectCsv);
       const glossary = languageMatchGlossary(glossaryCsv, locale);
+      const objects = stripPlaceholderObject(objectsCsv);
+      const written = new Set([
+        "_config.yml",
+        `${SPREADSHEETS_DIR}/project.csv`,
+        `${SPREADSHEETS_DIR}/glossary.csv`,
+        `${SPREADSHEETS_DIR}/objects.csv`,
+      ]);
+      const pages = await bornCleanPageChanges(token, owner, name, locale, readRetry);
+      for (const { path } of pages.writes) written.add(path);
+      const devOnlyFiles = await devOnlyFilesToDelete(token, owner, name, written, (path) =>
+        readRepoFile(token, owner, name, path, readRetry),
+      );
 
       await commitFilesToRepo(
         token,
@@ -722,10 +806,22 @@ export async function commitBornCleanSite(
           { path: "_config.yml", content: config },
           { path: `${SPREADSHEETS_DIR}/project.csv`, content: project },
           { path: `${SPREADSHEETS_DIR}/glossary.csv`, content: glossary },
+          { path: `${SPREADSHEETS_DIR}/objects.csv`, content: objects },
+          ...pages.writes.map(({ path, content }) => ({ path, content })),
         ],
-        "Set up site configuration and starter content",
+        "Set up site configuration",
         undefined,
-        [`${SPREADSHEETS_DIR}/${drop}.csv`, ...sisterFiles],
+        // One entry per path: GitHub refuses a commit that names a path twice,
+        // and the developer-only list may name a starter file too.
+        [
+          ...new Set([
+            ...STARTER_STORY_SLUGS.map((slug) => `${SPREADSHEETS_DIR}/${slug}.csv`),
+            ...starterTextFiles,
+            `${OBJECTS_DIR}/${PLACEHOLDER_OBJECT_FILE}`,
+            ...pages.deletions,
+            ...devOnlyFiles,
+          ]),
+        ],
       );
     }
   } catch (err) {

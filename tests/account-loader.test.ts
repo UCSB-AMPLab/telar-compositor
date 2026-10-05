@@ -15,7 +15,7 @@
  * Both derivations MUST NOT introduce a new DB query — the existing
  * projectRows call is the single source of truth.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -29,12 +29,22 @@ const mocks = vi.hoisted(() => ({
   listUserInstallationsMock: vi.fn(async () => ({ installations: [] })),
   getLocaleMock: vi.fn(async () => "en"),
   decryptMock: vi.fn(async () => "token"),
+  courseDisplayNameMock: vi.fn(async (_db: unknown, id: number) => `Course ${id}`),
+}));
+
+vi.mock("~/lib/course-membership.server", async (importActual) => ({
+  ...(await importActual<typeof import("~/lib/course-membership.server")>()),
+  courseDisplayName: mocks.courseDisplayNameMock,
 }));
 
 vi.mock("~/lib/membership.server", () => ({
   PRESENCE_PALETTE: ["#E47A6F"],
   setUserPresenceColor: vi.fn(),
   getUserProjectsWithStats: mocks.getUserProjectsWithStatsMock,
+  // The real predicate: the mock stands in for the queries, not for the
+  // rule about which rows list.
+  listableProjects: (rows: Array<{ userRole: string; parent_project_id: number | null }>) =>
+    rows.filter((p) => !(p.userRole === "instructor" && p.parent_project_id != null)),
   requireOwner: vi.fn(),
   requireProjectMember: vi.fn(),
 }));
@@ -102,8 +112,8 @@ function makeContext(opts: { userId: number | null }) {
   };
 }
 
-function makeGetRequest(): Request {
-  return new Request("https://example.workers.dev/account", { method: "GET" });
+function makeGetRequest(query = ""): Request {
+  return new Request(`https://example.workers.dev/account${query}`, { method: "GET" });
 }
 
 beforeEach(() => {
@@ -291,6 +301,45 @@ describe("/account loader — delete-account derivations", () => {
     expect(data.soloConvenedCount).toBe(2);
   });
 
+  // -------------------------------------------------------------------------
+  // Instructor rows in the caller's OWN project list (design §3 census:
+  // "the danger zone's collaborator-positive count filter"). The filter is
+  // `userRole === "collaborator"`, so an instructor-role membership is
+  // already excluded by construction — this pins that as intentional
+  // behaviour rather than an accidental omission that could regress.
+  // -------------------------------------------------------------------------
+
+  it("an instructor-role project (userRole='instructor') does not inflate collaboratorCount", async () => {
+    mocks.getUserProjectsWithStatsMock.mockResolvedValue([
+      {
+        id: 1,
+        github_repo_full_name: "alice/collab-site",
+        userRole: "collaborator",
+        last_edited_at: 1000,
+        collaborator_count: 1,
+      },
+      {
+        id: 2,
+        github_repo_full_name: "bob/course-child-site",
+        userRole: "instructor",
+        last_edited_at: 900,
+        collaborator_count: 0,
+      },
+    ]);
+    const ctx = makeContext({ userId: 7 });
+
+    const data = await (loader as unknown as (a: unknown) => Promise<{
+      collaboratorCount: number;
+      convenedProjects: { id: number; title: string }[];
+    }>)({ request: makeGetRequest(), context: ctx });
+
+    // Only the one literal "collaborator" row counts.
+    expect(data.collaboratorCount).toBe(1);
+    // Instructor rows never appear in convenedProjects either — that
+    // filter is userRole === "convenor", which an instructor is not.
+    expect(data.convenedProjects).toEqual([]);
+  });
+
   it("(c): no convener projects (collaborator-only or empty) — soloConvenedCount = 0", async () => {
     mocks.getUserProjectsWithStatsMock.mockResolvedValue([
       {
@@ -310,5 +359,99 @@ describe("/account loader — delete-account derivations", () => {
 
     expect(data.convenedProjects).toEqual([]);
     expect(data.soloConvenedCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removeProjectId derivation — StepConnect's Unlink control deep-links here
+// via ?remove=<id> so the row's removal confirmation opens on arrival. The
+// id is only trusted when it names a row already scoped to this user by
+// listableProjects; anything else (garbage, someone else's project) resolves
+// to null rather than erroring.
+// ---------------------------------------------------------------------------
+
+describe("/account loader — removeProjectId derivation", () => {
+  it("?remove=7 matching an owned row yields removeProjectId: 7", async () => {
+    mocks.getUserProjectsWithStatsMock.mockResolvedValue([
+      {
+        id: 7,
+        github_repo_full_name: "alice/site-a",
+        userRole: "convenor",
+        last_edited_at: 1000,
+        collaborator_count: 0,
+      },
+    ]);
+    const ctx = makeContext({ userId: 7 });
+
+    const data = await (loader as unknown as (a: unknown) => Promise<{
+      removeProjectId: number | null;
+    }>)({ request: makeGetRequest("?remove=7"), context: ctx });
+
+    expect(data.removeProjectId).toBe(7);
+  });
+
+  it("?remove=<id not among the user's rows> yields removeProjectId: null", async () => {
+    mocks.getUserProjectsWithStatsMock.mockResolvedValue([
+      {
+        id: 7,
+        github_repo_full_name: "alice/site-a",
+        userRole: "convenor",
+        last_edited_at: 1000,
+        collaborator_count: 0,
+      },
+    ]);
+    const ctx = makeContext({ userId: 7 });
+
+    const data = await (loader as unknown as (a: unknown) => Promise<{
+      removeProjectId: number | null;
+    }>)({ request: makeGetRequest("?remove=999"), context: ctx });
+
+    expect(data.removeProjectId).toBeNull();
+  });
+
+  it("garbage ?remove= value yields removeProjectId: null", async () => {
+    mocks.getUserProjectsWithStatsMock.mockResolvedValue([
+      {
+        id: 7,
+        github_repo_full_name: "alice/site-a",
+        userRole: "convenor",
+        last_edited_at: 1000,
+        collaborator_count: 0,
+      },
+    ]);
+    const ctx = makeContext({ userId: 7 });
+
+    const data = await (loader as unknown as (a: unknown) => Promise<{
+      removeProjectId: number | null;
+    }>)({ request: makeGetRequest("?remove=not-a-number"), context: ctx });
+
+    expect(data.removeProjectId).toBeNull();
+  });
+
+  it("no ?remove= param yields removeProjectId: null", async () => {
+    mocks.getUserProjectsWithStatsMock.mockResolvedValue([]);
+    const ctx = makeContext({ userId: 7 });
+
+    const data = await (loader as unknown as (a: unknown) => Promise<{
+      removeProjectId: number | null;
+    }>)({ request: makeGetRequest(), context: ctx });
+
+    expect(data.removeProjectId).toBeNull();
+  });
+});
+
+describe("/account loader — course marker", () => {
+  it("names the course of a site enrolled in one, once per course, and leaves other sites unmarked", async () => {
+    mocks.getUserProjectsWithStatsMock.mockResolvedValue([
+      { id: 1, github_repo_full_name: "org/group-a", userRole: "convenor", last_edited_at: null, collaborator_count: 0, parent_project_id: 9 },
+      { id: 2, github_repo_full_name: "org/group-b", userRole: "convenor", last_edited_at: null, collaborator_count: 0, parent_project_id: 9 },
+      { id: 3, github_repo_full_name: "org/own", userRole: "convenor", last_edited_at: null, collaborator_count: 0, parent_project_id: null },
+    ]);
+    const data = await (loader as unknown as (a: unknown) => Promise<{
+      projects: { id: number; courseName: string | null }[];
+    }>)({ request: makeGetRequest(), context: makeContext({ userId: 7 }) });
+
+    expect(data.projects.map((p) => [p.id, p.courseName])).toEqual([[1, "Course 9"], [2, "Course 9"], [3, null]]);
+    expect(mocks.courseDisplayNameMock).toHaveBeenCalledTimes(1);
   });
 });

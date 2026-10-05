@@ -6,7 +6,7 @@
  * Uses `useSortable` from `@dnd-kit/sortable`. Touch target:
  * `h-[36px]`.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 import { useSortable } from "@dnd-kit/sortable";

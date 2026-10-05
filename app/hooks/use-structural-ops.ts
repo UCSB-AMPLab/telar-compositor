@@ -15,21 +15,85 @@
  *   - `created_by: <userId>`  (permission tracking)
  *
  * Permission model: `canDelete` allows the convenor to delete
- * anything; collaborators can delete only items they created
- * themselves.
+ * anything; collaborators and instructors can delete only items
+ * they created themselves. An object carrying `course_project_id`
+ * is undeletable for everyone while the marker is set.
  *
- * @version v1.4.1-beta
+ * A new media step may be seeded from another step: `addStep` takes a
+ * `StepSeed` of plain scalars and writes them into the fresh Y.Map inside the
+ * same transaction, so peers and the snapshot see the step with its object
+ * already set rather than an empty step that acquires one a moment later. The
+ * seeded keys are ordinary step values from that moment on.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useMemo } from "react";
 import * as Y from "yjs";
+import {
+  ORDER_KEY,
+  nextOrderKeyAfterLast,
+  reorderByOrderKey,
+} from "~/lib/field-order";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { findYMapIndex } from "~/lib/yjs-helpers";
 import { normaliseSlug, makeUniqueSlug, slugifyTermId } from "~/lib/slug";
 import { makeUniqueTermId } from "~/lib/glossary-slug";
 import { makeObjectYMap } from "~/lib/object-ymap";
 
-export type StructuralRole = "convenor" | "collaborator";
+export type StructuralRole = "convenor" | "collaborator" | "instructor";
+
+/**
+ * Y.Map key naming the course an object was preloaded from. Mirrors
+ * `workers/can-delete.ts` COURSE_MARKER_KEY — the two gates must agree on
+ * the key or the client would offer a delete the Durable Object reverts.
+ */
+export const COURSE_MARKER_KEY = "course_project_id";
+
+/**
+ * True for an object preloaded from a course and still attached to it. The
+ * marker is an integer when set and absent when not; a null value means
+ * unmarked, so only an integer gates.
+ */
+export function isCourseItemYMap(yMap: Y.Map<unknown>): boolean {
+  return typeof yMap.get(COURSE_MARKER_KEY) === "number";
+}
+
+/**
+ * The delete gate, mirroring the Durable Object's server-side enforcement.
+ * The course-item clause is first and role-independent: a marked object is
+ * refused here so a forbidden delete is never applied, reverted by the DO
+ * and — on the third attempt in a minute — punished with a closed socket.
+ */
+export function canDeleteYMap(
+  yMap: Y.Map<unknown>,
+  role: StructuralRole,
+  currentUserId: number,
+): boolean {
+  if (isCourseItemYMap(yMap)) return false;
+  if (role === "convenor") return true;
+  return yMap.get("created_by") === currentUserId;
+}
+
+/**
+ * The values a new step inherits from the step it was seeded off: the object
+ * and the view of it. Clip values are not inherited — a clip belongs to the
+ * moment an author chose in one step, not to the object.
+ */
+export interface StepSeed {
+  object_id: string;
+  page: string | null;
+  x: number | null;
+  y: number | null;
+  zoom: number | null;
+}
+
+/** A new panel's text as the author first wrote it, and the key it was held under. */
+export interface NewLayerText {
+  tempId?: string;
+  title?: string;
+  content?: string;
+}
 
 export interface StructuralOps {
   // Permission check.
@@ -46,7 +110,7 @@ export interface StructuralOps {
   reorderStories: (oldIndex: number, newIndex: number) => void;
 
   // Steps.
-  addStep: (storyYMap: Y.Map<unknown>) => void;
+  addStep: (storyYMap: Y.Map<unknown>, seed?: StepSeed) => string | null;
   addSectionCard: (storyYMap: Y.Map<unknown>) => void;
   deleteStep: (
     storyYMap: Y.Map<unknown>,
@@ -60,11 +124,17 @@ export interface StructuralOps {
   ) => void;
 
   // Layers.
+  /**
+   * Writes a panel with its first content (`initial`), held in the editor
+   * until then (use-pending-layers.ts). False, and nothing written, where
+   * the step already has a panel of that number.
+   */
   addLayer: (
     stepYMap: Y.Map<unknown>,
     layerNumber: number,
-    buttonLabel: string
-  ) => void;
+    buttonLabel: string,
+    initial?: NewLayerText
+  ) => boolean;
   deleteLayer: (
     stepYMap: Y.Map<unknown>,
     layerId: number | null,
@@ -106,59 +176,19 @@ export interface StructuralOps {
 }
 
 /**
- * cloneYMap — deep-clone a Y.Map, preserving Y.Text content and nested
- * Y.Array/Y.Map structures. Returns a fresh Y.Map that can be inserted
- * into a Y.Array without tombstone issues.
- */
-function cloneYMap(source: Y.Map<unknown>): Y.Map<unknown> {
-  const clone = new Y.Map<unknown>();
-  for (const [key, value] of source.entries()) {
-    if (value instanceof Y.Text) {
-      clone.set(key, new Y.Text(value.toString()));
-    } else if (value instanceof Y.Array) {
-      // Deep-clone nested arrays (e.g. steps, layers)
-      const clonedArray = new Y.Array<unknown>();
-      for (let i = 0; i < value.length; i++) {
-        const child = value.get(i);
-        if (child instanceof Y.Map) {
-          clonedArray.push([cloneYMap(child)]);
-        } else {
-          clonedArray.push([child]);
-        }
-      }
-      clone.set(key, clonedArray);
-    } else if (value instanceof Y.Map) {
-      clone.set(key, cloneYMap(value));
-    } else {
-      clone.set(key, value);
-    }
-  }
-  return clone;
-}
-
-/**
- * reorderInPlace — shared helper for Y.Array reorder operations.
+ * Reordering used to live here, as `reorderInPlace`: deep-clone the Y.Map at
+ * `oldIndex`, delete the original, insert the clone at `newIndex`. It is gone,
+ * and nothing replaced it in this file — every list now moves an entry by
+ * writing its `order_key` (`reorderByOrderKey`, app/lib/field-order.ts).
  *
- * Clones the Y.Map at oldIndex into a fresh Y.Map, deletes the original,
- * and inserts the clone at newIndex. This avoids the Yjs tombstone bug
- * where re-inserting a deleted Y.Map corrupts its nested Y.Text children.
- * The trade-off is that collaborative cursors on text fields inside the
- * moved item will reset — acceptable for a reorder operation.
- *
- * Must be called inside a ydoc.transact() block.
+ * The reason is not tidiness. A delete-plus-reinsert is, on the wire, exactly
+ * what "delete a colleague's entity and put a hollow one carrying their
+ * identity in its place" looks like, so the server's own-content delete rule
+ * could not refuse the attack without refusing the drag. It carried an
+ * exemption instead, decided on `_temp_id` and `created_by` — both of which
+ * any collaborator can write. With no list reordering this way, the exemption
+ * is gone too (workers/can-delete.ts).
  */
-export function reorderInPlace(
-  yArray: Y.Array<Y.Map<unknown>>,
-  oldIndex: number,
-  newIndex: number
-): void {
-  if (oldIndex === newIndex) return;
-  if (oldIndex < 0 || oldIndex >= yArray.length) return;
-  if (newIndex < 0 || newIndex > yArray.length - 1) return;
-  const clone = cloneYMap(yArray.get(oldIndex));
-  yArray.delete(oldIndex, 1);
-  yArray.insert(newIndex, [clone]);
-}
 
 /**
  * deleteFromArray — shared body for every structural delete operation
@@ -197,13 +227,17 @@ function deleteFromArray(
 function buildStepYMap(
   currentUserId: number,
   stepNumber: number,
+  orderKey: string,
   kind: "media" | "section"
 ): Y.Map<unknown> {
   const stepMap = new Y.Map<unknown>();
   stepMap.set("_id", null);
   stepMap.set("_temp_id", crypto.randomUUID());
   stepMap.set("created_by", currentUserId);
+  // Advisory: the published `step` number is the rank the snapshot derives from
+  // order_key order, so this copy is a hint for the editor, never the ordering.
   stepMap.set("step_number", stepNumber);
+  stepMap.set(ORDER_KEY, orderKey);
   stepMap.set("kind", kind);
   stepMap.set("object_id", "");
   stepMap.set("x", null);
@@ -218,11 +252,14 @@ function buildStepYMap(
   stepMap.set("clip_start", "");
   stepMap.set("clip_end", "");
   stepMap.set("loop", "");
+  // The kept cells of story CSV columns the Compositor does not map; a new
+  // step has none, whatever step its view was seeded from.
+  stepMap.set("extra_columns", "");
   stepMap.set("layers", new Y.Array<Y.Map<unknown>>());
   return stepMap;
 }
 
-export const __test__ = { reorderInPlace, buildStepYMap };
+export const __test__ = { buildStepYMap };
 
 /**
  * useStructuralOps — returns the mutation API for structural Y.Array
@@ -241,10 +278,8 @@ export function useStructuralOps(
   return useMemo<StructuralOps | null>(() => {
     if (!ydoc) return null;
 
-    const canDelete = (yMap: Y.Map<unknown>): boolean => {
-      if (role === "convenor") return true;
-      return yMap.get("created_by") === currentUserId;
-    };
+    const canDelete = (yMap: Y.Map<unknown>): boolean =>
+      canDeleteYMap(yMap, role, currentUserId);
 
     // ---- Stories ----
 
@@ -267,7 +302,7 @@ export function useStructuralOps(
         // an omitted value starts empty.
         storyMap.set("subtitle", new Y.Text(subtitle ?? ""));
         storyMap.set("byline", new Y.Text(byline ?? ""));
-        storyMap.set("order", storiesArray.length);
+        storyMap.set(ORDER_KEY, nextOrderKeyAfterLast(storiesArray));
         storyMap.set("private", false);
         storyMap.set("draft", false);
         storyMap.set("steps", new Y.Array<Y.Map<unknown>>());
@@ -285,22 +320,43 @@ export function useStructuralOps(
       oldIndex,
       newIndex
     ) => {
+      // Every list moves an entry by writing its own place, not by moving it
+      // between Y.Array positions: nothing is deleted, so the server's
+      // own-content delete rule has nothing to judge and two concurrent drags
+      // settle as last-write-wins on two independent fields.
       ydoc.transact(() => {
         const storiesArray = ydoc.getArray<Y.Map<unknown>>("stories");
-        reorderInPlace(storiesArray, oldIndex, newIndex);
+        reorderByOrderKey(storiesArray, oldIndex, newIndex);
       });
     };
 
     // ---- Steps ----
 
-    const addStep: StructuralOps["addStep"] = (storyYMap) => {
+    const addStep: StructuralOps["addStep"] = (storyYMap, seed) => {
+      let tempId: string | null = null;
       ydoc.transact(() => {
         const stepsArray = storyYMap.get("steps") as Y.Array<Y.Map<unknown>>;
         if (!(stepsArray instanceof Y.Array)) return;
-        stepsArray.push([
-          buildStepYMap(currentUserId, stepsArray.length + 1, "media"),
-        ]);
+        const stepMap = buildStepYMap(
+          currentUserId,
+          stepsArray.length + 1,
+          nextOrderKeyAfterLast(stepsArray),
+          "media",
+        );
+        if (seed) {
+          stepMap.set("object_id", seed.object_id);
+          stepMap.set("page", seed.page);
+          stepMap.set("x", seed.x);
+          stepMap.set("y", seed.y);
+          stepMap.set("zoom", seed.zoom);
+        }
+        // A Y.Map's entries live in preliminary content until it joins the
+        // document, and `get` reads nothing there, so the temp id is read back
+        // after the push.
+        stepsArray.push([stepMap]);
+        tempId = (stepMap.get("_temp_id") as string | null) ?? null;
       });
+      return tempId;
     };
 
     const addSectionCard: StructuralOps["addSectionCard"] = (storyYMap) => {
@@ -308,7 +364,12 @@ export function useStructuralOps(
         const stepsArray = storyYMap.get("steps") as Y.Array<Y.Map<unknown>>;
         if (!(stepsArray instanceof Y.Array)) return;
         stepsArray.push([
-          buildStepYMap(currentUserId, stepsArray.length + 1, "section"),
+          buildStepYMap(
+            currentUserId,
+            stepsArray.length + 1,
+            nextOrderKeyAfterLast(stepsArray),
+            "section",
+          ),
         ]);
       });
     };
@@ -324,10 +385,13 @@ export function useStructuralOps(
       oldIndex,
       newIndex
     ) => {
+      // One field write on one map. Nothing leaves the steps Y.Array, so the
+      // server's own-content delete rule has nothing to judge and two
+      // concurrent drags settle as last-write-wins on two independent fields.
       ydoc.transact(() => {
         const stepsArray = storyYMap.get("steps") as Y.Array<Y.Map<unknown>>;
         if (!(stepsArray instanceof Y.Array)) return;
-        reorderInPlace(stepsArray, oldIndex, newIndex);
+        reorderByOrderKey(stepsArray, oldIndex, newIndex);
       });
     };
 
@@ -336,21 +400,32 @@ export function useStructuralOps(
     const addLayer: StructuralOps["addLayer"] = (
       stepYMap,
       layerNumber,
-      buttonLabel
+      buttonLabel,
+      initial = {}
     ) => {
+      let added = false;
       ydoc.transact(() => {
         const layersArray = stepYMap.get("layers") as Y.Array<Y.Map<unknown>>;
         if (!(layersArray instanceof Y.Array)) return;
+        // A collaborator's panel in the same place was written first.
+        if (layersArray.toArray().some((m) => m.get("layer_number") === layerNumber)) return;
         const layerMap = new Y.Map<unknown>();
         layerMap.set("_id", null);
-        layerMap.set("_temp_id", crypto.randomUUID());
+        layerMap.set("_temp_id", initial.tempId ?? crypto.randomUUID());
         layerMap.set("created_by", currentUserId);
+        // Also the published slot (layer1_* versus layer2_* cells), which is
+        // why it stays a field of its own rather than becoming the ordering.
         layerMap.set("layer_number", layerNumber);
-        layerMap.set("title", new Y.Text(buttonLabel));
+        layerMap.set(ORDER_KEY, nextOrderKeyAfterLast(layersArray));
+        // No title: the panel is headed as the site heads an untitled one
+        // (`panelHeading`), from its button label, which the author may change.
+        layerMap.set("title", new Y.Text(initial.title ?? ""));
         layerMap.set("button_label", new Y.Text(buttonLabel));
-        layerMap.set("content", new Y.Text(""));
+        layerMap.set("content", new Y.Text(initial.content ?? ""));
         layersArray.push([layerMap]);
+        added = true;
       });
+      return added;
     };
 
     const deleteLayer: StructuralOps["deleteLayer"] = (stepYMap, layerId, tempId) => {
@@ -380,7 +455,10 @@ export function useStructuralOps(
         pageMap.set("title", new Y.Text(""));
         pageMap.set("slug", tempSlug);
         pageMap.set("body", new Y.Text(""));
-        pageMap.set("order", pagesArray.length);
+        // A new page has a file with no front matter yet, which is "", not
+        // the null of a file never read.
+        pageMap.set("frontmatter", "");
+        pageMap.set(ORDER_KEY, nextOrderKeyAfterLast(pagesArray));
         pagesArray.push([pageMap]);
       });
     };
@@ -394,7 +472,7 @@ export function useStructuralOps(
     const reorderPages: StructuralOps["reorderPages"] = (oldIndex, newIndex) => {
       ydoc.transact(() => {
         const pagesArray = ydoc.getArray<Y.Map<unknown>>("pages");
-        reorderInPlace(pagesArray, oldIndex, newIndex);
+        reorderByOrderKey(pagesArray, oldIndex, newIndex);
       });
     };
 
@@ -429,6 +507,7 @@ export function useStructuralOps(
           sourceUrl,
           validationState: "pending",
           origin: "iiif",
+          orderKey: nextOrderKeyAfterLast(objectsArray),
         });
         objectsArray.push([objMap]);
       });
@@ -468,6 +547,7 @@ export function useStructuralOps(
           sourceUrl,
           validationState: "valid",
           origin: "compositor",
+          orderKey: nextOrderKeyAfterLast(objectsArray),
         });
         objectsArray.push([objMap]);
       });
@@ -504,6 +584,7 @@ export function useStructuralOps(
         termMap.set("title", new Y.Text(title));
         termMap.set("term_id", uniqueId);
         termMap.set("definition", new Y.Text(""));
+        termMap.set(ORDER_KEY, nextOrderKeyAfterLast(glossaryArray));
         glossaryArray.push([termMap]);
       });
     };
@@ -528,6 +609,7 @@ export function useStructuralOps(
         termMap.set("title", new Y.Text(title));
         termMap.set("term_id", uniqueId);
         termMap.set("definition", new Y.Text(""));
+        termMap.set(ORDER_KEY, nextOrderKeyAfterLast(glossaryArray));
         glossaryArray.push([termMap]);
       });
     };

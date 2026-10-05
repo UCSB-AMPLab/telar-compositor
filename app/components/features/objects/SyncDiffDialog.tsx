@@ -2,26 +2,69 @@
  * SyncDiffDialog — three-section diff review dialog for object sync.
  *
  * Shows new, changed, and missing objects from the repo sync diff.
- * Each section has checkboxes (checked by default) and apply/cancel controls.
+ * Each section has checkboxes and apply/cancel controls.
  * Changed objects show per-field diffs with repo/keep-mine radio choices.
+ * What opens ticked and chosen, and what the apply posts, is
+ * `sync-selections`: a three-way check opens on the full sync's defaults, a
+ * two-way one ticks every row and keeps the editor's value of every field.
+ * A reorder of objects on GitHub is one line after them, with no choice: it
+ * is applied with the sync whatever is ticked.
+ * What the check found wrong in objects.csv and the tree is listed above the
+ * sections, whether or not there is anything to apply. A `notice` from the
+ * page, saying why the list changed, is shown above both.
+ *
+ * The apply carries the commit the diff was read at (`headSha`), and the
+ * server applies only while it is still GitHub's head. The checkboxes and
+ * field choices are local to one check: the page keys the dialog on the check
+ * it shows, so a new check starts from the defaults.
+ *
+ * Dismissal (Escape, overlay click) is disabled while `isApplying`, matching
+ * the Cancel button's own disabled state — an apply already submitted must
+ * not be left with no dialog to surface its outcome in.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckCircle } from "lucide-react";
 import { Dialog } from "~/components/ui/Dialog";
-import type { SyncDiff, SyncField } from "~/lib/sync.server";
+import { SheetWarnings } from "~/components/ui/SheetWarnings";
+import type { ChangedObject, MissingObject, NewObject, SyncDiff, SyncField } from "~/lib/sync.server";
+import { ownValue } from "~/components/features/dashboard/sync-changes";
+import {
+  buildObjectsSyncPayload,
+  changedObjectTicked,
+  isThreeWayCheck,
+  listsDeletionConflict,
+  missingObjectTicked,
+  newObjectTicked,
+  objectsFieldChoice,
+  unregisteredFileTicked,
+  type ObjectsSyncSelections,
+  type SyncApplyPayload,
+} from "./sync-selections";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+export type { SyncApplyPayload } from "./sync-selections";
 
-export interface SyncApplyPayload {
-  newObjectIds: string[];
-  changedObjectIds: string[];
-  fieldChoices: Record<string, Record<string, "repo" | "d1">>;
-  removedObjectIds: string[];
-  unregisteredObjectIds: string[];
+/** A check with nothing on it: no row new, changed or missing, no image file with no row, and no reorder. */
+function listsNothing(diff: SyncDiff): boolean {
+  const lists = [diff.newObjects, diff.changedObjects, diff.missingObjects, diff.unregisteredFiles];
+  return diff.reordered == null && lists.every((list) => list.length === 0);
+}
+
+/** A reorder of objects on GitHub: one line, with no choice. */
+function OrderChangedLine({ diffData }: { diffData: SyncDiff | null }) {
+  const { t } = useTranslation("objects");
+  if (diffData?.reordered == null) return null;
+  return (
+    <p
+      data-testid="sync-order-changed"
+      className="font-body text-sm text-charcoal bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5"
+    >
+      {t("sync_order_changed")}
+    </p>
+  );
 }
 
 interface Props {
@@ -31,6 +74,8 @@ interface Props {
   onApply: (payload: SyncApplyPayload) => void;
   isComputing: boolean;
   isApplying: boolean;
+  /** Why the list changed, shown above it. */
+  notice?: string | null;
 }
 
 // Field display labels are translated at render via `t("sync_field.<field>")`
@@ -40,6 +85,34 @@ interface Props {
 // Component
 // ---------------------------------------------------------------------------
 
+/** A conflict's one-line explanation under its row; nothing for a row that is not one. */
+function SyncConflictNote({ text }: { text: string | null }) {
+  if (!text) return null;
+  return <p className="ml-7 mt-1 font-body text-xs text-gray-600">{text}</p>;
+}
+
+/** The count of Compositor changes a three-way check left untouched; nothing when none. */
+function EditorOnlyNote({ diffData }: { diffData: SyncDiff | null }) {
+  const { t } = useTranslation("objects");
+  const count = diffData?.suppressedEditorOnly ?? 0;
+  if (count === 0) return null;
+  return (
+    <p data-testid="sync-editor-only" className="font-body text-xs text-gray-500">
+      {t("dashboard:sync_modal.editor_only_note", { count })}
+    </p>
+  );
+}
+
+/** Why the list changed, above it; nothing without a notice. */
+function SyncNotice({ notice }: { notice?: string | null }) {
+  if (!notice) return null;
+  return (
+    <p className="font-body text-sm text-charcoal bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+      {notice}
+    </p>
+  );
+}
+
 export function SyncDiffDialog({
   open,
   onClose,
@@ -47,6 +120,7 @@ export function SyncDiffDialog({
   onApply,
   isComputing,
   isApplying,
+  notice,
 }: Props) {
   const { t } = useTranslation("objects");
 
@@ -61,76 +135,57 @@ export function SyncDiffDialog({
     Record<string, Record<string, "repo" | "d1">>
   >({});
 
-  // Initialise checked state when diff data arrives
-  function getCheckedNew(objectId: string): boolean {
-    return objectId in checkedNew ? checkedNew[objectId] : true;
-  }
-  function getCheckedChanged(objectId: string): boolean {
-    return objectId in checkedChanged ? checkedChanged[objectId] : true;
-  }
-  function getCheckedMissing(objectId: string): boolean {
-    return objectId in checkedMissing ? checkedMissing[objectId] : true;
-  }
-  function getCheckedUnreg(objectId: string): boolean {
-    return objectId in checkedUnregistered ? checkedUnregistered[objectId] : true;
-  }
-  function getFieldChoice(objectId: string, field: string): "repo" | "d1" {
-    return fieldChoices[objectId]?.[field] ?? "repo";
-  }
+  const selections: ObjectsSyncSelections = {
+    checkedNew, checkedChanged, checkedMissing, checkedUnregistered, fieldChoices,
+  };
+  const threeWay = isThreeWayCheck(diffData);
+
+  const getCheckedNew = (obj: NewObject) => newObjectTicked(selections, obj);
+  const getCheckedChanged = (objectId: string) => changedObjectTicked(selections, objectId);
+  const getCheckedMissing = (obj: MissingObject) => missingObjectTicked(selections, obj);
+  const getCheckedUnreg = (objectId: string) => unregisteredFileTicked(selections, objectId);
+  const getFieldChoice = (obj: ChangedObject, field: SyncField) => objectsFieldChoice(selections, threeWay, obj, field);
 
   function setFieldChoice(objectId: string, field: string, choice: "repo" | "d1") {
     setFieldChoices((prev) => ({
       ...prev,
-      [objectId]: { ...(prev[objectId] ?? {}), [field]: choice },
+      [objectId]: { ...(ownValue(prev, objectId) ?? {}), [field]: choice },
     }));
   }
 
   function handleApply() {
     if (!diffData) return;
-
-    const newObjectIds = diffData.newObjects
-      .map((o) => o.object_id)
-      .filter((id) => getCheckedNew(id));
-
-    const changedObjectIds = diffData.changedObjects
-      .map((o) => o.object_id)
-      .filter((id) => getCheckedChanged(id));
-
-    const removedObjectIds = diffData.missingObjects
-      .map((o) => o.object_id)
-      .filter((id) => getCheckedMissing(id));
-
-    const unregisteredObjectIds = diffData.unregisteredFiles
-      .map((f) => f.object_id)
-      .filter((id) => getCheckedUnreg(id));
-
-    onApply({
-      newObjectIds,
-      changedObjectIds,
-      fieldChoices,
-      removedObjectIds,
-      unregisteredObjectIds,
-    });
+    onApply(buildObjectsSyncPayload(diffData, selections));
   }
 
+  // A reorder has no box: it is applied with the sync whatever is ticked. A
+  // deletion conflict left on its default is a choice too, and applying it
+  // records the commit reviewed, as the full sync's does.
   const hasAnyChecked =
     diffData !== null &&
-    (diffData.newObjects.some((o) => getCheckedNew(o.object_id)) ||
+    (diffData.reordered != null ||
+      listsDeletionConflict(diffData) ||
+      diffData.newObjects.some(getCheckedNew) ||
       diffData.changedObjects.some((o) => getCheckedChanged(o.object_id)) ||
-      diffData.missingObjects.some((o) => getCheckedMissing(o.object_id)) ||
+      diffData.missingObjects.some(getCheckedMissing) ||
       diffData.unregisteredFiles.some((f) => getCheckedUnreg(f.object_id)));
 
-  const hasNoChanges =
-    diffData !== null &&
-    diffData.newObjects.length === 0 &&
-    diffData.changedObjects.length === 0 &&
-    diffData.missingObjects.length === 0 &&
-    diffData.unregisteredFiles.length === 0;
+  const hasNoChanges = diffData !== null && listsNothing(diffData);
+
+  // While an apply is in flight, Escape and an overlay click must not
+  // dismiss the dialog — only its Cancel button is disabled otherwise, so
+  // without this guard those two paths would leave the dialog closed with
+  // the response's removals and commit window still to be surfaced when it
+  // arrives.
+  function handleDialogClose() {
+    if (isApplying) return;
+    onClose();
+  }
 
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={handleDialogClose}
       className="w-full max-w-2xl sm:min-w-[600px] p-0 overflow-hidden"
     >
       {/* Header */}
@@ -153,6 +208,12 @@ export function SyncDiffDialog({
           </div>
         )}
 
+        <SyncNotice notice={notice} />
+
+        {!isComputing && diffData && <SheetWarnings warnings={diffData.warnings ?? []} defaultOpen />}
+
+        {!isComputing && <EditorOnlyNote diffData={diffData} />}
+
         {/* No changes */}
         {!isComputing && hasNoChanges && (
           <div className="flex flex-col items-center justify-center py-10 gap-3">
@@ -171,30 +232,59 @@ export function SyncDiffDialog({
                 {t("sync_new")} ({diffData.newObjects.length})
               </span>
             </div>
+            {/* Plain hint while every listed new object stays ticked; a warning
+                the moment one is unticked, since that object is not brought in
+                and the Compositor's next write of the objects sheet leaves it
+                out. An object deleted here is left out as the author meant, so
+                it does not raise the warning. The warning is announced through
+                a live region present from the first render: a region announces
+                a change to its content, not its own arrival or a change of
+                role. */}
+            {(() => {
+              const declined = diffData.newObjects.some((o) => !o.deletedInCompositor && !getCheckedNew(o));
+              return (
+                <>
+                  <p
+                    data-testid="sync-new-hint"
+                    data-state={declined ? "warning" : "hint"}
+                    className={
+                      declined
+                        ? "font-body text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-2"
+                        : "font-body text-xs text-gray-500 mb-2"
+                    }
+                  >
+                    {t("sync_new_hint")}
+                  </p>
+                  <span data-testid="sync-new-hint-live" aria-live="polite" className="sr-only">
+                    {declined ? t("sync_new_hint") : ""}
+                  </span>
+                </>
+              );
+            })()}
             <div className="bg-green-50 border border-green-200 rounded-lg divide-y divide-green-100">
               {diffData.newObjects.map((obj) => (
-                <label
-                  key={obj.object_id}
-                  className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-green-100/50 transition-colors"
-                >
-                  <input
-                    type="checkbox"
-                    checked={getCheckedNew(obj.object_id)}
-                    onChange={(e) =>
-                      setCheckedNew((prev) => ({
-                        ...prev,
-                        [obj.object_id]: e.target.checked,
-                      }))
-                    }
-                    className="w-4 h-4 rounded border-green-300 accent-green-600"
-                  />
-                  <span className="font-body text-sm text-charcoal flex-1">
-                    {obj.title || t("common:untitled")}
-                  </span>
-                  <code className="font-mono text-xs text-gray-400">
-                    {obj.object_id}
-                  </code>
-                </label>
+                <div key={obj.object_id} className="px-4 py-2.5 hover:bg-green-100/50 transition-colors">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={getCheckedNew(obj)}
+                      onChange={(e) =>
+                        setCheckedNew((prev) => ({
+                          ...prev,
+                          [obj.object_id]: e.target.checked,
+                        }))
+                      }
+                      className="w-4 h-4 rounded border-green-300 accent-green-600"
+                    />
+                    <span className="font-body text-sm text-charcoal flex-1">
+                      {obj.title || t("common:untitled")}
+                    </span>
+                    <code className="font-mono text-xs text-gray-400">
+                      {obj.object_id}
+                    </code>
+                  </label>
+                  <SyncConflictNote text={obj.deletedInCompositor ? t("dashboard:sync_modal.conflict_deleted_here") : null} />
+                </div>
               ))}
             </div>
           </section>
@@ -290,7 +380,7 @@ export function SyncDiffDialog({
                                   type="radio"
                                   name={`${obj.object_id}-${field}`}
                                   value="repo"
-                                  checked={getFieldChoice(obj.object_id, field) === "repo"}
+                                  checked={getFieldChoice(obj, field) === "repo"}
                                   onChange={() =>
                                     setFieldChoice(obj.object_id, field, "repo")
                                   }
@@ -305,7 +395,7 @@ export function SyncDiffDialog({
                                   type="radio"
                                   name={`${obj.object_id}-${field}`}
                                   value="d1"
-                                  checked={getFieldChoice(obj.object_id, field) === "d1"}
+                                  checked={getFieldChoice(obj, field) === "d1"}
                                   onChange={() =>
                                     setFieldChoice(obj.object_id, field, "d1")
                                   }
@@ -319,17 +409,17 @@ export function SyncDiffDialog({
                           </div>
                           <div className="flex gap-2 text-xs font-body mt-0.5">
                             {(() => {
-                              const useRepo = getFieldChoice(obj.object_id, field) === "repo";
+                              const useRepo = getFieldChoice(obj, field) === "repo";
                               return (
                                 <>
                                   <div className="flex-1">
-                                    <span className="text-gray-400">Current: </span>
+                                    <span className="text-gray-400">{t("sync_diff_current")} </span>
                                     <span className={useRepo ? "line-through text-gray-400" : "font-medium text-charcoal"}>
                                       {String(obj.d1Values[field] ?? "—")}
                                     </span>
                                   </div>
                                   <div className="flex-1">
-                                    <span className="text-gray-400">Repo: </span>
+                                    <span className="text-gray-400">{t("sync_diff_repo")} </span>
                                     <span className={useRepo ? "font-medium text-charcoal" : "line-through text-gray-400"}>
                                       {String(obj.repoValues[field] ?? "—")}
                                     </span>
@@ -348,6 +438,8 @@ export function SyncDiffDialog({
           </section>
         )}
 
+        {!isComputing && <OrderChangedLine diffData={diffData} />}
+
         {/* Missing objects */}
         {!isComputing && diffData && diffData.missingObjects.length > 0 && (
           <section>
@@ -357,7 +449,7 @@ export function SyncDiffDialog({
               </span>
             </div>
             <p className="font-body text-xs text-gray-500 mb-2">
-              {t("sync_missing_warning")}
+              {t("sync_missing_warning", { file: diffData.objectsSheet ?? "objects.csv" })}
             </p>
             <div className="bg-red-50 border border-red-200 rounded-lg divide-y divide-red-100">
               {diffData.missingObjects.map((obj) => (
@@ -365,7 +457,7 @@ export function SyncDiffDialog({
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={getCheckedMissing(obj.object_id)}
+                      checked={getCheckedMissing(obj)}
                       onChange={(e) =>
                         setCheckedMissing((prev) => ({
                           ...prev,
@@ -381,18 +473,23 @@ export function SyncDiffDialog({
                       {obj.object_id}
                     </code>
                   </label>
+                  <SyncConflictNote text={obj.editedInCompositor ? t("dashboard:sync_modal.conflict_deleted_in_repo") : null} />
                   {/* Story usage warning */}
                   {obj.usedByStories.length > 0 && (
                     <div className="ml-7 mt-1 rounded bg-yellow-50 border border-yellow-200 px-2 py-1.5">
                       <p className="font-body text-xs text-yellow-800">
-                        Used in{" "}
-                        {obj.usedByStories
-                          .map(
-                            (ref) =>
-                              `${ref.storyTitle || "unnamed story"} (step ${ref.stepNumber})`
-                          )
-                          .join(", ")}
+                        {t("sync_missing_used", { count: obj.usedByStories.length })}
                       </p>
+                      <ul className="space-y-1">
+                        {obj.usedByStories.map((ref, i) => (
+                          <li key={i} className="font-body text-xs text-yellow-800">
+                            {t("used_in_step", {
+                              title: ref.storyTitle || t("untitled_story"),
+                              step: ref.stepNumber,
+                            })}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
                 </div>

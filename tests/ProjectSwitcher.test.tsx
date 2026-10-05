@@ -12,7 +12,7 @@
  * Fixtures are clearly synthetic — no mock/placeholder owner names from the
  * design reference are rendered as real projects/people.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
@@ -105,6 +105,36 @@ describe("ProjectSwitcher", () => {
       <ProjectSwitcher allProjects={sharedProjects} activeProjectId={1} open />,
     );
     expect(container.textContent).toContain("role.convenor");
+  });
+
+  it("renders an instructor's own role as 'role.instructor', not falling through to the collaborator label", () => {
+    const projectsWithInstructor = [
+      { id: 1, github_repo_full_name: "fixture-org/course-site", userRole: "instructor" as const, collaboratorCount: 1 },
+      { id: 2, github_repo_full_name: "fixture-org/other-site", userRole: "convenor" as const, collaboratorCount: 1 },
+    ];
+    const { container } = render(
+      <ProjectSwitcher allProjects={projectsWithInstructor} activeProjectId={1} open />,
+    );
+    expect(container.textContent).toContain("role.instructor");
+    expect(container.textContent).not.toContain("role.collaborator");
+  });
+
+  it("gives the instructor badge its own amber styling, not the generic non-convenor grey shared with collaborator", () => {
+    const projectsWithInstructor = [
+      { id: 1, github_repo_full_name: "fixture-org/course-site", userRole: "instructor" as const, collaboratorCount: 1 },
+    ];
+    const { container } = render(
+      <ProjectSwitcher allProjects={projectsWithInstructor} activeProjectId={1} open />,
+    );
+    // Match the badge's own span specifically (not an ancestor wrapper with
+    // the same textContent) — its className carries the pill's uppercase
+    // font classes, which no wrapper span shares.
+    const badge = Array.from(container.querySelectorAll("span")).find(
+      (s) => s.textContent === "role.instructor" && s.className.includes("uppercase"),
+    );
+    expect(badge).toBeTruthy();
+    expect(badge!.className).toContain("bg-amber-100");
+    expect(badge!.className).not.toContain("bg-cream-dark");
   });
 
   it("submits switching via the /dashboard switch-project action", () => {

@@ -35,7 +35,7 @@
  * file hand-rolling its own DB fake (see created-by-persist.test.ts,
  * object-config-fields-persist.test.ts).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -55,6 +55,11 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 import { ProjectCollaborationDO } from "../workers/collaboration";
+import { recordPathContribution } from "../workers/collaboration-helpers";
+import type { EditsByPath } from "../workers/collaboration-helpers";
+import { markLoaded } from "./helpers/claimed-document";
+import { trackBaseRow } from "./helpers/base-row";
+import { checkD1Bind } from "./helpers/d1-memory";
 
 const TEST_PROJECT_ID = 42;
 
@@ -103,7 +108,7 @@ interface RecordingStmt {
   sql: string;
   boundArgs: unknown[];
   bind(...args: unknown[]): RecordingStmt;
-  run(): Promise<{ meta: { last_row_id: number }; success: true }>;
+  run(): Promise<{ meta: { last_row_id: number; changes: number }; success: true }>;
   all<T = unknown>(): Promise<{ results: T[]; success: true }>;
   first<T = unknown>(): Promise<T | null>;
 }
@@ -160,11 +165,14 @@ function makeRecordingDb(
     return { results: [] };
   }
 
+  const row = trackBaseRow();
+
   function prepare(sql: string): RecordingStmt {
     const stmt: RecordingStmt = {
       sql,
       boundArgs: [],
       bind(...args: unknown[]) {
+        checkD1Bind(sql, args);
         stmt.boundArgs = args;
         return stmt;
       },
@@ -173,9 +181,10 @@ function makeRecordingDb(
           throw new Error("UNIQUE constraint failed (injected)");
         }
         ops.push({ op: "run", sql, binds: stmt.boundArgs.map(normaliseBind) });
+        row.note(sql);
         const explicitId = /^INSERT INTO \w+ \(id,/.test(sql) ? Number(stmt.boundArgs[0]) : null;
         const rid = explicitId !== null && Number.isFinite(explicitId) ? explicitId : (lastRowId += 1);
-        return { meta: { last_row_id: rid }, success: true as const };
+        return { meta: { last_row_id: rid, changes: 1 }, success: true as const };
       },
       async all<T = unknown>() {
         return { results: resolveSelect(sql, stmt.boundArgs).results as T[], success: true as const };
@@ -187,7 +196,7 @@ function makeRecordingDb(
         if (/SELECT id FROM project_landing WHERE project_id/.test(sql)) {
           return (seed.landingMissing ? null : { id: 1 }) as T | null;
         }
-        return null as T | null;
+        return (row.read(sql) ?? null) as T | null;
       },
     };
     return stmt;
@@ -227,7 +236,13 @@ function makeCtx() {
     blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
     storage: {
       getAlarm: async () => (alarms.length ? alarms[alarms.length - 1] : null),
+      // The loader and the snapshot read the generation from storage, and a
+      // load lists the log prefix before it tags an untagged blob.
+      get: async (key: string) => (key === "docGeneration" ? 0 : undefined),
+      put: async () => {},
+      list: async () => new Map(),
       setAlarm: async (t: number) => { alarms.push(t); },
+      delete: async () => 0,
     },
     acceptWebSocket: vi.fn(),
   };
@@ -245,7 +260,7 @@ function makeDo(
     env as unknown as Env,
   );
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
-  (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+  markLoaded(doInstance);
   const ydoc = (doInstance as unknown as { ydoc: Y.Doc }).ydoc;
   return { doInstance, db, ydoc };
 }
@@ -422,9 +437,10 @@ describe("doSnapshot gap coverage — steps", () => {
     expect(db.runsMatching(/^INSERT INTO steps/)).toHaveLength(0);
     const upd = batchStatements(db).find((s) => /UPDATE steps SET/.test(s.sql));
     expect(upd).toBeDefined();
-    expect(upd!.binds[0]).toBe(1); // step_number = sti+1 (Y.Array index 0)
-    expect(upd!.binds[1]).toBe("text"); // kind
-    expect(upd!.binds[2]).toBe("obj-1"); // object_id
+    expect(upd!.binds[0]).toBe(1); // step_number = the rank in order_key order
+    expect(upd!.binds[1]).toBe(null); // order_key — absent on this fixture's Y.Map
+    expect(upd!.binds[2]).toBe("text"); // kind
+    expect(upd!.binds[3]).toBe("obj-1"); // object_id
     expect(upd!.binds[upd!.binds.length - 1]).toBe(21); // WHERE id = the live row
   });
 
@@ -507,11 +523,70 @@ describe("doSnapshot gap coverage — layers", () => {
     expect(db.runsMatching(/^INSERT INTO layers/)).toHaveLength(0);
     const upd = batchStatements(db).find((s) => /UPDATE layers SET/.test(s.sql));
     expect(upd).toBeDefined();
-    expect(upd!.binds[0]).toBe(1); // layer_number = li+1 (Y.Array index 0)
-    expect(upd!.binds[1]).toBe("Layer Title"); // title
-    expect(upd!.binds[2]).toBe("Next"); // button_label
-    expect(upd!.binds[3]).toBe("Body"); // content
+    expect(upd!.binds[0]).toBe(1); // layer_number = the rank in order_key order
+    expect(upd!.binds[1]).toBe(null); // order_key — absent on this fixture's Y.Map
+    expect(upd!.binds[2]).toBe("Layer Title"); // title
+    expect(upd!.binds[3]).toBe("Next"); // button_label
+    expect(upd!.binds[4]).toBe("Body"); // content
     expect(upd!.binds[upd!.binds.length - 1]).toBe(31); // WHERE id = the live row
+  });
+
+  it("binds NULL for updated_at when nobody edited the layer, so SQL keeps the stored time", async () => {
+    // The snapshot's clock says when IT ran. Binding it for every layer gave a
+    // whole project one instant, identical across every row. COALESCE plus a
+    // NULL bind leaves a row nobody touched exactly as it was.
+    const seed = emptySeed();
+    seed.storyIds = [11];
+    seed.stepIdsByStory.set(11, [21]);
+    seed.layerIdsByStep.set(21, [31]);
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    pushStoryWithStep(
+      ydoc,
+      { _id: 11, story_id: "s1", title: "Story One" },
+      { _id: 21, kind: "text" },
+      { _id: 31, title: "Layer Title", button_label: "Next", content: "Body" },
+    );
+
+    await snapshot(doInstance);
+
+    const upd = batchStatements(db).find((s) => /UPDATE layers SET/.test(s.sql));
+    expect(upd!.sql).toContain("updated_at = COALESCE(?, updated_at)");
+    expect(upd!.sql).toContain("last_edited_by = COALESCE(?, last_edited_by)");
+    expect(upd!.binds[5]).toBe(null); // last_edited_by
+    expect(upd!.binds[6]).toBe(null); // updated_at
+  });
+
+  it("binds the edit time and the editor, not the snapshot's clock and nobody", async () => {
+    const seed = emptySeed();
+    seed.storyIds = [11];
+    seed.stepIdsByStory.set(11, [21]);
+    seed.layerIdsByStep.set(21, [31]);
+    const { doInstance, db, ydoc } = makeDo(seed);
+    seedConfig(ydoc);
+    pushStoryWithStep(
+      ydoc,
+      { _id: 11, story_id: "s1", title: "Story One" },
+      { _id: 21, kind: "text" },
+      { _id: 31, title: "Layer Title", button_label: "Next", content: "Body" },
+    );
+    // What the afterTransaction handler records. Seeded directly because the
+    // handler fires only for socket-origin transactions, absent in this
+    // harness, and chosen unlike any snapshot clock so the bind is unambiguous.
+    // Seeded through the recorder the handler itself uses, so the fixture cannot
+    // encode a shape the recorder would never produce.
+    recordPathContribution(
+      (doInstance as unknown as { editsByPath: EditsByPath }).editsByPath,
+      "stories:11:steps:21:layers:31:content",
+      4,
+      "2025-12-25T09:30:00.000Z",
+    );
+
+    await snapshot(doInstance);
+
+    const upd = batchStatements(db).find((s) => /UPDATE layers SET/.test(s.sql));
+    expect(upd!.binds[5]).toBe(4); // last_edited_by — the person, not the client's claim
+    expect(upd!.binds[6]).toBe("2025-12-25T09:30:00.000Z");
   });
 
   it("GAP: explicit-id layer INSERT fails -> falls back to autoincrement + backfill", async () => {

@@ -1,0 +1,28 @@
+# telar-demos
+# Demo content hosting for Telar sites
+# https://content.telar.org
+
+title: Telar Demos
+description: Demo content for Telar scrollytelling sites
+url: https://content.telar.org
+baseurl: ""
+
+# Build settings
+markdown: kramdown
+sass:
+  style: compressed
+
+# Exclude from build
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - README.md
+  - generator/
+  - dev-docs/
+  - .gitignore
+  - LICENSE
+
+# Include static directories
+include:
+  - demos
+  - iiif

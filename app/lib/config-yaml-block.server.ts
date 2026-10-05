@@ -30,8 +30,21 @@
  * (`verifySiteUrl`), and onboarding (`fix-site-config`) share so a rewrite
  * and a read of the same line never disagree about its shape.
  *
- * @version v1.4.2-beta
+ * @version v1.5.0-beta
  */
+
+import { parseYaml } from "~/lib/yaml.server";
+
+/**
+ * Escape a config key for literal interpolation into a RegExp. Every caller
+ * passes a fixed identifier, and the walkers below document the key as
+ * literal — but `_config.yml` keys are not restricted to word characters
+ * (`development-features` is one), so the promise has to be kept rather than
+ * assumed.
+ */
+function escapeRegex(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * True when `line` is the non-indented, non-comment, non-blank line that
@@ -40,6 +53,11 @@
  */
 function endsBlock(line: string): boolean {
   return /^[^\s#]/.test(line) && line.trim() !== "";
+}
+
+/** Whether `line` carries nothing a reader has to account for. */
+export function isBlankOrComment(line: string): boolean {
+  return line.trim() === "" || /^[ \t]*#/.test(line);
 }
 
 /** One occurrence of a top-level `blockKey:` block within a lines array. */
@@ -73,7 +91,7 @@ export interface YamlBlockRegion {
  * fixed identifiers such as "telar" or "story_interface").
  */
 export function findYamlBlockRegions(lines: string[], blockKey: string): YamlBlockRegion[] {
-  const headerRe = new RegExp(`^${blockKey}:`);
+  const headerRe = new RegExp(`^${escapeRegex(blockKey)}:`);
   const regions: YamlBlockRegion[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -192,9 +210,118 @@ export function findInYamlBlock<T>(
  */
 export function configLineRegex(key: string): RegExp {
   return new RegExp(
-    `^(${key}:\\s*)(?:"[^"\\n]*"|'[^'\\n]*'|[^\\n#]*?)?(\\s*(?:#.*)?)$`,
+    `^(${escapeRegex(key)}:\\s*)(?:"[^"\\n]*"|'[^'\\n]*'|[^\\n#]*?)?(\\s*(?:#.*)?)$`,
     "m",
   );
+}
+
+/**
+ * Hand-decoded fallback for a quoted scalar, used only when the real parser
+ * (`parseYamlScalar` below) fails on a malformed value. This reader is
+ * on the sync and publish-verify paths and must not throw on a bad config
+ * line, so a parse
+ * failure falls back to this hand decode: double-quoted understands exactly the three escapes
+ * publish.server's `yamlQuote` emits (`\n`, `\"`, `\\`), dropping the
+ * backslash and keeping the letter for anything else; single-quoted treats
+ * `''` as a literal single quote and ends at the next lone `'`.
+ */
+function decodeQuotedScalarFallback(s: string): string {
+  if (s.startsWith('"')) {
+    let out = "";
+    for (let i = 1; i < s.length; i++) {
+      const c = s[i];
+      if (c === "\\") {
+        const next = s[i + 1];
+        if (next === "n") out += "\n";
+        else if (next === '"') out += '"';
+        else if (next === "\\") out += "\\";
+        else out += next ?? "";
+        i++;
+      } else if (c === '"') {
+        break;
+      } else {
+        out += c;
+      }
+    }
+    return out;
+  }
+  // Single-quoted: '' is a literal single quote; ends at a lone '.
+  let out = "";
+  for (let i = 1; i < s.length; i++) {
+    const c = s[i];
+    if (c === "'") {
+      if (s[i + 1] === "'") { out += "'"; i++; }
+      else break;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse a single YAML scalar value (the text after `key:` on one line) into
+ * its string value. Returns null for an empty/absent value. Line-based —
+ * no js-yaml dependency for the file walk itself, which keeps multi-line/
+ * commented config files intact (js-yaml would need the whole document,
+ * not one line, and a full-document parse+rewrite is what the line walk
+ * exists to avoid).
+ *
+ * - Quoted (starts `"` or `'`): handed to the real parser (`parseYaml`,
+ *   already a js-yaml dependency via yaml.server.ts) by wrapping it as a
+ *   one-key document. A quoted YAML scalar is always a string (YAML core
+ *   schema), so this branch has no type-coercion risk — it exists purely
+ *   to get the full escape set right (`yaml_string` emits more
+ *   than the three escapes the hand-decode understands).
+ *   A parse failure (malformed value) or a non-string result falls back to
+ *   `decodeQuotedScalarFallback` rather than throwing.
+ * - Bare: unchanged — strip a trailing " # comment" and return the literal
+ *   text. Deliberately NOT routed through the YAML parser: a bare scalar's
+ *   literal text is the managed value (`yes`, `1234`, `~`, ...) and a real
+ *   parser would type-coerce it (to `true`, the number `1234`, `null`)
+ *   where this reader must return the string exactly as written.
+ */
+export function parseYamlScalar(raw: string): string | null {
+  const s = raw.trim();
+  // No value, or only a comment. A plain YAML scalar cannot begin with `#`,
+  // so a remainder that starts with one is a comment and the key has no
+  // value: `baseurl: # root site` is an empty baseurl, not a baseurl of
+  // "# root site". The whitespace-before-hash rule below cannot see this,
+  // because the matcher that produced this remainder already consumed the
+  // space after the colon.
+  if (s === "" || s.startsWith("#")) return null;
+  if (s.startsWith('"') || s.startsWith("'")) {
+    try {
+      const doc = parseYaml(`value: ${s}`);
+      if (typeof doc?.value === "string") return doc.value;
+    } catch {
+      // Malformed quoted scalar — fall back below rather than throw.
+    }
+    return decodeQuotedScalarFallback(s);
+  }
+  // Bare scalar: strip a trailing " # comment".
+  const noComment = s.replace(/\s+#.*$/, "").trim();
+  return noComment === "" ? null : noComment;
+}
+
+/**
+ * Everything written after a top-level `key:` on its line, undecided —
+ * comment, quotes and all — or `undefined` when the key has no line.
+ *
+ * The whole remainder, deliberately. `configLineRegex` splits a trailing
+ * `# comment` off as its own group, which is what the REWRITE path needs to
+ * put the comment back; a reader that used the same split lost the `#` inside
+ * a quoted value, so `url: "a\"b#c"` read as `a"b` and `url: a#b` as `a`.
+ * Where a comment starts is the parser's judgement — YAML wants whitespace
+ * before the `#`, and never reads one inside quotes — so the remainder goes
+ * to `parseYamlScalar` whole.
+ *
+ * The single reader both `readConfigScalar` and sync's `extractConfigFields`
+ * use, so the two readers of a `_config.yml` line cannot disagree about it.
+ */
+export function topLevelKeyRemainder(content: string, key: string): string | undefined {
+  const m = content.match(new RegExp(`^${escapeRegex(key)}:[ \\t]*(.*)$`, "m"));
+  return m ? m[1] : undefined;
 }
 
 /**
@@ -207,17 +334,9 @@ export function configLineRegex(key: string): RegExp {
  * mode of the anchored `^url:\s*"?([^"\n]+)"?\s*$` regex this replaces).
  */
 export function readConfigScalar(content: string, key: string): string | undefined {
-  const m = content.match(configLineRegex(key));
-  if (!m) return undefined;
-  // The value is the full match minus the captured prefix ($1) and trailing
-  // whitespace-plus-comment ($2). Strip a matching surrounding quote pair.
-  const raw = m[0].slice(m[1].length, m[0].length - m[2].length).trim();
-  if (
-    raw.length >= 2 &&
-    ((raw.startsWith('"') && raw.endsWith('"')) ||
-      (raw.startsWith("'") && raw.endsWith("'")))
-  ) {
-    return raw.slice(1, raw.length - 1);
-  }
-  return raw;
+  const raw = topLevelKeyRemainder(content, key);
+  if (raw === undefined) return undefined;
+  // An absent value is the empty string here, rather than the parser's null:
+  // the key line exists, so the caller is being told what is on it.
+  return parseYamlScalar(raw) ?? "";
 }

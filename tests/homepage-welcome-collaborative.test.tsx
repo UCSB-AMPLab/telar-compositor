@@ -21,7 +21,7 @@
  * `yjs` + REAL `getYText` so the component resolves a real welcome_body Y.Text
  * from the collaboration context.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -100,6 +100,8 @@ vi.mock("~/hooks/use-collaborative-text", () => ({
   useCollaborativeText: (_yText: unknown, initialValue: string) => ({
     value: initialValue,
     handleChange: vi.fn(),
+    currentValue: () => initialValue,
+    lastWriteIsOwn: () => false,
   }),
 }));
 

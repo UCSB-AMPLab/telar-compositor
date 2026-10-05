@@ -12,7 +12,7 @@
  * returns to this tab, so the newly-installed org appears without a manual
  * reload.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef } from "react";
@@ -20,6 +20,7 @@ import { X, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useRevalidator } from "react-router";
 import { Button } from "~/components/ui/Button";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
 
 export interface AccountInstallationOption {
   installationId: number;
@@ -46,6 +47,7 @@ export function AccountModal({
   const { t } = useTranslation("onboarding");
   const revalidator = useRevalidator();
   const dialogRef = useRef<HTMLDivElement>(null);
+  useOverlayOpen(true);
 
   // Latest onClose without re-running the a11y effect. StepConnect passes an
   // inline-arrow onClose (new identity every render), so depending on it would

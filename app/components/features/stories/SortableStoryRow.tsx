@@ -46,6 +46,8 @@ interface SortableStoryRowProps {
   deleteTooltip?: string;
   /** When true, trash click calls onDelete directly (parent handles confirm). */
   skipInternalConfirm?: boolean;
+  /** When true, the row's toggles, delete button and drag handle are disabled. */
+  readOnly?: boolean;
   /** Optional extra className applied to the inner row (e.g. animations). */
   rowClassName?: string;
   /** Optional inline style on the row (e.g. --structural-highlight-color). */
@@ -63,6 +65,7 @@ export function SortableStoryRow({
   canDelete,
   deleteTooltip,
   skipInternalConfirm,
+  readOnly = false,
   rowClassName,
   rowStyle,
 }: SortableStoryRowProps) {
@@ -75,7 +78,7 @@ export function SortableStoryRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: sortableId ?? story.id });
+  } = useSortable({ id: sortableId ?? story.id, disabled: readOnly });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -88,6 +91,7 @@ export function SortableStoryRow({
       ref={setActivatorNodeRef}
       {...listeners}
       type="button"
+      disabled={readOnly}
       aria-label={t("drag_reorder_aria")}
       className="inline-flex items-center justify-center cursor-grab touch-none text-gray-300 hover:text-gray-400 transition-colors pointer-coarse:p-2.5"
     >
@@ -108,6 +112,7 @@ export function SortableStoryRow({
         canDelete={canDelete}
         deleteTooltip={deleteTooltip}
         skipInternalConfirm={skipInternalConfirm}
+        readOnly={readOnly}
         rowClassName={rowClassName}
         rowStyle={rowStyle}
       />

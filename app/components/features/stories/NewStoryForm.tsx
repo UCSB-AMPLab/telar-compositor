@@ -12,9 +12,11 @@ import { useTranslation } from "react-i18next";
 interface NewStoryFormProps {
   onSave: (title: string, subtitle: string, byline: string) => void;
   onCancel: () => void;
+  /** Save (button and Enter) does nothing while true; the typed text stays. */
+  saveDisabled?: boolean;
 }
 
-export function NewStoryForm({ onSave, onCancel }: NewStoryFormProps) {
+export function NewStoryForm({ onSave, onCancel, saveDisabled = false }: NewStoryFormProps) {
   const { t } = useTranslation("stories");
   const [title, setTitle] = useState("");
   const [subtitle, setSubtitle] = useState("");
@@ -23,7 +25,7 @@ export function NewStoryForm({ onSave, onCancel }: NewStoryFormProps) {
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
       const trimmed = title.trim();
-      if (trimmed) onSave(trimmed, subtitle.trim(), byline.trim());
+      if (trimmed && !saveDisabled) onSave(trimmed, subtitle.trim(), byline.trim());
     } else if (e.key === "Escape") {
       onCancel();
     }
@@ -31,7 +33,7 @@ export function NewStoryForm({ onSave, onCancel }: NewStoryFormProps) {
 
   function handleSave() {
     const trimmed = title.trim();
-    if (trimmed) onSave(trimmed, subtitle.trim(), byline.trim());
+    if (trimmed && !saveDisabled) onSave(trimmed, subtitle.trim(), byline.trim());
   }
 
   const isEmpty = title.trim().length === 0;
@@ -68,7 +70,7 @@ export function NewStoryForm({ onSave, onCancel }: NewStoryFormProps) {
           <button
             type="button"
             onClick={handleSave}
-            disabled={isEmpty}
+            disabled={isEmpty || saveDisabled}
             className="px-3 py-1.5 bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-xs uppercase tracking-wider rounded-full transition-colors disabled:bg-disabled disabled:text-fg-disabled disabled:cursor-not-allowed"
           >
             {t("save")}

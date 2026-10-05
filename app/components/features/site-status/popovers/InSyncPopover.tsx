@@ -13,10 +13,10 @@
  * fetcher in the render path. Tokens are pixel-locked to the design system's
  * colour contract (ok swatch = chilca-pale / chilca-deep).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
-import { Globe, ArrowUpRight, Check, GitCommit, RefreshCw } from "lucide-react";
+import { Globe, ArrowUpRight, Check, Database, GitCommit, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 /** The `in-sync` payload shape served by api.site-status. */
@@ -26,6 +26,29 @@ export interface InSyncPayload {
   last_synced_at: string | null;
   /** null when the lazy GitHub commit-message fetch failed open. */
   commitMessage: string | null;
+  /** Bytes of the project's saved state; null when the row holds no blob. */
+  blobBytes: number | null;
+}
+
+/**
+ * The size above which the saved state is worth a row of its own: below it the
+ * figure tells the reader nothing they can act on.
+ */
+const SIZE_ROW_ABOVE = 1_048_576;
+
+/**
+ * The size in decimal megabytes to one decimal place, in the UI's own language.
+ *
+ * Decimal, because the cap this warns about is stated in decimal bytes; and
+ * through `Intl`, because the decimal separator belongs to the reader's locale —
+ * "1.3 MB" in English and "1,3 MB" in Spanish.
+ */
+function fmtMegabytes(bytes: number, locale: string): string {
+  const megabytes = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(bytes / 1_000_000);
+  return `${megabytes} MB`;
 }
 
 export interface InSyncPopoverProps {
@@ -98,6 +121,14 @@ export function InSyncPopover({ payload, pagesUrl, className = "" }: InSyncPopov
         <Row icon={Check} label={t("in_sync.published", { time: fmtTime(payload.last_published_at, i18n.language) })} />
         <Row icon={GitCommit} label={commitLabel} mono />
         <Row icon={RefreshCw} label={t("in_sync.synced", { time: fmtTime(payload.last_synced_at, i18n.language) })} />
+        {payload.blobBytes !== null && payload.blobBytes > SIZE_ROW_ABOVE && (
+          <Row
+            icon={Database}
+            label={t("in_sync.saved_state_size", {
+              size: fmtMegabytes(payload.blobBytes, i18n.language),
+            })}
+          />
+        )}
       </div>
 
       {/* Footer: ghost View published site */}

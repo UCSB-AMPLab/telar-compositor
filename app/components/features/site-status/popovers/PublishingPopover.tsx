@@ -11,20 +11,30 @@
  * Watch-on-GitHub link to the Actions run (buildUrl), captured from the poll
  * data, falling back to the commit URL until the run is known.
  *
+ * A poll that fails in transit is answered unreachable by the Publish route's
+ * `clientAction`. The popover keeps its last successful poll, for the project
+ * and the commit being built, and shows it while an answer is unreachable, so
+ * the progress, the Actions link and the next poll's `runId` survive an outage;
+ * the pill passes `phases={null}`, so the prop is no fallback. A poll for
+ * another commit, or kept for another project, is not shown.
+ *
  * `BuildPhaseStatus` is imported type-only so no `.server` runtime reaches the
  * client bundle.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef } from "react";
-import { useFetcher } from "react-router";
+import { usePageSite, useSiteFetcher } from "~/lib/page-site";
+import { isUnreachableAnswer, type UnreachableWrite } from "~/lib/unreachable-write";
+import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
 import { ArrowUpRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
 import { resolvePublishSteps } from "~/components/features/site-status/build-phase-collapse";
 import { PublishingRows } from "~/components/features/site-status/PublishingRows";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { useAnswerKeptFor } from "~/hooks/use-answer-kept-for";
 
 export interface PublishingPopoverProps {
   /** The 6 real BUILD_PHASES (null until the first poll lands). */
@@ -38,18 +48,29 @@ export interface PublishingPopoverProps {
   className?: string;
 }
 
+interface PollAnswer {
+  ok: true;
+  intent: "poll-build";
+  /** The commit the answer is for. */
+  sha?: string;
+  buildStatus: string;
+  runId: number | null;
+  buildUrl: string | null;
+  phases: BuildPhaseStatus[] | null;
+}
+
 type PollData =
-  | {
-      ok: true;
-      intent: "poll-build";
-      buildStatus: string;
-      runId: number | null;
-      buildUrl: string | null;
-      phases: BuildPhaseStatus[] | null;
-    }
+  | PollAnswer
   | { ok: false; intent: "poll-build"; error: string }
+  | UnreachableWrite
   | null
   | undefined;
+
+/** A successful poll for the commit being built. */
+function pollFor(data: PollData, sha: string | null | undefined): PollAnswer | null {
+  if (!data?.ok || data.intent !== "poll-build" || !sha) return null;
+  return data.sha == null || data.sha === sha ? data : null;
+}
 
 export function PublishingPopover({
   phases,
@@ -62,14 +83,28 @@ export function PublishingPopover({
   const { isPublishing, isBuilding } = useCollaborationContext();
   const isActive = isPublishing || isBuilding;
 
-  const pollFetcher = useFetcher();
+  const pollFetcher = useSiteFetcher();
+  // The interval below outlives renders; it posts through the latest submit,
+  // which carries the page's current site.
+  const submitRef = useRef(pollFetcher.submit);
+  submitRef.current = pollFetcher.submit;
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollData = pollFetcher.data as PollData;
+  const projectId = usePageSite().live;
 
-  const pollDataRef = useRef<PollData>(pollData);
+  // The last successful poll, for the project and commit it was sent for.
+  const fresh = pollFor(pollData, sha);
+  const { kept: keptPoll, markSent } = useAnswerKeptFor<PollAnswer>(
+    pollData,
+    (answer) => pollFor(answer as PollData, sha),
+    `${projectId}:${sha ?? ""}`,
+  );
+  const shownPoll = fresh ?? (isUnreachableAnswer(pollData) ? keptPoll : null);
+
+  const pollDataRef = useRef({ data: pollData, shown: shownPoll });
   useEffect(() => {
-    pollDataRef.current = pollData;
-  }, [pollData]);
+    pollDataRef.current = { data: pollData, shown: shownPoll };
+  }, [pollData, shownPoll]);
 
   // Cross-reference: CommitAndBuildModal.tsx has a structurally similar 5s
   // poll-build loop but is NOT extracted into a shared hook with this one —
@@ -84,9 +119,17 @@ export function PublishingPopover({
     function doPoll() {
       const formData: Record<string, string> = { intent: "poll-build", sha: sha as string };
       const latest = pollDataRef.current;
-      const runId = latest?.ok && latest.intent === "poll-build" ? latest.runId : null;
+      // A poll refused because the site changed is not asked again: the
+      // layout's notice has said why, and this tab's build is not the
+      // session's.
+      if (isSiteChanged(latest.data)) {
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        return;
+      }
+      const runId = latest.shown?.runId ?? null;
       if (runId != null) formData.runId = String(runId);
-      pollFetcher.submit(formData, { method: "post", action: "/publish" });
+      markSent();
+      submitRef.current(formData, { method: "post", action: "/publish" });
     }
     doPoll();
     intervalRef.current = setInterval(doPoll, 5000);
@@ -102,17 +145,12 @@ export function PublishingPopover({
     };
   }, []);
 
-  // Prefer freshly polled phases over the prop.
-  const livePhases: BuildPhaseStatus[] =
-    (pollData?.ok && pollData.intent === "poll-build" && pollData.phases) || phases || [];
+  // Prefer polled phases over the prop.
+  const livePhases: BuildPhaseStatus[] = shownPoll?.phases || phases || [];
 
   // Surface the Actions run URL from the poll, falling back to the off-route
   // prop, then the commit URL (GitHub shows checks on the commit page).
-  const liveBuildUrl =
-    (pollData?.ok && pollData.intent === "poll-build" ? pollData.buildUrl : null) ??
-    buildUrl ??
-    commitUrl ??
-    null;
+  const liveBuildUrl = shownPoll?.buildUrl ?? buildUrl ?? commitUrl ?? null;
 
   const { steps, activeStep, totalSteps } = resolvePublishSteps(
     livePhases.length > 0 ? livePhases : null,

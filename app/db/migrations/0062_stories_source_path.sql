@@ -1,0 +1,12 @@
+-- The story CSV path the Compositor last read for each story.
+--
+-- @version v1.5.0-beta
+--
+-- source_path: the repository path of the CSV the import or sync read for
+-- this story's steps (telar-content/spreadsheets/<id>.csv, _data/<id>.csv or
+-- <id>.csv). A publish that writes the story to telar-content/spreadsheets
+-- deletes an older copy only at this path, so a file the Compositor never
+-- read is never deleted. NULL where the path is not known, which covers every
+-- story imported before this column: those stories have no older copy
+-- deleted.
+ALTER TABLE stories ADD COLUMN source_path text;

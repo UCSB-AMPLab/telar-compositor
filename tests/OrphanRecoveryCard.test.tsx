@@ -6,7 +6,7 @@
  * project.csv.
  *
  * Covered behaviour:
- *   - Renders only when orphanStoryIds is non-empty (don't-render gate); the
+ *   - Renders only when orphanStoryCount is above zero (don't-render gate); the
  *     card is convenor + populated only — the page never mounts it for
  *     collaborators or in the empty state, and it returns null on empty input.
  *   - "Restore as drafts" submits a fetcher with intent=restore-orphan-drafts
@@ -23,18 +23,25 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
 
-// i18n mock — return the key plus a `[opt=val]` suffix for any options so
-// tests can assert against the key AND confirm interpolation reached t().
+// i18n mock — mirrors i18next's own pluralisation: a `count` option selects
+// `${key}_one` (count === 1) or `${key}_other` (otherwise) and appends the
+// `[opt=val]` suffix for every option so tests can also confirm interpolation
+// values reached t().
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) => {
-      if (opts && typeof opts === "object" && Object.keys(opts).length > 0) {
-        const suffix = Object.entries(opts)
+      const hasOpts = opts && typeof opts === "object" && Object.keys(opts).length > 0;
+      const resolvedKey =
+        hasOpts && "count" in (opts as Record<string, unknown>)
+          ? `${key}_${(opts as Record<string, unknown>).count === 1 ? "one" : "other"}`
+          : key;
+      if (hasOpts) {
+        const suffix = Object.entries(opts as Record<string, unknown>)
           .map(([k, v]) => `[${k}=${String(v)}]`)
           .join("");
-        return `${key}${suffix}`;
+        return `${resolvedKey}${suffix}`;
       }
-      return key;
+      return resolvedKey;
     },
     i18n: { language: "en" },
   }),
@@ -50,6 +57,8 @@ type FakeFetcher = {
 };
 
 let currentFetcher: FakeFetcher;
+/** The options each useFetcher call was given. */
+let fetcherOptions: unknown[] = [];
 
 function makeFetcher(): FakeFetcher {
   return {
@@ -61,30 +70,39 @@ function makeFetcher(): FakeFetcher {
 }
 
 vi.mock("react-router", () => ({
-  useFetcher: () => currentFetcher,
+  useFetcher: (opts?: unknown) => {
+    fetcherOptions.push(opts);
+    return currentFetcher;
+  },
 }));
 
-import { OrphanRecoveryCard } from "~/components/features/start/OrphanRecoveryCard";
+import { OrphanRecoveryCard, ORPHAN_RECOVERY_FETCHER_KEY } from "~/components/features/start/OrphanRecoveryCard";
 
 beforeEach(() => {
   currentFetcher = makeFetcher();
+  fetcherOptions = [];
 });
 
 describe("OrphanRecoveryCard — convenor+populated gating", () => {
-  it("returns null when orphanStoryIds is empty (don't-render gate)", () => {
-    const { container } = render(<OrphanRecoveryCard orphanStoryIds={[]} />);
+  it("returns null when orphanStoryCount is zero (don't-render gate)", () => {
+    const { container } = render(<OrphanRecoveryCard orphanStoryCount={0} />);
     expect(container.firstChild).toBeNull();
   });
 
   it("renders the card (eyebrow + body with count) when orphans exist", () => {
-    render(<OrphanRecoveryCard orphanStoryIds={["story-a", "story-b"]} />);
+    render(<OrphanRecoveryCard orphanStoryCount={2} />);
     expect(screen.getByText("recovery.eyebrow")).toBeTruthy();
     // Body interpolates the count via the t() option suffix.
-    expect(screen.getByText("recovery.body[N=2]")).toBeTruthy();
+    expect(screen.getByText("recovery.body_other[count=2]")).toBeTruthy();
+  });
+
+  it("uses the singular body key and passes count (not N) for exactly one orphan", () => {
+    render(<OrphanRecoveryCard orphanStoryCount={1} />);
+    expect(screen.getByText("recovery.body_one[count=1]")).toBeTruthy();
   });
 
   it("'Restore as drafts' submits intent=restore-orphan-drafts to action /dashboard", () => {
-    render(<OrphanRecoveryCard orphanStoryIds={["story-a", "story-b"]} />);
+    render(<OrphanRecoveryCard orphanStoryCount={2} />);
     const restoreBtn = screen.getByRole("button", {
       name: "recovery.primary_cta",
     });
@@ -96,7 +114,7 @@ describe("OrphanRecoveryCard — convenor+populated gating", () => {
   });
 
   it("'Ignore' submits intent=ignore-orphans to action /dashboard", () => {
-    render(<OrphanRecoveryCard orphanStoryIds={["story-a"]} />);
+    render(<OrphanRecoveryCard orphanStoryCount={1} />);
     const ignoreBtn = screen.getByRole("button", {
       name: "recovery.ignore_aria",
     });
@@ -109,7 +127,7 @@ describe("OrphanRecoveryCard — convenor+populated gating", () => {
 
   it("sends no orphan IDs in either payload (server recomputes)", () => {
     render(
-      <OrphanRecoveryCard orphanStoryIds={["story-a", "story-b", "story-c"]} />,
+      <OrphanRecoveryCard orphanStoryCount={3} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "recovery.primary_cta" }));
     fireEvent.click(screen.getByRole("button", { name: "recovery.ignore_aria" }));
@@ -120,8 +138,16 @@ describe("OrphanRecoveryCard — convenor+populated gating", () => {
     }
   });
 
+  // The page, not the card, shows the answer, since a restore that recovers
+  // every orphan unmounts the card; so both submit through the fetcher key the
+  // page reads.
+  it("submits through the keyed fetcher the Start page reads", () => {
+    render(<OrphanRecoveryCard orphanStoryCount={1} />);
+    expect(fetcherOptions).toEqual([{ key: ORPHAN_RECOVERY_FETCHER_KEY }]);
+  });
+
   it("gives the single-word Ignore action a non-empty accessible name", () => {
-    render(<OrphanRecoveryCard orphanStoryIds={["story-a"]} />);
+    render(<OrphanRecoveryCard orphanStoryCount={1} />);
     const ignoreBtn = screen.getByRole("button", {
       name: "recovery.ignore_aria",
     });

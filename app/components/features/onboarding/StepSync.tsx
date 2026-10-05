@@ -6,6 +6,13 @@
  * button. Does NOT offer any fallback or "skip Sheets" option — the Sheet
  * IS the source of truth when google_sheets.enabled is true.
  *
+ * A default branch other than `main` offers the change the Compositor can
+ * make itself, where there is one: renaming the default to `main`, or making
+ * a `main` that holds the site the default.
+ *
+ * Columns Telar reads as one field, each holding values, are offered in the
+ * column picker; the choice goes back with the import.
+ *
  * Auto-advances to Review after 1.5s when import succeeds.
  */
 
@@ -14,6 +21,8 @@ import { CheckCircle, XCircle, Circle, Loader2, ArrowLeft } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
 import type { ImportResult } from "~/lib/import.server";
+import type { SubmittedChoice } from "~/lib/upgrade-sheets.server";
+import { UpgradeColumnPicker } from "~/components/features/upgrade/UpgradeColumnPicker";
 
 interface StepSyncProps {
   importResult: ImportResult | null;
@@ -21,6 +30,9 @@ interface StepSyncProps {
   onBack: () => void;
   onContinue: () => void;
   onRetryWithUrl: (url: string) => void;
+  onFixDefaultBranch: () => void;
+  /** The author's column choices, posted with the import again along with the challenge they answer. */
+  onChooseColumns: (challenge: string, choices: SubmittedChoice[]) => void;
   className?: string;
 }
 
@@ -40,6 +52,8 @@ export function StepSync({
   onBack,
   onContinue,
   onRetryWithUrl,
+  onFixDefaultBranch,
+  onChooseColumns,
   className = "",
 }: StepSyncProps) {
   const { t } = useTranslation("onboarding");
@@ -65,6 +79,8 @@ export function StepSync({
 
   const isSheetsError =
     !isImporting && importResult?.sheetsAccessError === true;
+
+  const fixLabel = isValidationError ? defaultBranchFixLabel(importResult) : null;
 
   return (
     <div className={className}>
@@ -140,26 +156,34 @@ export function StepSync({
         </div>
       )}
 
+      {/* Columns read as one field, each holding values: the author chooses */}
+      {isValidationError && importResult.sheetChoices && (
+        <ImportColumnPicker question={importResult.sheetChoices} onChoose={onChooseColumns} onCancel={onBack} />
+      )}
+
       {/* Validation error (not_telar or empty_repo) */}
-      {isValidationError && (
+      {isValidationError && !importResult.sheetChoices && (
         <div className="mt-4 space-y-4">
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-red-700 text-sm font-body">
-              {importResult.validationError === "not_telar"
-                ? t("step_sync.error_not_telar")
-                : importResult.validationError === "already_connected"
-                  ? t("step_sync.error_already_connected")
-                  : t("step_sync.error_empty_repo")}
+              {validationErrorMessage(importResult, t)}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center gap-1.5 text-sm font-body text-gray-500 hover:text-charcoal transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-            {t("step_sync.back")}
-          </button>
+          <div className="flex items-center gap-3">
+            {fixLabel && (
+              <Button variant="primary" onClick={onFixDefaultBranch}>
+                {t(fixLabel)}
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 text-sm font-body text-gray-500 hover:text-charcoal transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+              {t("step_sync.back")}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -169,6 +193,29 @@ export function StepSync({
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The column picker for a sheet the import refused, saying what choosing does for the source it read. */
+function ImportColumnPicker({
+  question,
+  onChoose,
+  onCancel,
+}: {
+  question: NonNullable<ImportResult["sheetChoices"]>;
+  onChoose: (challenge: string, choices: SubmittedChoice[]) => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation("onboarding");
+  const intro = question.source === "tabs" ? "upgrade:columnPickerIntroSheets" : "upgrade:columnPickerIntroSite";
+  return (
+    <UpgradeColumnPicker
+      groups={question.groups}
+      notice={question.notice}
+      intro={t(intro)}
+      onSubmit={(choices) => onChoose(question.challenge, choices)}
+      onCancel={onCancel}
+    />
+  );
+}
 
 function StateIcon({ state }: { state: ItemState }) {
   switch (state) {
@@ -181,6 +228,97 @@ function StateIcon({ state }: { state: ItemState }) {
     default:
       return <Circle className="w-5 h-5 text-gray-300 flex-shrink-0" aria-hidden="true" />;
   }
+}
+
+/**
+ * The message for an import that stopped before writing anything. A refused
+ * sheet is named with the headers as the author typed them, because the sheet
+ * on GitHub or in Google Sheets is where it has to be fixed. A file GitHub did
+ * not answer for is named by what it is, and the author tries again.
+ */
+export function validationErrorMessage(
+  result: ImportResult,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  switch (result.validationError) {
+    case "not_telar":
+      return t("step_sync.error_not_telar");
+    case "already_connected":
+      return t("step_sync.error_already_connected");
+    case "colliding_columns":
+      return collidingColumnsMessage(result, t);
+    case "choice_not_applied":
+      return t("upgrade:columnPickerNotApplied", { sheet: result.unreadableSheet ?? "" });
+    case "no_main_branch":
+      return noMainBranchMessage(result, t);
+    case "main_unreadable":
+      return t("step_sync.error_main_unreadable");
+    case "rename_pending":
+      return t("step_sync.error_rename_pending");
+    case "branch_admin_required":
+      return t("step_sync.error_branch_admin_required");
+    case "sheet_unreadable":
+    case "file_unreadable":
+    case "ignore_list_unreadable":
+      return unreadableFileMessage(result, t);
+    // The server could not ask GitHub whether the installation reaches the
+    // repository, so nothing was imported; the create form's copy for a failed
+    // exchange with GitHub says the same thing.
+    case "scope_check_failed":
+      return t("create_site.errors.github_error");
+    default:
+      return t("step_sync.error_empty_repo");
+  }
+}
+
+/** A default branch other than `main`, by what the repository's `main` is. */
+function noMainBranchMessage(
+  result: ImportResult,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  const branch = result.defaultBranch ?? "";
+  if (result.mainBranch === "site") return t("step_sync.error_main_beside_default", { branch });
+  if (result.mainBranch === "not_site") return t("step_sync.error_main_not_site", { branch });
+  return t("step_sync.error_no_main_branch", { branch });
+}
+
+/**
+ * The label of the change the Compositor can make to a default branch other
+ * than `main`, or null where it can make none. A rename GitHub had not
+ * finished keeps its button, so a second click finds the default on `main`.
+ */
+function defaultBranchFixLabel(result: ImportResult): string | null {
+  if (result.validationError === "rename_pending") return "step_sync.rename_to_main";
+  if (result.validationError !== "no_main_branch") return null;
+  if (result.mainBranch === "absent") return "step_sync.rename_to_main";
+  if (result.mainBranch === "site") return "step_sync.make_main_default";
+  return null;
+}
+
+/** A refused sheet, its field and its headers as the author typed them. */
+function collidingColumnsMessage(
+  result: ImportResult,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  return t("step_sync.error_colliding_columns", {
+    sheet: result.collidingColumns?.sheet ?? "",
+    field: result.collidingColumns?.canonicalName ?? "",
+    columns: (result.collidingColumns?.headers ?? []).map((h) => `"${h}"`).join(", "),
+  });
+}
+
+/** A file GitHub did not answer for: a sheet by its name, any other file by its path. */
+function unreadableFileMessage(
+  result: ImportResult,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (result.validationError === "sheet_unreadable") {
+    return t("step_sync.error_sheet_unreadable", { sheet: result.unreadableSheet ?? "" });
+  }
+  if (result.validationError === "file_unreadable") {
+    return t("step_sync.error_file_unreadable", { file: result.unreadableFile ?? "" });
+  }
+  return t("step_sync.error_ignore_list_unreadable");
 }
 
 function buildChecklistItems(

@@ -16,9 +16,13 @@
  *   - `messageAuth` is still 2,
  *   - `provider.messageHandlers` is still a per-instance array of functions,
  *   - the install path still lands on slot 2 and leaves 0/1/3 untouched,
+ *   - `tests/connection-liveness-contract.test.ts` still passes: the liveness
+ *     check in `app/lib/connection-liveness.ts` replaces the provider's
+ *     `_checkInterval`, reads `wsLastMessageReceived`, and closes through the
+ *     socket's `onclose`,
  * then update PINNED_YWS_VERSION to the new known-good release.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -91,6 +95,8 @@ describe("installSessionControlHandler — real provider", () => {
       installSessionControlHandler(provider, {
         onProjectDeleted: vi.fn(),
         onRemovedFromProject: vi.fn(),
+        onStateReset: vi.fn(),
+        onDocGeneration: vi.fn(),
       });
       expect(provider.messageHandlers[2]).not.toBe(original[2]);
       expect(typeof provider.messageHandlers[2]).toBe("function");
@@ -114,7 +120,12 @@ describe("installSessionControlHandler — frame dispatch", () => {
     const handlers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
     installSessionControlHandler(
       { messageHandlers: handlers },
-      { onProjectDeleted, onRemovedFromProject },
+      {
+        onProjectDeleted,
+        onRemovedFromProject,
+        onStateReset: vi.fn(),
+        onDocGeneration: vi.fn(),
+      },
     );
     const decoder = decoding.createDecoder(new Uint8Array([subtype]));
     handlers[2](null, decoder, null, false, 2);
@@ -145,6 +156,8 @@ describe("installSessionControlHandler — frame dispatch", () => {
       installSessionControlHandler(fixture, {
         onProjectDeleted: vi.fn(),
         onRemovedFromProject: vi.fn(),
+        onStateReset: vi.fn(),
+        onDocGeneration: vi.fn(),
       }),
     ).not.toThrow();
   });

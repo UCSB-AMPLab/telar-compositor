@@ -60,6 +60,63 @@ describe("InlineHtmlEditor", () => {
     expect(container.querySelector(".cm-content")?.getAttribute("aria-label")).toBe("Site description");
   });
 
+  /**
+   * `editable={false}` is a permission surface, not a cosmetic one. The editor
+   * binds the shared config.description Y.Text through yCollab, and the
+   * Durable Object snapshots that document straight back into project_config —
+   * so a caller the config action would refuse must not be able to open the
+   * editor at all. Opening it is the only way this component reaches the
+   * Y.Text, so refusing to mount is the whole gate.
+   */
+  describe("editable={false}", () => {
+    it("still renders the value, so the field stays readable", async () => {
+      const { container } = render(
+        <InlineHtmlEditor initialValue="" yText={yText} editable={false} />,
+      );
+      const preview = container.querySelector("[data-description-preview]")!;
+      expect(preview.innerHTML).toContain("<a href=");
+      expect(preview.textContent).toContain("Hello");
+    });
+
+    it("does not open the editor on click, so no Y.Text binding is created", async () => {
+      const { container } = render(
+        <InlineHtmlEditor initialValue="" yText={yText} editable={false} />,
+      );
+      fireEvent.click(container.querySelector("[data-description-preview]")!);
+
+      expect(container.querySelector(".cm-content")).toBeNull();
+      expect(container.querySelector("[data-description-preview]")).toBeTruthy();
+    });
+
+    it("does not open the editor on the keyboard path either", async () => {
+      const { container } = render(
+        <InlineHtmlEditor initialValue="" yText={yText} editable={false} />,
+      );
+      const preview = container.querySelector("[data-description-preview]")!;
+      fireEvent.keyDown(preview, { key: "Enter" });
+      fireEvent.keyDown(preview, { key: " " });
+
+      expect(container.querySelector(".cm-content")).toBeNull();
+    });
+
+    it("leaves the shared Y.Text untouched across an edit attempt", async () => {
+      const before = yText.toString();
+      const { container } = render(
+        <InlineHtmlEditor initialValue="" yText={yText} editable={false} />,
+      );
+      fireEvent.click(container.querySelector("[data-description-preview]")!);
+
+      expect(yText.toString()).toBe(before);
+    });
+
+    it("defaults to editable when the prop is omitted", async () => {
+      const { container } = render(<InlineHtmlEditor initialValue="" yText={yText} />);
+      fireEvent.click(container.querySelector("[data-description-preview]")!);
+
+      expect(container.querySelector(".cm-content")).toBeTruthy();
+    });
+  });
+
   it("shows the placeholder when empty", async () => {
     const empty = new Y.Doc().getText("d");
     const { container } = render(

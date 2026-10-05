@@ -3,6 +3,8 @@
  *
  * Tests: config values, locale file key parity (ES mirrors EN),
  * locale cookie configuration (sameSite lax, httpOnly false).
+ *
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -17,6 +19,7 @@ import { localeCookieConfig } from "~/i18n/i18next.server";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { awaitingSpanish } from "./helpers/awaiting-spanish";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -118,10 +121,10 @@ describe("en/common.json", () => {
     expect(typeof (enCommon as Record<string, unknown>).app_name).toBe("string");
   });
 
-  it("contains nav section with dashboard, objects, stories keys", () => {
+  it("contains nav section with start, objects, stories keys", () => {
     const nav = (enCommon as unknown as Record<string, Record<string, unknown>>).nav;
     expect(nav).toBeDefined();
-    expect(nav.dashboard).toBeTruthy();
+    expect(nav.start).toBeTruthy();
     expect(nav.objects).toBeTruthy();
     expect(nav.stories).toBeTruthy();
   });
@@ -148,11 +151,12 @@ describe("en/auth.json", () => {
 // ---------------------------------------------------------------------------
 // EN/ES key parity — single dynamic both-directions loop over ALL namespaces
 //
-// Replaces the former explicit per-namespace parity describes (common, auth,
-// config, onboarding, popover, editor). Iterates every namespace present in
-// the resource bundle and asserts flatKeys(en[ns]) === flatKeys(es[ns]) in
-// BOTH directions, so project_switcher and every future namespace is
-// auto-covered and no namespace can silently drift again.
+// Iterates every namespace present in the resource bundle and asserts
+// flatKeys(en[ns]) === flatKeys(es[ns]) in BOTH directions, so every namespace
+// is auto-covered and none can silently drift. The one exception is the keys
+// listed in tests/helpers/awaiting-spanish.ts, whose Colombian Spanish is
+// drafted and reviewed separately; each of those has to be missing from ES, so
+// the exception cannot outlive the review it stands in for.
 // ---------------------------------------------------------------------------
 
 describe("EN/ES key parity (all namespaces, both directions)", () => {
@@ -164,11 +168,18 @@ describe("EN/ES key parity (all namespaces, both directions)", () => {
       const enKeys = flatKeys(enBundle[ns]);
       const esKeys = flatKeys(esBundle[ns] ?? {});
 
+      const pending = awaitingSpanish(ns);
+
       for (const key of enKeys) {
+        if (pending.includes(key)) continue;
         expect(esKeys.has(key), `ES ${ns} missing key: ${key}`).toBe(true);
       }
       for (const key of esKeys) {
         expect(enKeys.has(key), `EN ${ns} missing key: ${key}`).toBe(true);
+      }
+      for (const key of pending) {
+        expect(enKeys.has(key), `EN ${ns} missing pending key: ${key}`).toBe(true);
+        expect(esKeys.has(key), `ES ${ns} already carries a pending key: ${key}`).toBe(false);
       }
     });
   }
@@ -207,30 +218,21 @@ describe("status.* captions (common.json)", () => {
 // ---------------------------------------------------------------------------
 // Story editor — editor.json EN/ES parity + story-editor keys
 //
-// The story-editor restructure adds breadcrumb.step/layer, the capture_toast
-// block, and layer.button_label_strip_label + L1/L2 markers. Key parity must
-// hold across locales; the EN/ES marker VALUES intentionally diverge (EN L1/L2
-// — locked visual design; ES C1/C2 — native "capa").
+// The capture_toast block, the L1/L2 markers, and the layer panels' title
+// pencil. Key parity must hold across locales; the EN/ES marker VALUES
+// intentionally diverge (EN L1/L2 — locked visual design; ES C1/C2 — native
+// "capa"). The breadcrumb's step and layer keys and the button-label strip's
+// label went with the panels' breadcrumb and strip.
 // ---------------------------------------------------------------------------
 
 describe("editor.json story-editor keys", () => {
   type Editor = {
-    breadcrumb?: Record<string, string>;
     capture_toast?: Record<string, string>;
     layer?: Record<string, string>;
+    stage?: Record<string, string>;
   };
   const en = enEditor as Editor;
   const es = esEditor as Editor;
-
-  it("EN breadcrumb has step + layer interpolation keys", () => {
-    expect(en.breadcrumb?.step).toBe("Step {{number}}");
-    expect(en.breadcrumb?.layer).toBe("Layer {{number}}");
-  });
-
-  it("ES breadcrumb has step + layer with non-empty Spanish values", () => {
-    expect(es.breadcrumb?.step).toBe("Paso {{number}}");
-    expect(es.breadcrumb?.layer).toBe("Capa {{number}}");
-  });
 
   it("EN capture_toast has captured + undo", () => {
     expect(en.capture_toast?.captured).toBe("Captured position");
@@ -242,27 +244,11 @@ describe("editor.json story-editor keys", () => {
     expect(es.capture_toast?.undo).toBe("Deshacer");
   });
 
-  it("EN layer has button_label_strip_label + L1/L2 markers", () => {
-    expect(en.layer?.button_label_strip_label).toBe("Button label");
-    expect(en.layer?.marker_l1).toBe("L1");
-    expect(en.layer?.marker_l2).toBe("L2");
-  });
-
-  it("ES layer markers are the native C1/C2 (capa), intentionally diverging from EN L1/L2", () => {
-    expect(es.layer?.button_label_strip_label).toBe("Etiqueta del botón");
-    expect(es.layer?.marker_l1).toBe("C1");
-    expect(es.layer?.marker_l2).toBe("C2");
-  });
-
   it("does not leave any new story-editor value as an empty string in either locale", () => {
     for (const obj of [en, es]) {
-      expect(obj.breadcrumb?.step).toBeTruthy();
-      expect(obj.breadcrumb?.layer).toBeTruthy();
       expect(obj.capture_toast?.captured).toBeTruthy();
       expect(obj.capture_toast?.undo).toBeTruthy();
-      expect(obj.layer?.button_label_strip_label).toBeTruthy();
-      expect(obj.layer?.marker_l1).toBeTruthy();
-      expect(obj.layer?.marker_l2).toBeTruthy();
+      expect(obj.stage?.edit_panel_title).toBeTruthy();
     }
   });
 });
@@ -285,80 +271,67 @@ describe("locale cookie config", () => {
 // pluralisation pairs + connection pill copy
 // ---------------------------------------------------------------------------
 
-import enTeamJson from "~/i18n/locales/en/team.json";
-import esTeamJson from "~/i18n/locales/es/team.json";
+import enContributionsJson from "~/i18n/locales/en/contributions.json";
+import esContributionsJson from "~/i18n/locales/es/contributions.json";
 import enCollabJson from "~/i18n/locales/en/collaboration.json";
 import esCollabJson from "~/i18n/locales/es/collaboration.json";
 
-type TeamJson = Record<string, string>;
-type CollabJson = Record<string, string>;
+/** A catalogue read for one key at a time. Nested sections are not read here. */
+type FlatJson = Record<string, unknown>;
 
-describe("metric_* plural pairs (EN team.json)", () => {
-  it("has metric_stories_one key", () => {
-    expect((enTeamJson as TeamJson)["metric_stories_one"]).toBeTruthy();
+/**
+ * The plural pair is asserted on the namespace that OWNS the count, which is
+ * `contributions`. The block that stood here read `team:metric_*`, a family
+ * whose screen was rebuilt as the `/contributions` route with a richer model —
+ * per kind, added and edited, words and time — in a namespace of its own. Every
+ * `metric_*` key it asserted had been unreferenced since that rebuild, so the
+ * pair discipline was being enforced on strings nothing rendered while the
+ * strings that are rendered went unchecked.
+ */
+describe("plural pairs (contributions)", () => {
+  it("states both forms in EN", () => {
+    expect((enContributionsJson as unknown as FlatJson)["meta_one"]).toBeTruthy();
+    expect((enContributionsJson as unknown as FlatJson)["meta_other"]).toBeTruthy();
   });
 
-  it("has metric_stories_other key", () => {
-    expect((enTeamJson as TeamJson)["metric_stories_other"]).toBeTruthy();
+  it("states both forms in ES", () => {
+    expect((esContributionsJson as unknown as FlatJson)["meta_one"]).toBeTruthy();
+    expect((esContributionsJson as unknown as FlatJson)["meta_other"]).toBeTruthy();
   });
 
-  it("metric_stories_one contains singular form ('story')", () => {
-    expect((enTeamJson as TeamJson)["metric_stories_one"]).toContain("story");
-  });
-
-  it("metric_stories_other contains plural form ('stories')", () => {
-    expect((enTeamJson as TeamJson)["metric_stories_other"]).toContain("stories");
-  });
-
-  it("does NOT have legacy flat metric_stories key", () => {
-    expect((enTeamJson as TeamJson)["metric_stories"]).toBeUndefined();
-  });
-
-  it("does NOT have legacy _plural suffix keys", () => {
-    const keys = Object.keys(enTeamJson as TeamJson);
-    const pluralKeys = keys.filter((k) => k.endsWith("_plural"));
-    expect(pluralKeys).toHaveLength(0);
-  });
-});
-
-describe("metric_* plural pairs (ES team.json)", () => {
-  it("has metric_stories_one key in ES", () => {
-    expect((esTeamJson as TeamJson)["metric_stories_one"]).toBeTruthy();
-  });
-
-  it("metric_stories_one ES contains 'historia'", () => {
-    expect((esTeamJson as TeamJson)["metric_stories_one"]).toContain("historia");
-  });
-
-  it("metric_stories_other ES contains 'historias'", () => {
-    expect((esTeamJson as TeamJson)["metric_stories_other"]).toContain("historias");
+  it("carries no legacy _plural suffix, in either language", () => {
+    for (const json of [enContributionsJson, esContributionsJson]) {
+      const legacy = Object.keys(json as unknown as FlatJson).filter((k) => k.endsWith("_plural"));
+      expect(legacy).toHaveLength(0);
+    }
   });
 });
 
-describe("connection pill copy (EN collaboration.json)", () => {
-  it("has connection_status_connected key", () => {
-    expect((enCollabJson as CollabJson)["connection_status_connected"]).toBe("Connected");
+/**
+ * The pill's three states, on the keys it actually renders. The block that
+ * stood here asserted `connection_status_connected` / `_connecting` /
+ * `_offline` word for word — copy `ConnectionPill` replaced deliberately,
+ * because "Offline" misrepresents an editor that still works locally. Pinning
+ * the old wording kept three dead strings looking alive and said nothing about
+ * the calm copy that took their place.
+ */
+describe("connection pill copy", () => {
+  it("states the three live pill labels in both languages", () => {
+    for (const json of [enCollabJson, esCollabJson]) {
+      expect((json as unknown as FlatJson)["presence_live"]).toBeTruthy();
+      expect((json as unknown as FlatJson)["presence_reconnecting"]).toBeTruthy();
+      expect((json as unknown as FlatJson)["presence_working_solo"]).toBeTruthy();
+      expect((json as unknown as FlatJson)["connection_status_tooltip"]).toBeTruthy();
+    }
   });
 
-  it("has connection_status_connecting key", () => {
-    expect((enCollabJson as CollabJson)["connection_status_connecting"]).toBeTruthy();
-  });
-
-  it("has connection_status_offline key", () => {
-    expect((enCollabJson as CollabJson)["connection_status_offline"]).toBe("Offline");
-  });
-
-  it("has connection_status_tooltip key", () => {
-    expect((enCollabJson as CollabJson)["connection_status_tooltip"]).toBeTruthy();
-  });
-});
-
-describe("connection pill copy (ES collaboration.json)", () => {
-  it("connection_status_connected ES is 'Conectado'", () => {
-    expect((esCollabJson as CollabJson)["connection_status_connected"]).toBe("Conectado");
-  });
-
-  it("connection_status_offline ES is 'Sin conexión'", () => {
-    expect((esCollabJson as CollabJson)["connection_status_offline"]).toBe("Sin conexión");
+  it("does not name a state the pill stopped claiming", () => {
+    // The point of the rewrite: none of the three may come back by the front
+    // door, in either language.
+    for (const json of [enCollabJson, esCollabJson]) {
+      for (const dead of ["connection_status_connected", "connection_status_connecting", "connection_status_offline"]) {
+        expect((json as unknown as FlatJson)[dead]).toBeUndefined();
+      }
+    }
   });
 });

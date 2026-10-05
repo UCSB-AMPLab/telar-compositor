@@ -10,12 +10,19 @@
  * those values. When the user drags region handles, `onClipChange` fires
  * with the new start/end values (in seconds).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Play, Pause, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import {
+  AUDIO_CONTROL_ICON,
+  AUDIO_CONTROLS_BUTTON_GAP,
+  AUDIO_ELAPSED,
+  AUDIO_PLAY_ICON,
+  type Box,
+} from "~/lib/framing-stage";
 
 interface AudioPlayerProps {
   audioUrl: string;
@@ -28,7 +35,27 @@ interface AudioPlayerProps {
   onClipChange?: (start: number, end: number) => void;
   /** Show the draggable clip region (defaults to true when onClipChange provided) */
   showRegion?: boolean;
+  /**
+   * The waveform's height in pixels: on the framing stage, the height the
+   * published page gives it (`audioWaveformBox`); 80 elsewhere.
+   */
+  waveformHeight?: number;
+  /**
+   * On the framing stage with the card below: the waveform's box and the
+   * controls row's box, each placed on its own in stage pixels relative to
+   * the positioned parent, with the stage's scale for the row's gap. The
+   * waveform fills its box and the row's buttons are as tall as the row.
+   */
+  placement?: {
+    wave: Box;
+    controls: Box;
+    /** The playing time's anchor from the parent's right and bottom edges. */
+    elapsed: { right: number; bottom: number };
+    scale: number;
+  };
 }
+
+const DEFAULT_WAVEFORM_HEIGHT = 80;
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -55,6 +82,8 @@ export function AudioPlayer({
   clipEnd,
   onClipChange,
   showRegion,
+  waveformHeight = DEFAULT_WAVEFORM_HEIGHT,
+  placement,
 }: AudioPlayerProps) {
   const { t } = useTranslation("editor");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -75,6 +104,14 @@ export function AudioPlayer({
   const hasSavedClip = !!(clipStart || clipEnd);
 
   const shouldShowRegion = showRegion ?? !!onClipChange;
+
+  // Read at construction, and applied to the live waveform when it changes,
+  // so a resized stage redraws the waveform rather than rebuilding the player.
+  const heightRef = useRef(waveformHeight);
+  heightRef.current = waveformHeight;
+  useEffect(() => {
+    wsRef.current?.setOptions({ height: waveformHeight });
+  }, [waveformHeight]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -106,7 +143,7 @@ export function AudioPlayer({
           progressColor: themeColor("--color-charcoal", "#333333"),
           cursorColor: themeColor("--color-charcoal", "#333333"),
           url: audioUrl,
-          height: 80,
+          height: heightRef.current,
           barWidth: 3,
           barGap: 2,
           barRadius: 2,
@@ -232,80 +269,161 @@ export function AudioPlayer({
     );
   }
 
+  const buttons = (size?: number) => (
+    <AudioButtons
+      size={size}
+      scale={placement?.scale}
+      isPlaying={isPlaying}
+      isMuted={isMuted}
+      onPlayPause={handlePlayPause}
+      onRewind={handleRewind}
+      onMuteToggle={handleMuteToggle}
+    />
+  );
+  const elapsed = (
+    <span className="font-mono text-xs text-charcoal/60">
+      {formatTime(currentTime)} / {formatTime(duration)}
+    </span>
+  );
+  const savedClip = shouldShowRegion && (saved || showSavedMsg) && (
+    <span className={`font-mono text-xs text-qolle-deep transition-opacity ${showSavedMsg ? "opacity-100" : "opacity-70"}`}>
+      {formatTime(regionStart)} → {formatTime(regionEnd)}
+      {showSavedMsg && (
+        <span className="ml-2 font-body text-[10px] uppercase tracking-wider">✓ {t("media.clip_saved")}</span>
+      )}
+    </span>
+  );
+  const loading = isLoading && (
+    <div className="h-20 flex items-center justify-center">
+      <p className="font-body text-sm text-charcoal/50">{t("media.audio_loading")}</p>
+    </div>
+  );
+
+  // One tree in both placements, so the element WaveSurfer draws into is the
+  // same element whichever is in force: the placement only positions it.
+  const wave = placement?.wave;
+  const controls = placement?.controls;
   return (
-    <div className="w-full">
-    <div className="rounded-lg bg-anil overflow-hidden">
-      {/* Waveform area */}
-      <div className="px-4 pt-4 pb-2">
-        {isLoading && (
-          <div className="h-20 flex items-center justify-center">
-            <p className="font-body text-sm text-charcoal/50">
-              {t("media.audio_loading")}
-            </p>
+    <div className={placement ? "contents" : "w-full"}>
+      <div
+        data-testid={placement ? "audio-wave" : undefined}
+        className={placement ? "absolute rounded-lg bg-anil overflow-hidden" : "rounded-lg bg-anil overflow-hidden"}
+        style={wave ? { left: wave.x, top: wave.y, width: wave.w, height: wave.h } : undefined}
+      >
+        <div className={placement ? undefined : "px-4 pt-4 pb-2"}>
+          {loading}
+          <div ref={containerRef} className={isLoading ? "invisible h-0" : "w-full"} />
+        </div>
+        {!placement && !isLoading && !hasError && (
+          <div className="flex items-center justify-between px-4 pb-3">
+            {elapsed}
+            <div className="flex items-center gap-1">{buttons()}</div>
           </div>
         )}
-        <div ref={containerRef} className={isLoading ? "invisible h-0" : "w-full"} />
       </div>
-
-      {/* Controls bar */}
-      {!isLoading && !hasError && (
-        <div className="flex items-center justify-between px-4 pb-3">
-          {/* Time counter — left */}
-          <span className="font-mono text-xs text-charcoal/60">
-            {formatTime(currentTime)} / {formatTime(duration)}
-          </span>
-
-          {/* Buttons — right */}
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={handlePlayPause}
-              className="flex items-center justify-center w-9 h-9 rounded-full bg-charcoal/10 hover:bg-charcoal/20 text-charcoal transition-colors"
-              aria-label={isPlaying ? t("media.pause_aria") : t("media.play_aria")}
-            >
-              {isPlaying ? (
-                <Pause className="w-4 h-4" />
-              ) : (
-                <Play className="w-4 h-4 ml-0.5" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleRewind}
-              className="flex items-center justify-center w-9 h-9 rounded-full bg-charcoal/10 hover:bg-charcoal/20 text-charcoal transition-colors"
-              aria-label={t("media.restart_clip_aria")}
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={handleMuteToggle}
-              className="flex items-center justify-center w-9 h-9 rounded-full bg-charcoal/10 hover:bg-charcoal/20 text-charcoal transition-colors"
-              aria-label={isMuted ? t("media.unmute_aria") : t("media.mute_aria")}
-            >
-              {isMuted ? (
-                <VolumeX className="w-4 h-4" />
-              ) : (
-                <Volume2 className="w-4 h-4" />
-              )}
-            </button>
+      {controls && !isLoading && (
+        <>
+          <div
+            data-testid="audio-controls"
+            className="absolute flex items-center justify-center"
+            style={{
+              left: controls.x,
+              top: controls.y,
+              width: controls.w,
+              height: controls.h,
+              gap: AUDIO_CONTROLS_BUTTON_GAP * placement.scale,
+            }}
+          >
+            {buttons(controls.h)}
           </div>
-        </div>
+          <SavedClipReadout row={controls}>{savedClip}</SavedClipReadout>
+        </>
       )}
+      {placement && !isLoading && (
+        <ElapsedReadout placement={placement} text={`${formatTime(currentTime)} / ${formatTime(duration)}`} />
+      )}
+      {!placement && savedClip && <div className="mt-1.5 text-center">{savedClip}</div>}
     </div>
-    {/* Saved clip indicator — below the player */}
-    {shouldShowRegion && (saved || showSavedMsg) && (
-      <div className="mt-1.5 text-center">
-        <span className={`font-mono text-xs text-qolle-deep transition-opacity ${showSavedMsg ? "opacity-100" : "opacity-70"}`}>
-          {formatTime(regionStart)} → {formatTime(regionEnd)}
-          {showSavedMsg && (
-            <span className="ml-2 font-body text-[10px] uppercase tracking-wider">
-              ✓ Clip saved
-            </span>
-          )}
-        </span>
-      </div>
-    )}
+  );
+}
+
+/**
+ * Play or pause, restart and mute: 36px round buttons with 16px icons, or on
+ * the stage buttons `size` tall with the framework's icons at the stage's scale.
+ */
+function AudioButtons({
+  size,
+  scale,
+  isPlaying,
+  isMuted,
+  onPlayPause,
+  onRewind,
+  onMuteToggle,
+}: {
+  size?: number;
+  scale?: number;
+  isPlaying: boolean;
+  isMuted: boolean;
+  onPlayPause: () => void;
+  onRewind: () => void;
+  onMuteToggle: () => void;
+}) {
+  const { t } = useTranslation("editor");
+  const button = {
+    className: `flex items-center justify-center rounded-full bg-charcoal/10 hover:bg-charcoal/20 text-charcoal transition-colors${size ? "" : " w-9 h-9"}`,
+    style: size ? { width: size, height: size } : undefined,
+  };
+  const play = scale ? AUDIO_PLAY_ICON * scale : 16;
+  const other = scale ? AUDIO_CONTROL_ICON * scale : 16;
+  return (
+    <>
+      <button type="button" onClick={onPlayPause} {...button} aria-label={isPlaying ? t("media.pause_aria") : t("media.play_aria")}>
+        {isPlaying ? <Pause size={play} /> : <Play size={play} className="ml-0.5" />}
+      </button>
+      <button type="button" onClick={onRewind} {...button} aria-label={t("media.restart_clip_aria")}>
+        <RotateCcw size={other} />
+      </button>
+      <button type="button" onClick={onMuteToggle} {...button} aria-label={isMuted ? t("media.unmute_aria") : t("media.mute_aria")}>
+        {isMuted ? <VolumeX size={other} /> : <Volume2 size={other} />}
+      </button>
+    </>
+  );
+}
+
+/**
+ * The saved clip on the stage. The framework has no such readout; the
+ * editor's sits at the controls row's left edge, clear of the playing time at
+ * its right and of the centred buttons.
+ */
+function SavedClipReadout({ row, children }: { row: Box; children: React.ReactNode }) {
+  if (!children) return null;
+  return (
+    <div
+      data-testid="audio-saved-clip"
+      className="absolute flex items-center pointer-events-none"
+      style={{ left: row.x, top: row.y, height: row.h }}
+    >
+      {children}
     </div>
+  );
+}
+
+/** The playing time on the stage, as the framework's `.audio-elapsed` pill, at the stage's scale. */
+function ElapsedReadout({ placement, text }: { placement: { elapsed: { right: number; bottom: number }; scale: number }; text: string }) {
+  const k = placement.scale;
+  return (
+    <span
+      data-testid="audio-elapsed"
+      className="absolute pointer-events-none bg-white/60 text-black/70 backdrop-blur-sm"
+      style={{
+        right: placement.elapsed.right,
+        bottom: placement.elapsed.bottom,
+        fontSize: AUDIO_ELAPSED.fontSize * k,
+        padding: `${AUDIO_ELAPSED.paddingY * k}px ${AUDIO_ELAPSED.paddingX * k}px`,
+        borderRadius: AUDIO_ELAPSED.radius * k,
+      }}
+    >
+      {text}
+    </span>
   );
 }

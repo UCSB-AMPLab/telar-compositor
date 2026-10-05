@@ -3,20 +3,22 @@
  *
  * Renders six WorkflowTile entries in STEP order (Configure · Objects ·
  * Stories · Glossary · Pages · Publish) with real per-step counts from the
- * /start loader. The Publish tile is LOCKED (don't-render the action — no nav,
- * "Convenor-only" soft pill) for collaborators, gated on useIsConvenor().
+ * /start loader. The Publish tile is LOCKED (don't-render the action — no
+ * nav, "Convenor-only" soft pill) for a caller with no project membership,
+ * gated on useIsPublisher().
  *
  * In the empty (first-run) state every tile dims and shows its empty pill;
  * the locked Publish tile keeps its locked treatment regardless of state.
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { Settings, Image, BookOpen, BookA, FileText, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useIsConvenor } from "~/hooks/use-role";
+import type { TFunction } from "i18next";
+import { useIsPublisher } from "~/hooks/use-role";
 import { WorkflowTile } from "./WorkflowTile";
 import type { PillVariant } from "./WorkflowTile";
 
@@ -32,13 +34,26 @@ export interface WorkflowCounts {
 
 export interface WorkflowMapProps {
   counts: WorkflowCounts;
-  /** Publish "N to ship" — sourced from the _app shell unpublishedCount. */
-  unpublishedCount: number;
+  /** Publish "N to ship"; null until the live count has answered. */
+  unpublishedCount: number | null;
   /** First-run flag — dims all (non-locked) tiles. */
   empty: boolean;
   /** Open the DocsDrawer at a tile's DOC key (docs-footer click). */
   onOpenDoc?: (docKey: string) => void;
   className?: string;
+}
+
+/** The Publish tile's pill: no number until the live count has answered. */
+function publishPillLabel(
+  t: TFunction<"start">,
+  isPublisher: boolean,
+  empty: boolean,
+  unpublishedCount: number | null,
+): string {
+  if (!isPublisher) return t("pill.convenor_only");
+  if (empty) return t("pill.nothing_to_publish");
+  if (unpublishedCount === null) return t("pill.to_ship_pending");
+  return t("pill.to_ship", { count: unpublishedCount, N: unpublishedCount });
 }
 
 export function WorkflowMap({
@@ -49,7 +64,7 @@ export function WorkflowMap({
   className = "",
 }: WorkflowMapProps) {
   const { t } = useTranslation("start");
-  const isConvenor = useIsConvenor();
+  const isPublisher = useIsPublisher();
 
   // Per-tile descriptors. Populated vs empty pill resolved per the state
   // variants table; tip text transcribed verbatim from the design spec.
@@ -158,23 +173,18 @@ export function WorkflowMap({
           />
         ))}
 
-        {/* Publish tile — step 6. Locked (don't-render action) for collaborators. */}
+        {/* Publish tile — step 6. Locked (don't-render action) for a caller
+            with no project membership. */}
         <WorkflowTile
           step={6}
           to="/publish"
           icon={Upload}
           iconTint="text-terracotta"
           title={t("tile.publish")}
-          pillLabel={
-            !isConvenor
-              ? t("pill.convenor_only")
-              : empty
-                ? t("pill.nothing_to_publish")
-                : t("pill.to_ship", { count: unpublishedCount, N: unpublishedCount })
-          }
-          pillVariant={!isConvenor ? "soft" : empty ? "soft" : "mark"}
+          pillLabel={publishPillLabel(t, isPublisher, empty, unpublishedCount)}
+          pillVariant={!isPublisher ? "soft" : empty ? "soft" : "mark"}
           tip={
-            !isConvenor
+            !isPublisher
               ? t("tip.publish_collaborator")
               : t("tip.publish_convenor")
           }
@@ -182,7 +192,7 @@ export function WorkflowMap({
           docLabel={t("workflow.learn_more")}
           onOpenDoc={onOpenDoc}
           empty={empty}
-          locked={!isConvenor}
+          locked={!isPublisher}
         />
       </div>
     </section>

@@ -1,21 +1,26 @@
 {
-  "v1_3_2_beta": {
-    "title": "Qué mejoró en el compositor",
+  "v1_5_0_beta": {
+    "title": "Qué hay de nuevo en el Compositor",
     "features_label": "Novedades",
     "features": [
-      "Ahora puedes agregar un párrafo de introducción opcional a la sección de historias"
+      "Proyectos de curso: los estudiantes unen sus sitios con un código y comparten la colección del curso; los docentes se unen con un código propio. Si eres docente y quieres probar esta función, escríbenos.",
+      "Un registro de participación con lo que hizo y escribió cada persona en el proyecto, que cualquier integrante puede ver y descargar",
+      "Cualquier integrante del sitio puede publicar, subir objetos y actualizar Telar",
+      "El editor de la historia muestra cada paso tal como se verá en la historia publicada",
+      "Cada término del glosario tiene un tipo, y los paneles de capa pueden mostrar un término en un recuadro al lado del texto",
+      "Ahora puedes cambiar el ID de una historia o de un objeto, editar los campos personalizados de los objetos y subir archivos de audio, PDF y WEBP como objetos",
+      "Mientras escribes una respuesta ves cuántas líneas ocupa, y los paneles de capa tienen un botón Nota al pie"
     ],
     "fixes_label": "Correcciones",
     "fixes": [
-      "Los datos del objeto, como el crédito, la fuente y el tipo, ahora se guardan bien",
-      "Subir imágenes es más confiable: si una subida falla, puedes volver a intentarla sin que se creen objetos repetidos",
-      "Cuando una imagen no se puede subir, el mensaje ahora explica qué pasó, en lugar de un mensaje genérico como \"verifica tu conexión\"",
-      "Los objetos se comportan mejor: el ID que escribes se ajusta automáticamente (los espacios y las mayúsculas ya no son problema) y los objetos ya no desaparecen por un momento al editar en equipo",
-      "Actualizar Telar ya no se queda atascado cuando falta aprobar un permiso en GitHub"
+      "Al publicar, los cambios hechos en GitHub ya no se pierden: el Compositor los lee antes de publicar",
+      "Al publicar, los archivos del sitio conservan sus propias columnas y su formato",
+      "Las personas del equipo siguen conectadas mientras editan, y si un cambio no se guarda, reaparece la próxima vez que abras el campo",
+      "Al actualizar Telar ves cada cambio que se hizo, y tu configuración queda como estaba"
     ],
-    "thanks_label": "Gracias a",
-    "thanks_suffix": "por reportar errores y problemas.",
-    "thanks_cta": "Tú también puedes ayudarnos a mejorar Telar y el compositor: reporta cualquier problema que encuentres con el botón para reportar errores",
+    "thanks_label": "Gracias a los estudiantes de INT 138LA de UCSB, a quienes participaron en el taller del 14 de septiembre en UT Austin y, en especial, a",
+    "thanks_suffix": "por reportar errores.",
+    "thanks_cta": "Tú también puedes ayudarnos a mejorar Telar y el Compositor: reporta cualquier problema que encuentres con el botón para reportar errores",
     "dismiss": "Listo"
   }
 }

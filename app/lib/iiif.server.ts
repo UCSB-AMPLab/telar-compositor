@@ -6,7 +6,7 @@
  * checks for an ImageService to determine whether IIIF tiles are available.
  *
  * Exports:
- *   fetchAndParseManifest(url) — fetches and parses a manifest URL
+ *   fetchAndParseManifest(url, signal?) — fetches and parses a manifest URL
  *   IiifMetadata               — normalised metadata interface
  *   IiifFetchResult            — discriminated union result type
  *   extractV2Label             — helper (exported for testing)
@@ -213,12 +213,13 @@ function getIiifVersion(manifest: Record<string, unknown>): 2 | 3 | null {
  * normalised IiifMetadata.
  *
  * Errors:
- *   fetch_failed — network error or non-OK HTTP response
+ *   fetch_failed — network error, non-OK HTTP response, or `signal` aborted
  *   not_iiif     — response is valid JSON but has no recognised @context
  *   parse_error  — parsing failed unexpectedly after context detected
  */
 export async function fetchAndParseManifest(
-  url: string
+  url: string,
+  signal?: AbortSignal,
 ): Promise<IiifFetchResult> {
   let manifest: Record<string, unknown>;
 
@@ -250,7 +251,7 @@ export async function fetchAndParseManifest(
   }
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal });
     if (!response.ok) {
       return { ok: false, error: "fetch_failed" };
     }

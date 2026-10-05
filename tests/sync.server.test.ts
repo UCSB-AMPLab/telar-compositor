@@ -3,36 +3,82 @@
  *
  * Tests computeFullSyncDiff and applyFullSyncChanges for stories,
  * steps, and config — beyond the existing objects-only sync.
+ *
+ * @version v1.5.0-beta
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mock setup
 // ---------------------------------------------------------------------------
 
-vi.mock("~/lib/github.server", () => ({
-  getFileContent: vi.fn(),
-  getRepoTree: vi.fn(),
-  getRepoHead: vi.fn(),
-  graphqlGitHub: vi.fn(),
-  githubHeaders: vi.fn(() => ({})),
-  decodeGitHubContent: vi.fn((s: string) => s),
+vi.mock("~/lib/freeze-lease.server", () => ({
+  controlFreezeLease: vi.fn(async () => "applied"),
+  newFreezeOperationId: vi.fn(() => "lease-1"),
 }));
+// objects.csv is read strictly at a head; the cases here state the
+// sheet through getFileContent, so the strict read answers from it: null is
+// a missing file.
+// The mock database answers its queued rows in order; this file's applies have
+// no pending object records, which have their own spec.
+vi.mock("~/lib/pending-object-ops.server", async (orig) => ({
+  ...((await orig()) as Record<string, unknown>),
+  completePendingObjectOps: vi.fn(async () => ({ ok: true, outcomes: new Map() })),
+}));
+vi.mock("~/lib/github.server", () => {
+  const getFileContent = vi.fn();
+  return {
+    getFileContent,
+    getFileAtRef: vi.fn(async (...args: unknown[]) => {
+      const content = await getFileContent(...args.slice(0, 4));
+      return content == null ? { status: "absent" } : { status: "ok", content };
+    }),
+    getRepoTree: vi.fn(),
+    getRepoHead: vi.fn(),
+    graphqlGitHub: vi.fn(),
+    githubHeaders: vi.fn(() => ({})),
+    decodeGitHubContent: vi.fn((s: string) => s),
+    // Unanswered unless a case answers it: the story-file check then does not
+    // conclude. The accept cases answer it (`storyTreesConclude`).
+    getSubtreeOids: vi.fn(),
+    listSubtreeEntries: vi.fn(async () => ({ files: new Map(), dirs: new Set() })),
+  };
+});
+
+vi.mock("~/lib/story-files-to-delete.server", async (orig) => {
+  const actual = (await orig()) as Record<string, unknown>;
+  return { ...actual, recordStoryFileReads: vi.fn(actual.recordStoryFileReads as never) };
+});
 
 import * as githubServer from "~/lib/github.server";
+import { recordStoryFileReads } from "~/lib/story-files-to-delete.server";
+import { gitBlobSha } from "~/lib/story-files.server";
+import { syncIngestRecorder } from "./helpers/sync-ingest-recorder";
+import { glossary_terms, projects, stories } from "~/db/schema";
 import {
   computeFullSyncDiff,
   applyFullSyncChanges,
+  resolveFullSyncPayload,
   computeSyncDiff,
   applySyncChanges,
   computeGlossarySyncDiff,
   extractTelarVersion,
+  configHealPatch,
   extractConfigFields,
   hasDivergentChanges,
   SYNC_FIELDS,
 } from "~/lib/sync.server";
-import type { FullSyncDiff, FullSyncEnv, SyncIngestPayload } from "~/lib/sync.server";
+import type { FullSyncChanges, FullSyncDiff, FullSyncEnv, SyncIngestPayload } from "~/lib/sync.server";
+import { CollidingColumnsRefusal, OBJECTS_CANONICAL_SCOPE, parseTelarCsv } from "~/lib/import.server";
+import type { IngestObjectInsert } from "../workers/collaboration";
+import { yamlString } from "~/lib/knap-filters.server";
+
+/** The commit an objects check was read at, and GitHub's head at its apply. */
+const OBJECTS_CHECKED_HEAD = "0".repeat(40);
+
+// The owner who accepted the sync, as the route resolves them server-side.
+const SYNC_ACTOR_ID = 7;
 
 // A fake DO binding for applyFullSyncChanges: captures the /ingest-sync payload
 // (the content half of the sync, now routed through the Y.Doc) and returns 200.
@@ -133,6 +179,15 @@ type MockConfig = {
 // awaited call advances the counter.
 // ---------------------------------------------------------------------------
 
+/**
+ * Changes from a check computed for `projectId` against no recorded head,
+ * which is what these stand-in databases hold: every project read answers no
+ * head. The apply refuses a check whose base is no longer the recorded head.
+ */
+function checkedAtNoBase<T extends object>(changes: T, projectId: number): T & { projectId: number; baseSha: null } {
+  return { ...changes, projectId, baseSha: null };
+}
+
 function createSequentialMockDb(responses: unknown[]) {
   let callIndex = 0;
 
@@ -166,6 +221,7 @@ function createSequentialMockDb(responses: unknown[]) {
 
   db.select = vi.fn(() => terminal());
   db.from = vi.fn(() => terminal());
+  db.innerJoin = vi.fn(() => terminal());
   db.where = vi.fn(() => terminal());
   db.limit = vi.fn(() => terminal());
   db.orderBy = vi.fn(() => terminal());
@@ -174,6 +230,8 @@ function createSequentialMockDb(responses: unknown[]) {
   db.insert = vi.fn(() => terminal());
   db.values = vi.fn(() => terminal());
   db.delete = vi.fn(() => terminal());
+  // A compare-and-set head write reports its row changed: no other writer here.
+  db.returning = vi.fn(() => terminal(() => [{ id: 1 }]));
 
   return db as unknown as ReturnType<typeof import("~/lib/db.server").getDb>;
 }
@@ -247,6 +305,8 @@ function createTrackedMockDb({
     return terminal();
   });
   db.delete = vi.fn(() => terminal());
+  // A compare-and-set head write reports its row changed: no other writer here.
+  db.returning = vi.fn(() => terminal(() => [{ id: 1 }]));
 
   return db as unknown as ReturnType<typeof import("~/lib/db.server").getDb>;
 }
@@ -254,6 +314,17 @@ function createTrackedMockDb({
 // ---------------------------------------------------------------------------
 // computeFullSyncDiff — stories diff
 // ---------------------------------------------------------------------------
+
+
+/**
+ * The story subtrees absent at every commit, which reads to a conclusion, so
+ * an accept records its head (applyFullSyncUnderLease's tree guard).
+ */
+function storyTreesConclude() {
+  vi.mocked(githubServer.getSubtreeOids).mockResolvedValue(
+    { ok: true, at: () => ({ kind: "absent" }) } as unknown as Awaited<ReturnType<typeof githubServer.getSubtreeOids>>,
+  );
+}
 
 describe("computeFullSyncDiff — stories", () => {
   const projectId = 1;
@@ -291,6 +362,34 @@ describe("computeFullSyncDiff — stories", () => {
 
     expect(result.stories.newStories).toHaveLength(1);
     expect(result.stories.newStories[0].story_id).toBe("new-story");
+  });
+
+  // project.csv is parsed as a project import here too, so a v0.8.x
+  // `protected` column must resolve to isPrivate rather than being read as an
+  // unrecognised custom column.
+  it("reads a v0.8.x project.csv 'protected' column as isPrivate on a new story", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") {
+        return "order,story_id,title,subtitle,byline,protected\n1,my-story,My Story,A subtitle,An author,yes";
+      }
+      if (path === "_config.yml") return CONFIG_YML_BASE;
+      return null;
+    });
+
+    const mockDb = createSequentialMockDb([
+      [], // objects
+      [], // steps
+      [], // stories for storyTitleMap
+      [], // stories for full sync (empty D1 — this story is new)
+      [], // project_config
+    ]);
+
+    const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.stories.newStories).toHaveLength(1);
+    expect(result.stories.newStories[0].story_id).toBe("my-story");
+    expect(result.stories.newStories[0].isPrivate).toBe(true);
   });
 
   it("detects a modified story (title differs between repo and D1) — appears in stories.changedStories", async () => {
@@ -556,8 +655,10 @@ describe("applyFullSyncChanges", () => {
   const owner = "test-owner";
   const repo = "test-repo";
 
+  afterEach(() => vi.mocked(githubServer.getSubtreeOids).mockReset());
   beforeEach(() => {
     vi.clearAllMocks();
+    storyTreesConclude();
     vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
     vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
@@ -573,13 +674,16 @@ describe("applyFullSyncChanges", () => {
     const mockDb = createSequentialMockDb(Array(20).fill([]));
 
     const changes = {
+      // The check the dialog showed read the story and page files to a conclusion.
+      storyContentChecked: true,
+      pageContentChecked: true,
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: [], insertNew: [] },
       config: { accept: [], reject: [] },
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    const result = await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv());
+    const result = await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
 
     expect(result.newHeadSha).toBe("newsha123");
   });
@@ -595,10 +699,58 @@ describe("applyFullSyncChanges", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     expect(captured).not.toBeNull();
     expect(captured!.stories.insert.map((s) => s.storyId)).toContain("new-story");
+  });
+
+  it("records the spreadsheets CSV as the path of a story it inserted with one, once the ingest applied it", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") {
+        return "order,story_id,title\n1,read-story,Read\n2,no-file,No file\n";
+      }
+      if (path === "telar-content/spreadsheets/read-story.csv") return "step,object,question\n1,obj-a,Q\n";
+      return null;
+    });
+    const updates: Array<{ table: unknown; set: Record<string, unknown> }> = [];
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (table, set) => { updates.push({ table, set: set as Record<string, unknown> }); },
+    });
+    const changes = {
+      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+      stories: { accept: [], reject: [], insertNew: ["read-story", "no-file"] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
+    };
+
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
+
+    const recorded = updates.filter((u) => u.table === stories).map((u) => u.set);
+    expect(recorded).toEqual([{ source_path: "telar-content/spreadsheets/read-story.csv" }]);
+  });
+
+  it("records the blob of the CSV it inserted a story from, for the files a first publish deletes", async () => {
+    const csv = "\uFEFFstep,object,question\n1,obj-a,Q\n";
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return "order,story_id,title\n1,read-story,Read\n2,no-file,No file\n";
+      return path === "telar-content/spreadsheets/read-story.csv" ? csv : null;
+    });
+    const changes = {
+      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+      stories: { accept: [], reject: [], insertNew: ["read-story", "no-file"] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
+    };
+
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, createTrackedMockDb({ responses: Array(20).fill([]) }), SYNC_ACTOR_ID, fakeIngestEnv());
+
+    expect(vi.mocked(recordStoryFileReads).mock.calls.map((c) => [c[1], c[2]])).toEqual([
+      [projectId, [{ path: "telar-content/spreadsheets/read-story.csv", sha: await gitBlobSha(csv) }]],
+    ]);
   });
 
   it("does not carry a rejected story into the ingest payload (keep D1)", async () => {
@@ -612,7 +764,7 @@ describe("applyFullSyncChanges", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     expect(captured!.stories.update).toHaveLength(0);
   });
@@ -636,7 +788,7 @@ describe("applyFullSyncChanges", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     const entry = captured!.config.find((c) => c.key === "title");
     expect(entry?.value).toBe("Updated Site Title");
@@ -663,7 +815,7 @@ describe("applyFullSyncChanges", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     const entry = captured!.config.find((c) => c.key === "collection_mode");
     expect(entry).toBeDefined();
@@ -696,10 +848,10 @@ describe("applyFullSyncChanges", () => {
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: [], insertNew: [] },
       config: { accept: [], reject: [] },
-      glossary: { accept: ["enc"], reject: [], insertNew: [] },
+      glossary: { accept: ["enc"], reject: [], insertNew: [], fieldChoices: { enc: { related_terms: "repo" as const } } },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv());
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
 
     const relatedUpdates = updates.filter(
       (u) => u.set !== null && typeof u.set === "object" && (u.set as Record<string, unknown>).related_terms === "mita|repartimiento"
@@ -735,7 +887,7 @@ describe("applyFullSyncChanges", () => {
       glossary: { accept: [], reject: [], insertNew: ["mita"] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     // The term itself is inserted through the DO ingest…
     expect(captured!.glossary.insert.map((t) => t.termId)).toContain("mita");
@@ -744,6 +896,129 @@ describe("applyFullSyncChanges", () => {
       (u) => u.set !== null && typeof u.set === "object" && (u.set as Record<string, unknown>).related_terms === "enc|repartimiento"
     );
     expect(relatedUpdates.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyFullSyncChanges — object inserts: producer/reader link, created_by, origin
+// ---------------------------------------------------------------------------
+
+/**
+ * True only when A and B are the same type read in both directions. A widening
+ * or a narrowing on either side collapses it to `false`, which is what makes
+ * the assignment below a compile-time failure rather than a comment.
+ */
+type SameType<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+
+/** The element type the full-sync producer actually builds. */
+type ProducedObjectInsert = SyncIngestPayload["objects"]["insert"][number];
+
+describe("applyFullSyncChanges — object inserts", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+  const actorUserId = 42;
+
+  const OBJECTS_CSV = ["object_id,title", "new-obj,New Object"].join("\n");
+
+  function insertChanges(): FullSyncChanges {
+    return {
+      objects: {
+        newObjectIds: ["new-obj"],
+        changedObjectIds: [],
+        fieldChoices: {},
+        removedObjectIds: [],
+        unregisteredObjectIds: [],
+      },
+      stories: { accept: [], reject: [], insertNew: [] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: [], reject: [], insertNew: [] },
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return OBJECTS_CSV;
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_BASE;
+      return null;
+    });
+  });
+
+  it("builds its inserts as the DO's own IngestObjectInsert, not a look-alike", () => {
+    // The producer and the DO's reader are one type, so a field added, removed,
+    // or re-typed on either side fails `npm run typecheck` here. A runtime
+    // assertion cannot see this: the two shapes agree on every value they both
+    // carry right up to the moment one of them stops.
+    const sameType: SameType<ProducedObjectInsert, IngestObjectInsert> = true;
+    expect(sameType).toBe(true);
+  });
+
+  it("records the applying user as created_by on every inserted object", async () => {
+    let captured: SyncIngestPayload | null = null;
+    const mockDb = createTrackedMockDb({ responses: Array(20).fill([]) });
+
+    await applyFullSyncChanges(
+      projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, mockDb, actorUserId,
+      fakeIngestEnv((p) => { captured = p; }),
+    );
+
+    expect(captured!.objects.insert).toHaveLength(1);
+    expect(captured!.objects.insert[0].created_by).toBe(actorUserId);
+  });
+
+  it("records created_by on an unregistered image registered by the same sync", async () => {
+    let captured: SyncIngestPayload | null = null;
+    const mockDb = createTrackedMockDb({ responses: Array(20).fill([]) });
+
+    const changes = insertChanges();
+    changes.objects.newObjectIds = [];
+    changes.objects.unregisteredObjectIds = ["stray-image"];
+
+    await applyFullSyncChanges(
+      projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, actorUserId,
+      fakeIngestEnv((p) => { captured = p; }),
+    );
+
+    expect(captured!.objects.insert.map((o) => o.created_by)).toEqual([actorUserId]);
+  });
+
+  it("carries the repo as origin on the wire and writes no origin to D1 after the ingest", async () => {
+    let captured: SyncIngestPayload | null = null;
+    const updates: Array<{ table: unknown; set: unknown }> = [];
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (table, set) => { updates.push({ table, set }); },
+    });
+
+    await applyFullSyncChanges(
+      projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, mockDb, actorUserId,
+      fakeIngestEnv((p) => { captured = p; }),
+    );
+
+    expect(captured!.objects.insert[0].origin).toBe("repo");
+    const originUpdates = updates.filter(
+      (u) => u.set !== null && typeof u.set === "object" && "origin" in (u.set as Record<string, unknown>),
+    );
+    expect(originUpdates).toEqual([]);
+  });
+
+  it("carries the repo as origin on every insert, including unregistered images", async () => {
+    const changes = insertChanges();
+    changes.objects.unregisteredObjectIds = ["stray-image"];
+
+    const { payload } = await resolveFullSyncPayload(
+      projectId, changes, token, owner, repo, createSequentialMockDb([[], []]), actorUserId,
+    );
+
+    expect(payload.objects.insert.map((o) => [o.object_id, o.origin])).toEqual([
+      ["new-obj", "repo"],
+      ["stray-image", "repo"],
+    ]);
   });
 });
 
@@ -1028,6 +1303,11 @@ describe("extractTelarVersion", () => {
     expect(extractTelarVersion(y)).toBeNull();
   });
 
+  it("returns null for a malformed version, which is what heals nothing", () => {
+    const y = "telar:\n  version:\n";
+    expect(extractTelarVersion(y)).toBeNull();
+  });
+
   it("returns null when telar: block has no version key", () => {
     const y = 'telar:\n  release_date: "2026-01-01"\n';
     expect(extractTelarVersion(y)).toBeNull();
@@ -1047,6 +1327,20 @@ describe("extractTelarVersion", () => {
   it("returns null on empty input", () => {
     expect(extractTelarVersion("")).toBeNull();
   });
+});
+
+describe("configHealPatch", () => {
+  it("is null when the sync heals no version, so the row is not touched", () => {
+    expect(configHealPatch({ telarVersionHeal: null }, "NOW")).toBeNull();
+  });
+
+  it("carries the version the sync healed to", () => {
+    expect(configHealPatch({ telarVersionHeal: "1.8.0" }, "NOW")).toEqual({
+      telar_version: "1.8.0",
+      updated_at: "NOW",
+    });
+  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -1297,7 +1591,8 @@ describe("applyFullSyncChanges — versionChange D1 healing", () => {
   function versionDb(d1Version: string | null) {
     const updates: Array<{ table: unknown; set: unknown }> = [];
     const mockDb = createTrackedMockDb({
-      responses: [[], [{ id: 1, project_id: projectId, telar_version: d1Version }], ...Array(18).fill([])],
+      // First the project row the apply starts from, which records no head.
+      responses: [[], [], [{ id: 1, project_id: projectId, telar_version: d1Version }], ...Array(18).fill([])],
       onUpdate: (table, set) => updates.push({ table, set }),
     });
     return { mockDb, updates };
@@ -1321,7 +1616,7 @@ describe("applyFullSyncChanges — versionChange D1 healing", () => {
     mockConfig("0.10.0");
     const { mockDb, updates } = versionDb("0.9.0");
 
-    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb, fakeIngestEnv());
+    await applyFullSyncChanges(projectId, checkedAtNoBase(baseChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
 
     const versionUpdates = updates.filter(
       (u) => u.set !== null && typeof u.set === "object" && (u.set as Record<string, unknown>).telar_version === "0.10.0",
@@ -1333,7 +1628,7 @@ describe("applyFullSyncChanges — versionChange D1 healing", () => {
     mockConfig("0.8.0");
     const { mockDb, updates } = versionDb("0.9.0");
 
-    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb, fakeIngestEnv());
+    await applyFullSyncChanges(projectId, checkedAtNoBase(baseChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
 
     const wrongUpdates = updates.filter(
       (u) => u.set !== null && typeof u.set === "object" && "telar_version" in (u.set as Record<string, unknown>),
@@ -1345,7 +1640,7 @@ describe("applyFullSyncChanges — versionChange D1 healing", () => {
     mockConfig("0.9.0");
     const { mockDb, updates } = versionDb("0.9.0");
 
-    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb, fakeIngestEnv());
+    await applyFullSyncChanges(projectId, checkedAtNoBase(baseChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
 
     const wrongUpdates = updates.filter(
       (u) => u.set !== null && typeof u.set === "object" && "telar_version" in (u.set as Record<string, unknown>),
@@ -1357,7 +1652,7 @@ describe("applyFullSyncChanges — versionChange D1 healing", () => {
     mockConfig(null);
     const { mockDb, updates } = versionDb("0.9.0");
 
-    await applyFullSyncChanges(projectId, baseChanges(), token, owner, repo, mockDb, fakeIngestEnv());
+    await applyFullSyncChanges(projectId, checkedAtNoBase(baseChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
 
     const wrongUpdates = updates.filter(
       (u) => u.set !== null && typeof u.set === "object" && "telar_version" in (u.set as Record<string, unknown>),
@@ -1437,7 +1732,7 @@ describe("hasDivergentChanges", () => {
         newObjects: [],
         changedObjects: [],
         missingObjects: [],
-        unregisteredFiles: [],
+        unregisteredFiles: [], reordered: null,
       },
       stories: {
         newStories: [],
@@ -1456,6 +1751,7 @@ describe("hasDivergentChanges", () => {
       hasConflicts: false,
       classification: "two-way",
       suppressedEditorOnly: 0,
+      unreadableFiles: [],
     };
   }
 
@@ -1630,32 +1926,33 @@ describe("computeSyncDiff — dimensions reconciliation", () => {
   it("apply with dimensions choice 'repo' writes the repo value into the D1 update payload", async () => {
     vi.mocked(githubServer.getFileContent).mockResolvedValue(objectsCsv("24 x 30 cm"));
 
-    let captured: Record<string, unknown> | null = null;
-    // applySyncChanges queries: d1Objects (then update via .set/.where)
-    const mockDb = createTrackedMockDb({
-      responses: [[d1Object("10 x 10 cm")]],
-      onUpdate: (_table, set) => {
-        captured = set as Record<string, unknown>;
-      },
-    });
+    // applySyncChanges queries: d1Objects. The accepted field goes through the
+    // document's ingest, not a D1 update.
+    const mockDb = createTrackedMockDb({ responses: [[d1Object("10 x 10 cm")]] });
+    const ingest = syncIngestRecorder();
 
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue(OBJECTS_CHECKED_HEAD);
     await applySyncChanges(
       projectId,
       {
         newObjectIds: [],
         changedObjectIds: ["obj-1"],
+        changedDocIds: { "obj-1": 1 },
         fieldChoices: { "obj-1": { dimensions: "repo" } },
+        fieldsSeen: { "obj-1": { dimensions: "10 x 10 cm" } },
         removedObjectIds: [],
         unregisteredObjectIds: [],
+        headSha: OBJECTS_CHECKED_HEAD,
       },
       token,
       owner,
       repo,
       mockDb,
+      ingest.env,
+      1,
     );
 
-    expect(captured).not.toBeNull();
-    expect(captured!.dimensions).toBe("24 x 30 cm");
+    expect(ingest.fieldsFor("obj-1")?.dimensions).toBe("24 x 30 cm");
   });
 });
 
@@ -1688,11 +1985,15 @@ describe("sync new-object path carries dimensions + extra_columns", () => {
     vi.mocked(githubServer.getFileContent).mockResolvedValue(NEW_OBJECT_CSV);
   });
 
-  it("applySyncChanges returns a pendingObject carrying dimensions and extra_columns", async () => {
+  // The apply registers the new row itself: the registration's
+  // insert entry carries the columns the repo row has.
+  it("applySyncChanges registers a new row carrying dimensions and extra_columns", async () => {
     // D1 has no objects → repo's new-obj is brand-new.
     // applySyncChanges queries: d1Objects (empty)
     const mockDb = createTrackedMockDb({ responses: [[]] });
+    const ingest = syncIngestRecorder();
 
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue(OBJECTS_CHECKED_HEAD);
     const result = await applySyncChanges(
       projectId,
       {
@@ -1701,20 +2002,25 @@ describe("sync new-object path carries dimensions + extra_columns", () => {
         fieldChoices: {},
         removedObjectIds: [],
         unregisteredObjectIds: [],
+        headSha: OBJECTS_CHECKED_HEAD,
       },
       token,
       owner,
       repo,
       mockDb,
+      ingest.env,
+      1,
     );
 
-    expect(result.pendingObjects).toHaveLength(1);
-    const pending = result.pendingObjects[0];
-    expect(pending.object_id).toBe("new-obj");
-    expect(pending.dimensions).toBe("40 x 20 cm");
+    expect(result.pendingObjects).toEqual([]);
+    const inserts = (ingest.bodies.at(-1)?.objects as unknown as { insert: Array<Record<string, unknown>> }).insert;
+    expect(inserts).toHaveLength(1);
+    const registered = inserts[0];
+    expect(registered.object_id).toBe("new-obj");
+    expect(registered.dimensions).toBe("40 x 20 cm");
 
     // extra_columns is the canonical JSON passthrough blob for custom columns.
-    const extra = pending.extra_columns;
+    const extra = registered.extra_columns;
     expect(extra).toBeTruthy();
     expect(JSON.parse(extra as string)).toEqual({ accession_number: "ACC-2026-001" });
   });
@@ -1786,6 +2092,138 @@ describe("extractConfigFields", () => {
   it("returns null for an absent key", () => {
     const out = extractConfigFields(`title: only`);
     expect(out.description).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractConfigFields — quoted-scalar escape round-trip
+//
+// yaml_string (knap-filters.server.ts) emits a strictly larger
+// escape set than parseYamlScalar's original hand-rolled double-quoted
+// decode understood (`\n`, `\"`, `\\` only — the exact inverse of
+// publish.server.ts's `yamlQuote`, still present as decodeQuotedScalarFallback).
+// These round-trip every escape it can produce through the REAL encoder
+// (`yamlString`) and extractConfigFields, asserting the original character
+// survives.
+//
+// Not every case here demonstrates the fix — checked by running each
+// encoded value through decodeQuotedScalarFallback directly. Tab, CR,
+// backspace, form feed, and the three code points it emits as a
+// `\uXXXX` escape (NEL/U+0085, U+FFFE, U+FFFF) all come back corrupted from
+// that old decoder (e.g. `\t` loses the backslash and keeps the bare `t`;
+// the NEL escape comes back as the six literal characters `u0085`, with
+// the backslash dropped) — those seven are what this block is actually
+// for. Line feed, double quote, backslash, and the astral character
+// round-trip fine even against the old decoder, because it already
+// understood exactly those three escapes (`\n`, `\"`, `\\`) and an astral
+// character was never escaped at all; those four are regression cover,
+// kept here so a future change can't silently break them, not evidence
+// for the fix.
+// ---------------------------------------------------------------------------
+
+describe("extractConfigFields — quoted-scalar escape round-trip", () => {
+  const roundTrip = (value: string): string | null => {
+    const encoded = yamlString(value) as string;
+    return extractConfigFields(`description: ${encoded}`).description;
+  };
+
+  it("round-trips a tab", () => {
+    expect(roundTrip("a\tb")).toBe("a\tb");
+  });
+
+  it("round-trips a carriage return", () => {
+    expect(roundTrip("a\rb")).toBe("a\rb");
+  });
+
+  it("round-trips a line feed", () => {
+    expect(roundTrip("a\nb")).toBe("a\nb");
+  });
+
+  it("round-trips a backspace", () => {
+    expect(roundTrip("a\bb")).toBe("a\bb");
+  });
+
+  it("round-trips a form feed", () => {
+    expect(roundTrip("a\fb")).toBe("a\fb");
+  });
+
+  it("round-trips a C1 code point emitted as \\uXXXX (NEL, U+0085)", () => {
+    expect(roundTrip("ab")).toBe("ab");
+  });
+
+  it("round-trips U+FFFE", () => {
+    expect(roundTrip("a￾b")).toBe("a￾b");
+  });
+
+  it("round-trips U+FFFF", () => {
+    expect(roundTrip("a￿b")).toBe("a￿b");
+  });
+
+  it("round-trips a double quote", () => {
+    expect(roundTrip('a"b')).toBe('a"b');
+  });
+
+  it("round-trips a backslash", () => {
+    expect(roundTrip("a\\b")).toBe("a\\b");
+  });
+
+  it("round-trips a correctly-paired astral character", () => {
+    expect(roundTrip("a\u{1F600}b")).toBe("a\u{1F600}b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractConfigFields — bare-scalar regression (must NOT change)
+//
+// The bare-scalar branch is the part most likely to get broken
+// by accident: routing it through a real YAML parser would type-coerce
+// `yes` to `true`, `1234` to a number, `~` to null. These lock the literal-
+// text behaviour the fix must preserve, and must pass both before and
+// after the change.
+// ---------------------------------------------------------------------------
+
+describe("extractConfigFields — bare-scalar regression (must NOT change)", () => {
+  it.each(["yes", "no", "true", "1234", "~"])(
+    "returns bare %j as literal text, not YAML-coerced",
+    (literal) => {
+      expect(extractConfigFields(`title: ${literal}`).title).toBe(literal);
+    },
+  );
+
+  it("strips a trailing comment from a bare scalar", () => {
+    expect(extractConfigFields(`title: plain text  # a note`).title).toBe("plain text");
+  });
+
+  it("does NOT strip trailing comment-like text from inside a quoted scalar", () => {
+    expect(extractConfigFields(`title: "plain text  # not a comment"`).title).toBe(
+      "plain text  # not a comment",
+    );
+  });
+
+  it("returns null for an empty value", () => {
+    expect(extractConfigFields(`title:`).title).toBeNull();
+  });
+
+  it("returns null for an absent key", () => {
+    expect(extractConfigFields(`author: only`).title).toBeNull();
+  });
+
+  it("yields one literal quote for single-quoted ''''", () => {
+    expect(extractConfigFields(`title: ''''`).title).toBe("'");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractConfigFields — malformed quoted scalar (must fall back, not throw)
+//
+// This reader is on the sync path: a parse failure on a malformed config
+// line must fall back to the hand-decoded behaviour, never throw.
+// ---------------------------------------------------------------------------
+
+describe("extractConfigFields — malformed quoted scalar fallback", () => {
+  it("falls back to hand-decoded behaviour instead of throwing on an unterminated double-quoted value", () => {
+    expect(() => extractConfigFields(`title: "unterminated`)).not.toThrow();
+    expect(extractConfigFields(`title: "unterminated`).title).toBe("unterminated");
   });
 });
 
@@ -1886,12 +2324,12 @@ describe("applyFullSyncChanges — show_sections", () => {
 
     const changes = {
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
-      stories: { accept: ["my-story"], reject: [], insertNew: [] },
+      stories: { accept: ["my-story"], reject: [], insertNew: [], fieldChoices: { "my-story": { showSections: "repo" as const } } },
       config: { accept: [], reject: [] },
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     const upd = captured!.stories.update.find((s) => s.storyId === "my-story");
     expect(upd?.showSections).toBe(true);
@@ -1908,7 +2346,7 @@ describe("applyFullSyncChanges — show_sections", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     const ins = captured!.stories.insert.find((s) => s.storyId === "new-story");
     expect(ins?.showSections).toBe(true);
@@ -2080,25 +2518,29 @@ describe("computeSyncDiff — published object round-trip fields", () => {
     ].join("\n");
     vi.mocked(githubServer.getFileContent).mockResolvedValue(csv);
 
-    let captured: Record<string, unknown> | null = null;
     const mockDb = createTrackedMockDb({
       responses: [[roundTripD1Object({ alt_text: "D1 alt", source_url: "https://d1/old", thumbnail: "d1-thumb.jpg", extra_columns: JSON.stringify({ accession_number: "ACC-OLD" }) })]],
-      onUpdate: (_table, set) => { captured = set as Record<string, unknown>; },
     });
+    const ingest = syncIngestRecorder();
 
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue(OBJECTS_CHECKED_HEAD);
     await applySyncChanges(
       projectId,
       {
         newObjectIds: [],
         changedObjectIds: ["obj-1"],
+        changedDocIds: { "obj-1": 1 },
         fieldChoices: { "obj-1": { alt_text: "repo", source_url: "repo", thumbnail: "repo", extra_columns: "repo" } },
+        fieldsSeen: { "obj-1": { alt_text: null, source_url: null, thumbnail: null, extra_columns: null } },
         removedObjectIds: [],
         unregisteredObjectIds: [],
+        headSha: OBJECTS_CHECKED_HEAD,
       },
-      token, owner, repo, mockDb,
+      token, owner, repo, mockDb, ingest.env, 1,
     );
 
-    expect(captured).not.toBeNull();
+    const captured = ingest.fieldsFor("obj-1");
+    expect(captured).toBeDefined();
     expect(captured!.alt_text).toBe("Repo alt");
     expect(captured!.source_url).toBe("https://repo/new");
     expect(captured!.thumbnail).toBe("repo-thumb.jpg");
@@ -2155,6 +2597,347 @@ describe("computeGlossarySyncDiff — title changes", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Glossary custom-column passthrough through the sync seam
+// ---------------------------------------------------------------------------
+
+describe("computeGlossarySyncDiff — extra_columns", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  beforeEach(() => vi.clearAllMocks());
+
+  function mockGlossary(csv: string) {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/glossary.csv") return csv;
+      return null;
+    });
+  }
+
+  const d1Term = (extra: string | null) => [
+    {
+      id: 1, project_id: projectId, term_id: "enc", title: "Encomienda",
+      definition: "A labor system", related_terms: "", extra_columns: extra, updated_at: null,
+    },
+  ];
+
+  it("surfaces a repo-only custom column as a change, carrying both blobs", async () => {
+    mockGlossary(
+      `term_id,title,definition,related_terms,source_note\nenc,"Encomienda","A labor system",,Museo del Oro`,
+    );
+    const mockDb = createSequentialMockDb([d1Term(null)]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changed).toHaveLength(1);
+    expect(result.changed[0].repoExtraColumns).toBe(JSON.stringify({ source_note: "Museo del Oro" }));
+    expect(result.changed[0].d1ExtraColumns).toBe("");
+  });
+
+  it("does NOT flag a term whose custom columns differ only in stored key ORDER", async () => {
+    mockGlossary(
+      `term_id,title,definition,related_terms,alpha,zeta\nenc,"Encomienda","A labor system",,1,2`,
+    );
+    // Same data, the opposite key order as the CSV's column order produces.
+    const mockDb = createSequentialMockDb([d1Term('{"zeta":"2","alpha":"1"}')]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changed).toHaveLength(0);
+  });
+
+  it("flags a term whose custom column VALUE changed in the repo", async () => {
+    mockGlossary(
+      `term_id,title,definition,related_terms,source_note\nenc,"Encomienda","A labor system",,Archivo`,
+    );
+    const mockDb = createSequentialMockDb([d1Term(JSON.stringify({ source_note: "Museo" }))]);
+
+    const result = await computeGlossarySyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changed).toHaveLength(1);
+    expect(result.changed[0].repoExtraColumns).toBe(JSON.stringify({ source_note: "Archivo" }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The inserted-term residue is content, not cosmetics
+//
+// It can only be written after the ingest (the rows do not exist before it),
+// but it must still land before head_sha moves. Letting it fail quietly leaves
+// head_sha advanced with the column missing, and THAT revision becomes the base
+// of the next three-way diff — which reads the absent column as an editor-only
+// change and suppresses it, so the repo value is never offered again.
+// ---------------------------------------------------------------------------
+
+describe("applyFullSyncChanges — a failed glossary residue write fails the apply", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  afterEach(() => vi.mocked(githubServer.getSubtreeOids).mockReset());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    storyTreesConclude();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
+  });
+
+  function mockRepo() {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_BASE;
+      if (path === "telar-content/spreadsheets/glossary.csv") {
+        return `term_id,title,definition,related_terms,source_note\nnew-term,"New","A definition",,Museo del Oro`;
+      }
+      return null;
+    });
+  }
+
+  const insertChanges = () => ({
+    // The check the dialog showed read the story and page files to a conclusion.
+    storyContentChecked: true,
+    pageContentChecked: true,
+    objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+    stories: { accept: [], reject: [], insertNew: [] },
+    config: { accept: [], reject: [] },
+    glossary: { accept: [], reject: [], insertNew: ["new-term"] },
+  });
+
+  /**
+   * A db whose glossary_terms UPDATE rejects and whose every other call
+   * resolves. Purpose-built rather than `createTrackedMockDb`, whose thenable
+   * swallows a throw from its callback and never settles.
+   *
+   * `failWrite` decides per SET clause; `updatedTables` records what was
+   * updated, so the test can see whether the run ever reached `projects`.
+   */
+  function dbWithGlossaryWriteOutcome(failWrite: boolean) {
+    const updatedTables: string[] = [];
+    const writes: Array<{ table: string; set: Record<string, unknown> }> = [];
+    let currentTable = "";
+    let pendingSet: Record<string, unknown> | null = null;
+    const db: Record<string, unknown> = {};
+    const settle = () => {
+      const set = pendingSet;
+      pendingSet = null;
+      if (set === null) return Promise.resolve([]);
+      updatedTables.push(currentTable);
+      writes.push({ table: currentTable, set });
+      if (failWrite && currentTable === "glossary_terms") {
+        return Promise.reject(new Error("D1_ERROR: glossary_terms write failed"));
+      }
+      return Promise.resolve([]);
+    };
+    const terminal = (fn?: () => Promise<unknown>) =>
+      Object.assign(
+        {
+          then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
+            (fn ? fn() : Promise.resolve([])).then(resolve, reject),
+        },
+        db,
+      );
+    db.select = vi.fn(() => terminal());
+    db.from = vi.fn(() => terminal());
+    db.where = vi.fn(() => terminal(settle));
+    db.limit = vi.fn(() => terminal());
+    db.orderBy = vi.fn(() => terminal());
+    db.insert = vi.fn(() => terminal());
+    db.values = vi.fn(() => terminal());
+    db.delete = vi.fn(() => terminal());
+    // A compare-and-set head write reports its row changed: no other writer here.
+    db.returning = vi.fn(() => terminal(() => settle().then(() => [{ id: 1 }])));
+    db.update = vi.fn((table: unknown) => {
+      // Identify by identity against the schema objects: the table name lives
+      // behind drizzle symbols, and reading a private field would rot silently.
+      currentTable =
+        table === glossary_terms ? "glossary_terms"
+        : table === projects ? "projects"
+        : "other";
+      return terminal();
+    });
+    db.set = vi.fn((vals: unknown) => {
+      pendingSet = vals as Record<string, unknown>;
+      return terminal();
+    });
+    return {
+      mockDb: db as unknown as ReturnType<typeof import("~/lib/db.server").getDb>,
+      updatedTables,
+      writes,
+    };
+  }
+
+  it("throws rather than returning a head sha", async () => {
+    mockRepo();
+    const { mockDb } = dbWithGlossaryWriteOutcome(true);
+
+    await expect(
+      applyFullSyncChanges(
+        projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv(),
+      ),
+    ).rejects.toThrow(/glossary_terms write failed/);
+  });
+
+  it("does not advance head_sha when that write fails", async () => {
+    mockRepo();
+    const { mockDb, updatedTables } = dbWithGlossaryWriteOutcome(true);
+
+    await applyFullSyncChanges(
+      projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv(),
+    ).catch(() => {});
+
+    expect(updatedTables).toContain("glossary_terms");
+    expect(updatedTables, "head_sha advanced despite the failed content write")
+      .not.toContain("projects");
+  });
+
+  // The whole point of failing closed: the banner stays up, the author presses
+  // sync again, and the second attempt lands what the first one lost.
+  it("recovers on a retry: the term, its extras and the advanced head all land", async () => {
+    mockRepo();
+    const first = dbWithGlossaryWriteOutcome(true);
+
+    await applyFullSyncChanges(
+      projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, first.mockDb, SYNC_ACTOR_ID, fakeIngestEnv(),
+    ).catch(() => {});
+
+    expect(first.updatedTables).not.toContain("projects"); // head_sha held back
+
+    // The retry. The DO's skip-if-present finds the term already in the
+    // document from the first attempt, and the residue runs again against it.
+    const second = dbWithGlossaryWriteOutcome(false);
+    const result = await applyFullSyncChanges(
+      projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, second.mockDb, SYNC_ACTOR_ID, fakeIngestEnv(),
+    );
+
+    expect(second.writes.find((w) => w.table === "glossary_terms")?.set).toMatchObject({
+      extra_columns: JSON.stringify({ source_note: "Museo del Oro" }),
+    });
+    expect(second.updatedTables).toContain("projects");
+    expect(result.newHeadSha).toBe("newsha123");
+  });
+
+  it("a retry after the term was already inserted still completes its residue", async () => {
+    mockRepo();
+    // The DO reports the insert as skipped — the term is in the document from
+    // the failed attempt. The residue is keyed on the repo file, not on what
+    // the DO applied, so it runs regardless and finishes the row.
+    const skipOnSecond: FullSyncEnv = {
+      SESSION_SECRET: "test-secret",
+      COLLABORATION: {
+        idFromName: (n: string) => n,
+        get: () => ({
+          fetch: async () =>
+            new Response(
+              JSON.stringify({ applied: { glossaryInsert: 0 }, skipped: { glossaryInsert: ["new-term"] } }),
+              { status: 200 },
+            ),
+        }),
+      },
+    };
+    const retry = dbWithGlossaryWriteOutcome(false);
+
+    const result = await applyFullSyncChanges(
+      projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, retry.mockDb, SYNC_ACTOR_ID, skipOnSecond,
+    );
+
+    expect(retry.writes.find((w) => w.table === "glossary_terms")?.set).toMatchObject({
+      related_terms: null,
+      extra_columns: JSON.stringify({ source_note: "Museo del Oro" }),
+    });
+    expect(result.newHeadSha).toBe("newsha123");
+  });
+
+  it("still advances head_sha when the write succeeds", async () => {
+    mockRepo();
+    const { mockDb, updatedTables } = dbWithGlossaryWriteOutcome(false);
+
+    const result = await applyFullSyncChanges(
+      projectId, checkedAtNoBase(insertChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv(),
+    );
+
+    expect(result.newHeadSha).toBe("newsha123");
+    expect(updatedTables).toContain("glossary_terms");
+    expect(updatedTables).toContain("projects");
+  });
+});
+
+describe("applyFullSyncChanges — glossary extra_columns", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
+  });
+
+  it("accepting a repo change writes the custom columns to D1 through the residue", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/glossary.csv") {
+        return `term_id,title,definition,related_terms,source_note\nenc,"Encomienda","A labor system",,Museo del Oro`;
+      }
+      return null;
+    });
+
+    const changes = {
+      objects: {
+        newObjectIds: [], changedObjectIds: [], fieldChoices: {},
+        removedObjectIds: [], unregisteredObjectIds: [],
+      },
+      stories: { accept: [], reject: [], insertNew: [] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: ["enc"], reject: [], insertNew: [], fieldChoices: { enc: { extra_columns: "repo" as const } } },
+    };
+    const { residue } = await resolveFullSyncPayload(
+      projectId, changes, token, owner, repo, createSequentialMockDb([[], []]), 7,
+    );
+
+    const entry = residue.glossaryD1Update.find((x) => x.termId === "enc");
+    expect(entry).toBeDefined();
+    expect(entry!.extraColumns).toBe(JSON.stringify({ source_note: "Museo del Oro" }));
+  });
+
+  it("writes the custom columns into the glossary_terms row, not only into the residue", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "telar-content/spreadsheets/project.csv") return PROJECT_CSV_ONE_STORY;
+      if (path === "_config.yml") return CONFIG_YML_BASE;
+      if (path === "telar-content/spreadsheets/glossary.csv") {
+        return `term_id,title,definition,related_terms,source_note\nenc,"Encomienda","A labor system",,Museo del Oro`;
+      }
+      return null;
+    });
+
+    const writes: Array<Record<string, unknown>> = [];
+    const mockDb = createTrackedMockDb({
+      responses: Array(20).fill([]),
+      onUpdate: (_table, set) => writes.push(set as Record<string, unknown>),
+    });
+
+    const changes = {
+      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
+      stories: { accept: [], reject: [], insertNew: [] },
+      config: { accept: [], reject: [] },
+      glossary: { accept: ["enc"], reject: [], insertNew: [], fieldChoices: { enc: { extra_columns: "repo" as const } } },
+    };
+
+    await applyFullSyncChanges(
+      projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv(() => {}),
+    );
+
+    const written = writes.find((w) => "extra_columns" in w);
+    expect(written, "no glossary_terms write carried extra_columns").toBeDefined();
+    expect(written!.extra_columns).toBe(JSON.stringify({ source_note: "Museo del Oro" }));
+  });
+});
+
 describe("applyFullSyncChanges — glossary title", () => {
   const projectId = 1;
   const token = "test-token";
@@ -2185,10 +2968,10 @@ describe("applyFullSyncChanges — glossary title", () => {
       objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: [], insertNew: [] },
       config: { accept: [], reject: [] },
-      glossary: { accept: ["enc"], reject: [], insertNew: [] },
+      glossary: { accept: ["enc"], reject: [], insertNew: [], fieldChoices: { enc: { title: "repo" as const } } },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     const upd = captured!.glossary.update.find((t) => t.termId === "enc");
     expect(upd?.title).toBe("Encomienda (revised)");
@@ -2294,7 +3077,7 @@ describe("applyFullSyncChanges — telar_theme", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     const entry = captured!.config.find((c) => c.key === "theme");
     expect(entry?.value).toBe("dark");
@@ -2455,7 +3238,7 @@ describe("applyFullSyncChanges — insertNew layer file references", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     };
 
-    await applyFullSyncChanges(projectId, changes, token, owner, repo, mockDb, fakeIngestEnv((p) => { captured = p; }));
+    await applyFullSyncChanges(projectId, checkedAtNoBase(changes, projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv((p) => { captured = p; }));
 
     // Layer bodies resolve inside resolveFullSyncPayload and ride the story
     // insert's layers[] (the DO then persists them via the snapshot).
@@ -2465,5 +3248,210 @@ describe("applyFullSyncChanges — insertNew layer file references", () => {
     expect(layerContents).toContain("# Fetched panel body"); // .md resolved
     expect(layerContents).toContain("Just inline text");     // inline untouched
     expect(layerContents).toContain("missing.md");           // missing degrades to literal
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeSyncDiff — the scope import parses under
+// ---------------------------------------------------------------------------
+
+describe("computeSyncDiff reads objects.csv under the same scope as import", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  // Two headers resolving to one canonical name, the second holding the value.
+  // Import keeps the one with values and stores nothing in extras; a sync that
+  // parses it unscoped sees an empty first plus a `medium_genre_1` custom
+  // column, reports the object as changed against the import that produced it,
+  // and accepting reverses that decision.
+  const CSV = "object_id,title,medium_genre,medium\no1,A,,tempera\n";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(CSV);
+  });
+
+  it("reports no change against the D1 row the same file imports to", async () => {
+    const d1Objects = [
+      {
+        id: 1, project_id: projectId, object_id: "o1",
+        title: "A", origin: "repo",
+        featured: false, missing_from_repo: false,
+        creator: null, description: null, source_url: null,
+        period: null, year: null, object_type: "tempera", subjects: null,
+        source: null, credit: null, thumbnail: null, dimensions: null,
+        extra_columns: null, alt_text: null,
+        image_available: false, updated_at: null,
+      },
+    ];
+    const mockDb = createSequentialMockDb([d1Objects, [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changedObjects ?? []).toHaveLength(0);
+  });
+});
+
+describe("computeSyncDiff sees the author delete their last custom column", () => {
+  const projectId = 1;
+  const token = "test-token";
+  const owner = "test-owner";
+  const repo = "test-repo";
+
+  // The blanket repo-empty guard exists for enriched IIIF fields against a
+  // blank cell. For extra_columns, "empty" is not a cell left for enrichment to
+  // fill — it is an object whose last custom column was removed, and swallowing
+  // it means that deletion can never be seen or accepted.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(
+      "object_id,title\no1,A\n",
+    );
+  });
+
+  it("reports the change when the repo blob is empty and D1's is not", async () => {
+    const d1Objects = [
+      {
+        id: 1, project_id: projectId, object_id: "o1",
+        title: "A", origin: "repo",
+        featured: false, missing_from_repo: false,
+        creator: null, description: null, source_url: null,
+        period: null, year: null, object_type: null, subjects: null,
+        source: null, credit: null, thumbnail: null, dimensions: null,
+        extra_columns: JSON.stringify({ notes: "x" }),
+        alt_text: null, image_available: false, updated_at: null,
+      },
+    ];
+    const mockDb = createSequentialMockDb([d1Objects, [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    const changed = result.changedObjects ?? [];
+    expect(changed).toHaveLength(1);
+    expect(changed[0].changedFields).toContain("extra_columns");
+  });
+
+  it("still swallows a blank repo cell for an enrichable field", async () => {
+    const d1Objects = [
+      {
+        id: 1, project_id: projectId, object_id: "o1",
+        title: "A", origin: "repo",
+        featured: false, missing_from_repo: false,
+        creator: null, description: null,
+        source_url: "https://example.org/manifest.json",
+        period: null, year: null, object_type: null, subjects: null,
+        source: null, credit: null, thumbnail: null, dimensions: null,
+        extra_columns: null, alt_text: null,
+        image_available: true, updated_at: null,
+      },
+    ];
+    const mockDb = createSequentialMockDb([d1Objects, [], []]);
+
+    const result = await computeSyncDiff(projectId, token, owner, repo, mockDb);
+
+    expect(result.changedObjects ?? []).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Accepting the deletion of the last custom column
+// ---------------------------------------------------------------------------
+
+describe("accepting an emptied repo blob removes the key", () => {
+  const PROJECT_ID = 42;
+  const ACTOR = 7;
+
+  const emptyChanges = {
+    objects: {
+      newObjectIds: [] as string[],
+      changedObjectIds: [] as string[],
+      fieldChoices: {} as Record<string, Record<string, "repo" | "d1">>,
+      removedObjectIds: [] as string[],
+      unregisteredObjectIds: [] as string[],
+    },
+    stories: { accept: [], reject: [], insertNew: [], removed: [] },
+    config: { accept: [], reject: [] },
+    glossary: { accept: [], reject: [], insertNew: [] },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    // The repo file no longer carries the custom column.
+    vi.mocked(githubServer.getFileContent).mockResolvedValue("object_id,title\no1,A\n");
+  });
+
+  it("writes a null blob through when the field is accepted as repo", async () => {
+    const d1Objects = [{
+      id: 1, project_id: PROJECT_ID, object_id: "o1", title: "A",
+      featured: false, creator: null, description: null, source_url: null,
+      period: null, year: null, object_type: null, subjects: null,
+      source: null, credit: null, thumbnail: null, dimensions: null,
+      alt_text: null, extra_columns: JSON.stringify({ notes: "x" }),
+      origin: "repo", missing_from_repo: false, image_available: false,
+      course_project_id: null, updated_at: null,
+    }];
+    const db = createSequentialMockDb([d1Objects, [], [], d1Objects, [], []]);
+
+    const { payload } = await resolveFullSyncPayload(
+      PROJECT_ID,
+      {
+        ...emptyChanges,
+        objects: {
+          ...emptyChanges.objects,
+          changedObjectIds: ["o1"],
+          changedDocIds: { o1: 1 },
+          fieldChoices: { o1: { extra_columns: "repo" } },
+        },
+      } as never,
+      "t", "o", "r", db, ACTOR,
+    );
+
+    const update = payload.objects.update.find((u) => u.objectId === "o1");
+    expect(update).toBeDefined();
+    expect(update!.fields.extra_columns ?? null).toBeNull();
+  });
+});
+
+// A sheet in which two columns for one field both hold values is refused by a
+// sync as it is by the first import: keeping the last would drop the other
+// column's values without telling the author. The other sync paths are pinned
+// in sync-colliding-columns.test.ts.
+describe("computeSyncDiff — two colliding columns that both hold values", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    vi.mocked(githubServer.getFileContent).mockResolvedValue(
+      "object_id,title,medium,object_type\nobj-001,First,Oil,Painting\n",
+    );
+  });
+
+  it("refuses the sheet rather than keeping the last column", async () => {
+    const mockDb = createSequentialMockDb([[], [], []]);
+    await expect(
+      computeSyncDiff(1, "test-token", "test-owner", "test-repo", mockDb),
+    ).rejects.toBeInstanceOf(CollidingColumnsRefusal);
+  });
+
+  it("names the sheet and the columns as the author typed them, where the default parse keeps the last", async () => {
+    const mockDb = createSequentialMockDb([[], [], []]);
+    const err = await computeSyncDiff(1, "test-token", "test-owner", "test-repo", mockDb).then(
+      () => undefined,
+      (e: unknown) => e as CollidingColumnsRefusal,
+    );
+    expect(err?.sheet).toBe("objects.csv");
+    expect(err?.canonicalName).toBe("medium_genre");
+    expect(err?.headers).toEqual(["medium", "object_type"]);
+    const rows = parseTelarCsv(
+      "object_id,title,medium,object_type\nobj-001,First,Oil,Painting\n",
+      undefined,
+      false,
+      OBJECTS_CANONICAL_SCOPE,
+    );
+    expect(rows[0].medium_genre).toBe("Painting");
   });
 });

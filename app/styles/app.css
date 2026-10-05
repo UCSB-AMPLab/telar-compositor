@@ -2,7 +2,7 @@
  * Telar Compositor — global stylesheet
  * Tailwind v4 @theme tokens, font imports, and shared keyframes.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 @import "tailwindcss";
@@ -13,11 +13,28 @@
 @import "@fontsource/roboto-condensed/400.css";
 @import "@fontsource/roboto-condensed/500.css";
 
+/* Layer panel widgets, scoped to `.cm-panel-box`. */
+@import "./panel-bootstrap.css";
+@import "./panel-widgets.css";
+@import "./panel-authoring.css";
+
+/* The framing stage's step card, as the published page draws it. */
+@import "./visitor-layer.css";
+
 /* `landscape-compact:` — a phone held in landscape: short viewport + touch.
    Tablets (>=744px tall in landscape) and desktops (fine pointer) fall outside
    it, so they are never affected. Used to trim editor chrome (slim header,
    hidden tab nav) and reclaim vertical space where it is scarcest. */
 @custom-variant landscape-compact (@media (orientation: landscape) and (max-height: 600px) and (pointer: coarse));
+
+/* `editor-short:` — a viewport too short to give the layer panel's editor
+   more than a couple of lines once its own fixed rows (breadcrumb, nav,
+   title, button-label, layer-2 footer) are accounted for. Unlike
+   `landscape-compact`, this carries NO `pointer` requirement: the trigger is
+   vertical space, not touch, so a laptop with a mouse on a small, low-density
+   display matches it too. 640px is the sum of those fixed rows plus eight
+   editor lines at the editor's line-height plus the shell's 6rem chrome. */
+@custom-variant editor-short (@media (max-height: 640px));
 
 @theme {
   /* ============================================================================
@@ -65,6 +82,8 @@
 
   /* Terracotta family */
   --color-terracotta-pale: #FBEAE8;
+  /* Layer 2 on the dark step line, where terracotta is too dark to read */
+  --color-terracotta-soft: #E8B4AE;
   --color-terracotta:      #883C36;
   --color-terracotta-deep: #5A2622;
 
@@ -251,19 +270,20 @@ html {
 }
 
 /* Glossary deep-link pulse — a transient anil-deep ring that fades after
-   the "Used in" jump lands on a [[term]] chip. One-shot (no infinite loop); the
-   story route adds this class then removes it after the animation. Distinct from
-   site-status-pulse (infinite) and structural-highlight-pulse (collaborator id). */
-@keyframes cm-glossary-chip-pulse {
+   the "Used in" jump lands on a panel's first glossary link (PanelContent
+   adds the class, then removes it once the animation has run). One-shot, not
+   a loop. Distinct from site-status-pulse (infinite) and
+   structural-highlight-pulse (collaborator id). */
+@keyframes glossary-link-pulse {
   0%   { box-shadow: inset 0 0 0 1px var(--color-anil-deep), 0 0 0 0 rgba(91, 107, 175, 0.55); }
   40%  { box-shadow: inset 0 0 0 1px var(--color-anil-deep), 0 0 0 6px rgba(91, 107, 175, 0.18); }
   100% { box-shadow: inset 0 0 0 1px var(--color-anil-deep), 0 0 0 0 transparent; }
 }
-.cm-glossary-chip-pulse {
-  animation: cm-glossary-chip-pulse 2.4s ease-out 1;
+.glossary-link-pulse {
+  animation: glossary-link-pulse 2.4s ease-out 1;
 }
 @media (prefers-reduced-motion: reduce) {
-  .cm-glossary-chip-pulse { animation: none; }
+  .glossary-link-pulse { animation: none; }
 }
 
 /* Structural ops animations (highlight, fade-out) */

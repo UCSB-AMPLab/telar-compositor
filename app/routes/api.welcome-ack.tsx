@@ -7,7 +7,12 @@
  * inline via the session `userId` (the same pattern as `api.locale.tsx`) —
  * resource routes do not sit under the layout's authMiddleware.
  *
- * @version v1.3.0-beta
+ * The stamp is for the site the page showed the modal on, which the form names
+ * (`siteId`), whichever site the session names. It touches only the caller's
+ * own membership row, so no standing beyond membership is needed, and a site
+ * the caller is not a member of stamps nothing.
+ *
+ * @version v1.5.0-beta
  */
 
 import { and, eq } from "drizzle-orm";
@@ -15,7 +20,6 @@ import type { Route } from "./+types/api.welcome-ack";
 import { getDb } from "~/lib/db.server";
 import { project_members } from "~/db/schema";
 import { createSessionStorage } from "~/lib/session.server";
-import { resolveActiveProject } from "~/lib/membership.server";
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env as Env;
@@ -24,17 +28,17 @@ export async function action({ request, context }: Route.ActionArgs) {
   const userId = session.get("userId") as number | undefined;
   if (!userId) return { ok: false };
 
-  const db = getDb(env.DB);
-  const sessionActiveId = session.get("activeProjectId") as number | undefined;
-  const resolved = await resolveActiveProject(db, Number(userId), sessionActiveId);
-  if (!resolved) return { ok: false };
+  const formData = await request.formData();
+  const siteId = Number(formData.get("siteId"));
+  if (!Number.isSafeInteger(siteId) || siteId <= 0) return { ok: false };
 
+  const db = getDb(env.DB);
   await db
     .update(project_members)
     .set({ welcomed_at: new Date().toISOString() })
     .where(
       and(
-        eq(project_members.project_id, resolved.project.id),
+        eq(project_members.project_id, siteId),
         eq(project_members.user_id, Number(userId)),
       ),
     );

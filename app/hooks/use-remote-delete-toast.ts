@@ -32,7 +32,7 @@
  * live inline in route modules that break vitest suite collection when
  * imported). See tests/use-remote-delete-toast.test.tsx.
  *
- * @version v1.4.2-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, type RefObject } from "react";
@@ -49,6 +49,14 @@ export interface UseRemoteDeleteToastOptions<T extends YjsItemLike> {
    * so detection stays off and the previous-keys map is not advanced.
    */
   enabled: boolean;
+  /**
+   * The shared document the list is read from, compared by identity. Another
+   * document's list is a different set of items, not deletions from this one,
+   * so a new document starts a fresh map with no toast. The document, not the
+   * project id, because the route can hold the next project's id while the
+   * previous project's document is still the one mounted.
+   */
+  scope: unknown;
   /** Last-known label for a deleted item — shown in the toast message. */
   getLabel: (item: T) => string;
   /**
@@ -73,14 +81,20 @@ export interface UseRemoteDeleteToastOptions<T extends YjsItemLike> {
 export function useRemoteDeleteToast<T extends YjsItemLike>({
   items,
   enabled,
+  scope,
   getLabel,
   suppressRef,
 }: UseRemoteDeleteToastOptions<T>): void {
   const { showToast } = useToast();
   const { t: tStructural } = useTranslation("structural");
   const prevLabelsRef = useRef<Map<string, string>>(new Map());
+  const scopeRef = useRef(scope);
 
   useEffect(() => {
+    if (scopeRef.current !== scope) {
+      scopeRef.current = scope;
+      prevLabelsRef.current = new Map();
+    }
     if (!enabled) return;
     const curr = new Map<string, string>();
     for (const item of items) curr.set(keyFor(item), getLabel(item));
@@ -103,5 +117,5 @@ export function useRemoteDeleteToast<T extends YjsItemLike>({
     // closures, and detection must run on list/enabled changes only — not on
     // every render. Matches the pre-extraction inline-effect deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, enabled]);
+  }, [items, enabled, scope]);
 }

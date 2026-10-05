@@ -1,8 +1,4 @@
 {
-  "autosave": {
-    "saving": "Saving...",
-    "saved": "Saved"
-  },
   "toolbar": {
     "bold": "Bold",
     "italic": "Italic",
@@ -24,6 +20,14 @@
     "insert": "Insert",
     "cancel": "Cancel"
   },
+  "footnote": {
+    "button": "Footnote",
+    "text": "Footnote text",
+    "reuse": "Use an existing footnote",
+    "new": "Write a new footnote",
+    "target_changed": "The text changed while this window was open. Close it and choose where to put the footnote again. What you wrote will still be here.",
+    "not_here": "Footnotes can't go inside code, links or carousels. Put the cursor somewhere else in the text and try again."
+  },
   "image_dialog": {
     "title": "Insert Image",
     "tab_url": "URL",
@@ -33,15 +37,18 @@
     "insert": "Insert",
     "cancel": "Cancel",
     "no_objects": "No objects imported yet",
-    "pdf_not_supported": "Multi-page documents (PDFs) can't be inserted as images. Choose a single-page object instead."
+    "pdf_not_supported": "Multi-page documents (PDFs) can't be inserted as images. Choose a single-page object instead.",
+    "image_not_found": "We couldn't find an image for this object. Choose another object, or type the image's URL in the URL tab."
   },
   "word_count_one": "{{count}} word",
   "word_count_other": "{{count}} words",
+  "answer_text_only": "Answers are text only — put images, tables, code, footnotes and widgets in a layer panel.",
+  "answer_budget_count": "{{lines}} of {{budget}} lines",
+  "answer_budget_rule": "A line holds {{line_chars}} characters, and each paragraph after the first counts {{break_lines}} more lines. An answer fits on the story's card with up to {{max_paragraphs}} paragraphs and {{budget}} lines. Past {{small_type_lines}} lines, the site sets it in smaller type.",
+  "answer_over_hard_limit": "Too long for the story's card: the published site will cut this answer. An answer may have up to {{max_paragraphs}} paragraphs and {{budget}} lines, counting {{line_chars}} characters to a line and {{break_lines}} lines for each paragraph after the first. Shorten it, or move the detail into a layer panel.",
   "breadcrumb": {
     "dashboard": "Start",
-    "untitled": "Untitled Story",
-    "step": "Step {{number}}",
-    "layer": "Layer {{number}}"
+    "untitled": "Untitled Story"
   },
   "shell": {
     "steps_open": "Show steps",
@@ -49,6 +56,11 @@
     "steps_heading": "Steps",
     "rotate_hint": "Turn your phone sideways for more room to edit.",
     "rotate_hint_dismiss": "Dismiss"
+  },
+  "write_failed": {
+    "capture": "The captured position was not saved. Capture it again.",
+    "object": "The object was not changed. Choose it again.",
+    "page": "The page was not saved. Choose it again."
   },
   "capture_toast": {
     "captured": "Captured position",
@@ -61,32 +73,39 @@
     "subtitle_placeholder": "Subtitle (optional)",
     "byline_label": "Byline (optional)",
     "byline_placeholder": "By...",
-    "story_number": "Story {{number}}",
     "show_sections_label": "Show section list on title card",
-    "show_sections_empty_helper": "No section titles yet — add one in the sidebar to populate the list."
+    "show_sections_empty_helper": "No section titles yet — add one in the sidebar to populate the list.",
+    "story_id_label": "Story ID",
+    "story_id_warning": "When you next publish, this story's address changes from /stories/{{old}}/ to /stories/{{new}}/ and its files in your repository are renamed. Links to the old address will stop working.",
+    "story_id_confirm": "Change ID",
+    "story_id_keep": "Keep {{old}}",
+    "story_id_invalid": "A story ID can only contain lowercase letters, numbers, hyphens, and underscores.",
+    "story_id_taken": "Another story already uses the ID {{id}}. Choose a different ID.",
+    "story_id_reserved": "Your site already has a sheet named {{id}}. Choose a different ID."
   },
   "step": {
     "question_placeholder": "Question",
     "answer_placeholder": "Answer",
-    "alt_text_label": "Image description",
     "alt_text_placeholder": "Describe what is visible in this zoomed view...",
     "alt_text_section": "Accessibility",
     "alt_text_help": "Describe what this specific view of your object shows for visitors using screen readers. Good descriptions mention the subject, action, and important details. For example: \"Close-up of the river delta showing trade route annotations and settlement markers.\"",
-    "click_to_edit": "Click to edit",
     "title_card_label": "Title card",
     "add_step": "+ Add step",
     "add_section_break": "Add section title",
-    "step_label": "Step {{number}}",
     "no_question_yet": "No question yet",
     "section_no_heading_yet": "(no section title yet)",
     "delete_aria": "Delete step",
-    "save_label_aria": "Save label",
-    "cancel_editing_aria": "Cancel editing",
-    "edit_button_label_aria": "Edit button label"
+    "new_step_dialog": {
+      "title": "Same object for the new step?",
+      "body": "The new step starts with {{title}}, at the same page and position as the last step that used it.",
+      "keep": "Keep this object",
+      "choose": "Choose another object"
+    }
   },
   "section_card": {
     "heading_label": "Section title",
-    "subtitle_label": "Section subtitle"
+    "subtitle_label": "Section subtitle",
+    "subtitle_text_only": "A section subtitle holds text only. Images, tables, code, footnotes and widgets can't go here."
   },
   "viewer": {
     "capture_position": "Capture position",
@@ -100,13 +119,28 @@
     "set_object_in_step1": "The viewer object in Step 0 is the same as that for Step 1. Set it there.",
     "zoom_in_aria": "Zoom in",
     "zoom_out_aria": "Zoom out",
-    "reset_aria": "Reset view"
+    "reset_aria": "Reset view",
+    "page_indicator": "Page {{page}}/{{count}}",
+    "prev_page_aria": "Previous page",
+    "next_page_aria": "Next page",
+    "change_page": "Change"
   },
   "object_picker": {
     "title": "Choose object",
     "search_placeholder": "Search objects...",
     "no_results": "No objects match your search",
     "no_objects": "No objects imported yet"
+  },
+  "page_chooser": {
+    "title": "Choose a page",
+    "count": "{{title}} has {{count}} pages",
+    "go_to_label": "Go to page",
+    "go": "Go",
+    "invalid_page": "Enter a number between 1 and {{count}}",
+    "page_label": "Page {{page}}",
+    "earlier": "Earlier pages",
+    "later": "Later pages",
+    "no_preview": "No preview"
   },
   "delete_step": {
     "title": "Delete step",
@@ -115,6 +149,11 @@
     "cancel": "Cancel",
     "confirm": "Delete"
   },
+  "kept_draft": {
+    "message": "You typed text here before the shared text loaded, and it was not saved. The field now shows the shared text.",
+    "apply": "Replace the shared text with mine",
+    "discard": "Discard my text"
+  },
   "save_discard": {
     "unsaved": "Unsaved changes",
     "saved": "All changes saved",
@@ -122,59 +161,35 @@
     "discard": "Discard"
   },
   "media": {
-    "capture_clip_start": "Capture start",
-    "capture_clip_end": "Capture end",
-    "clip_start_label": "Clip start",
-    "clip_end_label": "Clip end",
     "loop": "Loop",
-    "loop_on": "on",
-    "loop_off": "off",
-    "media_type_image": "Image",
     "media_type_video": "Video",
     "media_type_audio": "Audio",
     "media_type_text": "Text",
     "media_preview_unavailable": "Preview not available for this media type",
     "audio_loading": "Loading audio...",
-    "audio_play": "Play",
-    "audio_pause": "Pause",
-    "clip_capture_fallback": "Enter time manually (MM:SS)",
     "no_clip_set": "No clip set",
-    "clip_capture_error": "Could not read playback time from player. Enter the time manually (MM:SS).",
     "google_drive_no_clip": "Google Drive does not support clipping",
     "play_aria": "Play",
     "pause_aria": "Pause",
     "restart_clip_aria": "Restart from clip start",
     "mute_aria": "Mute",
-    "unmute_aria": "Unmute"
+    "unmute_aria": "Unmute",
+    "clip_saved": "Clip saved",
+    "clip_length": "{{duration}} clip",
+    "clip_range": "clip {{start}} → {{end}}"
   },
   "layer": {
     "add_panel": "+ Add panel",
     "add_further_panel": "+ Add further layer panel",
     "default_label_1": "Learn more",
     "default_label_2": "Go deeper",
-    "default_title_1": "Learn more",
-    "default_title_2": "Go deeper",
     "back": "Back",
-    "close_dirty_title": "Unsaved changes",
-    "close_dirty_body": "You have unsaved changes. Discard them?",
-    "close_dirty_discard": "Discard",
-    "close_dirty_cancel": "Keep editing",
     "delete_title": "Delete panel",
-    "delete_body": "Delete this panel? The content will be lost.",
-    "delete_confirm": "Delete",
-    "delete_cancel": "Cancel",
     "cannot_delete_has_layer2": "Delete the second panel first",
-    "open_layer2": "Open second panel",
-    "panel_title": "Panel title",
     "button_label": "Button label",
-    "button_label_strip_label": "Button label",
-    "marker_l1": "L1",
-    "marker_l2": "L2",
     "edit_button_label": "Edit button label",
-    "content_label": "Content",
     "close_panel_aria": "Close panel",
     "panel_title_aria": "Panel title",
-    "save_label_aria": "Save label",
     "edit_button_label_aria": "Edit button label"
   },
   "error": {
@@ -186,5 +201,74 @@
     "generic_body": "This story couldn't be opened. Go back to your stories and try again."
   },
   "preview_clip": "Preview clip",
-  "video_player_title": "{{type}} video player"
+  "video_player_title": "{{type}} video player",
+  "panel": {
+    "bibliography": "Bibliography",
+    "widget": "Widget",
+    "math": "Math",
+    "accordion": "Accordion",
+    "tabs": "Tabs",
+    "carousel": "Carousel",
+    "glossary": "Glossary callout",
+    "glossarySide": "Side of the text",
+    "glossaryRight": "Right",
+    "glossaryLeft": "Left",
+    "glossaryInsert": "Insert callout",
+    "section": "Section",
+    "reference": "Reference",
+    "title": "Title",
+    "content": "Content",
+    "image": "Image",
+    "alt": "Alternative text",
+    "caption": "Caption",
+    "credit": "Credit",
+    "width": "Width",
+    "height": "Height",
+    "edit": "Edit",
+    "done": "Done",
+    "source": "Source",
+    "add": "Add",
+    "remove": "Remove",
+    "previous": "Previous image",
+    "next": "Next image",
+    "fieldGone": "The field you were editing is gone. Click where you want to make this change and try again.",
+    "olderFramework": "Your site uses Telar {{version}}. Until the site is upgraded, carousel images, formulas inside widgets and footnote numbers may look different on the published site from how they look here.",
+    "olderFrameworkLink": "Upgrade Telar",
+    "shownAsWritten": "This part can't be previewed, so it's shown as written.",
+    "previewUnavailable": "Formula preview is unavailable. You can still edit formulas as text."
+  },
+  "stage": {
+    "frame_label": "Every visitor sees what is inside the frame.",
+    "stage_label": "A visitor with a window shaped like yours sees this whole area.",
+    "alt_text_add": "Describe this view for screen readers",
+    "alt_text_edit": "Edit the description for screen readers",
+    "edit_hint": "Click the text to edit it.",
+    "edit_hint_title": "Click the title, subtitle or byline to edit it.",
+    "edit_question": "Edit question",
+    "edit_answer": "Edit answer",
+    "edit_panel_title": "Edit panel title",
+    "edit_panel_text": "Edit panel text",
+    "panel_text_placeholder": "Panel text",
+    "answer_field_label": "Answer (Markdown)",
+    "answer_field_hint": "Click outside the field to see the answer as visitors will.",
+    "card_ceiling": "The published card cuts any text that runs past this line.",
+    "save_failed": "Your change wasn't saved. Try again.",
+    "sections_heading": "Sections",
+    "scroll_hint": "Press ↓ or scroll to begin",
+    "scroll_hint_mobile": "Use the arrow buttons to navigate"
+  },
+  "in_place": {
+    "recovered_notice": "Your last changes here weren't saved, so they're back in the field. Try again to save them, or discard them to go back to the saved text.",
+    "recovered_retry": "Try again",
+    "recovered_discard": "Discard changes",
+    "recovered_marker": "Your last changes here weren't saved. Open this field to get them back."
+  },
+  "step_line": {
+    "move_aria": "Move “{{title}}”",
+    "drag_instructions": "To move a step, press Space or Enter on its handle. Use the up and down arrow keys to move it, then Space or Enter to drop it, or Escape to cancel.",
+    "picked_up": "Picked up “{{title}}”, position {{position}} of {{total}}.",
+    "moved": "“{{title}}” moved to position {{position}} of {{total}}.",
+    "dropped": "“{{title}}” dropped at position {{position}} of {{total}}.",
+    "cancelled": "Move cancelled. “{{title}}” is back at position {{position}} of {{total}}."
+  }
 }

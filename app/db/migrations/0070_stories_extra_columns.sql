@@ -1,0 +1,11 @@
+-- Custom-column passthrough for project.csv, matching objects (0031), glossary
+-- terms (0054) and steps (0058).
+--
+-- @version v1.5.0-beta
+--
+-- extra_columns: JSON object of the custom project.csv columns the Compositor
+-- has no first-class column for, keyed by header in file order; NULL when none.
+-- Without it, a column an author adds to project.csv by hand is absent from D1
+-- and so deleted by the next publish, which writes the file from the fixed
+-- column list alone.
+ALTER TABLE stories ADD COLUMN extra_columns text;

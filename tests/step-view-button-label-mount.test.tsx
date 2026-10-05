@@ -1,82 +1,43 @@
 // @vitest-environment jsdom
 /**
- * step-view-button-label-mount.test.tsx — component-mount coverage.
+ * The step card's layer button, mounted against a real Y.Doc: the button
+ * opens its panel, the pencil beside it edits its label in place, and the
+ * label never goes stale.
  *
- * The shared-identity test (tests/story-button-label-sync.test.ts) proves the
- * getYText/writeYText helpers share a single Y.Text identity, but it operates
- * on a bare Y.Doc and never mounts a component. That gap is exactly why the
- * regression
- * passed CI: `LayerButtonWithEdit` (inside StepView) kept an independent local
- * `label` state seeded ONCE at mount and only re-synced on Cancel. When the
- * shared button_label changed from the panel strip or a remote peer while the
- * inline editor was closed, opening the pencil showed the STALE seed and Save
- * clobbered the newer shared value.
+ * tests/story-button-label-sync.test.tsx checks which layer's Y.Text each
+ * label's writer writes. This checks the card's button against a change made
+ * elsewhere: a change by a remote peer while the label is not being edited
+ * shows on the button, opening it shows the new label rather than the one it
+ * mounted with, and finishing without an edit leaves the newer label in
+ * place.
  *
- * This test MOUNTS StepView against a real Y.Doc, mutates the shared
- * button_label Y.Text while the inline editor is closed (modelling a panel-strip
- * or remote write), then opens the pencil and asserts the input reflects the NEW
- * value — not the stale mount-time seed. It also asserts that Saving after such
- * an external change does not overwrite the newer value with the stale one.
- *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
 import * as Y from "yjs";
-import { StepView } from "~/components/features/editor/StepView";
+import { StepCard } from "~/components/features/editor/StepCard";
+import { stageGeometryOf } from "~/hooks/use-stage-geometry";
 import { getYText } from "~/lib/yjs-helpers";
+import { resetTargetSaves } from "~/components/ui/target-saves";
 
-// ---------------------------------------------------------------------------
-// i18n: identity mock so keys surface as their raw key string.
-// ---------------------------------------------------------------------------
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-    i18n: { changeLanguage: vi.fn() },
-  }),
+  useTranslation: () => ({ t: (key: string) => key, i18n: { changeLanguage: vi.fn() } }),
 }));
 
-// ---------------------------------------------------------------------------
-// Inline text fields: render a plain input/textarea so StepView mounts without
-// CodeMirror/collaborative-text machinery (only the layer pill is under test).
-// ---------------------------------------------------------------------------
-vi.mock("~/components/ui/InlineTextField", () => ({
-  InlineTextField: ({ initialValue }: { initialValue: string }) => (
-    <div data-testid="inline-field">{initialValue}</div>
-  ),
-}));
-vi.mock("~/components/ui/InlineTextArea", () => ({
-  InlineTextArea: ({ initialValue }: { initialValue: string }) => (
-    <div data-testid="inline-area">{initialValue}</div>
-  ),
-}));
-
-// ---------------------------------------------------------------------------
-// Collaboration context: hand the component a REAL Y.Doc so writeYText (which
-// runs ydoc.transact) actually mutates the shared Y.Text. The doc is swapped
-// per-test via a module-level holder.
-// ---------------------------------------------------------------------------
 let activeDoc: Y.Doc | null = null;
 vi.mock("~/hooks/use-collaboration", () => ({
   useCollaborationContext: () => ({
     isPublishing: false,
     remoteCollaborators: [],
     provider: null,
-    connected: false,
-    publishError: false,
-    setIsPublishing: vi.fn(),
     ydoc: activeDoc,
+    undoManager: null,
     lastEditorByField: new Map(),
   }),
 }));
 
-/**
- * Build a real Y.Doc carrying a single layer whose `button_label` is a Y.Text
- * (mirroring how the collaboration worker seeds the field). Returns the doc,
- * the layer Y.Map, and the resolved button_label Y.Text — the SAME handle the
- * route threads into StepView.
- */
 function buildDocWithButtonLabel(initial: string) {
   const doc = new Y.Doc();
   const layers = doc.getArray<Y.Map<unknown>>("layers");
@@ -87,10 +48,10 @@ function buildDocWithButtonLabel(initial: string) {
     layerMap.set("button_label", label);
     layers.push([layerMap]);
   });
-  return { doc, layerMap, yText: getYText(layerMap, "button_label")! };
+  return { doc, yText: getYText(layerMap, "button_label")! };
 }
 
-/** Replace a Y.Text's contents in one transaction (panel-strip / remote idiom). */
+/** Replace a Y.Text's contents in one transaction, as a remote peer's edit arrives. */
 function writeYText(doc: Y.Doc, yText: Y.Text, value: string) {
   doc.transact(() => {
     if (yText.length > 0) yText.delete(0, yText.length);
@@ -98,125 +59,89 @@ function writeYText(doc: Y.Doc, yText: Y.Text, value: string) {
   });
 }
 
-const baseStep = {
-  id: 1,
-  step_number: 1,
-  question: "Q",
-  answer: "A",
-  alt_text: "",
-};
+const geometry = stageGeometryOf({ w: 1240, h: 768 }, { w: 1440, h: 900 })!;
 
-function renderStepView(
-  buttonLabel: string | null,
-  buttonLabelYText: Y.Text | null
-) {
-  const layer = {
-    id: 10,
-    step_id: 1,
-    layer_number: 1,
-    title: null,
-    button_label: buttonLabel,
-    content: null,
-  };
-  return render(
-    <StepView
-      step={baseStep}
-      layers={[layer]}
-      onOpenLayer={vi.fn()}
-      onCreateLayer={vi.fn()}
-      actionUrl="/stories/test"
+const onOpenLayer = vi.fn();
+
+function card(buttonLabel: string, yText: Y.Text) {
+  return (
+    <StepCard
+      geometry={geometry}
+      media={false}
+      step={{ id: 1, question: "Q", answer: "A" }}
+      target="id:1"
+      fieldKeyPrefix="step-test-1"
       questionYText={null}
       answerYText={null}
-      altTextYText={null}
-      buttonLabelYText={buttonLabelYText}
-      storySlug="test"
+      layer1={{ id: 10, button_label: buttonLabel }}
+      buttonLabelYText={yText}
+      onCreateLayer={vi.fn()}
+      onOpenLayer={onOpenLayer}
+      glossary={{ terms: new Map(), baseUrl: "" }}
     />
   );
 }
 
+const pencil = () => screen.getByRole("button", { name: "layer.edit_button_label_aria" });
+const pill = (label: string) => screen.getByRole("button", { name: label });
+
 beforeEach(() => {
-  vi.clearAllMocks();
   activeDoc = null;
+  onOpenLayer.mockClear();
+});
+afterEach(() => {
+  cleanup();
+  resetTargetSaves();
 });
 
-describe("LayerButtonWithEdit local label does not go stale (component mount)", () => {
-  it("opening the pencil after an external button_label change shows the NEW value, not the stale mount seed", () => {
+describe("the step card's button label does not go stale", () => {
+  it("shows a change made elsewhere while the button is not being edited, and opens on it", () => {
     const { doc, yText } = buildDocWithButtonLabel("Learn more");
     activeDoc = doc;
+    const view = render(card("Learn more", yText));
+    expect(pill("Learn more")).toBeTruthy();
 
-    // Mount with the initial label. The pill renders the current button_label.
-    const { rerender } = renderStepView("Learn more", yText);
+    act(() => writeYText(doc, yText, "Explore the delta"));
+    view.rerender(card("Explore the delta", yText));
+    expect(pill("Explore the delta")).toBeTruthy();
 
-    // Simulate a panel-strip / remote-peer write to the SHARED Y.Text while the
-    // inline editor is CLOSED. In production this re-renders the route with a
-    // new layer.button_label (recomputed from the Y.Text observer); model that
-    // by writing the Y.Text and re-rendering StepView with the new prop value.
-    act(() => {
-      writeYText(doc, yText, "Explore the delta");
-    });
-    rerenderWith(rerender, "Explore the delta", yText);
-
-    // Open the inline editor (pencil).
-    fireEvent.click(
-      screen.getByRole("button", { name: /edit_button_label_aria/i })
-    );
-
-    // The input must show the NEW shared value, not the stale "Learn more" seed.
+    fireEvent.click(pencil());
     const input = screen.getByRole("textbox") as HTMLInputElement;
     expect(input.value).toBe("Explore the delta");
   });
 
-  it("Save after an external change writes the up-to-date value back, not the stale seed", () => {
+  it("finishing without an edit leaves the newer label in the shared text", () => {
     const { doc, yText } = buildDocWithButtonLabel("Learn more");
     activeDoc = doc;
-    const { rerender } = renderStepView("Learn more", yText);
+    const view = render(card("Learn more", yText));
+    act(() => writeYText(doc, yText, "Explore the delta"));
+    view.rerender(card("Explore the delta", yText));
 
-    // External change while editor closed.
-    act(() => {
-      writeYText(doc, yText, "Explore the delta");
-    });
-    rerenderWith(rerender, "Explore the delta", yText);
-
-    // Open the editor, then Save WITHOUT editing the field.
-    fireEvent.click(
-      screen.getByRole("button", { name: /edit_button_label_aria/i })
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: /save_label_aria/i })
-    );
-
-    // The shared Y.Text must still hold the newer value — Save must not have
-    // clobbered it with the stale mount-time seed ("Learn more").
+    fireEvent.click(pencil());
+    fireEvent.blur(screen.getByRole("textbox"));
     expect(yText.toString()).toBe("Explore the delta");
   });
-});
 
-/** Re-render StepView with an updated button_label prop (route re-render). */
-function rerenderWith(
-  rerender: (ui: React.ReactElement) => void,
-  buttonLabel: string,
-  buttonLabelYText: Y.Text
-) {
-  const layer = {
-    id: 10,
-    step_id: 1,
-    layer_number: 1,
-    title: null,
-    button_label: buttonLabel,
-    content: null,
-  };
-  rerender(
-    <StepView
-      step={baseStep}
-      layers={[layer]}
-      onOpenLayer={vi.fn()}
-      onCreateLayer={vi.fn()}
-      actionUrl="/stories/test"
-      questionYText={null}
-      answerYText={null}
-      altTextYText={null}
-      buttonLabelYText={buttonLabelYText}
-      storySlug="test"
-    />
-  );
-}
+  it("writes the label typed on the button to the shared text", () => {
+    const { doc, yText } = buildDocWithButtonLabel("Learn more");
+    activeDoc = doc;
+    render(card("Learn more", yText));
+    fireEvent.click(pencil());
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "About Coordinates" } });
+    expect(yText.toString()).toBe("About Coordinates");
+    expect(onOpenLayer).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    expect(pill("About Coordinates")).toBeTruthy();
+    expect(pencil()).toBeTruthy();
+  });
+
+  it("opens the panel from the button and leaves the shared text alone", () => {
+    const { doc, yText } = buildDocWithButtonLabel("Learn more");
+    activeDoc = doc;
+    render(card("Learn more", yText));
+    fireEvent.click(pill("Learn more"));
+    expect(onOpenLayer).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(yText.toString()).toBe("Learn more");
+  });
+});

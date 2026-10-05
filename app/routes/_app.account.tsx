@@ -22,13 +22,14 @@
  * notifies the project's Durable Object so anyone editing in real time
  * gets dropped cleanly rather than finding out by silent failure.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
+import { tombstoneAccount } from "~/lib/account-tombstone.server";
 import { useEffect, useState } from "react";
-import { Form, redirect, useFetcher } from "react-router";
+import { redirect, useFetcher } from "react-router";
 import { Trans, useTranslation } from "react-i18next";
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Route } from "./+types/_app.account";
 import { userContext } from "~/middleware/auth.server";
 import { getLocale } from "~/i18n/i18next.server";
@@ -39,20 +40,32 @@ import {
   PRESENCE_PALETTE,
   setUserPresenceColor,
   getUserProjectsWithStats,
+  listableProjects,
   requireOwner,
   requireProjectMember,
+  getUserRole,
+  isMembershipExitRefused,
 } from "~/lib/membership.server";
 import { deleteProjectCascade } from "~/lib/import.server";
+import { redeemAsStaff } from "~/lib/join-codes.server";
+import {
+  courseDisplayName,
+  endMembership,
+  fanOutStaffJoin,
+  detachCourseChildren,
+  evictMembers,
+  notifyProjectDeleted,
+} from "~/lib/course-membership.server";
 import {
   listUserInstallations,
   type Installation,
 } from "~/lib/github.server";
 import {
   project_members,
-  project_invites,
   projects,
   users,
   activity_log,
+  code_redemption_attempts,
 } from "~/db/schema";
 import {
   ConnectedSitesCard,
@@ -60,9 +73,14 @@ import {
 } from "~/components/features/account/ConnectedSitesCard";
 import { GitHubAccessCard } from "~/components/features/account/GitHubAccessCard";
 import { DangerZoneCard } from "~/components/features/account/DangerZoneCard";
+import {
+  JoinCourseCard,
+  type StaffJoinOutcome,
+} from "~/components/features/account/JoinCourseCard";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { useToast } from "~/hooks/use-toast";
-import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
+import { getFromCollaborationDO, makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
+import { recordWithdrawals } from "~/lib/repo-access-withdrawals.server";
 
 export const handle = { i18n: ["common", "account"] };
 
@@ -75,6 +93,23 @@ const PRESENCE_COLOR_NAMES = [
   "purple",
   "pink",
 ] as const;
+
+/**
+ * The polite announcement for the presence-colour save: the colour that was
+ * set, or that the route refused it. An answer of any other shape is silent.
+ */
+function presenceAnnouncementText(
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  data: { ok: boolean; color?: string; error?: string } | undefined,
+  palette: readonly string[],
+): string {
+  if (data?.ok === false && data.error === "invalid_color") return t("preferences.presence_color_invalid");
+  const index = data?.ok && data.color ? palette.indexOf(data.color) : -1;
+  if (index < 0) return "";
+  return t("preferences.presence_color_saved", {
+    color: t(`preferences.presence_color_${PRESENCE_COLOR_NAMES[index]}`),
+  });
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const user = context.get(userContext);
@@ -109,12 +144,27 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // convenors. A later iteration can upgrade to `project_config.title`
   // with a fallback to the repo name.
   const projectRows = await getUserProjectsWithStats(db, user.id);
-  const projects: ConnectedSitesProject[] = projectRows.map((p) => ({
+  // The card is a list, so children the user holds only an instructor row on
+  // are left out of it (ruling 18). `projectRows` itself is not filtered:
+  // the danger-zone derivations below are about what deleting this account
+  // would do to other people, and a row hidden from a list is still a row.
+  const listedRows = listableProjects(projectRows);
+  // A site that belongs to a course is marked with the course's name.
+  const courseIds = [
+    ...new Set(listedRows.map((p) => p.parent_project_id).filter((id): id is number => id != null)),
+  ];
+  const courseNames = new Map(
+    await Promise.all(
+      courseIds.map(async (id) => [id, await courseDisplayName(db, id)] as const),
+    ),
+  );
+  const projects: ConnectedSitesProject[] = listedRows.map((p) => ({
     id: p.id,
     title: p.github_repo_full_name,
     userRole: p.userRole,
     last_edited_at: p.last_edited_at,
     collaborator_count: p.collaborator_count,
+    courseName: (p.parent_project_id != null && courseNames.get(p.parent_project_id)) || null,
   }));
 
   // Derive the danger-zone gate inputs in-memory from the existing
@@ -141,6 +191,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const collaboratorCount = projectRows.filter(
     (p) => p.userRole === "collaborator",
   ).length;
+
+  // Deep-link removal target — StepConnect's Unlink control lands here as
+  // ?remove=<projectId> so the row's own removal confirmation opens without
+  // an extra click. Trusted only when the id names a row already scoped to
+  // this user by `projects` above; any other value (non-numeric, or a
+  // project this user does not belong to) resolves to null and is ignored.
+  const removeParam = new URL(request.url).searchParams.get("remove");
+  const removeCandidate = removeParam !== null ? Number(removeParam) : NaN;
+  const removeProjectId =
+    Number.isFinite(removeCandidate) &&
+    projects.some((p) => p.id === removeCandidate)
+      ? removeCandidate
+      : null;
 
   // GitHub access — read-only summary. GitHub API failure is a soft
   // error: render empty installations array so the reinstall CTA in
@@ -197,6 +260,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // Date.now() at different moments and trip React's hydration
     // mismatch guard for just-edited projects.
     nowMs: Date.now(),
+    removeProjectId,
   };
 }
 
@@ -220,6 +284,47 @@ export async function loader({ request, context }: Route.LoaderArgs) {
  * Input validation: `projectId` is `Number()`-cast and
  * `Number.isFinite`-checked before any DB / DO call.
  */
+/**
+ * Turn an instructor-role code into standing on the course it belongs to.
+ *
+ * `redeemAsStaff` owns the token and the membership row; `fanOutStaffJoin`
+ * owns what follows, which is an `instructor` row on every child site the
+ * course already has, so a co-instructor admitted in week three is in every
+ * group's site rather than only in the ones created after them.
+ *
+ * The fan-out runs on `alreadyStaff` too. It re-establishes the standing from
+ * the database rather than taking it from this call, so running it again
+ * writes rows only where they are missing — which is the repair for a first
+ * pass that admitted the person and then failed partway through the children.
+ *
+ * A throw is reported rather than raised. Both halves are re-runnable, so the
+ * remedy for any failure is the same field again, and losing the page would
+ * take the code with it.
+ */
+async function joinCourseAsStaff(
+  db: ReturnType<typeof getDb>,
+  args: { token: string; userId: number },
+): Promise<StaffJoinOutcome> {
+  try {
+    const outcome = await redeemAsStaff(db, args);
+    if (outcome.state !== "ok") return { state: outcome.state };
+
+    await fanOutStaffJoin(db, {
+      courseProjectId: outcome.courseProjectId,
+      userId: args.userId,
+    });
+
+    return {
+      state: "ok",
+      courseName: await courseDisplayName(db, outcome.courseProjectId),
+      alreadyStaff: outcome.alreadyStaff,
+    };
+  } catch (err) {
+    console.error("joinCourseAsStaff failed:", err);
+    return { state: "error" };
+  }
+}
+
 export async function action({ request, context }: Route.ActionArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
@@ -251,6 +356,27 @@ export async function action({ request, context }: Route.ActionArgs) {
     };
   }
 
+  // join-course-staff carries a code rather than a projectId: staff
+  // admission attaches a PERSON to a course (design §89), and which course
+  // is the code's answer, not the caller's. Handled before the projectId
+  // validation below for that reason.
+  //
+  // The whole sequence is `redeemAsStaff` followed by the join fan-out, and
+  // both are re-runnable: entering the same code twice writes nothing the
+  // first pass wrote and repairs anything it did not. So a failure here needs
+  // no repair path of its own — the remedy is the same field again, which is
+  // what the refusal copy tells the person.
+  //
+  // No password gate. The gate is on running a course, never on joining one
+  // (ruling 20), and the code was handed over by somebody who passed it.
+  if (intent === "join-course-staff") {
+    const outcome = await joinCourseAsStaff(db, {
+      token: String(formData.get("code") ?? ""),
+      userId: user.id,
+    });
+    return { ok: outcome.state === "ok", intent: "join-course-staff" as const, outcome };
+  }
+
   // delete-account does not carry a projectId — handle it before the
   // projectId validation below.
   if (intent === "delete-account") {
@@ -259,7 +385,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     // purpose is to prevent orphaning collaborators; solo convener
     // projects (zero other collaborators) have no orphaning hazard and
     // are auto-cascaded below. We filter `projects WHERE user_id = me`
-    // to rows where a non-self project_members row exists.
+    // to rows where a non-self, non-instructor project_members row
+    // exists — instructor rows are staff, not collaborators to protect
+    // from orphaning (design §3), so an uncorrected role-blind check here
+    // would block a solo student's own account deletion whenever their
+    // site carries an instructor row from course enrolment.
     //
     // Microsecond window between this SELECT and the cascade is
     // acceptable per the threat model. On the error path, no project
@@ -270,7 +400,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       .where(
         and(
           eq(projects.user_id, user.id),
-          sql`EXISTS (SELECT 1 FROM ${project_members} WHERE ${project_members.project_id} = ${projects.id} AND ${project_members.user_id} != ${user.id})`,
+          sql`EXISTS (SELECT 1 FROM ${project_members} WHERE ${project_members.project_id} = ${projects.id} AND ${project_members.user_id} != ${user.id} AND ${project_members.role} != 'instructor')`,
         ),
       );
     if (collabConvened.length > 0) {
@@ -291,32 +421,47 @@ export async function action({ request, context }: Route.ActionArgs) {
       .select({ id: projects.id })
       .from(projects)
       .where(eq(projects.user_id, user.id));
+    // A course among them is detached from its sites first; a detach that
+    // fails throws here, like a cascade that fails, so the account is never
+    // deleted over a course that was not.
     for (const p of soloProjects) {
-      await deleteProjectCascade(db, p.id);
+      await detachCourseChildren(db, env, p.id);
+      await evictMembers(env, await deleteProjectCascade(db, p.id));
     }
 
-    // Atomic D1 batch — FK-dependent rows first.
-    // project_invites.created_by is NOT NULL → users.id, so leaving these
-    // rows would FK-violate when the users row is deleted. project_members
-    // references users.id too. activity_log.actor_user_id → users.id must
-    // also be cleared; these rows can reference other people's projects so
-    // they are not covered by deleteProjectCascade above.
-    // Order: invites → members → activity_log (actor) → users.
-    // db.batch is transactional in D1 — any op failure rolls back the
-    // whole batch (atomic-mutation pattern).
-    await db.batch([
+    // One transaction. The memberships go, with the repository access each
+    // held recorded for withdrawal, and the redemption attempts, which
+    // are rate-limit bookkeeping keyed on the user with no foreign key. The
+    // account row becomes a tombstone rather than being deleted
+    // (`tombstoneAccount`), so that everything that names the person on
+    // other people's sites stays as their history: the content they made and
+    // last edited, their contributor, editing-time and activity rows, and the
+    // invites they issued and used. Memberships are deleted before the row is
+    // marked, since migration 0057 refuses any membership naming a tombstone.
+    // The memberships the batch deletes are the ones evicted after it, so one
+    // added since any earlier read is evicted too.
+    const [, deletedMemberships] = await db.batch([
+      recordWithdrawals(db, eq(project_members.user_id, user.id)),
       db
-        .delete(project_invites)
-        .where(
-          or(
-            eq(project_invites.created_by, user.id),
-            eq(project_invites.used_by, user.id),
-          ),
-        ),
-      db.delete(project_members).where(eq(project_members.user_id, user.id)),
-      db.delete(activity_log).where(eq(activity_log.actor_user_id, user.id)),
-      db.delete(users).where(eq(users.id, user.id)),
+        .delete(project_members)
+        .where(eq(project_members.user_id, user.id))
+        .returning({ projectId: project_members.project_id }),
+      db
+        .delete(code_redemption_attempts)
+        .where(eq(code_redemption_attempts.user_id, user.id)),
+      tombstoneAccount(db, user.id, new Date().toISOString()),
     ]);
+
+    // Best-effort, after D1 has settled the deletion: the solo projects are
+    // gone, so every socket on them is closed; on the rest only this person's.
+    const soloIds = new Set(soloProjects.map((p) => p.id));
+    for (const projectId of soloIds) await notifyProjectDeleted(env, projectId);
+    await evictMembers(
+      env,
+      deletedMemberships
+        .filter((m) => !soloIds.has(m.projectId))
+        .map((m) => ({ projectId: m.projectId, userId: user.id })),
+    );
 
     // Destroy session + redirect to /signin with reason banner.
     // Mirrors app/routes/signout.tsx verbatim with the extra ?reason
@@ -342,35 +487,26 @@ export async function action({ request, context }: Route.ActionArgs) {
       // Convenor-only — throws 403 if not.
       await requireOwner(db, projectId, user.id);
 
+      // A course leaves its sites first, while they can still be found
+      // through it. A detach that fails leaves the course whole and the
+      // delete refused, and a retry finishes it.
+      try {
+        await detachCourseChildren(db, env, projectId);
+      } catch (err) {
+        console.error(`[delete-project] project ${projectId}: its sites could not be detached`, err);
+        return { ok: false as const, intent: "delete-project" as const, error: "detach_failed" as const };
+      }
+
       // D1 cascade BEFORE DO RPC: if cascade fails, the DO RPC is
       // never sent and the project still exists. If DO RPC fails after a
-      // successful cascade, the row is gone from /account already and
-      // collaborators fail-out lazily on next WS message — acceptable
-      // degradation (acceptable per the design).
-      await deleteProjectCascade(db, projectId);
+      // successful cascade, an open socket is removed by the object's own
+      // membership recheck, at its first message a minute or more after
+      // its last check.
+      await evictMembers(env, await deleteProjectCascade(db, projectId));
 
-      // Best-effort DO broadcast — wrapped in try/catch so DO outage
-      // does not flip the user-visible outcome (delete already
-      // succeeded in D1).
-      try {
-        const headers = await makeInternalMarkerHeaders(
-          projectId,
-          env.SESSION_SECRET,
-          "notify-deleted",
-        );
-        const stub = env.COLLABORATION.get(
-          env.COLLABORATION.idFromName(String(projectId)),
-        );
-        await stub.fetch(
-          new Request("https://internal/notify-deleted", {
-            method: "POST",
-            headers,
-          }),
-        );
-      } catch {
-        // DO offline / network blip — collaborators fail-out lazily on
-        // next message. End state is OK; this degradation is explicit by design.
-      }
+      // Best-effort: a Durable Object outage does not flip the outcome, since
+      // the delete already succeeded in D1.
+      await notifyProjectDeleted(env, projectId);
 
       return { ok: true, intent: "delete-project" as const };
     }
@@ -380,18 +516,24 @@ export async function action({ request, context }: Route.ActionArgs) {
       // non-members.
       await requireProjectMember(db, projectId, user.id);
 
-      // Delete the user's single project_members row. Drizzle returns
-      // 0-row deletes silently; callers do not need to verify a row
-      // existed (the requireProjectMember check above already proved
-      // it).
-      await db
-        .delete(project_members)
-        .where(
-          and(
-            eq(project_members.project_id, projectId),
-            eq(project_members.user_id, user.id),
-          ),
-        );
+      // Instructor membership on a child project is tied to the course in
+      // both directions (design §5) — leaving by this door would produce
+      // a state the design declares impossible. Convenor/collaborator
+      // rows, and instructor rows on a project with no parent, are never
+      // refused; the shared check also gates `remove-member` in
+      // _app.dashboard.tsx.
+      const exitingRole = await getUserRole(db, projectId, user.id);
+      if (await isMembershipExitRefused(db, projectId, exitingRole)) {
+        return {
+          ok: false as const,
+          intent: "leave-project" as const,
+          error: "instructor_on_child" as const,
+        };
+      }
+
+      // The user's own row — and, when it is their standing on a course's
+      // staff, the copies on the course's children (endMembership).
+      await endMembership(db, env, { projectId, userId: user.id });
 
       // Single-socket DO RPC — only the leaver's own sockets are
       // notified. Best-effort try/catch — DO outage does not flip the
@@ -426,23 +568,15 @@ export async function action({ request, context }: Route.ActionArgs) {
       await requireOwner(db, projectId, user.id);
 
       try {
-        const headers = await makeInternalMarkerHeaders(
-          projectId,
-          env.SESSION_SECRET,
-          "active-ws-count",
-          user.id,
-        );
-        const stub = env.COLLABORATION.get(
-          env.COLLABORATION.idFromName(String(projectId)),
-        );
         // Exclude the requesting user's own sockets from the count —
         // the warning is about OTHER collaborators who'll be disconnected,
         // not the convenor themselves.
-        const res = await stub.fetch(
-          new Request(
-            `https://internal/active-ws-count?exceptUserId=${user.id}`,
-            { method: "GET", headers },
-          ),
+        const res = await getFromCollaborationDO(
+          env,
+          projectId,
+          "active-ws-count",
+          `/active-ws-count?exceptUserId=${user.id}`,
+          user.id,
         );
         const data = (await res.json()) as { count: number };
         return {
@@ -481,6 +615,7 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
     installAppUrl,
     uiLocale,
     nowMs,
+    removeProjectId,
   } = loaderData;
 
   // Lift the delete-project modal open-state up to the
@@ -489,6 +624,12 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
   // duplication). Plain useState
   // suffices — the lift surface is well under the ~30-line threshold
   // CONTEXT recommends for promotion to a context provider.
+  // The presence colour is saved through a fetcher so the page can announce the
+  // result: sighted users see the swatch ring move, and this is what tells the
+  // rest.
+  const presenceFetcher = useFetcher<{ ok: boolean; intent: string; color?: string; error?: string }>();
+  const presenceAnnouncement = presenceAnnouncementText(t, presenceFetcher.data, palette);
+
   const [deleteProjectId, setDeleteProjectId] = useState<number | null>(null);
   const openDeleteProject = (id: number) => setDeleteProjectId(id);
   const closeDeleteProject = () => setDeleteProjectId(null);
@@ -661,7 +802,7 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
           >
             {t("preferences.presence_color_label")}
           </p>
-          <Form method="post">
+          <presenceFetcher.Form method="post">
             <input type="hidden" name="intent" value="update-presence-color" />
             <div
               role="radiogroup"
@@ -698,7 +839,10 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
                 );
               })}
             </div>
-          </Form>
+          </presenceFetcher.Form>
+          <p role="status" aria-live="polite" className="sr-only">
+            {presenceAnnouncement}
+          </p>
           <p className="mt-2 text-sm text-charcoal/60 font-body">
             {t("preferences.presence_color_help")}
           </p>
@@ -710,7 +854,10 @@ export default function AccountPage({ loaderData }: Route.ComponentProps) {
         uiLocale={uiLocale}
         nowMs={nowMs}
         onOpenDeleteProject={openDeleteProject}
+        removeProjectId={removeProjectId}
       />
+
+      <JoinCourseCard />
 
       <GitHubAccessCard
         installations={installations}
@@ -828,6 +975,7 @@ function SharedDeleteProjectModal({
       }
       contentSummary={activeWarning}
       confirmLabel={t("delete_project_confirm_button")}
+      inputAriaLabel={t("delete_project_input_aria")}
       onConfirm={() => {
         deleteFetcher.submit(
           { intent: "delete-project", projectId: String(project.id) },

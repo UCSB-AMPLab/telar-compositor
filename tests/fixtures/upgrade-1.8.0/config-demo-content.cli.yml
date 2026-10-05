@@ -1,0 +1,39 @@
+# telar-demos
+# Demo content hosting for Telar sites
+# https://content.telar.org
+
+title: Telar Demos
+description: Demo content for Telar scrollytelling sites
+url: https://content.telar.org
+baseurl: ""
+
+# Build settings
+markdown: kramdown
+sass:
+  style: compressed
+
+# Exclude from build
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - README.md
+  - generator/
+  - dev-docs/
+  - .gitignore
+  - LICENSE
+  # Telar's own test suite and the configuration that runs it. Nothing on a
+  # site links to any of it, and a fixture is content written to be wrong in
+  # a particular way — published, it is indistinguishable from the site's own.
+  - tests/
+  - pytest.ini
+  - vitest.config.js
+  # Page, story and glossary sources. The build reads them and generates the
+  # published pages from them; Jekyll rendering them as well puts a raw,
+  # unprocessed copy of every one at a second URL, and a source that declares
+  # its own permalink lands on top of the page generated from it.
+  - telar-content/texts/
+
+# Include static directories
+include:
+  - demos
+  - iiif

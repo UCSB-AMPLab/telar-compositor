@@ -16,7 +16,7 @@
  * Mock strategy mirrors tests/_app.homepage.test.tsx, but uses the REAL `yjs`
  * module and a REAL Y.Doc (not the inert stub) so observers actually fire.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -90,6 +90,8 @@ vi.mock("~/hooks/use-collaborative-text", () => ({
   useCollaborativeText: (_yText: unknown, initialValue: string) => ({
     value: initialValue,
     handleChange: vi.fn(),
+    currentValue: () => initialValue,
+    lastWriteIsOwn: () => false,
   }),
 }));
 

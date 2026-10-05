@@ -1,53 +1,38 @@
 {
   "app_name": "Telar Compositor",
-  "language_toggle": "ES",
   "loading": "Loading...",
   "error": "Something went wrong",
   "learn_more": "Learn more",
-  "coming_soon": "This section will be available in a future update.",
-  "autosave": {
-    "saving": "Saving...",
-    "saved": "Saved",
-    "all_saved": "All changes saved"
-  },
   "footer": {
     "attribution": "The Telar Compositor is a project of <neo>Neogranadina</neo> and the UC Santa Barbara <ampl>Archives, Memory, and Preservation Lab</ampl>"
   },
   "nav": {
-    "dashboard": "Start",
     "start": "Start",
     "docs": "Docs",
     "config": "Site settings",
-    "homepage": "Homepage",
     "objects": "Objects",
     "stories": "Stories",
     "pages": "Home and Pages",
     "glossary": "Glossary",
     "publish": "Publish",
+    "course": "Course",
     "site": "Site",
     "site_aria": "Open published site in a new tab"
   },
   "role": {
     "convenor": "Convenor",
     "collaborator": "Collaborator",
-    "denied_publish": "Only the convenor can publish.",
-    "denied_upgrade": "Only the convenor can update Telar.",
-    "ask_convenor_publish": "Ask convenor to publish"
+    "denied_publish": "You can't publish this site: your account doesn't have a role on this project.",
+    "denied_upgrade": "You can't update Telar on this site: your account doesn't have a role on this project.",
+    "instructor": "Instructor"
   },
   "user_menu": {
     "report_problem": "Report a problem"
   },
   "objects": {
-    "empty_heading": "No objects yet",
     "empty_body": "Add your first object to start building stories. New here? Finish setup in Site settings."
   },
-  "onboarding": {
-    "next_add_object": "Next: add your first object"
-  },
-  "sync_banner": {
-    "message": "Your GitHub repository has changed since the last sync. Review the changes to keep the compositor's working copy up to date.",
-    "action": "Review changes"
-  },
+  "upgrade_awaits_convenor": "This site is running an older version of Telar, so uploading images and publishing are unavailable for now. The upgrade needs a GitHub App permission, and only the site's convenor can accept it. Ask them to upgrade the site.",
   "dialog": {
     "dismiss_cancel": "Go back",
     "dismiss_confirm": "Close"
@@ -55,6 +40,7 @@
   "user_menu_aria": "User menu",
   "status": {
     "in_sync": "In sync",
+    "unpublished": "Unpublished changes",
     "unpublished_one": "{{n}} unpublished change",
     "unpublished_other": "{{n}} unpublished changes",
     "publish_cta": "Publish",
@@ -64,7 +50,10 @@
     "upgrade": "Telar {{version}} available",
     "upgrade_cta": "Run upgrade",
     "saving": "Saving…",
-    "repo_unavailable": "Repo unavailable"
+    "repo_unavailable": "Repo unavailable",
+    "halted": "Saving stopped",
+    "halted_action": "Restore",
+    "repo_invitation": "Repository invitation"
   },
   "untitled": "Untitled",
   "a11y": {
@@ -72,14 +61,70 @@
     "close_notification": "Close notification",
     "main_navigation": "Main navigation",
     "edit_slug": "Edit URL slug",
-    "orphan_story_files": "Orphan story files",
     "onboarding_progress": "Onboarding progress",
     "import_progress": "Import progress",
     "activity_rail": "Activity and recovery rail"
   },
   "cancel": "Cancel",
+  "close": "Close",
   "sign_out": "Sign out",
   "no_image": "No image",
   "dismiss": "Dismiss",
-  "switch_language": "Switch to {{label}}"
+  "switch_language": "Switch to {{label}}",
+  "course_label": "Course",
+  "sheet_warnings": {
+    "summary_one": "{{count}} warning in your sheets",
+    "summary_other": "{{count}} warnings in your sheets",
+    "summary_files_one": "{{count}} warning about your site's files",
+    "summary_files_other": "{{count}} warnings about your site's files",
+    "ragged_row": {
+      "named": "Row \"{{row}}\" in the sheet \"{{sheet}}\" has values in columns with no heading, so Telar left them out. To keep them, give each of those columns a heading in the sheet.",
+      "numbered": "Row {{row}} in the sheet \"{{sheet}}\" has values in columns with no heading, so Telar left them out. To keep them, give each of those columns a heading in the sheet."
+    },
+    "bilingual_header_row": {
+      "named": "Telar skipped row \"{{row}}\" in the sheet \"{{sheet}}\" because it looks like a second row of headings. If it actually holds content, check it in the sheet.",
+      "numbered": "Telar skipped row {{row}} in the sheet \"{{sheet}}\" because it looks like a second row of headings. If it actually holds content, check it in the sheet."
+    },
+    "blank_header": "Column {{column}} in the sheet \"{{sheet}}\" has no heading, so Telar left its values out. To keep them, give the column a heading in the sheet.",
+    "column_collision_only_filled": "The sheet \"{{sheet}}\" has more than one column for \"{{name}}\": {{headers}}. Only \"{{kept}}\" (column {{column}}) has values, so Telar used it and ignored the empty ones. Delete the empty columns from the sheet.",
+    "column_collision_last": "The sheet \"{{sheet}}\" has more than one column for \"{{name}}\" ({{headers}}), and more than one of them has values. Telar used the last one (column {{column}}) and left the others out. Keep only the column you want and remove the others from the sheet.",
+    "reserved_column_one": "The sheet \"{{sheet}}\" has a column whose heading Telar keeps for its own use: {{columns}}. You can't publish until you remove it. You can remove it on the Publish tab, or change the heading in the sheet.",
+    "reserved_column_other": "The sheet \"{{sheet}}\" has columns whose headings Telar keeps for its own use: {{columns}}. You can't publish until you remove them. You can remove each one on the Publish tab, or change the headings in the sheet.",
+    "header_spelling_one": "In the sheet \"{{sheet}}\", your site doesn't recognize the heading {{headers}}. It expects {{names}}, so what's in that column doesn't appear on your site. Publish your site from the Publish tab to correct the heading.",
+    "header_spelling_other": "In the sheet \"{{sheet}}\", your site doesn't recognize the headings {{headers}}. It expects {{names}}, in that order, so what's in those columns doesn't appear on your site. Publish your site from the Publish tab to correct the headings.",
+    "header_spelling_object_id": "In the sheet \"{{sheet}}\", your site doesn't recognize the heading {{headers}}. It expects {{names}}, so it can't read any of your objects. Publish your site from the Publish tab to correct the heading.",
+    "header_spelling_sheets_one": "Your site reads the tab \"{{sheet}}\" from Google Sheets, and Telar may not recognize its heading {{headers}}. It expects {{names}}. Change the heading in that tab in Google Sheets so that what's in the column appears on your site. If your site stops reading from Google Sheets, your next publish corrects the heading for you.",
+    "header_spelling_sheets_other": "Your site reads the tab \"{{sheet}}\" from Google Sheets, and Telar may not recognize its headings {{headers}}. It expects {{names}}, in that order. Change the headings in that tab in Google Sheets so that what's in those columns appears on your site. If your site stops reading from Google Sheets, your next publish corrects the headings for you.",
+    "instruction_column_one": "The sheet \"{{sheet}}\" has a column whose heading starts with \"#\": {{columns}}. Telar treats these columns as notes to you, so their content doesn't appear on your site. If you want it to appear, remove the \"#\" from the heading.",
+    "instruction_column_other": "The sheet \"{{sheet}}\" has columns whose headings start with \"#\": {{columns}}. Telar treats these columns as notes to you, so their content doesn't appear on your site. If you want it to appear, remove the \"#\" from their headings.",
+    "folded_columns": "The sheet \"{{sheet}}\" has columns Telar reads as one: {{groups}}. You can't publish until you keep only one column of each group and remove the others from the sheet.",
+    "coordinate_invalid": "In the sheet \"{{sheet}}\", step {{step}} has the value \"{{value}}\" in {{column}}. It isn't a number, so Telar left it out and the step uses the default. Enter a number for it in the story's editor, or in your Google Sheet if your site reads from Google Sheets.",
+    "page_below_one": "In the sheet \"{{sheet}}\", step {{step}} has page \"{{value}}\", which is below 1, so your site won't use it. Enter a page number of 1 or more in the story's editor, or in your Google Sheet if your site reads from Google Sheets.",
+    "page_truncated": "In the sheet \"{{sheet}}\", step {{step}} has page \"{{value}}\", which your site will read as page {{readAs}}. If you meant another page, enter it as a whole number in the story's editor, or in your Google Sheet if your site reads from Google Sheets.",
+    "object_site_id_shared": "In the sheet \"{{sheet}}\", your site reads {{ids}} as one object and shows {{shown}}. On the Objects tab, change the ID of one of them, or delete the one you don't want to keep.",
+    "object_site_id_shared_split": "In the sheet \"{{sheet}}\", your site reads {{ids}} as one object, and different parts of your site show different rows. On the Objects tab, change the ID of one of them, or delete the one you don't want to keep.",
+    "object_id_repeated": "In the sheet \"{{sheet}}\", {{id}} appears in more than one row. Your site uses the last one, and your next publish keeps only that row.",
+    "object_id_repeated_split": "In the sheet \"{{sheet}}\", {{id}} appears in more than one row, and different parts of your site show different rows. Your next publish keeps only the last row, and your site then uses it everywhere.",
+    "tree_truncated": "Your repository has more files than GitHub lists at once, so Telar may not have found some of your images. If an object's image doesn't appear, check on GitHub that the file is in the telar-content/objects folder.",
+    "unreadable_characters": {
+      "build_stops": "The file \"{{file}}\" has characters your site can't read, so your site can't update.",
+      "left_out": "The file \"{{file}}\" has characters your site can't read, so your site leaves it out.",
+      "name_shown": "The file \"{{file}}\" has characters your site can't read, so your site shows the file's name instead of its text.",
+      "from_sheets": "On GitHub, the file \"{{file}}\" has characters that aren't valid text. Your site takes this sheet from Google Sheets, so it isn't affected.",
+      "not_used": "The file \"{{file}}\" has characters that aren't valid text. Your site doesn't use this file, so it isn't affected.",
+      "repair": {
+        "publish": "The next time you publish a change, your site's copy is replaced, with � in place of those characters.",
+        "title_then_publish": "Give this page a title on the Pages tab, and your next publish replaces them with �.",
+        "import_then_publish": "If you import this page, your next publish replaces them with �.",
+        "remove_old_copy": "It's an old copy of one of your stories, and your next publish removes it."
+      }
+    }
+  },
+  "site_changed": {
+    "title": "This tab is out of date",
+    "body_stopped": "In another tab you opened the site {{other}}, while this tab was showing the site {{site}}, so the Compositor stopped what you just did here rather than apply it to {{other}}.",
+    "body_stale": "In another tab you opened the site {{other}} while this tab was showing the site {{site}}. Reload this tab before you make more changes.",
+    "next": "Reload this tab to work on {{other}}. To go back to {{site}}, reload, click the site name (top left, next to the Telar logo) and choose {{site}} from the list.",
+    "reload": "Reload"
+  }
 }

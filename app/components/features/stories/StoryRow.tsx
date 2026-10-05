@@ -54,6 +54,8 @@ interface StoryRowProps {
   deleteTooltip?: string;
   /** When true, trash click calls onDelete directly (parent handles confirm). */
   skipInternalConfirm?: boolean;
+  /** When true, the toggles and the delete button are disabled. */
+  readOnly?: boolean;
   /** Optional extra className applied to the row wrapper (e.g. animations). */
   rowClassName?: string;
   /** Optional inline style applied to the row wrapper (e.g. presence highlight). */
@@ -72,6 +74,7 @@ export function StoryRow({
   canDelete = true,
   deleteTooltip,
   skipInternalConfirm = false,
+  readOnly = false,
   rowClassName,
   rowStyle,
 }: StoryRowProps) {
@@ -132,6 +135,7 @@ export function StoryRow({
             <Switch
               checked={isDraft}
               onChange={() => onToggleDraft(story)}
+              disabled={readOnly}
               label={t("draft_toggle")}
             />
           </div>
@@ -146,6 +150,7 @@ export function StoryRow({
             <Switch
               checked={isPrivate}
               onChange={() => onTogglePrivate(story)}
+              disabled={readOnly}
               label={t("private_toggle")}
             />
           </div>
@@ -166,15 +171,15 @@ export function StoryRow({
             type="button"
             aria-label={t("delete_story.title")}
             onClick={() => {
-              if (!canDelete) return;
+              if (!canDelete || readOnly) return;
               if (skipInternalConfirm) onDelete(story);
               else setDeleteOpen(true);
             }}
             onPointerDown={(e) => e.stopPropagation()}
-            disabled={!canDelete}
+            disabled={!canDelete || readOnly}
             title={!canDelete ? deleteTooltip : undefined}
             className={`shrink-0 transition-colors ${
-              canDelete
+              canDelete && !readOnly
                 ? "text-gray-300 hover:text-red-400 cursor-pointer"
                 : "text-gray-200 cursor-not-allowed"
             }`}

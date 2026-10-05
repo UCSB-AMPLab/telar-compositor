@@ -224,7 +224,8 @@ describe("fetchAndParseManifest scheme guard", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://example.org/manifest.json"
+      "https://example.org/manifest.json",
+      { signal: undefined },
     );
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("Expected ok");

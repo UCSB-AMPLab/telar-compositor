@@ -1,0 +1,11 @@
+-- The per-site soft limit on a step answer's length, enforced at publish.
+--
+-- @version v1.5.0-beta
+--
+-- answer_word_limit: words allowed in one step's answer under the shared
+-- counting rule. NULL means the default (ANSWER_WORD_LIMIT_DEFAULT), resolved
+-- in code rather than stored, so a site created before this column existed is
+-- held to the same number as one created after it. 0 means no limit; only an
+-- explicit positive value overrides the default. Layers and the question are
+-- not limited.
+ALTER TABLE project_config ADD COLUMN answer_word_limit integer;

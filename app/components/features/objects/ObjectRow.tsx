@@ -14,15 +14,19 @@
  * beside the open-arrow — hidden until hover, gated by canDelete, and
  * wired to the route's existing DeleteConfirmationModal flow through the
  * onDelete prop.
+ *
+ * @version v1.5.0-beta
  */
 
 import { Package, Star, Video, Music, Trash2, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 import { deriveStatus } from "~/lib/iiif-types";
+import { useThumbnailRefresh } from "~/lib/object-thumbnail-refresh";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
 import { detectMediaType } from "~/lib/media-type";
+import { isExternalSource, siteIiifObjectBase, type SharedSiteId } from "~/lib/object-id";
 
 export interface ObjectRowObject {
   id: number;
@@ -44,8 +48,14 @@ export interface ObjectRowObject {
 interface ObjectRowProps {
   object: ObjectRowObject;
   onToggleFeatured: (object: ObjectRowObject) => void;
+  /** The row's controls are disabled while the list stands in for an unsynced document. */
+  readOnly?: boolean;
   /** Site base URL for constructing self-hosted IIIF thumbnail URLs */
   siteBaseUrl: string | null;
+  /** The site's `telar_version`, which decides the id its tiles are under. */
+  frameworkVersion?: string | null;
+  /** The other rows the site reads as this same object, when there are any. */
+  sharedSiteId?: SharedSiteId | null;
   /**
    * Display-only thumbnail URL resolved server-side from the object's external
    * IIIF manifest (loader enrichment). Used when the collaborative Y.Doc copy of
@@ -60,6 +70,14 @@ interface ObjectRowProps {
    * "Used in N steps" / "Unused" line — no toggle, no mutation.
    */
   usedInSteps?: number;
+  /**
+   * Called when the thumbnail image fails to load. Answers the form fields for
+   * a request to `/api/object-thumbnail`, or nothing when the route does not
+   * want the manifest asked again.
+   */
+  onThumbnailFailed?: (object: ObjectRowObject) => Record<string, string> | null | void;
+  /** Called with the manifest's current thumbnail, for the route to write into the live document. */
+  onThumbnailRefreshed?: (object: ObjectRowObject, thumbnail: string) => void;
   /**
    * Per-row delete affordance. When provided, a hover-revealed delete button
    * renders beside the open-arrow; the route wires this to its existing
@@ -118,7 +136,7 @@ function StatusBadge({ status, objectId }: { status: ReturnType<typeof deriveSta
   if (status === "image_missing" && objectId) {
     return (
       <Link
-        to={`/objects/${objectId}`}
+        to={`/objects/${encodeURIComponent(objectId)}`}
         className={`shrink-0 inline-flex items-center gap-1.5 text-xs rounded-full px-2 py-0.5 transition-colors ${badgeClass}`}
       >
         {inner}
@@ -138,15 +156,21 @@ function StatusBadge({ status, objectId }: { status: ReturnType<typeof deriveSta
 export function ObjectRow({
   object,
   onToggleFeatured,
+  readOnly = false,
   siteBaseUrl,
+  frameworkVersion,
+  sharedSiteId,
   fallbackThumbnail,
   usedInSteps,
+  onThumbnailFailed,
+  onThumbnailRefreshed,
   onDelete,
   canDelete = true,
   deleteTooltip,
 }: ObjectRowProps) {
   const { t } = useTranslation("objects");
   const [imgFailed, setImgFailed] = useState(false);
+  const askForThumbnail = useThumbnailRefresh(object, onThumbnailFailed, onThumbnailRefreshed);
   const isFeatured = object.featured ?? false;
   const mediaType = detectMediaType(object.source_url, object.object_id);
   const isMedia = mediaType === "youtube" || mediaType === "vimeo" || mediaType === "google-drive" || mediaType === "audio";
@@ -160,13 +184,11 @@ export function ObjectRow({
 
   // Resolve thumbnail: stored URL for external IIIF, or fetch from
   // info.json for self-hosted (Level 0 — must use pre-generated sizes).
-  const isExternal =
-    object.source_url !== null &&
-    (object.source_url.startsWith("http://") || object.source_url.startsWith("https://"));
+  const isExternal = isExternalSource(object.source_url);
 
   const selfHostedInfoUrl =
     !isExternal && siteBaseUrl && object.image_available
-      ? `${siteBaseUrl}/iiif/objects/${object.object_id}/info.json`
+      ? `${siteIiifObjectBase(siteBaseUrl, object.object_id, frameworkVersion)}/info.json`
       : null;
 
   const resolvedThumbnail = useIiifThumbnail(
@@ -178,6 +200,11 @@ export function ObjectRow({
   // server-resolved fallback (external IIIF) or the self-hosted info.json result.
   const thumbnailUrl = object.thumbnail || fallbackThumbnail || resolvedThumbnail;
 
+  // A replaced URL gets its own try.
+  useEffect(() => {
+    setImgFailed(false);
+  }, [thumbnailUrl]);
+
   return (
     <div className="group flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white hover:bg-gray-50 transition-colors">
       {/* Featured star (leftmost) — caracol when filled, fg-faint when hollow */}
@@ -185,7 +212,8 @@ export function ObjectRow({
         type="button"
         aria-label={isFeatured ? t("unmark_featured") : t("mark_featured")}
         onClick={() => onToggleFeatured(object)}
-        className={`shrink-0 transition-colors ${
+        disabled={readOnly}
+        className={`shrink-0 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
           isFeatured
             ? "text-caracol hover:text-caracol"
             : "text-fg-faint hover:text-caracol"
@@ -211,7 +239,10 @@ export function ObjectRow({
             alt={object.title ?? t("common:untitled")}
             className="w-full h-full object-cover"
             // Fall through to the Package icon if the thumbnail fails to load
-            onError={() => setImgFailed(true)}
+            onError={() => {
+              setImgFailed(true);
+              askForThumbnail();
+            }}
           />
         ) : (
           <Package className="w-5 h-5 text-gray-400" />
@@ -252,6 +283,11 @@ export function ObjectRow({
             <StatusBadge status={status} objectId={object.object_id} />
           </span>
         </div>
+        {sharedSiteId && (
+          <p className="mt-0.5 font-body text-xs text-amber-700">
+            {t("site_id_shared", { others: sharedSiteId.others.join(", "), shown: sharedSiteId.shown })}
+          </p>
+        )}
       </div>
 
       {/* Year column — hidden on phones (folded into the metadata line above) */}
@@ -281,7 +317,7 @@ export function ObjectRow({
 
       {/* Open arrow — opens the object detail / edit panel */}
       <Link
-        to={`/objects/${object.object_id}`}
+        to={`/objects/${encodeURIComponent(object.object_id)}`}
         aria-label={t("edit_button")}
         className="shrink-0 inline-flex items-center justify-center text-gray-400 hover:text-charcoal transition-colors"
       >

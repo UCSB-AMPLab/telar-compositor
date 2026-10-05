@@ -1,18 +1,15 @@
 /**
- * FreezeModal — Full-screen overlay shown to collaborators during an
- * owner-initiated blocking operation (publish or upgrade).
+ * FreezeModal — Full-screen overlay shown while a blocking operation (publish
+ * or upgrade) that another user started is running, or after it failed.
  *
  * Used by PublishFreezeModal (publish flow) and UpgradeFreezeModal (upgrade
  * flow). Props-driven — no i18n lookups inside. Specific wrappers supply
  * localised strings from their namespace.
  *
- * Visibility rule: the modal is intended for collaborators who are NOT the
- * initiator — they need to know editing is paused. The owner already has a
- * dedicated action page (publish, upgrade) with inline progress/error UI,
- * so rendering the modal for them duplicates feedback and hides their page.
- * The modal therefore returns null when isOwner is true, regardless of
- * isActive / hasError. bodyOwner is retained in the props shape for
- * compatibility with existing wrappers but is unused.
+ * The caller decides who sees it: `isActive` and `hasError` describe only an
+ * operation someone else holds. Whoever started it has the action page
+ * (publish, upgrade) with inline progress and errors, and the modal over that
+ * page would hide it.
  */
 
 import { Loader2, AlertCircle } from "lucide-react";
@@ -22,13 +19,9 @@ export interface FreezeModalProps {
   isActive: boolean;
   /** True when the operation errored. Error state shown. */
   hasError: boolean;
-  /** True when the current user initiated the operation. */
-  isOwner: boolean;
   /** Spinner-state heading. */
   heading: string;
-  /** Spinner-state body shown to the owner. */
-  bodyOwner: string;
-  /** Spinner-state body shown to collaborators. */
+  /** Spinner-state body. */
   bodyCollaborator: string;
   /** Error-state heading. */
   errorHeading: string;
@@ -45,9 +38,7 @@ export interface FreezeModalProps {
 export function FreezeModal({
   isActive,
   hasError,
-  isOwner,
   heading,
-  bodyOwner,
   bodyCollaborator,
   errorHeading,
   errorBody,
@@ -55,9 +46,6 @@ export function FreezeModal({
   onDismiss,
   labelId = "freeze-modal-heading",
 }: FreezeModalProps) {
-  // Owner-initiated flow: owner has their own inline page UI for progress
-  // and errors. Showing the modal duplicates feedback and hides the page.
-  if (isOwner) return null;
   if (!isActive && !hasError) return null;
   return (
     <div
@@ -89,7 +77,7 @@ export function FreezeModal({
               {heading}
             </h2>
             <p className="font-body text-sm text-gray-500">
-              {isOwner ? bodyOwner : bodyCollaborator}
+              {bodyCollaborator}
             </p>
           </>
         )}

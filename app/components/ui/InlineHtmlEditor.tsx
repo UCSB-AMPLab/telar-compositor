@@ -17,7 +17,11 @@
  * value is observed independently so the render stays live (e.g. a collaborator's
  * remote edit) even when this client isn't editing.
  *
- * @version v1.3.0-beta
+ * The link popover is portalled to `document.body` and registers with this
+ * field's focus scope (focus-scope.ts), so focus moving into it keeps the
+ * field in edit mode.
+ *
+ * @version v1.5.0-beta
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -31,6 +35,11 @@ import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { sanitiseInlineHtml } from "~/lib/sanitise-html";
 import { wrapHtml, insertHtmlLink, type LinkSnapshot } from "~/components/ui/html-commands";
 import { LinkPopover } from "~/components/ui/markdown-editor/LinkPopover";
+import { caretAnchor, type PopoverAnchor } from "~/components/ui/markdown-editor/EditorPopover";
+import { FocusScopeContext, useFocusScope } from "~/components/ui/focus-scope";
+import { cleanPasteExtension } from "~/components/ui/markdown-editor/cleanPaste";
+import { toolbarPress } from "~/components/ui/markdown-editor/toolbar-press";
+import { StableHtml } from "~/components/ui/StableHtml";
 
 export interface InlineHtmlEditorProps {
   initialValue: string;          // SSR / pre-connection fallback (raw HTML)
@@ -43,6 +52,15 @@ export interface InlineHtmlEditorProps {
    * here to name both the click-to-edit box and the editor textbox.
    */
   ariaLabel?: string;
+  /**
+   * False makes the field read-only: the box shows the render and never opens
+   * the source editor. The Y.Text binding is what makes this a permission
+   * surface rather than a cosmetic one — a caller who may not change the
+   * stored value must not be able to type into the shared document, because
+   * the Durable Object snapshots that document straight back into D1.
+   * Composes with the publish lock; both must be clear to edit.
+   */
+  editable?: boolean;
 }
 
 // Box chrome shared by the render view and the editor so the swap is seamless.
@@ -55,7 +73,7 @@ function ToolbarButton({ icon: Icon, tooltip, onAction }: {
     <button
       type="button"
       title={tooltip}
-      onMouseDown={(e) => { e.preventDefault(); onAction(); }}
+      {...toolbarPress(onAction)}
       className="p-1.5 text-gray-500 hover:text-charcoal hover:bg-cream-dark rounded transition-colors"
     >
       <Icon className="w-4 h-4" />
@@ -64,20 +82,23 @@ function ToolbarButton({ icon: Icon, tooltip, onAction }: {
 }
 
 export function InlineHtmlEditor({
-  initialValue, yText, placeholder, className = "", ariaLabel,
+  initialValue, yText, placeholder, className = "", ariaLabel, editable = true,
 }: InlineHtmlEditorProps) {
   const { t } = useTranslation("editor");
   const { provider, isPublishing } = useCollaborationContext();
+  // One lock for both reasons the field can be closed to writing.
+  const locked = isPublishing || !editable;
   const [mounted, setMounted] = useState(false);
   const [editing, setEditing] = useState(false);
   // Live value, mirrored from the Y.Text so the render reflects remote edits
   // even when this client isn't editing.
   const [value, setValue] = useState(initialValue);
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [linkPos, setLinkPos] = useState<{ top: number; left: number } | null>(null);
+  const [linkAnchor, setLinkAnchor] = useState<PopoverAnchor | null>(null);
   const [linkSelected, setLinkSelected] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const focusScope = useFocusScope(wrapperRef, {});
   const viewRef = useRef<EditorView | null>(null);
   const readOnly = useRef(new Compartment());
   // Selection snapshot captured when the link popover opens. The popover input
@@ -105,12 +126,7 @@ export function InlineHtmlEditor({
     const text = view.state.sliceDoc(from, to);
     linkSnapshotRef.current = { from, to, text };
     setLinkSelected(text);
-    const coords = view.coordsAtPos(from);
-    const wrapRect = wrapperRef.current?.getBoundingClientRect();
-    if (coords && wrapRect) {
-      setLinkPos({ top: coords.bottom - wrapRect.top + 4, left: coords.left - wrapRect.left });
-    }
-    setLinkOpen(true);
+    setLinkAnchor(caretAnchor(view, from, () => toolbarRef.current ?? wrapperRef.current));
   }
 
   // EditorView lifecycle — mounted ONLY while editing (the box otherwise shows
@@ -136,9 +152,10 @@ export function InlineHtmlEditor({
             { key: "Mod-k", run: () => { openLinkPopover(); return true; } },
           ]),
           EditorView.lineWrapping,
+          cleanPasteExtension,
           ...(ariaLabel ? [EditorView.contentAttributes.of({ "aria-label": ariaLabel })] : []),
           ...(placeholder ? [cmPlaceholder(placeholder)] : []),
-          readOnly.current.of(EditorState.readOnly.of(isPublishing)),
+          readOnly.current.of(EditorState.readOnly.of(locked)),
           ...(yText ? [yCollab(yText, provider?.awareness ?? null, { undoManager: localUndo ?? false })] : []),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) setValue(u.state.doc.toString());
@@ -147,7 +164,7 @@ export function InlineHtmlEditor({
             blur: (e) => {
               const rt = e.relatedTarget as Node | null;
               // Stay in edit mode while focus is inside the field (toolbar / link popover).
-              if (!wrapperRef.current?.contains(rt)) setEditing(false);
+              if (!focusScope.contains(rt)) setEditing(false);
               return false;
             },
           }),
@@ -163,16 +180,22 @@ export function InlineHtmlEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, editing, yText]);
 
-  // Publish-lock: reconfigure when isPublishing changes during an edit session.
+  // Reconfigure when the lock changes during an edit session.
   useEffect(() => {
     if (!editing || !viewRef.current) return;
     viewRef.current.dispatch({
-      effects: readOnly.current.reconfigure(EditorState.readOnly.of(isPublishing)),
+      effects: readOnly.current.reconfigure(EditorState.readOnly.of(locked)),
     });
-  }, [isPublishing, editing]);
+  }, [locked, editing]);
+
+  // A locked field never opens the editor at all, so no Y.Text binding is
+  // created and the shared document cannot be reached from here.
+  useEffect(() => {
+    if (locked) setEditing(false);
+  }, [locked]);
 
   function startEditing() {
-    if (!isPublishing) setEditing(true);
+    if (!locked) setEditing(true);
   }
 
   if (!mounted) {
@@ -180,10 +203,11 @@ export function InlineHtmlEditor({
   }
 
   return (
+    <FocusScopeContext.Provider value={focusScope}>
     <div ref={wrapperRef} className={`relative ${className}`}>
       {editing ? (
         <>
-          <div className="flex items-center gap-0.5 px-2 py-1 mb-2 border-b border-gray-100 bg-black/5 rounded-t">
+          <div ref={toolbarRef} className="flex items-center gap-0.5 px-2 py-1 mb-2 border-b border-gray-100 bg-black/5 rounded-t">
             <ToolbarButton icon={Bold} tooltip={t("toolbar.bold")} onAction={() => viewRef.current && wrapHtml(viewRef.current, "strong")} />
             <ToolbarButton icon={Italic} tooltip={t("toolbar.italic")} onAction={() => viewRef.current && wrapHtml(viewRef.current, "em")} />
             <ToolbarButton icon={Link} tooltip={t("toolbar.link")} onAction={openLinkPopover} />
@@ -192,12 +216,16 @@ export function InlineHtmlEditor({
             ref={containerRef}
             className={`${BOX} [&_.cm-editor]:outline-none [&_.cm-content]:font-body`}
           />
-          {linkOpen && linkPos && (
+          {linkAnchor && (
             <LinkPopover
-              position={linkPos}
+              anchor={linkAnchor}
               selectedText={linkSelected}
-              onInsert={(url) => { if (viewRef.current) insertHtmlLink(viewRef.current, url, linkSnapshotRef.current ?? undefined); setLinkOpen(false); setLinkPos(null); }}
-              onCancel={() => { setLinkOpen(false); setLinkPos(null); }}
+              onInsert={(url) => { if (viewRef.current) insertHtmlLink(viewRef.current, url, linkSnapshotRef.current ?? undefined); setLinkAnchor(null); }}
+              onCancel={() => setLinkAnchor(null)}
+              onDetach={() => {
+                setLinkAnchor(null);
+                viewRef.current?.contentDOM.focus({ preventScroll: true });
+              }}
             />
           )}
         </>
@@ -209,13 +237,14 @@ export function InlineHtmlEditor({
           aria-label={ariaLabel}
           onClick={startEditing}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); startEditing(); } }}
-          className={`${BOX} min-h-[3rem] cursor-text hover:border-gray-300 focus:border-anil focus:outline-none ${isPublishing ? "opacity-60 cursor-not-allowed" : ""}`}
+          className={`${BOX} min-h-[3rem] cursor-text hover:border-gray-300 focus:border-anil focus:outline-none ${locked ? "opacity-60 cursor-not-allowed" : ""}`}
         >
           {value.trim() ? (
-            <span
+            <StableHtml
+              as="span"
               aria-hidden="true"
               className="pointer-events-none [&_a]:text-anil-ink [&_a]:underline"
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
+              html={previewHtml}
             />
           ) : (
             <span className="pointer-events-none text-gray-400">{placeholder}</span>
@@ -223,5 +252,6 @@ export function InlineHtmlEditor({
         </div>
       )}
     </div>
+    </FocusScopeContext.Provider>
   );
 }

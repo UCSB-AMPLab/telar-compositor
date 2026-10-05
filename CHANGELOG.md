@@ -1,5 +1,116 @@
 # Changelog
 
+## v1.5.0-beta (2026-10-04)
+
+The teaching release: course projects with join codes and shared object collections, a per-contributor record of group work, and publishing opened to every member of a group. The story editor is rebuilt around a stage that shows each step as a visitor will see it. Edits made on GitHub are now read back before a publish instead of being overwritten, and a large set of fixes stops authored content from being lost between the Compositor and the published site.
+
+### New features
+
+- **Course projects** — A convenor can mark a project as a course and share its objects with every group site that joins it. Students join with a reusable join code, either while creating a site or later from Site settings; course objects are tagged in each site's objects list and cannot be deleted there. The Course tab lists the sites in the course and manages its join codes. Please contact us if you are an instructor and would like to try this feature.
+
+- **Instructors and staff codes** — Courses have an Instructor role, shown with its own badge and left out of member counts. A convenor can issue a staff code, which a co-instructor or teaching assistant redeems under "Join a course as staff" on the account page; they are then added to every group site in the course, including sites that join later. Removing a staff member from the course removes them from every group site at once. When a site leaves the course, the course's staff are removed from that site's team.
+
+- **Every member can publish, upload and upgrade** — Publishing, uploading objects and upgrading the site are no longer limited to the convenor: collaborators and instructors can do all three. Commits are made by the Compositor's GitHub App, with the publisher named in the commit message. Thanks UCSB INT 138LA students for your feedback!
+
+- **Repository access held by GitHub** — The Compositor now adds each new member as a collaborator on the site's GitHub repository. GitHub requires the person to accept an invitation; it appears in the site-status pill and when they open the project, and they can accept it there without going to GitHub. The "Repository access" page shows convenors each member's state (access, invitation pending, invitation lapsed, none) and lets them reissue an invitation or withdraw access. Removing a member withdraws the access the Compositor gave. Members who joined before this release are not added automatically.
+
+- **Contribution record** — Each project has a record of who made and wrote what: items added, items written in, words written, and time spent in the Compositor, with the idle threshold stated beside it. Cataloguing objects counts as its own row. Every measure says what it does not capture, nothing is ranked or totalled, and everyone with access to the project can see it, in its own view and in the collaboration sidebar. It can be downloaded as a CSV, one row per person with a column for each measure; anyone with access to the project can download it. Authorship for content written before this release is recovered where the collaborative document still holds it and shown as unknown where it does not.
+
+- **The story editor shows the step as published** — The image viewer now fills the editor, and the step card, layer panels and controls sit over it as they do on the site from Telar 1.8.0: beside, below or over the object depending on the window, with video and audio steps laid out as the site lays them out. Title and section cards appear on the stage, a dashed line marks where the published card cuts the text, and the question, answer and layer-button label are edited in place, with pencil buttons beside each. Steps can be reordered from the keyboard. Capture now measures framing against the image and the region beside the card, so a captured view replays where the author left it; the capture viewer can no longer be rotated or mirrored, since a step records neither, and a click on the image no longer zooms.
+
+- **Layer panels preview as the site renders them** — Accordions, tabs, carousels, bibliographies, footnotes and KaTeX maths preview as the site will publish them, and the step answer renders through the same rules. Glossary callouts can be inserted from the Widget menu and preview as the site places them.
+
+- **Footnote button** — The layer panel toolbar has a Footnote button. It inserts the reference at the cursor and the note where the site will read it, and says so when the cursor is somewhere a note cannot go.
+
+- **Answer length measured in lines** — An answer may have up to 18 lines and five paragraphs, counting 53 characters to a line and two lines for each paragraph break. The editor shows the count as you write, answers over 15 lines publish in slightly smaller type, and a publish is blocked for an answer the site would cut, with a pointer to the layer panels for the detail.
+
+- **Change a story's or an object's ID** — "Change ID" renames a story (its files, its row in the project sheet and its steps together) or an object (its files and every step that uses it). The editor still opens a story from an address that uses an earlier ID.
+
+- **Custom object fields** — Custom columns in `objects.csv` are shown and edited on the object page, in the sheet's column order. Two people editing different custom fields of the same object no longer lose one of the edits. A publish blocked by a column the framework refuses offers to remove that column from the story, from every object or from every glossary term.
+
+- **Glossary kinds** — Each glossary entry has a kind, chosen from the standard kinds and the site's own, beside the entry title and as a column in the entry list; the preview shows the kind above the title. "Edit kinds" on the Glossary page adds and removes the site's own kinds, published to `_config.yml`.
+
+- **More object formats** — Audio files (MP3, OGG, M4A), PDF and WEBP can be uploaded. The upload dialog says "file" for what is picked from your disk and lists the accepted formats, and shows a placeholder rather than a preview for formats a browser cannot display.
+
+- **Page chooser for multi-page objects** — Picking a multi-page object for a step opens a chooser with page thumbnails and a page-number box, and a Change button in the bar reopens it. A new step starts from the previous one.
+
+- **Imports from any default branch** — Importing a repository whose default branch is not `main` now offers to rename it, or to make an existing `main` the default, instead of sending you to GitHub. An import the GitHub App cannot reach returns you to the connect step with your choices kept.
+
+- **Colliding columns resolved in the Compositor** — When two columns Telar reads as one each hold values, the upgrade, sync, first import and story restore let you choose which to keep, and commit the choice so the site's next build passes. Sheets named in Spanish (`proyecto`, `objetos`, `glosario`) are read as the site reads them.
+
+- **Build workflow repair** — The publish warning about an out-of-date build workflow now has an "Update the build workflow" button.
+
+- **Restoring a project whose saving has stopped** — If the Compositor stops saving a project's changes, the site-status pill says so and why, and the convenor can restore it from the last save.
+
+- **Bug reports carry the site** — The bug reporter records the repository, the site's Telar version, recent commits made outside the Compositor and the last failed publish, and asks what changed recently. Server error messages are never attached, since the issue is public.
+
+### Fixes
+
+- **Edits made on GitHub are read, not overwritten** — The sync and publish checks now read step CSVs, layer files and page files, not only the sheets. A story or page changed on GitHub is listed with a choice of version, and a publish no longer replaces a file the Compositor has not read. Object order in `objects.csv`, and object rows changed on GitHub, are carried in the same way.
+
+- **Files keep their own layout** — Publishing keeps each CSV's column order, header spelling, comment and instruction rows, and custom columns, including empty ones and custom columns in `project.csv`. A page keeps its whole front matter, with only the title edited. An imported story keeps the order of its steps and layers.
+
+- **A failed read is never taken for a missing file** — The import, sync, restore and publish now refuse with the file named when GitHub cannot be read, instead of treating the file as absent and offering every row as removed. Files over 1 MB can be read, and a file that is not valid UTF-8 is named with how to repair it.
+
+- **Objects work finishes on the server** — Uploaded objects are registered as soon as their commit lands, not when the uploader's tab sees the build finish, and a publish finishes any objects work still owed before reading. An object counts as ready only once its tiles exist on the deployed site. Deleted objects no longer return, and deleting an object removes every row carrying its ID and its files.
+
+- **One language per site** — A site is in one language, so the Compositor keeps one file per page. A new site starts without the template's other-language page files, and an imported site's other-language page files are dropped on import and deleted from GitHub the next time you publish.
+
+- **Upgrades** — An upgrade delivers the site's menu only where it has none, adds framework-owned page settings without touching the author's, stamps the release date the framework declares, and is checked against the latest release before it commits. The post-upgrade screen lists only the steps that apply to you, and the upgrade page names the site it acts on. The upgrade page lists every file the upgrade deletes, and an upgrade that would delete one it did not list stops before changing anything. The steps after an upgrade are shown in the interface language.
+
+- **Characters that break a build** — Characters a Telar build rejects, such as those carried in text pasted from a PDF, are removed on paste and before every commit. An object or glossary ID beginning with `#`, which Telar reads as a comment, is refused at publish.
+
+- **Collaboration** — An editor alone in a project, or with the tab in the background, stays connected instead of reconnecting every 30 seconds or every two minutes. Collaborators whose tabs are in the background no longer drop out of the presence list, and reconnecting a tab no longer removes collaborators from the same browser's other tabs. A cancelled input-method composition no longer leaves its text behind, and a save that fails after its field has closed brings the draft back next time the field is opened.
+
+- **Private repositories** — Importing a private repository is no longer refused. The wizard warns that GitHub Pages doesn't publish private repositories on free GitHub accounts, explains how to publish it (make the repository public or use a paid account), and asks you to confirm with Understood before you can continue.
+
+- **Invitations and removals report what happened** — Inviting someone without a Compositor account now gives you the invitation link to send them, since the Compositor sends no email; a refused invitation or member removal now says why.
+
+- **Version gate** — A site behind the latest Telar release keeps the Objects page open and refuses only the upload, and the upgrade page says why you were sent there.
+
+- **Accessibility** — Dialogs are announced as dialogs and hold focus, the Markdown and site-description toolbars work from the keyboard, and popovers near the bottom of the window open above their anchor.
+
+- **Interface language** — Sheet warnings and sync reasons are shown in the interface language, the GitHub App has one name in Spanish, and "Compositor" is capitalised wherever the interface names the product.
+
+### Security and stability
+
+- **One publish or upgrade at a time** — A publish, upgrade or objects commit now holds a lock on the site for the length of its request. No second one can begin while it stands, the Publish and Upgrade buttons say who holds it, and editing waits only while the request runs.
+
+- **Editor freezes can no longer be forged** — The "publishing" and "upgrading" freeze is now held by the server, so a member can no longer freeze every collaborator's editor from their own browser, and each connection can update only its own presence entry.
+
+- **Writes act on the site the page was opened for** — A write from a tab still showing one site, after another tab switched to a second site, is refused instead of being applied to the second site.
+
+- **Membership is rechecked on open connections** — A removed member's open connection stops writing. Deleting an account closes the person's live connections, and deleting a course detaches its sites and removes its staff from them.
+
+- **Account deletion** — An account that has contributed to another person's site can now be deleted. The account row is kept with the person's name only, so their credit in each project's history stays; a later sign-in creates a new account.
+
+- **Unknown latest release pauses writes** — When the latest Telar release cannot be read, publish, upload, objects commits and repository deletion pause instead of proceeding as though the site were current.
+
+- **Redirect after upgrade** — The upgrade page's return link no longer follows an off-site address passed in the URL.
+
+- **Join codes are rate-limited** — Failed join-code redemptions are counted per user per hour.
+
+### Data layer
+
+Thirty-eight new D1 migrations. They add:
+
+- Course projects: course and parent-site links on projects, a course marker on objects, the Instructor role, reusable join codes with no use limit or expiry, a per-account course-access flag and a redemption rate limit.
+- Authorship and contributions: who last edited each entity, template authorship recorded as the template rather than a person, a table of who wrote in each entity with words written, an editing-time ledger, and a record of when a project's authorship was recovered.
+- Collaboration persistence: a generation and sequence on each project's saved document, and a write fence enforced by database triggers, so that only the current collaboration session can save a project.
+- Ordering: an order key on stories, steps, layers, objects, glossary terms and pages, so reordering never deletes and re-creates an entry.
+- File fidelity: kept custom columns for steps, glossary terms and `project.csv`, kept page front matter, the story file each story was read from, earlier story IDs, the page and story files the Compositor answers for, and the last commit whose `objects.csv` was read.
+- Objects work: a table recording objects operations until they finish, including ID changes.
+- Glossary: each entry's kind, and the site's own kinds.
+- Accounts and access: a deleted-account marker with triggers that keep a deleted account out of every membership, and each member's repository access and invitation state, with a table of access still to withdraw.
+- Identity: unique object IDs and glossary term IDs within a project.
+
+Several of these migrations rebuild tables, and none of them can be rolled back.
+
+### Toolchain
+
+- Added: `knap` (Markdown and YAML front matter serialisation), `katex` (maths preview), `entities` (HTML entity decoding that matches the site build).
+- Test tooling: `vitest` 4 and `@cloudflare/vitest-plugin`, which runs part of the suite against real D1.
+
 ## v1.4.5-beta (2026-08-27)
 
 A security patch: one onboarding action did not check project ownership.

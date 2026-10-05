@@ -1,3 +1,18 @@
+/**
+ * This file tests the GitHub commit and Actions helpers in commit.server.ts,
+ * plus the GraphQL transport in github.server.ts that they all travel on.
+ *
+ * Covers: the atomic multi-file commit and its deletion-existence probe, stale
+ * head detection, the Google Sheets config helpers, Pages URL verification and
+ * enablement, workflow dispatch and its unnamed-run fallbacks, the run and job
+ * readers, the build-phase mapping, and the classification that decides which
+ * GraphQL failures a caller is allowed to retry.
+ *
+ * Everything here runs against a mocked global fetch, so the real request
+ * shapes — URLs, headers, GraphQL bodies — are what the assertions see.
+ *
+ * @version v1.5.0-beta
+ */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   commitFilesToRepo,
@@ -12,9 +27,15 @@ import {
   BUILD_PHASES,
   dispatchWorkflow,
   getLatestWorkflowRun,
+  getWorkflowRun,
+  isRepoPrivate,
   type DispatchResult,
 } from "~/lib/commit.server";
-import { graphqlGitHub, githubHeaders } from "~/lib/github.server";
+import {
+  graphqlGitHub,
+  githubHeaders,
+  GitHubTransientError,
+} from "~/lib/github.server";
 
 const TOKEN = "test-token-xyz";
 const OWNER = "testuser";
@@ -95,6 +116,45 @@ describe("graphqlGitHub", () => {
     await expect(
       graphqlGitHub(TOKEN, "query { foo }", {})
     ).rejects.toThrow("Field 'foo' doesn't exist");
+  });
+
+  // The upgrade's workflow commit retries on a server error and on nothing
+  // else, and it decides by class rather than by message text. The three cases
+  // below are the whole basis of that decision.
+  it("Test 3a: a 5xx throws GitHubTransientError carrying the status", async () => {
+    globalThis.fetch = makeRestFetch({}, 503);
+
+    const err = await graphqlGitHub(TOKEN, "query { viewer { login } }", {}).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(GitHubTransientError);
+    expect((err as GitHubTransientError).status).toBe(503);
+    expect((err as Error).message).toBe("GitHub GraphQL error: 503");
+  });
+
+  it("Test 3b: a 4xx throws a plain Error, not the transient class", async () => {
+    globalThis.fetch = makeRestFetch({}, 422);
+
+    const err = await graphqlGitHub(TOKEN, "query { viewer { login } }", {}).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(GitHubTransientError);
+    expect((err as Error).message).toBe("GitHub GraphQL error: 422");
+  });
+
+  it("Test 3c: a 200 carrying errors throws the plain GraphQL error", async () => {
+    globalThis.fetch = makeRestFetch({
+      data: null,
+      errors: [{ message: "Something is wrong with your query" }],
+    });
+
+    const err = await graphqlGitHub(TOKEN, "query { foo }", {}).catch((e: unknown) => e);
+
+    expect(err).not.toBeInstanceOf(GitHubTransientError);
+    expect((err as Error).message).toBe("GraphQL: Something is wrong with your query");
   });
 });
 
@@ -353,6 +413,31 @@ describe("commitFilesToRepo", () => {
       (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[2][1].body
     );
     expect(mutationBody.variables.input.fileChanges.deletions).toBeUndefined();
+  });
+
+  it("Test 9g: a 5xx on the deletion probe surfaces as GitHubTransientError", async () => {
+    // The probe runs before the mutation and outside its catch, so the class
+    // reaches the caller intact — which is what lets the upgrade's workflow
+    // commit retry a probe failure on the same footing as a mutation failure.
+    let call = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      call += 1;
+      if (call === 1) {
+        return { ok: true, status: 200, json: async () => HEAD_OID_RESPONSE };
+      }
+      return { ok: false, status: 503, json: async () => ({}) };
+    });
+
+    const err = await commitFilesToRepo(
+      TOKEN, OWNER, REPO, BRANCH,
+      [{ path: "_config.yml", content: "telar:\n  version: 1.6.2" }],
+      "Update Telar workflows for v1.6.2",
+      undefined,
+      [".github/workflows/retired.yml"],
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(GitHubTransientError);
+    expect((err as GitHubTransientError).status).toBe(503);
   });
 
   it("Test 9f: existence probe queries each path at the expected head OID", async () => {
@@ -728,6 +813,35 @@ describe("verifySiteUrl", () => {
     expect(result.configUrl).toBe("https://testuser.github.io/my-telar-site");
   });
 
+  it.each([500, 503, 408, 429])("marks a Pages read that answers %i as failed, not as Pages off", async (status) => {
+    globalThis.fetch = makeRestFetch({}, status);
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL);
+
+    expect(result.readFailed).toBe(true);
+  });
+
+  it.each([401, 403])("marks a Pages read refused with %i, which has no URL to compare", async (status) => {
+    globalThis.fetch = makeRestFetch({}, status);
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL);
+    expect(result.readRefused).toBe(true);
+    expect(result.readFailed).toBeUndefined();
+  });
+
+  it("does not mark a 404 as refused", async () => {
+    globalThis.fetch = makeRestFetch({}, 404);
+    expect((await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL)).readRefused).toBeUndefined();
+  });
+
+  it.each([404, 401, 403])("leaves a Pages read that answers %i as an answer", async (status) => {
+    globalThis.fetch = makeRestFetch({}, status);
+
+    const result = await verifySiteUrl(TOKEN, OWNER, REPO, CONFIG_WITH_URL);
+
+    expect(result.readFailed).toBeUndefined();
+    expect(result.pagesEnabled).toBe(false);
+  });
+
   it("returns match: true when config url+baseurl equals the GitHub Pages html_url", async () => {
     globalThis.fetch = makeRestFetch({
       html_url: "https://testuser.github.io/my-telar-site",
@@ -1001,6 +1115,49 @@ describe("dispatchWorkflow", () => {
       `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/iiif-only.yml/dispatches`
     );
   });
+  it("dispatch-6: a 2xx whose body cannot be read is an accepted dispatch with no run", async () => {
+    // The dispatch succeeded; only the response body failed. Throwing here
+    // would tell the caller the build never started, and the caller would say
+    // so on screen while the build ran.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError("Unexpected end of JSON input");
+      },
+    });
+
+    const result: DispatchResult = await dispatchWorkflow(TOKEN, OWNER, REPO, "build.yml");
+
+    expect(result).toEqual({ runId: 0, runUrl: "", htmlUrl: "" });
+  });
+
+  it("dispatch-7: a 2xx body without run details is an accepted dispatch with no run", async () => {
+    globalThis.fetch = makeRestFetch({});
+
+    const result: DispatchResult = await dispatchWorkflow(TOKEN, OWNER, REPO, "build.yml");
+
+    expect(result).toEqual({ runId: 0, runUrl: "", htmlUrl: "" });
+  });
+
+  // `null` and `[]` parse without error, so a parse-only guard lets them
+  // through and the field read throws where nothing catches it — an accepted
+  // dispatch would reach the caller as a failed one.
+  it("dispatch-8: a 2xx whose body parses to null is an accepted dispatch with no run", async () => {
+    globalThis.fetch = makeRestFetch(null);
+
+    const result: DispatchResult = await dispatchWorkflow(TOKEN, OWNER, REPO, "build.yml");
+
+    expect(result).toEqual({ runId: 0, runUrl: "", htmlUrl: "" });
+  });
+
+  it("dispatch-9: a 2xx whose body parses to an array is an accepted dispatch with no run", async () => {
+    globalThis.fetch = makeRestFetch([]);
+
+    const result: DispatchResult = await dispatchWorkflow(TOKEN, OWNER, REPO, "build.yml");
+
+    expect(result).toEqual({ runId: 0, runUrl: "", htmlUrl: "" });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1052,6 +1209,46 @@ describe("getLatestWorkflowRun", () => {
     const result = await getLatestWorkflowRun(TOKEN, OWNER, REPO, "objects-only.yml");
 
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getWorkflowRun tests
+// ---------------------------------------------------------------------------
+
+const ONE_RUN_RESPONSE = {
+  id: 99002,
+  name: "Build and deploy Telar site",
+  status: "in_progress",
+  conclusion: null,
+  html_url: "https://github.com/testuser/my-telar-site/actions/runs/99002",
+  head_sha: "tipsha0",
+};
+
+describe("getWorkflowRun", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("one-run-1: reads the run by id and returns its head_sha and URL", async () => {
+    globalThis.fetch = makeRestFetch(ONE_RUN_RESPONSE);
+
+    const result = await getWorkflowRun(TOKEN, OWNER, REPO, 99002);
+
+    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(`https://api.github.com/repos/${OWNER}/${REPO}/actions/runs/99002`);
+    expect((opts.headers as Record<string, string>)["Authorization"]).toBe(`Bearer ${TOKEN}`);
+    expect(result?.head_sha).toBe("tipsha0");
+    expect(result?.html_url).toBe(ONE_RUN_RESPONSE.html_url);
+  });
+
+  it("one-run-2: returns null on the 404 a just-dispatched run gives", async () => {
+    globalThis.fetch = makeRestFetch({}, 404);
+
+    expect(await getWorkflowRun(TOKEN, OWNER, REPO, 99002)).toBeNull();
   });
 });
 
@@ -1134,5 +1331,54 @@ describe("enableGitHubPages", () => {
     await expect(
       enableGitHubPages(TOKEN, OWNER, REPO)
     ).rejects.toThrow("Failed to enable GitHub Pages: 422");
+  });
+});
+
+describe("isRepoPrivate", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads the repository's visibility", async () => {
+    globalThis.fetch = makeRestFetch({ private: true });
+    await expect(isRepoPrivate(TOKEN, OWNER, REPO)).resolves.toBe(true);
+
+    globalThis.fetch = makeRestFetch({ private: false });
+    await expect(isRepoPrivate(TOKEN, OWNER, REPO)).resolves.toBe(false);
+  });
+
+  it("asks the repository endpoint, not the Pages one", async () => {
+    const fetchMock = makeRestFetch({ private: false });
+    globalThis.fetch = fetchMock;
+
+    await isRepoPrivate(TOKEN, OWNER, REPO);
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `https://api.github.com/repos/${OWNER}/${REPO}`,
+    );
+  });
+
+  // The three states are the point, and these are the two that are easy to
+  // collapse into `false`. Every caller renders "your repository is private"
+  // off a `true` and says nothing otherwise, so a failed probe answering
+  // `false` would be indistinguishable from a public repository — and a failed
+  // probe answering `true` would accuse an author's repository on no evidence.
+  it("answers null when GitHub refuses the question", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ message: "Not Found" }),
+    });
+    await expect(isRepoPrivate(TOKEN, OWNER, REPO)).resolves.toBeNull();
+  });
+
+  it("answers null when the request throws", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network down"));
+    await expect(isRepoPrivate(TOKEN, OWNER, REPO)).resolves.toBeNull();
+  });
+
+  it("answers null when the payload carries no visibility at all", async () => {
+    globalThis.fetch = makeRestFetch({ name: REPO });
+    await expect(isRepoPrivate(TOKEN, OWNER, REPO)).resolves.toBeNull();
   });
 });

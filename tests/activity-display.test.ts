@@ -17,6 +17,7 @@ import type { RecentActivityRow } from "~/lib/activity.server";
 const STRINGS: Record<string, string> = {
   "config:sections.collection_interface.field_featured_count": "Featured Count",
   "start:activity.entity.config": "settings",
+  "glossary:kinds_title": "Kinds of glossary entry",
   "start:activity.untitled": "untitled",
 };
 const t = ((key: string, opts?: { defaultValue?: string }) =>
@@ -35,6 +36,11 @@ describe("activityEntityLabel", () => {
   it("config: maps a known field key to its Config-tab label", () => {
     expect(activityEntityLabel(row({ entity_type: "config", entity_id: "featured_count" }), t))
       .toBe("Featured Count");
+  });
+
+  it("config: names the glossary kinds column by the glossary editor's title for it", () => {
+    expect(activityEntityLabel(row({ entity_type: "config", entity_id: "glossary_kinds_json" }), t))
+      .toBe("Kinds of glossary entry");
   });
 
   it("config: unknown field key degrades to the generic settings noun", () => {

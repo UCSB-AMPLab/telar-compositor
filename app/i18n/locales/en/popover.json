@@ -4,7 +4,8 @@
     "published": "Last published {{time}}",
     "commit": "commit {{sha}}",
     "synced": "Synced from repo {{time}}",
-    "view_site": "View published site"
+    "view_site": "View published site",
+    "saved_state_size": "This project's saved state is {{size}}. Above 2 MB it can no longer be published."
   },
   "unpublished": {
     "title_one": "1 unpublished change",
@@ -19,6 +20,7 @@
     },
     "landing_page": "Landing page",
     "navigation": "Navigation",
+    "objects_order": "Order of objects",
     "modified": "modified",
     "added": "added",
     "review": "Review all changes",
@@ -32,7 +34,8 @@
     "changed": "{{n}} changed",
     "removed": "{{n}} removed",
     "keep_mine": "Keep my version",
-    "review": "Review changes"
+    "review": "Review changes",
+    "accept_divergence_stale": "GitHub changed while you were reviewing the differences, so we didn't save your choice. Review the changes again to see the latest."
   },
   "publishing": {
     "title": "Publishing… {{step}} of {{total}}",
@@ -69,5 +72,46 @@
     "body": "Telar can't reach the repository for this project ({{repo}}). It may have been deleted, renamed, made private, or the app's access removed. Your work here is safe — it's stored separately from the repository.",
     "manage_cta": "Manage access on GitHub",
     "collaborator_note": "Ask the project's convenor to reconnect the repository."
+  },
+  "site_status": {
+    "halted": {
+      "title": "Saving has stopped",
+      "body": "This project's changes are no longer being saved. Anything you change now will not be kept.",
+      "reason": {
+        "enforcement_failed": "A change could not be undone safely.",
+        "fence_refused": "Another copy of the project took over saving.",
+        "apply_failed": "A change could not be applied safely.",
+        "log_corrupt": "The saved copy could not be read.",
+        "bad_halt": "The saved state could not be read.",
+        "other": "Saving stopped."
+      },
+      "since": "Since {{time}}",
+      "ask_convenor": "Ask the project's convenor to restore it.",
+      "restore_button": "Restore from the last save",
+      "restore_cost": "Changes made since the last save were not saved and will be lost. Everyone editing will be reconnected.",
+      "restore_confirm": "Restore now",
+      "restored": "Restored. Reconnecting…",
+      "restored_short": "Restored.",
+      "restored_halted_again": "Restored, but saving stopped again: {{reason}}",
+      "stale": "The project changed while you were confirming. Check its state and try again.",
+      "uncertain": "The restore may not have completed. Check its state and try again.",
+      "retry": "Could not restore. Try again.",
+      "failed": "Could not restore ({{status}}).",
+      "unreadable_state": "The project's saving state could not be read just now.",
+      "observed": "Last check: state {{generation}}",
+      "check_again": "Check again"
+    }
+  },
+  "repo_invitation": {
+    "title": "Repository invitation",
+    "body": "GitHub has sent you an invitation to this project's repository. Accept it here to finish joining.",
+    "welcome_body": "{{convenor}} added you as a collaborator. Accept the invitation to this project's repository to finish joining.",
+    "welcome_email": "GitHub is also sending you this invitation by email. Be sure to accept it, here or in that email.",
+    "later": "Later",
+    "accept": "Accept invitation",
+    "lapsed": "Your invitation to the repository expired, so it can't be accepted. A convenor can send you a new one.",
+    "changed": "Your invitation changed, so nothing was accepted. Close this and open it again.",
+    "fallback": "We couldn't accept the invitation from here. You can accept it on GitHub instead.",
+    "fallback_link": "Open the invitation on GitHub"
   }
 }

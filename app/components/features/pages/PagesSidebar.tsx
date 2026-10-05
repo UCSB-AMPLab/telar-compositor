@@ -21,7 +21,7 @@
  * `sidebarIdToFullIdx` map and supplies `onDragEnd` / `onDelete` / `onAddPage`
  * callbacks plus the DnD `sensors`.
  *
- * @version v1.3.7-beta
+ * @version v1.5.0-beta
  */
 
 import {

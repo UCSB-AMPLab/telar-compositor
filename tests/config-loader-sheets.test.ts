@@ -9,10 +9,11 @@
  * when D1 claims enabled, so the common already-disabled case costs no
  * GitHub read and no decrypt.
  *
- * @version v1.4.3-beta
+ * @version v1.5.0-beta
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { testGithubAppPrivateKey, installGithubAppFetchStub } from "./helpers/github-app-fetch";
 
 vi.mock("~/lib/db.server", () => ({ getDb: vi.fn() }));
 vi.mock("~/middleware/auth.server", () => ({ userContext: Symbol("userContext") }));
@@ -81,6 +82,10 @@ beforeEach(() => {
   withProject();
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("config loader sheets-flag reconciliation", () => {
   it("D1 flag true + reconcile says disabled: returns the healed value", async () => {
     vi.mocked(getDb).mockReturnValue(makeDbMock({ google_sheets_enabled: true }));
@@ -137,5 +142,76 @@ describe("config loader sheets-flag reconciliation", () => {
 
     expect(res.config?.google_sheets_enabled).toBe(true);
     expect(reconcileSheetsFlagFromRepo).not.toHaveBeenCalled();
+  });
+
+  // A collaborator's own token has no read access
+  // to a private repo the reconcile needs to read — it must never be used as
+  // a fallback for one. ~/lib/github-app.server is left unmocked: with no
+  // real App credentials in this harness the installation mint fails fast
+  // (missing key), so a collaborator's request exercises resolveProjectToken's
+  // real non-convenor branch — no fallback, and the D1 value renders
+  // unchanged rather than reconcileSheetsFlagFromRepo running on a token that
+  // was never meant to reach it.
+  it("collaborator, mint fails: renders the D1 value unchanged rather than falling back to their own token", async () => {
+    vi.mocked(resolveActiveProjectFromRequest).mockResolvedValue({
+      project: { id: 42, github_repo_full_name: "owner/repo" },
+      userRole: "collaborator",
+    } as never);
+    vi.mocked(getDb).mockReturnValue(makeDbMock({ google_sheets_enabled: true }));
+
+    const res = (await loader(buildArgs())) as {
+      config: { google_sheets_enabled: boolean } | null;
+    };
+
+    expect(reconcileSheetsFlagFromRepo).not.toHaveBeenCalled();
+    expect(res.config?.google_sheets_enabled).toBe(true);
+  });
+
+  // The installation token belongs to publishing
+  // roles. This loader carries no role gate at all, so which token an
+  // instructor's reconcile travels on is the shared membership set's answer
+  // — the same one a collaborator gets below.
+  it("instructor: reconcile runs on the installation token when the mint succeeds", async () => {
+    vi.mocked(resolveActiveProjectFromRequest).mockResolvedValue({
+      project: { id: 42, github_repo_full_name: "owner/repo", installation_id: 55 },
+      userRole: "instructor",
+    } as never);
+    vi.mocked(getDb).mockReturnValue(makeDbMock({ google_sheets_enabled: true }));
+    vi.mocked(reconcileSheetsFlagFromRepo).mockResolvedValue(true);
+    installGithubAppFetchStub();
+
+    const args = buildArgs() as { context: { cloudflare: { env: Record<string, unknown> } } };
+    args.context.cloudflare.env.GITHUB_APP_ID = "app-id";
+    args.context.cloudflare.env.GITHUB_PRIVATE_KEY = testGithubAppPrivateKey();
+
+    await loader(args as never);
+
+    expect(reconcileSheetsFlagFromRepo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { token: "install-token", owner: "owner", repo: "repo", projectId: 42, d1Enabled: true },
+    );
+  });
+
+  it("collaborator: reconcile runs on the installation token when the mint succeeds", async () => {
+    vi.mocked(resolveActiveProjectFromRequest).mockResolvedValue({
+      project: { id: 42, github_repo_full_name: "owner/repo", installation_id: 55 },
+      userRole: "collaborator",
+    } as never);
+    vi.mocked(getDb).mockReturnValue(makeDbMock({ google_sheets_enabled: true }));
+    vi.mocked(reconcileSheetsFlagFromRepo).mockResolvedValue(true);
+    installGithubAppFetchStub();
+
+    const args = buildArgs() as { context: { cloudflare: { env: Record<string, unknown> } } };
+    args.context.cloudflare.env.GITHUB_APP_ID = "app-id";
+    args.context.cloudflare.env.GITHUB_PRIVATE_KEY = testGithubAppPrivateKey();
+
+    await loader(args as never);
+
+    expect(reconcileSheetsFlagFromRepo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { token: "install-token", owner: "owner", repo: "repo", projectId: 42, d1Enabled: true },
+    );
   });
 });

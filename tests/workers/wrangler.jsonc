@@ -1,0 +1,45 @@
+/**
+ * Wrangler config for the `workers` Vitest project, kept in this directory
+ * and not at the repo root: `@cloudflare/vitest-plugin` resolves dev vars
+ * from the `.dev.vars` file beside the config path it is given, and a config
+ * beside the root one would load real secrets ahead of the test bindings
+ * `vitest.config.ts` supplies. No `.dev.vars` file lives here, so none is read.
+ *
+ * `compatibility_date`, `compatibility_flags`, the `durable_objects` binding
+ * and class, the `migrations` entry that declares it, the `version_metadata`
+ * binding and the `d1_databases` binding all have to match the root
+ * `wrangler.jsonc` — the object and the database under test are the same ones
+ * production runs. `main` is omitted: the plugin's own `main` option names
+ * `tests/workers/entry.ts`. `assets` and `observability` are omitted as
+ * unneeded by the workers project.
+ *
+ * `vars.ENVIRONMENT` is `staging` because the object's staging-only controls
+ * have to be reachable under test; the tests that need the other environments
+ * overwrite the cached field through the class's own seam.
+ *
+ * @version v1.5.0-beta
+ */
+{
+  "name": "telar-compositor-test",
+  "vars": {
+    "ENVIRONMENT": "staging"
+  },
+  "compatibility_date": "2025-03-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "telar-compositor-test-db",
+      "migrations_dir": "../../app/db/migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "COLLABORATION", "class_name": "ProjectCollaborationDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_classes": ["ProjectCollaborationDO"] }
+  ],
+  "version_metadata": { "binding": "CF_VERSION_METADATA" }
+}

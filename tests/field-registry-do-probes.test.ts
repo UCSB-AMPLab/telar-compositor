@@ -32,7 +32,7 @@
  * parsed and each column's bound argument compared against a per-field
  * sentinel, so a swapped pair of columns also fails.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -60,6 +60,10 @@ import {
 } from "~/lib/field-registry";
 import { makeObjectYMap } from "~/lib/object-ymap";
 import { __test__ as structuralOpsTest } from "~/hooks/use-structural-ops";
+import { markLoaded } from "./helpers/claimed-document";
+import { splitTopLevel, updateSetColumns } from "./helpers/sql-set-list";
+import { checkD1Bind } from "./helpers/d1-memory";
+import { withDocumentSeen } from "./helpers/object-update-seen";
 
 const TEST_PROJECT_ID = 42;
 const TEST_SECRET = "test-session-secret";
@@ -91,6 +95,15 @@ const TABLES: Record<EntityName, string> = {
 
 function textSentinel(entity: EntityName, fieldName: string): string {
   return `S_${entity}_${fieldName}`;
+}
+
+/**
+ * The site's parent course, as the object reads it before a snapshot: the
+ * course marker's own sentinel, so the probe's marker names the course the
+ * site is attached to and is written, not dropped as stranded.
+ */
+function siteParent(): { parent_project_id: number | null } {
+  return { parent_project_id: NUMERIC_SENTINELS.get("objects.course_project_id") ?? null };
 }
 
 // Unique numeric sentinel per int/real field, assigned in registry order so
@@ -195,15 +208,17 @@ function makeFakeDB(rowProvider: (sql: string) => unknown[]) {
   const binds: BindCall[] = [];
   const stmt = (sql: string) => ({
     bind(...args: unknown[]) {
+      checkD1Bind(sql, args);
       binds.push({ sql, args });
       return {
         async run() {
-          return { meta: { last_row_id: 100 } };
+          return { meta: { last_row_id: 100, changes: 1 } };
         },
         async all<T>() {
           return { results: rowProvider(sql) as T[] };
         },
         async first<T>() {
+          if (sql.startsWith("SELECT parent_project_id FROM projects")) return siteParent() as T;
           return (rowProvider(sql)[0] ?? null) as T | null;
         },
       };
@@ -222,7 +237,16 @@ function makeCtx() {
   return {
     getWebSockets: () => [] as unknown[],
     blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
-    storage: { getAlarm: async () => null, setAlarm: async () => {} },
+    storage: {
+      getAlarm: async () => null,
+      setAlarm: async () => {},
+      // The loader and the snapshot read the generation from storage, and a
+      // load lists the log prefix before it tags an untagged blob.
+      get: async (key: string) => (key === "docGeneration" ? 0 : undefined),
+      put: async () => {},
+      list: async () => new Map(),
+      delete: async () => 0,
+    },
     acceptWebSocket: vi.fn(),
   };
 }
@@ -235,7 +259,7 @@ function makeDO(rowProvider: (sql: string) => unknown[]) {
     env as Env,
   );
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
-  (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+  markLoaded(doInstance);
   return { doInstance, binds };
 }
 
@@ -261,12 +285,6 @@ function parseInsertColumns(sql: string): string[] {
   const m = sql.match(/INSERT INTO \w+ \(([^)]+)\)/);
   if (!m) return [];
   return m[1].split(",").map((c) => c.trim().replace(/"/g, ""));
-}
-
-function parseUpdateSetColumns(sql: string): string[] {
-  const m = sql.match(/UPDATE \w+ SET (.+?) WHERE /);
-  if (!m) return [];
-  return m[1].split(",").map((part) => part.split("=")[0].trim().replace(/"/g, ""));
 }
 
 // Y.Doc population from the registry ----------------------------------------
@@ -545,10 +563,13 @@ for (const e of FIELD_REGISTRY) {
 }
 
 describe("B. insert binds — preserveFromD1 declarations on the stale-_id re-INSERT", () => {
-  it("the registry declares the two known preserve obligations (guard against silent drift)", () => {
+  it("the registry declares the five known preserve obligations (guard against silent drift)", () => {
     expect(preserveObligations.map((o) => `${o.entity}.${o.fieldName}`).sort()).toEqual([
+      "glossary.extra_columns",
       "glossary.related_terms",
       "objects.origin",
+      "pages.frontmatter_source",
+      "stories.extra_columns",
     ]);
   });
 
@@ -557,7 +578,11 @@ describe("B. insert binds — preserveFromD1 declarations on the stale-_id re-IN
       const table = TABLES[ob.entity];
       const preserved = `S_preserved_${ob.entity}_${ob.fieldName}`;
       const listingRe = new RegExp(`SELECT id, \\w+ FROM ${table} WHERE project_id`);
-      const preserveRe = new RegExp(`SELECT ${ob.column} FROM ${table} WHERE id`);
+      // Tolerant of the column list: the preserve SELECT names every
+      // preserveColumns entry, so a pattern pinned to one column stops
+      // matching the moment another is added — and a fake that stops matching
+      // preserves nothing while looking like a genuine failure to preserve.
+      const preserveRe = new RegExp(`SELECT [\\w, ]*${ob.column}[\\w, ]* FROM ${table} WHERE id`);
       const { doInstance, binds } = makeDO((sql) => {
         if (listingRe.test(sql)) return []; // _id 77 is stale, no same-key adopt
         if (preserveRe.test(sql)) return [{ [ob.column]: preserved }];
@@ -596,7 +621,7 @@ function updateProblems(binds: BindCall[], entityName: EntityName): string[] {
   const problems: string[] = [];
   const update = binds.find((b) => b.sql.includes(`UPDATE ${table} SET`));
   if (!update) return [`${entityName}: no UPDATE ${table} SET was issued`];
-  const setCols = parseUpdateSetColumns(update.sql);
+  const setCols = updateSetColumns(update.sql);
   for (const { f, y } of declared(entityName)) {
     const id = `${entityName}.${f.name}`;
     const inSet = setCols.includes(f.d1.column);
@@ -634,7 +659,9 @@ describe("C. update binds — snapshotToD1 updates bind every declared field", (
     const { doInstance, binds } = makeDO((sql) => {
       if (/SELECT id FROM project_config WHERE project_id/.test(sql)) return [{ id: 1 }];
       if (/SELECT id FROM project_landing WHERE project_id/.test(sql)) return [{ id: 1 }];
-      if (/SELECT id FROM stories WHERE project_id/.test(sql)) return [{ id: 501 }];
+      if (/SELECT id, story_id FROM stories WHERE project_id/.test(sql)) {
+        return [{ id: 501, story_id: textSentinel("stories", "story_id") }];
+      }
       if (/SELECT id FROM steps WHERE story_id/.test(sql)) return [{ id: 601 }];
       if (/SELECT id FROM layers WHERE step_id/.test(sql)) return [{ id: 701 }];
       if (/SELECT id, object_id FROM objects WHERE project_id/.test(sql)) {
@@ -684,7 +711,7 @@ function makeRestoreDO() {
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
   (doInstance as unknown as { ensureDocLoaded: () => Promise<void> }).ensureDocLoaded =
     async () => {
-      (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+      markLoaded(doInstance);
     };
   vi.spyOn(
     doInstance as unknown as { snapshotToD1: () => Promise<void> },
@@ -734,6 +761,8 @@ function restoreCarryProblems(
   const problems: string[] = [];
   for (const { f, y } of declared(entityName)) {
     const id = `${entityName}.${f.name}`;
+    // Minted by the DO as it builds the Y.Map, not carried from the payload.
+    if (y.restore) continue;
     const val = container.get(y.key);
     let carried: boolean;
     if (y.kind === "ytext") {
@@ -780,7 +809,9 @@ describe("D. restore — /restore-orphans carries every steps/layers field into 
 //   created_by         — permission/attribution tracking
 //   _validation_state  — objects only: "pending" IIIF rows are snapshot-skipped
 //   layers             — steps only: the nested layers Y.Array container
-const OBJECT_INFRA_KEYS = ["_id", "_temp_id", "created_by", "_validation_state"];
+//   custom_fields, _custom_fields_base — objects only: extra_columns as one
+//                        Y.Text per column, and the blob it was last set from
+const OBJECT_INFRA_KEYS = ["_id", "_temp_id", "created_by", "_validation_state", "custom_fields", "_custom_fields_base"];
 const STEP_INFRA_KEYS = ["_id", "_temp_id", "created_by", "layers"];
 
 function attachedKeys(map: Y.Map<unknown>): string[] {
@@ -789,21 +820,31 @@ function attachedKeys(map: Y.Map<unknown>): string[] {
   return [...map.keys()].sort();
 }
 
+/**
+ * The Y keys a client factory is expected to set: every declared key EXCEPT
+ * those carrying a `factory` deviation, where absence of the key — not a null
+ * value — is the meaningful state for a client-created entity. Shared by both
+ * probes so the deviation is honoured wherever this family iterates, rather
+ * than on whichever table happened to need it first.
+ */
+function factoryKeys(entityName: EntityName): string[] {
+  return declared(entityName)
+    .filter(({ y }) => !y.factory)
+    .map(({ y }) => y.key);
+}
+
 describe("E. factory key-sets — pinned to the registry in both directions", () => {
   it("makeObjectYMap keys === declared objects ydoc keys + enumerated infra keys", () => {
-    const expected = [
-      ...declared("objects").map(({ y }) => y.key),
-      ...OBJECT_INFRA_KEYS,
-    ].sort();
+    const expected = [...factoryKeys("objects"), ...OBJECT_INFRA_KEYS].sort();
     const actual = attachedKeys(
-      makeObjectYMap({ objectId: "obj-1", validationState: "valid", origin: "compositor" }),
+      makeObjectYMap({ objectId: "obj-1", validationState: "valid", origin: "compositor", orderKey: "a01" }),
     );
     expect(actual).toEqual(expected);
   });
 
   it("buildStepYMap keys === declared steps ydoc keys + enumerated infra keys", () => {
-    const expected = [...declared("steps").map(({ y }) => y.key), ...STEP_INFRA_KEYS].sort();
-    const actual = attachedKeys(structuralOpsTest.buildStepYMap(7, 1, "media"));
+    const expected = [...factoryKeys("steps"), ...STEP_INFRA_KEYS].sort();
+    const actual = attachedKeys(structuralOpsTest.buildStepYMap(7, 1, "a01", "media"));
     expect(actual).toEqual(expected);
   });
 });
@@ -828,7 +869,11 @@ function makeStatefulDB() {
     project_pages: [],
     project_members: [],
     activity_log: [],
-    projects: [{ id: TEST_PROJECT_ID }],
+    // The base row a load reads: no blob, no tags, no claim yet, which is the
+    // cold build.
+    projects: [
+      { id: TEST_PROJECT_ID, yjs_state: null, yjs_generation: null, yjs_seq: null, yjs_write: 0 },
+    ],
   };
   let nextId = 5000;
 
@@ -847,7 +892,7 @@ function makeStatefulDB() {
     return list;
   }
 
-  function execWrite(sql: string, args: unknown[]): { meta: { last_row_id: number } } {
+  function execWrite(sql: string, args: unknown[]): { meta: { last_row_id: number; changes: number } } {
     let m: RegExpMatchArray | null;
     if ((m = sql.match(/^INSERT INTO (\w+) \(([^)]+)\)/))) {
       const table = m[1];
@@ -861,20 +906,32 @@ function makeStatefulDB() {
         row.id = id;
       }
       (rows[table] ??= []).push(row);
-      return { meta: { last_row_id: id } };
+      return { meta: { last_row_id: id, changes: 1 } };
     }
     if ((m = sql.match(/^UPDATE (\w+) SET ([\s\S]+?) WHERE ([\s\S]+)$/))) {
       const table = m[1];
-      const setCols = m[2].split(",").map((p) => p.split("=")[0].trim().replace(/"/g, ""));
+      const assignments = splitTopLevel(m[2]).map((part) => ({
+        column: part.split("=")[0].trim().replace(/"/g, ""),
+        // `col = COALESCE(NULLIF(?, ''), col)` writes only a non-empty bind.
+        // Modelled rather than ignored: the column it guards is the one whose
+        // stale value these probes would otherwise report as freshly written.
+        keepWhenEmpty: /COALESCE\s*\(\s*NULLIF\s*\(\s*\?\s*,\s*''\s*\)/i.test(part),
+      }));
       const wherePart = m[3];
-      const setVals = args.slice(0, setCols.length);
-      const whereVals = args.slice(setCols.length);
+      const setVals = args.slice(0, assignments.length);
+      const whereVals = args.slice(assignments.length);
       const list = rows[table] ?? [];
       const match = /project_id = \?/.test(wherePart)
         ? (r: Record<string, unknown>) => r.project_id === whereVals[0]
         : (r: Record<string, unknown>) => r.id === whereVals[0];
-      for (const r of list) if (match(r)) setCols.forEach((c, i) => (r[c] = setVals[i]));
-      return { meta: { last_row_id: 0 } };
+      for (const r of list) {
+        if (!match(r)) continue;
+        assignments.forEach((a, i) => {
+          if (a.keepWhenEmpty && setVals[i] === "") return;
+          r[a.column] = setVals[i];
+        });
+      }
+      return { meta: { last_row_id: 0, changes: 1 } };
     }
     if ((m = sql.match(/^DELETE FROM (\w+) WHERE ([\s\S]+)$/))) {
       const table = m[1];
@@ -885,13 +942,14 @@ function makeStatefulDB() {
           ? (r: Record<string, unknown>) => r.story_id === args[0]
           : (r: Record<string, unknown>) => r.id === args[0];
       rows[table] = (rows[table] ?? []).filter((r) => !match(r));
-      return { meta: { last_row_id: 0 } };
+      return { meta: { last_row_id: 0, changes: 1 } };
     }
-    return { meta: { last_row_id: 0 } };
+    return { meta: { last_row_id: 0, changes: 1 } };
   }
 
   const statefulStmt = (sql: string) => ({
     bind(...args: unknown[]) {
+      checkD1Bind(sql, args);
       return {
         async run() {
           return execWrite(sql, args);
@@ -900,6 +958,7 @@ function makeStatefulDB() {
           return { results: execSelect(sql, args) as T[] };
         },
         async first<T>() {
+          if (sql.startsWith("SELECT parent_project_id FROM projects")) return siteParent() as T;
           return (execSelect(sql, args)[0] ?? null) as T | null;
         },
         __write: () => execWrite(sql, args),
@@ -925,7 +984,7 @@ function makeStatefulDO() {
     env as Env,
   );
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
-  (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+  markLoaded(doInstance);
   return { doInstance, rows };
 }
 
@@ -942,7 +1001,8 @@ async function ingest(
       "X-Internal-Project": String(TEST_PROJECT_ID),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload),
+    // Object updates carry the value a check read, the document's own.
+    body: JSON.stringify(withDocumentSeen((doInstance as unknown as { ydoc: Y.Doc }).ydoc, payload)),
   });
   const res = await doInstance.fetch(req);
   return { status: res.status, body: (await res.json()) as never };
@@ -972,10 +1032,20 @@ function seedIngestStory(doInstance: ProjectCollaborationDO, rows: Record<string
 function seedFlat(doInstance: ProjectCollaborationDO, rows: Record<string, Array<Record<string, unknown>>>, entity: "objects" | "glossary", id: number) {
   const ydoc = ydocOf(doInstance);
   ydoc.transact(() => {
-    ydoc.getArray<Y.Map<unknown>>(entity).push([buildFlatMap(entity, id)]);
+    const m = buildFlatMap(entity, id);
+    // The ingest families below exercise an ordinary SITE object — one the
+    // site made for itself, which carries no course marker at all. The
+    // registry-driven buildFlatMap plants every declared key including the
+    // marker, and a marked object is deliberately un-removable through the
+    // ingest, so the marker is dropped here; the course-item refusal has its
+    // own probe.
+    if (entity === "objects") m.delete("course_project_id");
+    ydoc.getArray<Y.Map<unknown>>(entity).push([m]);
   }, null);
   const table = TABLES[entity];
-  rows[table].push(buildD1Row(entity, { id, project_id: TEST_PROJECT_ID, created_by: null }));
+  const row = buildD1Row(entity, { id, project_id: TEST_PROJECT_ID, created_by: null });
+  if (entity === "objects") row.course_project_id = null;
+  rows[table].push(row);
 }
 
 function snapshotOf(doInstance: ProjectCollaborationDO): Promise<void> {
@@ -1135,6 +1205,21 @@ describe("F. ingest binds — every sync field lands in its D1 column via the sn
       expect(rows.project_config[0][f.d1.column]).toBe(expectedColumn(f));
     });
   }
+
+  // Inverted from a probe that asserted the opposite while the key was
+  // mirrored into the document. The column is D1's alone now: the Config
+  // action writes it and sync heals it, and an ingest that could set it would
+  // be a second writer able to overwrite a value the action refused.
+  it("config.answer_word_limit: an ingest cannot set it, and a snapshot cannot write it", async () => {
+    const { doInstance, rows } = makeStatefulDO();
+    await ingest(doInstance, {
+      ...emptyIngest(),
+      config: [{ key: "answer_word_limit", value: 60 }],
+    });
+    await snapshotOf(doInstance);
+    expect(ydocOf(doInstance).getMap<unknown>("config").get("answer_word_limit")).toBeUndefined();
+    expect(rows.project_config[0]).not.toHaveProperty("answer_word_limit");
+  });
 
   for (const f of syncDeclared("stories")) {
     const itemKey = "diff" in f.sync ? (f.sync.itemKey ?? f.name) : f.name;
@@ -1406,5 +1491,8 @@ describe("L. ingest key allowlists — unlisted wire keys are never set", () => 
       .toArray()
       .find((mm) => mm.get("object_id") === objectId)!;
     expect(m.get("_id")).toBe(801);
+    // The unlisted key is ignored, not refused: the entry it rides on carries a
+    // field the arm does consume, and that field lands.
+    expect(String(m.get("title"))).toBe("Kept");
   });
 });

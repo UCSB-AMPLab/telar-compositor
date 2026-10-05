@@ -4,7 +4,7 @@
  * (`commitBornCleanSite`) and maps its graded result onto the action
  * response (bornCleanOk / bornCleanError / langPatchFailed).
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -24,6 +24,7 @@ vi.mock("~/lib/create-site.server", async (importOriginal) => {
 
 vi.mock("~/lib/github-app.server", () => ({
   getInstallationToken: vi.fn(),
+  getInstallationAccount: vi.fn(),
 }));
 
 import { handleCreateSiteIntents } from "~/lib/onboarding-create-site.server";
@@ -32,7 +33,7 @@ import {
   waitForRepoReady,
   commitBornCleanSite,
 } from "~/lib/create-site.server";
-import { getInstallationToken } from "~/lib/github-app.server";
+import { getInstallationAccount, getInstallationToken } from "~/lib/github-app.server";
 
 const TOKEN = "test-token-abc";
 const INSTALL_TOKEN = "install-token-xyz";
@@ -61,6 +62,7 @@ describe("handleCreateSiteIntents — create-site born-clean plumbing", () => {
     });
     (waitForRepoReady as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     tokenMock.mockResolvedValue(INSTALL_TOKEN);
+    vi.mocked(getInstallationAccount).mockResolvedValue("me");
   });
 
   it("happy path: born-clean succeeds → ok, bornCleanOk:true, pagesUrl, no lang warning", async () => {
@@ -400,5 +402,51 @@ describe("handleCreateSiteIntents — create-site born-clean plumbing", () => {
 
     expect(commitMock).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ ok: true, bornCleanOk: false, bornCleanError: "pages" });
+  });
+});
+
+// The form names the owner and the installation separately, and the repository
+// is created with the author's own token, so an installation of another account
+// would be recorded against a repository it cannot reach.
+describe("handleCreateSiteIntents — create-site checks the installation's account first", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (createSiteFromTemplate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      repoUrl: "https://github.com/me/my-site",
+      defaultBranch: "main",
+    });
+    (waitForRepoReady as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    tokenMock.mockResolvedValue(INSTALL_TOKEN);
+    commitMock.mockResolvedValue({ ok: true, pagesUrl: "u" });
+  });
+
+  it("refuses an installation of another account before anything is created", async () => {
+    vi.mocked(getInstallationAccount).mockResolvedValue("someone-else");
+
+    const result = await handleCreateSiteIntents("create-site", makeFormData("my-site", "me"), TOKEN, ENV, "en");
+
+    expect(result).toMatchObject({ ok: false, intent: "create-site", error: "github_error" });
+    expect(getInstallationAccount).toHaveBeenCalledWith("123", "key", 42);
+    expect(createSiteFromTemplate).not.toHaveBeenCalled();
+    expect(waitForRepoReady).not.toHaveBeenCalled();
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the installation cannot be read, before anything is created", async () => {
+    vi.mocked(getInstallationAccount).mockRejectedValue(new Error("Failed to get installation 42: 404"));
+
+    const result = await handleCreateSiteIntents("create-site", makeFormData("my-site", "me"), TOKEN, ENV, "en");
+
+    expect(result).toMatchObject({ ok: false, intent: "create-site", error: "github_error" });
+    expect(createSiteFromTemplate).not.toHaveBeenCalled();
+  });
+
+  it("creates the site when the installation is on the owner's account, whatever the case of the login", async () => {
+    vi.mocked(getInstallationAccount).mockResolvedValue("Me");
+
+    const result = await handleCreateSiteIntents("create-site", makeFormData("my-site", "me"), TOKEN, ENV, "en");
+
+    expect(result).toMatchObject({ ok: true, intent: "create-site", bornCleanOk: true });
+    expect(createSiteFromTemplate).toHaveBeenCalledWith(TOKEN, "me", "my-site");
   });
 });

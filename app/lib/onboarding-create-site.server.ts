@@ -10,7 +10,11 @@
  * imports, and tests can pull from them directly without touching the
  * route module.
  *
- * @version v1.4.0-beta
+ * The installation check the wizard's pre-check asks for is also the one the
+ * three import intents make on the server before they touch the repository,
+ * so both answer from `installationReachesRepo` here.
+ *
+ * @version v1.5.0-beta
  */
 
 import {
@@ -25,7 +29,63 @@ import {
   PermissionDeniedError,
   RepoNotReadyError,
 } from "~/lib/create-site.server";
-import { getInstallationToken } from "~/lib/github-app.server";
+import { getInstallationAccount, getInstallationToken } from "~/lib/github-app.server";
+import { refusedImportResult, type ImportResult } from "~/lib/import.server";
+
+/**
+ * Whether the installation reaches `{owner}/{name}`, asked on the
+ * installation's own token. Throws when the token cannot be minted or GitHub
+ * does not answer.
+ */
+export async function installationReachesRepo(
+  env: Env,
+  installationId: number,
+  owner: string,
+  name: string,
+): Promise<boolean> {
+  const installToken = await getInstallationToken(
+    env.GITHUB_APP_ID,
+    env.GITHUB_PRIVATE_KEY,
+    installationId,
+  );
+  return isRepoInInstallation(installToken, owner, name);
+}
+
+/** The import intents' answer for a repository the installation does not reach. */
+export interface ImportScopeBlocked {
+  scopeBlocked: true;
+  blockedIntent: string;
+}
+
+/**
+ * The server's own scope check for an import intent, made before anything
+ * reads or changes the repository: null when the installation reaches it, an
+ * `ImportScopeBlocked` when it does not, and the import's `scope_check_failed`
+ * refusal when the check cannot be made. Every commit after the import runs on
+ * the installation's token, so importing a repository the check could not
+ * confirm would record an installation that may not reach it.
+ */
+export async function importScopeRefusal(
+  env: Env,
+  intent: string,
+  installationId: number,
+  repoFullName: string | null,
+): Promise<ImportScopeBlocked | ImportResult | null> {
+  // The form names the repository; a submission without one, or with a name
+  // that is not owner/name, is a check that cannot be made.
+  const [owner, name, ...rest] = typeof repoFullName === "string" ? repoFullName.split("/") : [];
+  if (!owner || !name || rest.length > 0) {
+    return refusedImportResult({ validationError: "scope_check_failed" });
+  }
+  let inScope: boolean;
+  try {
+    inScope = await installationReachesRepo(env, installationId, owner, name);
+  } catch (err) {
+    console.error("[onboarding] installation scope check failed:", err);
+    return refusedImportResult({ validationError: "scope_check_failed" });
+  }
+  return inScope ? null : { scopeBlocked: true, blockedIntent: intent };
+}
 
 export async function handleCreateSiteIntents(
   intent: string,
@@ -59,6 +119,23 @@ export async function handleCreateSiteIntents(
     const name = formData.get("name") as string;
     const installationId = Number(formData.get("installation_id"));
     try {
+      // The repository is created with the author's token and then written to
+      // with this installation's, and the form names the two separately, so
+      // the installation must be on the account named as owner before
+      // anything is created.
+      const account = await getInstallationAccount(
+        env.GITHUB_APP_ID,
+        env.GITHUB_PRIVATE_KEY,
+        installationId,
+      );
+      if (account === null || account.toLowerCase() !== owner.toLowerCase()) {
+        return {
+          ok: false,
+          intent: "create-site",
+          error: "github_error",
+          message: "installation_account_mismatch",
+        };
+      }
       const { repoUrl, defaultBranch } = await createSiteFromTemplate(token, owner, name);
       await waitForRepoReady(token, owner, name);
 
@@ -173,12 +250,7 @@ export async function handleCreateSiteIntents(
     const owner = formData.get("owner") as string;
     const name = formData.get("name") as string;
     try {
-      const installToken = await getInstallationToken(
-        env.GITHUB_APP_ID,
-        env.GITHUB_PRIVATE_KEY,
-        installationId,
-      );
-      const inScope = await isRepoInInstallation(installToken, owner, name);
+      const inScope = await installationReachesRepo(env, installationId, owner, name);
       return { ok: true, intent: "check-installation-scope", inScope };
     } catch (err) {
       return {

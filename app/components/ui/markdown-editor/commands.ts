@@ -4,9 +4,12 @@
  * Pure-ish command functions that operate on an EditorView. Each function
  * dispatches a single transaction and calls view.focus() so the editor
  * retains focus after toolbar clicks.
+ *
+ * @version v1.5.0-beta
  */
 
 import { EditorView } from "@codemirror/view";
+import { encodeUrlForMarkdown, escapeBracketsForMarkdown } from "./authorText";
 
 // ---------------------------------------------------------------------------
 // Exported pure helper (used in unit tests without DOM)
@@ -194,13 +197,17 @@ export function outdentLine(view: EditorView): void {
 
 /**
  * Inserts a markdown link at the cursor.
- * If text is selected, uses it as link text; otherwise uses the provided `text` param.
+ * The link text is `text`, else the selection, else the address. `text`
+ * and the selection are the author's Markdown, the address plain text; each
+ * is escaped as `escapeBracketsForMarkdown` states, and the address as
+ * `encodeUrlForMarkdown` states.
  */
 export function insertLink(view: EditorView, url: string, text?: string): void {
   const { from, to } = view.state.selection.main;
   const selected = view.state.sliceDoc(from, to);
-  const linkText = text || selected || url;
-  const markdown = `[${linkText}](${url})`;
+  const written = text || selected;
+  const linkText = written ? escapeBracketsForMarkdown(written, "markdown") : escapeBracketsForMarkdown(url);
+  const markdown = `[${linkText}](${encodeUrlForMarkdown(url)})`;
 
   view.dispatch({
     changes: { from, to, insert: markdown },
@@ -211,11 +218,13 @@ export function insertLink(view: EditorView, url: string, text?: string): void {
 }
 
 /**
- * Inserts a markdown image at the cursor position.
+ * Inserts a markdown image at the cursor position, its alt text plain text
+ * escaped as `escapeBracketsForMarkdown` states and its address as
+ * `encodeUrlForMarkdown` states.
  */
 export function insertImage(view: EditorView, url: string, alt: string): void {
   const { from, to } = view.state.selection.main;
-  const markdown = `![${alt}](${url})`;
+  const markdown = `![${escapeBracketsForMarkdown(alt)}](${encodeUrlForMarkdown(url)})`;
 
   view.dispatch({
     changes: { from, to, insert: markdown },

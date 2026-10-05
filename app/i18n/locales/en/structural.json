@@ -22,5 +22,7 @@
   "redo": "Redo",
   "validation_pending": "Validating…",
   "validation_error": "Invalid IIIF manifest",
-  "validation_valid": "Valid"
+  "validation_valid": "Valid",
+  "type_to_confirm_label": "Type <0>{{value}}</0> to confirm.",
+  "type_to_confirm_aria": "Type {{value}} to confirm"
 }

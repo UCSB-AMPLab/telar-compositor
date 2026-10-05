@@ -6,9 +6,7 @@ import { FreezeModal } from "~/components/ui/FreezeModal";
 const baseProps = {
   isActive: false,
   hasError: false,
-  isOwner: false,
   heading: "Heading",
-  bodyOwner: "Body for owner",
   bodyCollaborator: "Body for collaborator",
   errorHeading: "Error heading",
   errorBody: "Error body",
@@ -30,19 +28,9 @@ describe("FreezeModal", () => {
     expect(svg).toBeTruthy();
   });
 
-  it("renders nothing when isOwner=true", () => {
-    // FreezeModal returns null for owners regardless of isActive — see the
-    // component's block comment.
-    const { container } = render(
-      <FreezeModal {...baseProps} isActive={true} isOwner={true} />,
-    );
-    expect(container.firstChild).toBeNull();
-  });
-
-  it("shows bodyCollaborator when isOwner=false", () => {
-    render(<FreezeModal {...baseProps} isActive={true} isOwner={false} />);
+  it("shows bodyCollaborator while active", () => {
+    render(<FreezeModal {...baseProps} isActive={true} />);
     expect(screen.getByText("Body for collaborator")).toBeTruthy();
-    expect(screen.queryByText("Body for owner")).toBeNull();
   });
 
   it("renders error state when hasError=true", () => {

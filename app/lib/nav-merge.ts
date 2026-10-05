@@ -23,7 +23,10 @@
  * The `_tempId` field is render-only — it is never written back to the
  * Yjs navArray.
  *
- * @version v1.2.0-beta
+ * The entries merged in are for the sidebar. The menu preview shows what the
+ * publish writes, which is the saved entries alone (`menuPreviewEntries`).
+ *
+ * @version v1.5.0-beta
  */
 
 export interface NavItem {
@@ -77,4 +80,19 @@ export function mergeNavItemsWithPages(
   }
 
   return missing.length > 0 ? [...navItems, ...missing] : navItems;
+}
+
+/**
+ * The entries the Pages screen's menu preview shows: the saved entries, less
+ * untitled pages, which cannot be published. The publish writes saved entries
+ * only (`navigationFiles`), so an entry `mergeNavItemsWithPages` appended
+ * after `base` is not shown; the sidebar still lists its page, so the page can
+ * be selected.
+ */
+export function menuPreviewEntries(
+  base: readonly NavItem[],
+  merged: readonly NavItem[],
+  isUntitled: (item: NavItem) => boolean,
+): NavItem[] {
+  return merged.filter((item, i) => i < base.length && !isUntitled(item));
 }

@@ -4,7 +4,7 @@
  * browser-language detector, and attaches the global error-capture
  * listeners so uncaught errors flow through the bug-report pipeline.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 import i18next from "i18next";
@@ -15,9 +15,11 @@ import { HydratedRouter } from "react-router/dom";
 import I18nextBrowserLanguageDetector from "i18next-browser-languagedetector";
 import resources from "~/i18n/locales";
 import { attachListeners } from "~/lib/error-capture";
+import { installTabSiteHeader } from "~/lib/tab-site";
 
 async function main() {
   attachListeners();
+  installTabSiteHeader();
   await i18next
     .use(initReactI18next)
     .use(I18nextBrowserLanguageDetector)

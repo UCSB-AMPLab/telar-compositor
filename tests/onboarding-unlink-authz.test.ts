@@ -19,7 +19,7 @@
  *
  * Mocking strategy mirrors `tests/dashboard-orphan-authz.test.ts`.
  *
- * @version v1.4.5-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -55,16 +55,25 @@ function makeDbMock(existingRow: { id: number } | undefined) {
     update: vi.fn(() => ({
       set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
     })),
+    insert: vi.fn(() => ({ select: vi.fn(() => ({})) })),
     delete: vi.fn((table: unknown) => {
       deleted.push(table);
-      return { where: vi.fn(async () => undefined) };
+      return { where: vi.fn(() => Object.assign(Promise.resolve(undefined), { returning: vi.fn(async () => []) })) };
     }),
-    batch: vi.fn(async () => []),
+    batch: vi.fn(async () => [[], []]),
   };
 }
 
 // The db the action sees for the call currently under test.
 let currentDb: DbMock;
+
+// The course leave sequence is not this suite's subject, and this fake answers
+// every select with the project row, which would read as the site being its
+// own child. course-delete-detaches.test.ts drives it against a real schema.
+vi.mock("~/lib/course-membership.server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/lib/course-membership.server")>();
+  return { ...actual, detachCourseChildren: vi.fn(async () => {}), evictStaffCopies: vi.fn(async () => []) };
+});
 
 vi.mock("~/lib/db.server", () => ({
   getDb: vi.fn(() => currentDb),
@@ -92,9 +101,7 @@ vi.mock("~/lib/membership.server", () => ({
   requireProjectMember: vi.fn(async () => undefined),
 }));
 
-vi.mock("~/lib/collab-reset.server", () => ({
-  resetCollabDocIfBlobExists: vi.fn(async () => undefined),
-}));
+vi.mock("~/lib/config-repair.server", () => ({ repairSiteConfig: vi.fn(async () => "applied") }));
 
 // ---------------------------------------------------------------------------
 // Imports under test (after mocks)

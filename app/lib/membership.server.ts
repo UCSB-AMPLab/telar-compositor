@@ -5,12 +5,13 @@
  * who is allowed to see a project and what they are allowed to change
  * once they are in it.
  *
- * Two roles exist: a single `convenor` per project (the owner — full
- * read/write/delete) and any number of `collaborator` members (read +
- * editorial write, but not destructive operations). `requireOwner` and
- * `requireProjectMember` are the gate helpers route actions invoke at
- * the top of a handler; anything they don't throw on is allowed
- * through.
+ * Three roles exist: a single `convenor` per project (the owner — full
+ * read/write/delete), any number of `collaborator` members (read +
+ * editorial write, but not destructive operations), and `instructor`
+ * members, who carry a collaborator's permissions and a role label.
+ * `requireOwner` and `requireProjectMember` are the gate helpers route
+ * actions invoke at the top of a handler; anything they don't throw on
+ * is allowed through.
  *
  * The presence-colour helpers solve a parallel concern: when several
  * editors are in the same project, each needs a stable, distinguishable
@@ -18,14 +19,15 @@
  * six-entry palette, prefer a user's consistent choice across their
  * other memberships, and fall back to first-unused for the project.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
-import { eq, and, inArray, isNull, isNotNull, sql } from "drizzle-orm";
+import { eq, and, inArray, isNull, isNotNull, ne, sql } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { projects, project_members } from "~/db/schema";
+import { isPublishingRole } from "~/lib/publishing-roles";
 
-type Role = "convenor" | "collaborator";
+type Role = "convenor" | "collaborator" | "instructor";
 
 type DbInstance = ReturnType<typeof getDb>;
 
@@ -83,6 +85,43 @@ export async function getUserProjects(
 }
 
 /**
+ * True when a project must be left out of the caller's project listings.
+ *
+ * An instructor is copied into every site that joins their course, so a
+ * term's worth of them would bury the instructor's own work in the header
+ * switcher, the start page and the account card. Ruling 18 takes them out
+ * of those lists; ruling 22 makes that a listing concern and nothing more —
+ * the instructor keeps full access, `switch-project` still admits a child
+ * by id, and `resolveActiveProject` still falls back to one.
+ *
+ * The pair is what suppresses, not either half. An `instructor` row on a
+ * project with no parent is the course itself, or an unaffiliated site, and
+ * both stay listed — a co-instructor whose only row on the course is an
+ * instructor row would otherwise lose the course from their own switcher,
+ * which is the surface ruling 18 keeps it on. A `convenor` or
+ * `collaborator` row on a child stays listed too: that is the student's own
+ * group site in their own switcher, and the TA who really collaborates on
+ * one child.
+ *
+ * The same pair `isMembershipExitRefused` tests, for the same reason —
+ * instructor membership on a child belongs to the course rather than to the
+ * person.
+ */
+export function isSuppressedFromProjectLists(project: {
+  userRole: Role;
+  parent_project_id: number | null;
+}): boolean {
+  return project.userRole === "instructor" && project.parent_project_id != null;
+}
+
+/** The listable subset of a caller's projects. Never used to decide access. */
+export function listableProjects<
+  T extends { userRole: Role; parent_project_id: number | null },
+>(projects: T[]): T[] {
+  return projects.filter((p) => !isSuppressedFromProjectLists(p));
+}
+
+/**
  * Extends the loader without disturbing existing
  * `getUserProjects` callers (`resolveActiveProject`, `_app.dashboard.tsx`).
  *
@@ -118,7 +157,14 @@ export async function getUserProjectsWithStats(
 
   const projectIds = base.map((p) => p.id);
 
-  // collaborator_count: count members per project, excluding the caller.
+  // collaborator_count: count members per project, excluding the caller AND
+  // excluding instructor rows — instructors are staff, not group size (design
+  // §3: "a teacher joining five groups must not make all five look larger
+  // than they are"). This count feeds the account danger zone's gating
+  // (convenedProjects / soloConvenedCount): an uncorrected instructor row
+  // would make a solo student's site look convened-with-collaborators,
+  // blocking their own account deletion while remove-member/leave-project
+  // refuse to remove the instructor (the exit is tied to the course).
   const counts = await db
     .select({
       project_id: project_members.project_id,
@@ -129,6 +175,7 @@ export async function getUserProjectsWithStats(
       and(
         inArray(project_members.project_id, projectIds),
         sql`${project_members.user_id} != ${userId}`,
+        ne(project_members.role, "instructor"),
       ),
     )
     .groupBy(project_members.project_id);
@@ -263,6 +310,127 @@ export async function requireOwner(
   if (role !== "convenor") {
     throw new Response("Forbidden", { status: 403 });
   }
+}
+
+// isPublishingRole lives in ~/lib/publishing-roles (not server-only) so the
+// client affordances for the same four actions can import the identical
+// check; re-exported here so existing server-side imports of it from this
+// module keep working.
+export { isPublishingRole };
+
+/**
+ * Throw 403 unless the user holds a publishing role on the project — the
+ * gate for publish, image upload, and upgrade.
+ */
+export async function requirePublishingRole(
+  db: DbInstance,
+  projectId: number,
+  userId: number,
+): Promise<void> {
+  const role = await getUserRole(db, projectId, userId);
+  if (!isPublishingRole(role)) {
+    throw new Response("Forbidden", { status: 403 });
+  }
+}
+
+/**
+ * Throw 403 unless the caller may manage a code of `codeRole` on
+ * `courseProjectId`.
+ *
+ * Course-management rights belong to all of a course's staff — issuing and
+ * revoking class codes, removing a site — but the staff list is the
+ * convenor's alone, and an instructor-role code is staff management by
+ * another door. So a class code (`collaborator`) admits the convenor and
+ * any instructor member; a staff code (`instructor`) admits the convenor
+ * only. Both creation and revocation take the same gate.
+ *
+ * The project id reaches this helper from a form, so it is verified here
+ * rather than trusted: a project that does not exist and a project that is
+ * not a course are both refused with the same 403 as a caller with no
+ * standing, which keeps the refusal from reporting whether an id is real.
+ *
+ * `requireOwner` is untouched — its other callers gate destructive
+ * single-project operations, which this is not.
+ */
+export async function requireCourseCodeManager(
+  db: DbInstance,
+  courseProjectId: number,
+  userId: number,
+  codeRole: "collaborator" | "instructor",
+): Promise<{ project: typeof projects.$inferSelect; role: Role }> {
+  const forbidden = new Response("Forbidden", { status: 403 });
+
+  const rows = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, courseProjectId))
+    .limit(1);
+  const project = rows[0];
+  if (!project || project.kind !== "course") throw forbidden;
+
+  const role = await getUserRole(db, courseProjectId, userId);
+  const permitted =
+    codeRole === "instructor"
+      ? role === "convenor"
+      : role === "convenor" || role === "instructor";
+  if (!permitted || role === null) throw forbidden;
+
+  return { project, role };
+}
+
+/**
+ * True when `userId` has course staff standing on the course tied to
+ * `project` — the same admission rule `requireCourseCodeManager` applies
+ * for a `collaborator`-role code: the course is resolved one hop up (the
+ * project itself when it is a course, otherwise its `parent_project_id`),
+ * and the caller must hold a `convenor` or `instructor` row there. This
+ * must stay in step with that function's rule — a course tab shown to
+ * anyone `/course`'s loader would refuse is a link to a 403.
+ *
+ * Resolves to `false` without a query when `project` names no course (a
+ * plain site, or a child with no parent) — callers get "no branch of
+ * their own" for that case.
+ */
+export async function hasCourseStanding(
+  db: DbInstance,
+  project: { id: number; kind: string; parent_project_id: number | null },
+  userId: number,
+): Promise<boolean> {
+  const courseProjectId =
+    project.kind === "course" ? project.id : project.parent_project_id;
+  if (courseProjectId == null) return false;
+
+  const role = await getUserRole(db, courseProjectId, userId);
+  return role === "convenor" || role === "instructor";
+}
+
+/**
+ * True when a membership exit must be refused: `role` is `instructor` and
+ * `projectId` names a project with a parent (a child site enrolled in a
+ * course).
+ *
+ * Instructor membership on a child is tied to the course in both
+ * directions (design §5, "Joining and leaving") — copied down at
+ * redemption, dropped only when the site leaves the course. Removing it
+ * any other way would produce a state the design declares impossible, so
+ * this check is shared by every membership exit: `remove-member` (a
+ * convenor removing someone else) and `leave-project` (self-service, from
+ * /account). Convenor and collaborator rows are never refused, and neither
+ * is an instructor row on a project with no parent — the course project
+ * itself, or an ordinary unaffiliated site.
+ */
+export async function isMembershipExitRefused(
+  db: DbInstance,
+  projectId: number,
+  role: Role | null | undefined,
+): Promise<boolean> {
+  if (role !== "instructor") return false;
+  const rows = await db
+    .select({ parent_project_id: projects.parent_project_id })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  return rows[0]?.parent_project_id != null;
 }
 
 /**

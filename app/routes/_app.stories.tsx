@@ -18,7 +18,7 @@
  * from the Y.Array so remote collaborators' changes appear in real
  * time; it falls back to loader data during SSR or pre-connection.
  *
- * @version v1.4.2-beta
+ * @version v1.5.0-beta
  */
 
 import { and, asc, count, eq, gt } from "drizzle-orm";
@@ -39,7 +39,10 @@ import { getDb } from "~/lib/db.server";
 import { keyFor } from "~/lib/item-key";
 import { stories, steps, project_members, users } from "~/db/schema";
 import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
-import { slugify } from "~/lib/slugify";
+import { gatePageSite } from "~/lib/page-site-gate.server";
+import { requireProjectMember } from "~/lib/membership.server";
+import { useSiteFetcher } from "~/lib/page-site";
+import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
 import { StoryRow } from "~/components/features/stories/StoryRow";
 import { SortableStoryRow } from "~/components/features/stories/SortableStoryRow";
 import { NewStoryForm } from "~/components/features/stories/NewStoryForm";
@@ -48,8 +51,10 @@ import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal
 import { DocsLink } from "~/components/ui/DocsLink";
 import { useCollaborationContext, FALLBACK_HIGHLIGHT_COLOR } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
-import { makeUniqueSlug } from "~/lib/slug";
+import { newStoryId } from "~/lib/story-id";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
+import { useDocumentSource } from "~/hooks/use-document-source";
+import { readOrderKey } from "~/lib/story-order";
 import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
 import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 
@@ -142,6 +147,35 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   };
 }
 
+/**
+ * Flips a story's draft or private flag on the story row's own site, for a
+ * member of it: the row names its site, which is the one the page showed it
+ * on, whichever site the session names. A story that does not exist writes
+ * nothing.
+ */
+async function toggleStoryFlag(
+  db: ReturnType<typeof getDb>,
+  userId: number,
+  formData: FormData,
+  intent: "toggle-draft" | "toggle-private",
+) {
+  const storyDbId = Number(formData.get("storyDbId"));
+  const next = formData.get("currentValue") !== "true";
+  const [row] = await db
+    .select({ project_id: stories.project_id })
+    .from(stories)
+    .where(eq(stories.id, storyDbId))
+    .limit(1);
+  if (!row) return { ok: true, intent };
+  await requireProjectMember(db, row.project_id, userId);
+  const flag = intent === "toggle-draft" ? { draft: next } : { private: next };
+  await db
+    .update(stories)
+    .set({ ...flag, updated_at: new Date().toISOString() })
+    .where(and(eq(stories.id, storyDbId), eq(stories.project_id, row.project_id)));
+  return { ok: true, intent };
+}
+
 export async function action({ request, context }: Route.ActionArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
@@ -151,34 +185,25 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
+  // Intents skipped by the page-site check below: both act on the story
+  // row's own site.
+  const PAGE_SITE_EXEMPT = ["toggle-draft", "toggle-private"];
+
+  // Every other intent acts on the session's site, and only when the page
+  // that posted it showed that site. `null` is the no-project case, which each
+  // intent answers in its own shape.
+  const gate = await gatePageSite(request, env, user.id, formData, intent, PAGE_SITE_EXEMPT);
+  if (gate.refused) return gate.refused;
+  const page = gate.page;
+
   switch (intent) {
     // Structural ops (create-story, delete-story, reorder) migrated to Yjs —
     // see app/hooks/use-structural-ops.ts and workers/collaboration.ts
     // snapshotToD1. Legacy intents are no longer handled here.
 
-    case "toggle-draft": {
-      const storyDbId = Number(formData.get("storyDbId"));
-      const currentValue = formData.get("currentValue") === "true";
-      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
-      if (!resolved) return { ok: false, intent: "toggle-draft", error: "no_project" };
-      await db
-        .update(stories)
-        .set({ draft: !currentValue, updated_at: new Date().toISOString() })
-        .where(and(eq(stories.id, storyDbId), eq(stories.project_id, resolved.project.id)));
-      return { ok: true, intent: "toggle-draft" };
-    }
-
-    case "toggle-private": {
-      const storyDbId = Number(formData.get("storyDbId"));
-      const currentValue = formData.get("currentValue") === "true";
-      const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
-      if (!resolved) return { ok: false, intent: "toggle-private", error: "no_project" };
-      await db
-        .update(stories)
-        .set({ private: !currentValue, updated_at: new Date().toISOString() })
-        .where(and(eq(stories.id, storyDbId), eq(stories.project_id, resolved.project.id)));
-      return { ok: true, intent: "toggle-private" };
-    }
+    case "toggle-draft":
+    case "toggle-private":
+      return toggleStoryFlag(db, user.id, formData, intent);
 
     case "flush-yjs-snapshot": {
       // Eager DO -> D1 snapshot before the client navigates to a
@@ -189,7 +214,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       // do NOT throw. The client still navigates — the story exists in
       // Yjs, and the 30s alarm-driven snapshot is the eventual safety net.
       try {
-        const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
+        const resolved = page;
         if (!resolved) {
           return { ok: false, intent: "flush-yjs-snapshot", error: "snapshot_failed" };
         }
@@ -234,8 +259,10 @@ interface StoryItem {
   _tempId?: string | null;
   /** Y.Map sentinel: the user id that created this item (used for delete permissions). */
   _createdBy?: number | null;
-  /** Index in the Y.Array (used for reorder). */
+  /** Index in the Y.Array; a last-resort sort tie-break and dnd key. */
   _yIndex?: number;
+  /** Fractional index the list sorts by; null on a doc awaiting the backfill. */
+  _orderKey?: string | null;
   /** Reference to the backing Y.Map — used for canDelete and deleteStory. */
   _yMap?: Y.Map<unknown> | null;
   /** Step count read from the Y.Map's nested steps Y.Array (Yjs mode only). */
@@ -291,6 +318,7 @@ function yMapToStoryItem(yMap: Y.Map<unknown>, yIndex: number): StoryItem {
     _tempId: tempId,
     _createdBy: createdBy,
     _yIndex: yIndex,
+    _orderKey: readOrderKey(yMap),
     _yMap: yMap,
     _yStepCount: stepCount,
   };
@@ -335,7 +363,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   // a new story is added to Yjs. Kept separate from `fetcher` so the
   // existing intents (toggle-draft, toggle-private) are not affected by
   // the flush state-machine.
-  const flushFetcher = useFetcher<{ ok: boolean; intent: string; error?: string }>();
+  const flushFetcher = useSiteFetcher<{ ok: boolean; intent: string; error?: string }>();
   const navigate = useNavigate();
   // Story id we are waiting to navigate to once the flush completes.
   // Cleared as soon as the navigate fires.
@@ -351,18 +379,37 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     userRole,
   } = loaderData;
 
-  const { ydoc, remoteCollaborators } = useCollaborationContext();
+  const { ydoc, provider, connectionStatus, remoteCollaborators } = useCollaborationContext();
   const ops = useStructuralOps(currentUserId, userRole);
 
   // ------------------------------------------------------------------
   // Source of truth: Yjs when available, loader data otherwise
   // ------------------------------------------------------------------
-  const yjsStories = useYjsArraySync(
+  const yjsStoriesUnsorted = useYjsArraySync(
     ydoc ? ydoc.getArray<Y.Map<unknown>>("stories") : null,
     yMapToStoryItem,
   );
 
-  const useYjs = ydoc !== null && ops !== null && yjsStories !== null;
+  // A story's place is its order_key, not its Y.Array position, so the list is
+  // sorted here rather than read off the array. The tie-break on `_yIndex`
+  // keeps the sort total and stable for a document whose keys the server-side
+  // backfill has not reached yet (it degenerates to array order, which is what
+  // such a document always presented).
+  const yjsStories = useMemo(
+    () =>
+      yjsStoriesUnsorted === null
+        ? null
+        : [...yjsStoriesUnsorted].sort((a, b) => {
+            const ka = a._orderKey ?? "";
+            const kb = b._orderKey ?? "";
+            if (ka !== kb) return ka < kb ? -1 : 1;
+            return (a._yIndex ?? 0) - (b._yIndex ?? 0);
+          }),
+    [yjsStoriesUnsorted],
+  );
+
+  // The loader's list stands in, read-only, for a document that has not synced.
+  const { useYjs, awaitingDoc } = useDocumentSource({ provider, connectionStatus, ydoc, ops, list: yjsStories });
   const displayStories: StoryItem[] = useYjs
     ? yjsStories!
     : (loaderStories as StoryItem[]);
@@ -376,6 +423,14 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
 
   const [activeId, setActiveId] = useState<string | number | null>(null);
   const [showNewCard, setShowNewCard] = useState(showNewForm);
+  // The form opens only once the document can take the story, and then stays
+  // mounted whatever the document does, so a reset that swaps in an unsynced
+  // one cannot discard what has been typed; its Save waits for the sync.
+  const [formOpened, setFormOpened] = useState(false);
+  useEffect(() => {
+    if (!showNewCard) setFormOpened(false);
+    else if (!awaitingDoc) setFormOpened(true);
+  }, [showNewCard, awaitingDoc]);
 
   useEffect(() => {
     if (showNewForm) setShowNewCard(true);
@@ -469,14 +524,12 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayStories, useYjs]);
 
-  // Belt-and-braces guard for the remote-delete toast during a reorder. The
-  // reorder replaces the moved item with a fresh Y.Map (cloneYMap in
-  // use-structural-ops), but that clone copies every entry — including
-  // `_temp_id` and `_id` — so keyFor still resolves to the same key and the
-  // swap reads as a move, never a deletion. This flag predates the shared
-  // tempId-first keying, back when the reorder DID churn the key and fire a
-  // false toast; it is retained as a cheap safety net, not because the
-  // detection would misfire under the current keying.
+  // Belt-and-braces guard for the remote-delete toast during a reorder. A
+  // reorder is now one field write on the moved story's own Y.Map — nothing
+  // leaves the array, so there is nothing for the toast to read as a deletion.
+  // This flag predates even the tempId-first keying that made the older
+  // clone-based reorder safe; it is retained as a cheap safety net, not
+  // because the detection would misfire under the current scheme.
   const reorderingRef = useRef(false);
 
   // Remote-delete toast — fires when a story disappears from the Y.Array
@@ -486,6 +539,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
   useRemoteDeleteToast({
     items: displayStories,
     enabled: useYjs,
+    scope: ydoc,
     getLabel: (s) => s.title ?? s.story_id,
     suppressRef: reorderingRef,
   });
@@ -537,11 +591,12 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
       // This rare collision was deliberately accepted in exchange for clean
       // URLs; the previous scheme spent a permanent 4-char suffix on every URL
       // to guard against a case that essentially never happens.
-      const existingIds = new Set(
+      // newStoryId counts the sheet names as taken, so a story titled
+      // "Objects" gets `objects-2`.
+      const storyId = newStoryId(
+        title,
         displayStories.map((s) => s.story_id).filter(Boolean),
       );
-      const baseSlug = slugify(title) || "story";
-      const { slug: storyId } = makeUniqueSlug(baseSlug, existingIds);
       // Seed the subtitle and byline the user typed in the creation form; both
       // stay editable inline on the story editor afterwards.
       ops!.addStory(title, storyId, subtitle, byline);
@@ -573,6 +628,9 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
     if (flushFetcher.data?.intent !== "flush-yjs-snapshot") return;
     const target = pendingNavigate;
     setPendingNavigate(null);
+    // Refused because the site changed: the story is not the session's site's
+    // to open, and the layout's notice says why.
+    if (isSiteChanged(flushFetcher.data)) return;
     navigate(`/stories/${target}`);
   }, [flushFetcher.state, flushFetcher.data, pendingNavigate, navigate]);
 
@@ -647,7 +705,8 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
         <button
           type="button"
           onClick={() => setShowNewCard(true)}
-          className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 transition-colors"
+          disabled={awaitingDoc}
+          className="inline-flex items-center justify-center bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {t("new_story_button")}
         </button>
@@ -656,17 +715,27 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
       {/* Drag hint */}
       <p className="font-body text-sm text-gray-500 mb-6">{t("hint")}</p>
 
+      {awaitingDoc && hasStories && (
+        <p role="status" className="font-body text-sm text-gray-500 mb-4">
+          {t("loading_state")}
+        </p>
+      )}
+
       {/* Inline new story form */}
-      {showNewCard && (
+      {showNewCard && (!awaitingDoc || formOpened) && (
         <NewStoryForm
+          saveDisabled={awaitingDoc}
           onSave={handleCreateStory}
           onCancel={() => setShowNewCard(false)}
         />
       )}
 
       {/* Stories list or empty state */}
-      {!hasStories && !showNewCard ? (
-        <StoriesEmptyState onCreateNew={() => setShowNewCard(true)} />
+      {!hasStories && (!showNewCard || awaitingDoc) ? (
+        <StoriesEmptyState
+          onCreateNew={() => setShowNewCard(true)}
+          awaitingSync={awaitingDoc}
+        />
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
           <DndContext
@@ -703,6 +772,7 @@ export default function StoriesPage({ loaderData }: Route.ComponentProps) {
                     canDelete={canDelete}
                     deleteTooltip={tStructural("tooltip_cannot_delete")}
                     skipInternalConfirm={useYjs}
+                    readOnly={awaitingDoc}
                     rowClassName={
                       highlightColor ? "structural-highlight" : undefined
                     }

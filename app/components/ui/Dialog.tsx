@@ -9,12 +9,39 @@
  * prevents accidental data loss in dialogs with form input (e.g. the
  * object upload flow).
  *
- * @version v1.4.0-beta
+ * The panel is a modal dialog to assistive technology: `role="dialog"`,
+ * `aria-modal`, and a name taken from the first heading inside it, so
+ * callers need not wire one. Focus moves into the panel when it opens, unless
+ * a field inside has already taken it with `autoFocus`, and goes back to
+ * whatever held it before, if that is still on the page, when the dialog
+ * closes. Tab and Shift-Tab wrap within the panel. Escape is left to
+ * `useEscapeToClose`, which listens on the document, so a popover inside the
+ * panel that stops Escape's propagation still keeps the dialog open.
+ *
+ * The overlay is portalled to `document.body`, so an ancestor with a CSS
+ * transform, a filter or its own stacking context can neither shift it nor
+ * clip it. It registers as a layer of the focus scope it was opened from
+ * (focus-scope.ts), so focus inside it still counts as focus in, say, the
+ * editor whose toolbar opened it.
+ *
+ * @version v1.5.0-beta
  */
 
-import { useState, useCallback, useEffect, type ReactNode } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { useFocusScopeLayer } from "~/components/ui/focus-scope";
 import { useEscapeToClose } from "~/hooks/use-escape-to-close";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
 
 interface DialogProps {
   open: boolean;
@@ -23,11 +50,139 @@ interface DialogProps {
   className?: string;
   /** When set, overlay click / Escape shows a confirmation prompt with this message. */
   dismissConfirm?: string;
+  /**
+   * The caller renders its own modal element inside the panel, through
+   * `useModalFocus`, and owns its role, name, focus and Tab; the panel then
+   * carries none of them and gives no focus back on close, because those
+   * dialogs hand focus forward along a chain only the caller knows.
+   */
+  managesOwnFocus?: boolean;
 }
 
-export function Dialog({ open, onClose, children, className = "", dismissConfirm }: DialogProps) {
+/** What Tab can land on inside the panel, in document order. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+  'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), ' +
+  '[contenteditable="true"]';
+
+/**
+ * The panel's focusable elements that are rendered. A control hidden by CSS
+ * (the add-object dialog's mobile-only select, on desktop) cannot take focus,
+ * so counting it would send focus nowhere. Where the browser has no
+ * `checkVisibility`, every match counts.
+ */
+function focusableIn(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => typeof el.checkVisibility !== "function" || el.checkVisibility({ visibilityProperty: true })
+  );
+}
+
+export function Dialog({
+  open,
+  onClose,
+  children,
+  className = "",
+  dismissConfirm,
+  managesOwnFocus = false,
+}: DialogProps) {
   const { t } = useTranslation("common");
   const [showConfirm, setShowConfirm] = useState(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
+  const [labelId, setLabelId] = useState<string | undefined>(undefined);
+  const fallbackLabelId = useId();
+
+  // The element that held focus before the dialog opened. Read during render,
+  // on the render that opens it: by the time an effect runs, a field inside
+  // with `autoFocus` has already taken focus, and the opener would be lost.
+  const openerRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+  if (open && !wasOpenRef.current && typeof document !== "undefined") {
+    const active = document.activeElement;
+    openerRef.current = !managesOwnFocus && active instanceof HTMLElement ? active : null;
+  }
+  wasOpenRef.current = open;
+
+  useFocusScopeLayer(overlayRef, open);
+  useOverlayOpen(open);
+
+  // Name the dialog by its first heading. Read after every render, since a
+  // dialog with stages (the sync and add-object flows) swaps its heading.
+  useLayoutEffect(() => {
+    if (!open || managesOwnFocus) return;
+    const heading = panelRef.current?.querySelector<HTMLElement>("h1, h2, h3");
+    if (heading && !heading.id) heading.id = fallbackLabelId;
+    setLabelId(heading?.id || undefined);
+  });
+
+  // Move focus in when it opens, unless something inside already has it.
+  useLayoutEffect(() => {
+    if (!open || managesOwnFocus) return;
+    const panel = panelRef.current;
+    if (panel && !panel.contains(document.activeElement)) {
+      (focusableIn(panel)[0] ?? panel).focus();
+    }
+  }, [open, managesOwnFocus]);
+
+  // Give focus back to the opener when the dialog closes or unmounts, if
+  // focus was lost with the panel. Focus on anything still on the page is left
+  // there: a dialog that replaced this one, or this one's own panel when
+  // Strict Mode replays the effect, which is also why the opener is kept.
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      const opener = openerRef.current;
+      if (!opener || !opener.isConnected) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active.isConnected) return;
+      opener.focus();
+    };
+  }, [open]);
+
+  // The confirmation prompt takes focus while it shows, and gives it back to
+  // what held it in the panel when the author goes back, or to the panel.
+  useEffect(() => {
+    if (!showConfirm) return;
+    const before = document.activeElement;
+    confirmRef.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      if (before instanceof HTMLElement && before.isConnected && panel.contains(before)) {
+        before.focus();
+      } else {
+        panel.focus();
+      }
+    };
+  }, [showConfirm]);
+
+  /** Keep Tab inside the topmost layer: the prompt if it shows, else the panel. */
+  const trapTab = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Tab") return;
+    // A dialog opened from this one is portalled beside it, not inside it, but
+    // its key events still bubble here through React; that dialog keeps Tab.
+    if (!overlayRef.current?.contains(event.target as Node)) return;
+    if (managesOwnFocus && !showConfirm) return;
+    const layer = showConfirm ? confirmRef.current : panelRef.current;
+    if (!layer) return;
+    const items = focusableIn(layer);
+    if (items.length === 0) {
+      event.preventDefault();
+      layer.focus();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || !layer.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !layer.contains(active))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const handleDismissAttempt = useCallback(() => {
     if (dismissConfirm) {
@@ -84,9 +239,11 @@ export function Dialog({ open, onClose, children, className = "", dismissConfirm
 
   if (!open) return null;
 
-  return (
+  const overlay = (
     <div
+      ref={overlayRef}
       className="fixed inset-0 z-50 bg-black/50 overflow-y-auto overscroll-contain"
+      onKeyDown={trapTab}
       onClick={(e) => {
         if (e.target === e.currentTarget) handleDismissAttempt();
       }}
@@ -101,7 +258,12 @@ export function Dialog({ open, onClose, children, className = "", dismissConfirm
         }}
       >
         <div
-          className={`bg-white rounded-lg shadow-xl w-full max-h-[calc(100dvh-2rem)] overflow-y-auto ${className.includes("max-w-") ? "" : "max-w-md"} ${className.includes("p-") ? "" : "p-6"} ${className}`}
+          ref={panelRef}
+          role={managesOwnFocus ? undefined : "dialog"}
+          aria-modal={managesOwnFocus ? undefined : "true"}
+          aria-labelledby={managesOwnFocus ? undefined : labelId}
+          tabIndex={-1}
+          className={`bg-white rounded-lg shadow-xl w-full focus:outline-none max-h-[calc(100dvh-2rem)] overflow-y-auto ${className.includes("max-w-") ? "" : "max-w-md"} ${className.includes("p-") ? "" : "p-6"} ${className}`}
         >
           {children}
         </div>
@@ -115,8 +277,15 @@ export function Dialog({ open, onClose, children, className = "", dismissConfirm
             if (e.target === e.currentTarget) setShowConfirm(false);
           }}
         >
-          <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full mx-4 p-6 text-center">
-            <p className="font-body text-sm text-charcoal mb-4">{dismissConfirm}</p>
+          <div
+            ref={confirmRef}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={`${fallbackLabelId}-confirm`}
+            tabIndex={-1}
+            className="bg-white rounded-lg shadow-2xl max-w-sm w-full mx-4 p-6 text-center focus:outline-none"
+          >
+            <p id={`${fallbackLabelId}-confirm`} className="font-body text-sm text-charcoal mb-4">{dismissConfirm}</p>
             <div className="flex items-center justify-center gap-3">
               <button
                 type="button"
@@ -141,4 +310,6 @@ export function Dialog({ open, onClose, children, className = "", dismissConfirm
       )}
     </div>
   );
+  // Server rendering has no body to portal into; the overlay renders in place.
+  return typeof document === "undefined" ? overlay : createPortal(overlay, document.body);
 }

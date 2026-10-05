@@ -7,7 +7,16 @@
  *
  * Used by the story editor to render the correct player/viewer component
  * for each step based on the object's source URL or file extension.
+ *
+ * Which extensions count as audio is not decided here: it is one of the three
+ * questions `~/lib/file-types` answers, and this module builds its matcher from
+ * AUDIO_EXTENSIONS so recognising a file as audio and accepting it for upload
+ * can diverge without either drifting from its own declaration.
+ *
+ * @version v1.5.0-beta
  */
+
+import { AUDIO_EXTENSIONS } from "~/lib/file-types";
 
 // ---------------------------------------------------------------------------
 // Regexes
@@ -20,7 +29,10 @@ const VIMEO_RE = /vimeo\.com\/(?:video\/)?(\d+)(?:\/([a-zA-Z0-9]+))?/;
 
 const GDRIVE_RE = /drive\.google\.com\/(?:file\/d\/|open\?id=)([A-Za-z0-9_-]+)/;
 
-const AUDIO_FILE_RE = /\.(mp3|ogg|m4a)$/i;
+// Built from AUDIO_EXTENSIONS rather than written out, so the set stays the one
+// declaration. Case-insensitive: the framework's media_type.py enumerates
+// uppercase spellings, and an object id may carry either.
+const AUDIO_FILE_RE = new RegExp(`\\.(${[...AUDIO_EXTENSIONS].join("|")})$`, "i");
 
 // ---------------------------------------------------------------------------
 // Types

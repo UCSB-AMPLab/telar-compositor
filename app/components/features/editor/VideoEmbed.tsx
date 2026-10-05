@@ -58,6 +58,10 @@ interface VideoEmbedProps {
   getDurationRef?: React.MutableRefObject<(() => Promise<number>) | null>;
   playerControlsRef?: React.MutableRefObject<VideoPlayerControls | null>;
   onTimeUpdate?: (time: number) => void;
+  /** Fill the box the parent gives it, whatever its shape, instead of a 16:9 frame. */
+  fill?: boolean;
+  /** A Vimeo video's width over height, reported once its player is ready. */
+  onAspect?: (aspect: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,9 +93,11 @@ function loadYouTubeApi(): Promise<void> {
 // Component
 // ---------------------------------------------------------------------------
 
-export function VideoEmbed({ type, videoId, vimeoHash, getCurrentTimeRef, getDurationRef, playerControlsRef, onTimeUpdate }: VideoEmbedProps) {
+export function VideoEmbed({ type, videoId, vimeoHash, getCurrentTimeRef, getDurationRef, playerControlsRef, onTimeUpdate, fill, onAspect }: VideoEmbedProps) {
   const { t } = useTranslation("editor");
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const onAspectRef = useRef(onAspect);
+  onAspectRef.current = onAspect;
 
   // Build the embed URL for each platform
   let src: string;
@@ -164,6 +170,11 @@ export function VideoEmbed({ type, videoId, vimeoHash, getCurrentTimeRef, getDur
     import("@vimeo/player").then(({ default: Player }) => {
       if (cancelled || !iframeRef.current) return;
       const player = new Player(iframeRef.current);
+      Promise.all([player.ready(), player.getVideoWidth(), player.getVideoHeight()])
+        .then(([, w, h]) => {
+          if (!cancelled && w && h) onAspectRef.current?.(w / h);
+        })
+        .catch(() => {});
       if (getCurrentTimeRef) {
         getCurrentTimeRef.current = () => player.getCurrentTime();
       }
@@ -206,7 +217,7 @@ export function VideoEmbed({ type, videoId, vimeoHash, getCurrentTimeRef, getDur
     <iframe
       ref={iframeRef}
       src={src}
-      className="w-full aspect-video rounded-sm video-embed-iframe"
+      className={`w-full ${fill ? "h-full" : "aspect-video"} rounded-sm video-embed-iframe`}
       allow="autoplay; encrypted-media"
       allowFullScreen
       title={t("video_player_title", { type })}

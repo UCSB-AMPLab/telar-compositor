@@ -1,13 +1,8 @@
 {
   "page_title": "Pages",
   "new_page_button": "+ New Page",
-  "new_page": "New page",
   "delete_page": "Delete page",
-  "no_pages": "No pages yet",
   "delete_confirm_title": "Delete page?",
-  "delete_confirm_body": "Delete \"{{title}}\"? This page will be permanently removed.",
-  "delete_page_confirm": "Delete this page? It will be removed from your site's navigation.",
-  "delete_confirm_button": "Delete page",
   "delete_cancel": "Keep page",
   "empty_state": "Build your site's pages",
   "empty_state_description": "Add pages to your site — About, Team, and more. Each page appears as a tab in the menu.",
@@ -37,5 +32,7 @@
   "repo_pages_description": "Import them into the editor to manage their content here.",
   "import_all_button": "Import all",
   "import_one_button": "Import",
-  "import_in_progress": "Importing…"
+  "import_in_progress": "Importing…",
+  "scan_not_made": "We couldn't check GitHub for pages you could import. We'll keep trying, or you can try again now.",
+  "scan_retry": "Try again"
 }

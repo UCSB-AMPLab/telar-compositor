@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
-// Collaboration sidebar tests
+/**
+ * Collaboration sidebar tests
+ *
+ * @version v1.5.0-beta
+ */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import React from "react";
@@ -18,6 +22,8 @@ vi.mock("react-i18next", () => ({
 vi.mock("react-router", () => ({
   useFetcher: () => ({
     submit: vi.fn(),
+    // The panel loads the contribution record on open through a fetcher.
+    load: vi.fn(),
     state: "idle",
     data: undefined,
   }),
@@ -35,15 +41,22 @@ const mockContextValue: CollaborationContextValue = {
   provider: null,
   connected: true,
   connectionStatus: "connected",
+  admissionEpoch: 1,
   isPublishing: false,
   isBuilding: false,
   publishError: false,
-  setIsPublishing: vi.fn(),
+  publishHeldByOther: false,
+  publishHeldBy: null,
+  dismissPublishError: vi.fn(),
   publishSha: null,
   publishCommitUrl: null,
   isUpgrading: false,
   upgradeError: false,
-  setIsUpgrading: vi.fn(),
+  upgradeHeldByOther: false,
+  upgradeHeldBy: null,
+  dismissUpgradeError: vi.fn(),
+  upgradeSucceeded: false,
+  objectsHeldBy: null,
   remoteCollaborators: [
     {
       clientId: 101,
@@ -148,7 +161,7 @@ describe("CollaborationSidebar", () => {
     expect(aside?.className).not.toContain("translate-x-full");
   });
 
-  it("renders three sections in order: Online now, Contributions, Team", () => {
+  it("renders four sections in order: Online now, your contributions, your time, Team", () => {
     render(
       <ContextWrapper>
         <CollaborationSidebar
@@ -164,11 +177,31 @@ describe("CollaborationSidebar", () => {
     const headings = screen.getAllByRole("heading", { level: 3 });
     const texts = headings.map((h) => h.textContent ?? "");
     const onlineIdx = texts.findIndex((t) => t.includes("online_now"));
-    const contribIdx = texts.findIndex((t) => t.includes("contributions"));
+    // Both sections render before the record has loaded, so the panel does not
+    // change shape underneath the reader when it arrives.
+    const yoursIdx = texts.findIndex((t) => t.includes("sidebar.yours"));
+    const timeIdx = texts.findIndex((t) => t.includes("sidebar.yourTime"));
     const teamIdx = texts.findIndex((t) => t.includes("team_heading"));
     expect(onlineIdx).toBeGreaterThanOrEqual(0);
-    expect(contribIdx).toBeGreaterThan(onlineIdx);
-    expect(teamIdx).toBeGreaterThan(contribIdx);
+    expect(yoursIdx).toBeGreaterThan(onlineIdx);
+    expect(timeIdx).toBeGreaterThan(yoursIdx);
+    expect(teamIdx).toBeGreaterThan(timeIdx);
+  });
+
+  it.each([true, false])("links to the team page for a convenor=%s", (isConvenor) => {
+    render(
+      <ContextWrapper>
+        <CollaborationSidebar
+          open={true}
+          onClose={vi.fn()}
+          isConvenor={isConvenor}
+          members={MEMBERS}
+          seats={SEATS}
+          triggerRef={triggerRef}
+        />
+      </ContextWrapper>
+    );
+    expect(screen.getByText("team:team_page_link").closest("a")?.getAttribute("href")).toBe("/team");
   });
 
   it("renders invite controls only when isConvenor=true", () => {
@@ -345,5 +378,70 @@ describe("CollaborationSidebar", () => {
     expect(onlineSection).not.toBeNull();
     const onlineText = onlineSection!.textContent ?? "";
     expect(onlineText).toContain("@carol");
+  });
+
+  // -------------------------------------------------------------------------
+  // isCourseProject threading to MemberRow's kebab (design §5 / item 4):
+  // an instructor row's kebab shows only on the course project's own
+  // member list, gated by isCourseProject — never on a child site's.
+  // -------------------------------------------------------------------------
+
+  const instructorMember = {
+    userId: 3,
+    githubId: 30,
+    username: "dana",
+    role: "instructor" as const,
+    contributions: null,
+    presenceColor: null,
+  };
+
+  it("hides the instructor row's kebab when isCourseProject is omitted (child site) even for the convenor", () => {
+    render(
+      <ContextWrapper>
+        <CollaborationSidebar
+          open={true}
+          onClose={vi.fn()}
+          isConvenor={true}
+          members={[instructorMember]}
+          seats={SEATS}
+          triggerRef={triggerRef}
+        />
+      </ContextWrapper>
+    );
+    expect(screen.queryByRole("button", { name: /row_menu_aria/i })).toBeNull();
+  });
+
+  it("shows the instructor row's kebab when isCourseProject is true, for the convenor", () => {
+    render(
+      <ContextWrapper>
+        <CollaborationSidebar
+          open={true}
+          onClose={vi.fn()}
+          isConvenor={true}
+          members={[instructorMember]}
+          seats={SEATS}
+          isCourseProject={true}
+          triggerRef={triggerRef}
+        />
+      </ContextWrapper>
+    );
+    expect(screen.getByRole("button", { name: /row_menu_aria/i })).toBeTruthy();
+  });
+
+  it("still hides the instructor row's kebab on the course project for a non-convenor viewer", () => {
+    render(
+      <ContextWrapper>
+        <CollaborationSidebar
+          open={true}
+          onClose={vi.fn()}
+          isConvenor={false}
+          members={[instructorMember]}
+          seats={SEATS}
+          isCourseProject={true}
+          triggerRef={triggerRef}
+        />
+      </ContextWrapper>
+    );
+    expect(screen.queryByRole("button", { name: /row_menu_aria/i })).toBeNull();
   });
 });

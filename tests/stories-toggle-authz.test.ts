@@ -1,10 +1,14 @@
 /**
  * Authorization tests for toggle-draft and toggle-private actions in
- * _app.stories.tsx. Verifies that both intents scope their UPDATE to the
- * caller's active project, closing the cross-project IDOR where any
- * signed-in user could flip draft/private on any story by id.
+ * _app.stories.tsx. Both intents are row-bound: they load the story row by
+ * id, resolve authorization against that row's OWN project_id via
+ * `requireProjectMember`, and scope the UPDATE by that same project_id —
+ * never by the caller's session-active project. This closes the
+ * cross-project IDOR where any signed-in user could flip draft/private on
+ * any story by id, while still letting a member act on a story that belongs
+ * to a site other than the one their session currently shows.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -31,16 +35,14 @@ vi.mock("~/middleware/auth.server", () => ({
 vi.mock("~/lib/session.server", () => ({
   createSessionStorage: vi.fn(() => ({
     getSession: vi.fn(async () => ({
-      get: vi.fn(() => 99),
+      get: vi.fn(() => undefined),
     })),
   })),
 }));
 
 vi.mock("~/lib/membership.server", () => ({
-  resolveActiveProject: vi.fn(async () => ({
-    project: { id: 42, github_repo_full_name: "owner/repo" },
-    userRole: "collaborator",
-  })),
+  resolveActiveProject: vi.fn(async () => null),
+  requireProjectMember: vi.fn(async () => undefined),
 }));
 
 vi.mock("../workers/auth", () => ({
@@ -53,8 +55,7 @@ vi.mock("../workers/auth", () => ({
 
 import { action } from "~/routes/_app.stories";
 import { getDb } from "~/lib/db.server";
-import { createSessionStorage } from "~/lib/session.server";
-import { resolveActiveProject } from "~/lib/membership.server";
+import { requireProjectMember } from "~/lib/membership.server";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,6 +91,31 @@ function buildContext(userId = 7) {
       cloudflare: { env },
     } as unknown as Parameters<typeof action>[0]["context"],
   };
+}
+
+// The row select (`db.select({project_id}).from(stories).where(eq(stories.id,
+// storyDbId)).limit(1)`) is the only select the row-bound toggle path makes
+// directly — `requireProjectMember` is mocked above rather than exercised
+// through its own `db.select` chain, so this is the only shape to fake here.
+function makeSelectMock(storyRow: { project_id: number } | undefined) {
+  return vi.fn(() => ({
+    from: vi.fn(() => ({
+      where: vi.fn(() => ({
+        limit: vi.fn(async () => (storyRow ? [storyRow] : [])),
+      })),
+    })),
+  }));
+}
+
+function setStoryRow(storyRow: { project_id: number } | undefined) {
+  vi.mocked(getDb).mockReturnValue({
+    select: makeSelectMock(storyRow),
+    update: vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: vi.fn().mockResolvedValue({}),
+      })),
+    })),
+  } as never);
 }
 
 // Helper to extract the captured where-argument from a freshly-called db mock.
@@ -134,27 +160,8 @@ function drizzleClauseContainsValue(node: unknown, value: number): boolean {
 
 beforeEach(() => {
   vi.clearAllMocks();
-
-  // Reset db mock to fresh chained fns each test
-  vi.mocked(getDb).mockReturnValue({
-    select: vi.fn(),
-    update: vi.fn(() => ({
-      set: vi.fn(() => ({
-        where: vi.fn().mockResolvedValue({}),
-      })),
-    })),
-  } as never);
-
-  // Default session: returns activeProjectId = 99
-  vi.mocked(createSessionStorage).mockReturnValue({
-    getSession: vi.fn(async () => ({ get: vi.fn(() => 99) })),
-  } as never);
-
-  // Default resolved project
-  vi.mocked(resolveActiveProject).mockResolvedValue({
-    project: { id: 42, github_repo_full_name: "owner/repo" } as never,
-    userRole: "collaborator",
-  });
+  setStoryRow({ project_id: 42 });
+  vi.mocked(requireProjectMember).mockResolvedValue(undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -162,11 +169,8 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("_app.stories action: toggle-draft IDOR fix", () => {
-  it("returns ok:true and scopes the UPDATE where-clause by the resolved project id", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue({
-      project: { id: 42, github_repo_full_name: "owner/repo" } as never,
-      userRole: "collaborator",
-    });
+  it("returns ok:true and scopes the UPDATE where-clause by the story row's own project id", async () => {
+    setStoryRow({ project_id: 42 });
 
     const { context } = buildContext();
     const res = (await action({
@@ -184,13 +188,16 @@ describe("_app.stories action: toggle-draft IDOR fix", () => {
     };
     expect(dbInstance.update).toHaveBeenCalled();
 
-    // The where arg must encode the resolved project id (42)
+    // The where arg must encode the row's own project id (42)
     const whereArg = captureWhereArg();
     expect(drizzleClauseContainsValue(whereArg, 42)).toBe(true);
   });
 
-  it("returns { ok:false, error:'no_project' } and does NOT mutate DB when resolveActiveProject returns null", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue(null);
+  // toggle-draft is row-bound: it never reads the session. A story row that
+  // does not exist answers { ok: true, intent } with no write, matching
+  // every other row-bound intent's "missing row" answer.
+  it("returns ok:true and does NOT mutate DB when the story row does not exist", async () => {
+    setStoryRow(undefined);
 
     const { context } = buildContext();
     const res = (await action({
@@ -199,9 +206,9 @@ describe("_app.stories action: toggle-draft IDOR fix", () => {
       params: {},
     } as never)) as { ok: boolean; intent: string; error?: string };
 
-    expect(res.ok).toBe(false);
+    expect(res.ok).toBe(true);
     expect(res.intent).toBe("toggle-draft");
-    expect(res.error).toBe("no_project");
+    expect(res.error).toBeUndefined();
 
     const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
       update: ReturnType<typeof vi.fn>;
@@ -209,22 +216,23 @@ describe("_app.stories action: toggle-draft IDOR fix", () => {
     expect(dbInstance.update).not.toHaveBeenCalled();
   });
 
-  it("passes the sessionActiveId from the session cookie to resolveActiveProject", async () => {
-    vi.mocked(createSessionStorage).mockReturnValue({
-      getSession: vi.fn(async () => ({ get: vi.fn(() => 77) })),
-    } as never);
+  // toggle-draft checks membership against the story row's own project id,
+  // via requireProjectMember — never against the caller's session-active
+  // project.
+  it("checks membership against the story row's own project id, regardless of the session", async () => {
+    setStoryRow({ project_id: 77 });
 
-    const { context } = buildContext();
+    const { context } = buildContext(7);
     await action({
       request: buildRequest("toggle-draft", { storyDbId: "5", currentValue: "true" }),
       context,
       params: {},
     } as never);
 
-    expect(resolveActiveProject).toHaveBeenCalledWith(
+    expect(requireProjectMember).toHaveBeenCalledWith(
       expect.anything(), // db
+      77,                // the row's own project_id
       7,                 // user.id
-      77,                // sessionActiveId
     );
   });
 });
@@ -234,11 +242,8 @@ describe("_app.stories action: toggle-draft IDOR fix", () => {
 // ---------------------------------------------------------------------------
 
 describe("_app.stories action: toggle-private IDOR fix", () => {
-  it("returns ok:true and scopes the UPDATE where-clause by the resolved project id", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue({
-      project: { id: 55, github_repo_full_name: "owner/repo" } as never,
-      userRole: "collaborator",
-    });
+  it("returns ok:true and scopes the UPDATE where-clause by the story row's own project id", async () => {
+    setStoryRow({ project_id: 55 });
 
     const { context } = buildContext();
     const res = (await action({
@@ -259,8 +264,11 @@ describe("_app.stories action: toggle-private IDOR fix", () => {
     expect(drizzleClauseContainsValue(whereArg, 55)).toBe(true);
   });
 
-  it("returns { ok:false, error:'no_project' } and does NOT mutate DB when resolveActiveProject returns null", async () => {
-    vi.mocked(resolveActiveProject).mockResolvedValue(null);
+  // toggle-private is row-bound: a story row that does not exist answers
+  // { ok: true, intent } with no write, matching every other row-bound
+  // intent's "missing row" answer.
+  it("returns ok:true and does NOT mutate DB when the story row does not exist", async () => {
+    setStoryRow(undefined);
 
     const { context } = buildContext();
     const res = (await action({
@@ -269,9 +277,9 @@ describe("_app.stories action: toggle-private IDOR fix", () => {
       params: {},
     } as never)) as { ok: boolean; intent: string; error?: string };
 
-    expect(res.ok).toBe(false);
+    expect(res.ok).toBe(true);
     expect(res.intent).toBe("toggle-private");
-    expect(res.error).toBe("no_project");
+    expect(res.error).toBeUndefined();
 
     const dbInstance = vi.mocked(getDb).mock.results.at(-1)?.value as {
       update: ReturnType<typeof vi.fn>;
@@ -279,22 +287,23 @@ describe("_app.stories action: toggle-private IDOR fix", () => {
     expect(dbInstance.update).not.toHaveBeenCalled();
   });
 
-  it("passes the sessionActiveId from the session cookie to resolveActiveProject", async () => {
-    vi.mocked(createSessionStorage).mockReturnValue({
-      getSession: vi.fn(async () => ({ get: vi.fn(() => 33) })),
-    } as never);
+  // toggle-private checks membership against the story row's own project id,
+  // via requireProjectMember — never against the caller's session-active
+  // project.
+  it("checks membership against the story row's own project id, regardless of the session", async () => {
+    setStoryRow({ project_id: 33 });
 
-    const { context } = buildContext();
+    const { context } = buildContext(7);
     await action({
       request: buildRequest("toggle-private", { storyDbId: "20", currentValue: "false" }),
       context,
       params: {},
     } as never);
 
-    expect(resolveActiveProject).toHaveBeenCalledWith(
+    expect(requireProjectMember).toHaveBeenCalledWith(
       expect.anything(),
-      7,
       33,
+      7,
     );
   });
 });

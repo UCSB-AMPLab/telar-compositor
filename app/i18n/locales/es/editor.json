@@ -1,8 +1,4 @@
 {
-  "autosave": {
-    "saving": "Guardando...",
-    "saved": "Guardado"
-  },
   "toolbar": {
     "bold": "Negrita",
     "italic": "Cursiva",
@@ -24,6 +20,14 @@
     "insert": "Insertar",
     "cancel": "Cancelar"
   },
+  "footnote": {
+    "button": "Nota al pie",
+    "text": "Texto de la nota",
+    "reuse": "Usar una nota del panel",
+    "new": "Escribir una nota nueva",
+    "target_changed": "El texto cambió mientras esta ventana estaba abierta. Ciérrala y vuelve a elegir dónde poner la nota. Lo que escribiste no se pierde.",
+    "not_here": "Las notas al pie no pueden ir dentro de código, enlaces ni carruseles. Pon el cursor en otra parte del texto e intenta de nuevo."
+  },
   "image_dialog": {
     "title": "Insertar imagen",
     "tab_url": "URL",
@@ -33,15 +37,15 @@
     "insert": "Insertar",
     "cancel": "Cancelar",
     "no_objects": "Aún no hay objetos importados",
-    "pdf_not_supported": "Los documentos de varias páginas (PDFs) no se pueden insertar como imágenes. Elige un objeto de una sola página."
+    "pdf_not_supported": "Los documentos de varias páginas (PDFs) no se pueden insertar como imágenes. Elige un objeto de una sola página.",
+    "image_not_found": "No encontramos ninguna imagen para este objeto. Elige otro objeto o escribe la URL de la imagen en la pestaña URL."
   },
   "word_count_one": "{{count}} palabra",
   "word_count_other": "{{count}} palabras",
+  "answer_text_only": "Las respuestas son solo texto — pasa imágenes, tablas, código, notas al pie y widgets a un panel de capa.",
   "breadcrumb": {
     "dashboard": "Inicio",
-    "untitled": "Historia sin título",
-    "step": "Paso {{number}}",
-    "layer": "Capa {{number}}"
+    "untitled": "Historia sin título"
   },
   "shell": {
     "steps_open": "Mostrar pasos",
@@ -61,32 +65,39 @@
     "subtitle_placeholder": "Subtítulo (opcional)",
     "byline_label": "Firma (opcional)",
     "byline_placeholder": "Por...",
-    "story_number": "Historia {{number}}",
     "show_sections_label": "Mostrar lista de secciones en la portada",
-    "show_sections_empty_helper": "Aún no hay títulos de sección — agrega uno en la barra lateral para llenar la lista."
+    "show_sections_empty_helper": "Aún no hay títulos de sección — agrega uno en la barra lateral para llenar la lista.",
+    "story_id_label": "ID de la historia",
+    "story_id_warning": "La próxima vez que publiques, la dirección de esta historia pasará de /stories/{{old}}/ a /stories/{{new}}/ y sus archivos en tu repositorio cambiarán de nombre. Los enlaces a la dirección anterior dejarán de funcionar.",
+    "story_id_confirm": "Cambiar ID",
+    "story_id_keep": "Mantener {{old}}",
+    "story_id_invalid": "El ID de una historia solo puede tener letras minúsculas, números, guiones y guiones bajos.",
+    "story_id_taken": "Otra historia ya usa el ID {{id}}. Elige otro.",
+    "story_id_reserved": "Tu sitio ya tiene una hoja llamada {{id}}. Elige otro ID."
   },
   "step": {
     "question_placeholder": "Pregunta",
     "answer_placeholder": "Respuesta",
-    "alt_text_label": "Descripción de la imagen",
     "alt_text_placeholder": "Describe lo que se ve en esta vista ampliada...",
     "alt_text_section": "Accesibilidad",
     "alt_text_help": "Describe lo que muestra esta vista específica de tu objeto para quienes usan lectores de pantalla. Una buena descripción menciona el sujeto, la acción y los detalles importantes. Por ejemplo: \"Primer plano del delta del río mostrando anotaciones de rutas comerciales y marcadores de asentamientos.\"",
-    "click_to_edit": "Clic para editar",
     "title_card_label": "Portada",
     "add_step": "+ Agregar paso",
     "add_section_break": "Agregar título de sección",
-    "step_label": "Paso {{number}}",
     "no_question_yet": "Sin pregunta aún",
     "section_no_heading_yet": "(sin título de sección aún)",
     "delete_aria": "Eliminar paso",
-    "save_label_aria": "Guardar etiqueta",
-    "cancel_editing_aria": "Cancelar edición",
-    "edit_button_label_aria": "Editar etiqueta del botón"
+    "new_step_dialog": {
+      "title": "¿El mismo objeto para el nuevo paso?",
+      "body": "El nuevo paso empieza con {{title}}, en la misma página y en la misma posición que el último paso con este objeto.",
+      "keep": "Conservar este objeto",
+      "choose": "Elegir otro objeto"
+    }
   },
   "section_card": {
     "heading_label": "Título de la sección",
-    "subtitle_label": "Subtítulo de sección (opcional)"
+    "subtitle_label": "Subtítulo de sección (opcional)",
+    "subtitle_text_only": "Los subtítulos de sección son solo texto. Aquí no pueden ir imágenes, tablas, código, notas al pie ni widgets."
   },
   "viewer": {
     "capture_position": "Capturar posición",
@@ -100,13 +111,28 @@
     "set_object_in_step1": "El objeto del visor en el Paso 0 es el mismo del Paso 1. Configúralo allí.",
     "zoom_in_aria": "Acercar",
     "zoom_out_aria": "Alejar",
-    "reset_aria": "Restablecer vista"
+    "reset_aria": "Restablecer vista",
+    "page_indicator": "Página {{page}}/{{count}}",
+    "prev_page_aria": "Página anterior",
+    "next_page_aria": "Página siguiente",
+    "change_page": "Cambiar"
   },
   "object_picker": {
     "title": "Elegir objeto",
     "search_placeholder": "Buscar objetos...",
     "no_results": "Ningún objeto coincide con tu búsqueda",
     "no_objects": "Aún no hay objetos importados"
+  },
+  "page_chooser": {
+    "title": "Elegir página",
+    "count": "{{title}} tiene {{count}} páginas",
+    "go_to_label": "Ir a la página",
+    "go": "Ir",
+    "invalid_page": "Escribe un número entre 1 y {{count}}",
+    "page_label": "Página {{page}}",
+    "earlier": "Páginas anteriores",
+    "later": "Páginas siguientes",
+    "no_preview": "Sin vista previa"
   },
   "delete_step": {
     "title": "Eliminar paso",
@@ -122,59 +148,35 @@
     "discard": "Descartar"
   },
   "media": {
-    "capture_clip_start": "Marcar inicio",
-    "capture_clip_end": "Marcar fin",
-    "clip_start_label": "Inicio del clip",
-    "clip_end_label": "Fin del clip",
     "loop": "Repetir",
-    "loop_on": "sí",
-    "loop_off": "no",
-    "media_type_image": "Imagen",
     "media_type_video": "Video",
     "media_type_audio": "Audio",
     "media_type_text": "Texto",
     "media_preview_unavailable": "Vista previa no disponible para este tipo de medio",
     "audio_loading": "Cargando audio...",
-    "audio_play": "Reproducir",
-    "audio_pause": "Pausar",
-    "clip_capture_fallback": "Ingresar tiempo manualmente (MM:SS)",
     "no_clip_set": "Sin clip definido",
-    "clip_capture_error": "No se pudo leer el tiempo de reproducción. Ingresa el tiempo manualmente (MM:SS).",
     "google_drive_no_clip": "Google Drive no admite recorte de clips",
     "play_aria": "Reproducir",
     "pause_aria": "Pausar",
     "restart_clip_aria": "Volver al inicio del clip",
     "mute_aria": "Silenciar",
-    "unmute_aria": "Activar sonido"
+    "unmute_aria": "Activar sonido",
+    "clip_saved": "Clip guardado",
+    "clip_length": "Clip de {{duration}}",
+    "clip_range": "Clip {{start}} → {{end}}"
   },
   "layer": {
     "add_panel": "+ Agregar panel",
     "add_further_panel": "+ Agregar otro panel de capas",
     "default_label_1": "Saber más",
     "default_label_2": "Profundizar",
-    "default_title_1": "Saber más",
-    "default_title_2": "Profundizar",
     "back": "Volver",
-    "close_dirty_title": "Cambios sin guardar",
-    "close_dirty_body": "Tienes cambios sin guardar. ¿Deseas descartarlos?",
-    "close_dirty_discard": "Descartar",
-    "close_dirty_cancel": "Seguir editando",
     "delete_title": "Eliminar panel",
-    "delete_body": "¿Eliminar este panel? El contenido se perderá.",
-    "delete_confirm": "Eliminar",
-    "delete_cancel": "Cancelar",
     "cannot_delete_has_layer2": "Elimina el segundo panel primero",
-    "open_layer2": "Abrir segundo panel",
-    "panel_title": "Título del panel",
     "button_label": "Etiqueta del botón",
-    "button_label_strip_label": "Etiqueta del botón",
-    "marker_l1": "C1",
-    "marker_l2": "C2",
-    "edit_button_label": "Editar contenido del botón",
-    "content_label": "Contenido",
+    "edit_button_label": "Editar etiqueta del botón",
     "close_panel_aria": "Cerrar panel",
     "panel_title_aria": "Título del panel",
-    "save_label_aria": "Guardar etiqueta",
     "edit_button_label_aria": "Editar etiqueta del botón"
   },
   "error": {
@@ -186,5 +188,87 @@
     "generic_body": "No pudimos abrir esta historia. Vuelve a tus historias e intenta de nuevo."
   },
   "preview_clip": "Previsualizar fragmento",
-  "video_player_title": "Reproductor de video de {{type}}"
+  "video_player_title": "Reproductor de video de {{type}}",
+  "panel": {
+    "bibliography": "Bibliografía",
+    "widget": "Widget",
+    "math": "Fórmula",
+    "accordion": "Acordeón",
+    "tabs": "Pestañas",
+    "carousel": "Carrusel",
+    "glossary": "Recuadro del glosario",
+    "glossarySide": "Lado del texto",
+    "glossaryRight": "Derecha",
+    "glossaryLeft": "Izquierda",
+    "glossaryInsert": "Insertar recuadro",
+    "section": "Sección",
+    "reference": "Referencia",
+    "title": "Título",
+    "content": "Contenido",
+    "image": "Imagen",
+    "alt": "Texto alternativo",
+    "caption": "Pie de imagen",
+    "credit": "Crédito",
+    "width": "Ancho",
+    "height": "Alto",
+    "edit": "Editar",
+    "done": "Listo",
+    "source": "Código fuente",
+    "add": "Agregar",
+    "remove": "Eliminar",
+    "previous": "Imagen anterior",
+    "next": "Imagen siguiente",
+    "fieldGone": "El campo que estabas editando ya no está. Haz clic donde quieras hacer este cambio e intenta de nuevo.",
+    "olderFramework": "Tu sitio usa Telar {{version}}. Mientras no se actualice, es posible que las imágenes de los carruseles, las fórmulas dentro de los widgets y la numeración de las notas al pie no se vean en el sitio publicado como se ven aquí.",
+    "olderFrameworkLink": "Actualizar Telar",
+    "shownAsWritten": "Esta parte no se puede previsualizar, así que aparece tal como está escrita.",
+    "previewUnavailable": "La vista previa de las fórmulas no está disponible. Puedes seguir editándolas como texto."
+  },
+  "stage": {
+    "frame_label": "Todos los visitantes ven lo que queda dentro del marco.",
+    "stage_label": "Quien abra el sitio en una ventana de las mismas proporciones que la tuya ve toda esta zona.",
+    "alt_text_add": "Describir esta vista para lectores de pantalla",
+    "alt_text_edit": "Editar descripción para lectores de pantalla",
+    "edit_hint": "Haz clic en el texto para editarlo.",
+    "edit_hint_title": "Para editar el título, el subtítulo o la firma, haz clic encima.",
+    "edit_question": "Editar pregunta",
+    "edit_answer": "Editar respuesta",
+    "edit_panel_title": "Editar título del panel",
+    "edit_panel_text": "Editar texto del panel",
+    "panel_text_placeholder": "Texto del panel",
+    "answer_field_label": "Respuesta (Markdown)",
+    "answer_field_hint": "Haz clic fuera del campo para ver la respuesta tal como la leerán los visitantes.",
+    "card_ceiling": "En el sitio publicado se corta el texto que pase de esta línea.",
+    "save_failed": "El cambio no se guardó. Intenta de nuevo.",
+    "sections_heading": "Secciones",
+    "scroll_hint": "Presiona ↓ o desplázate para empezar",
+    "scroll_hint_mobile": "Utiliza los botones de las flechas para desplazarte"
+  },
+  "in_place": {
+    "recovered_notice": "Los últimos cambios de este campo no se guardaron, así que aparecen de nuevo aquí. Intenta guardarlos otra vez o descártalos para volver al texto guardado.",
+    "recovered_retry": "Reintentar",
+    "recovered_discard": "Descartar cambios",
+    "recovered_marker": "Los últimos cambios de este campo no se guardaron. Ábrelo para recuperarlos."
+  },
+  "kept_draft": {
+    "message": "Lo que escribiste aquí antes de que cargara el texto compartido no se guardó. Ahora el campo muestra el texto compartido.",
+    "apply": "Reemplazar el texto compartido por el mío",
+    "discard": "Descartar mi texto"
+  },
+  "write_failed": {
+    "capture": "La posición capturada no se guardó. Vuelve a capturarla.",
+    "object": "El objeto no cambió. Vuelve a elegirlo.",
+    "page": "La página no se guardó. Vuelve a elegirla."
+  },
+  "answer_budget_count": "{{lines}} de {{budget}} líneas",
+  "answer_budget_rule": "Cada línea tiene {{line_chars}} caracteres, y cada párrafo después del primero suma {{break_lines}} líneas más. Una respuesta cabe en la tarjeta de la historia si tiene hasta {{max_paragraphs}} párrafos y {{budget}} líneas. Si pasa de {{small_type_lines}} líneas, el sitio la muestra en letra más pequeña.",
+  "answer_over_hard_limit": "No cabe en la tarjeta de la historia: el sitio publicado corta la respuesta. Una respuesta puede tener hasta {{max_paragraphs}} párrafos y {{budget}} líneas, contando {{line_chars}} caracteres por línea y {{break_lines}} líneas más por cada párrafo después del primero. Acórtala o pasa los detalles a un panel de capa.",
+  "step_line": {
+    "move_aria": "Mover “{{title}}”",
+    "drag_instructions": "Para mover un paso, ubícate en su control de arrastre y presiona Espacio o Enter. Muévelo con las flechas arriba y abajo; luego presiona Espacio o Enter para soltarlo, o Escape para cancelar.",
+    "picked_up": "Tomaste “{{title}}”, que está en la posición {{position}} de {{total}}.",
+    "moved": "“{{title}}” pasó a la posición {{position}} de {{total}}.",
+    "dropped": "“{{title}}” quedó en la posición {{position}} de {{total}}.",
+    "cancelled": "Movimiento cancelado. “{{title}}” volvió a la posición {{position}} de {{total}}."
+  }
 }

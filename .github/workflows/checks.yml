@@ -3,7 +3,7 @@
 # pull request, so that neither strict TypeScript regressions nor failing
 # tests reach a deploy. Typecheck and tests are separate jobs: each catches
 # a class of error the other can't.
-# Version: v1.4.0-beta
+# Version: v1.5.0-beta
 
 name: Checks
 
@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test

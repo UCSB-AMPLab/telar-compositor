@@ -3,7 +3,7 @@
  * objects-remote-delete-detection.test.ts — pins the remote-delete toast
  * behaviour as wired at the Objects route's call site.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  *
  * The Objects route feeds its Yjs object list into the shared
  * `useRemoteDeleteToast` hook with the label function `title ?? object_id`. The
@@ -54,7 +54,7 @@ const getLabel = (o: ObjectRow) => o.title ?? o.object_id;
 /** Deleted-item labels reported across a prev -> curr list transition. */
 function deletedLabels(prev: ObjectRow[], curr: ObjectRow[]): string[] {
   const { rerender } = renderHook(
-    ({ items }) => useRemoteDeleteToast({ items, enabled: true, getLabel }),
+    ({ items }) => useRemoteDeleteToast({ items, enabled: true, scope: 1, getLabel }),
     { initialProps: { items: prev } },
   );
   rerender({ items: curr });

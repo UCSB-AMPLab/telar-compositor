@@ -17,7 +17,7 @@
  * Do NOT paraphrase — the hash check depends on byte equality with the
  * v1.2.1 reference.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -97,15 +97,24 @@ describe("scenario 2: ES + default about.md", () => {
   it("scenario 2: ES + default about.md", async () => {
     const f = files([ABOUT_PATH, `---\ntitle: About\n---\n\n${ABOUT_V121}`]);
     const result = await applyV130Transforms(f, "es");
-    expect(result.created).toContain(ACERCA_PATH);
-    const acerca = result.files.get(ACERCA_PATH);
-    expect(acerca).toBeDefined();
-    expect(acerca).toMatch(/title: Acerca de Telar/);
-    expect(acerca).toMatch(/localized_for: about\.md/);
-    expect(acerca).toMatch(/language: es/);
-    // about.md body replaced with v1.3.0 content
-    const about = result.files.get(ABOUT_PATH);
-    expect(about).toContain('Telar (Spanish for "loom")');
+    // The site is in one language: the Spanish page is written at about.md,
+    // and acerca.md is not written at all.
+    expect(result.created).not.toContain(ACERCA_PATH);
+    expect(result.files.has(ACERCA_PATH)).toBe(false);
+    const about = result.files.get(ABOUT_PATH)!;
+    expect(about).toMatch(/^---\ntitle: Acerca de Telar\n---\n/);
+    expect(about.split("---")[1]).toBe("\ntitle: Acerca de Telar\n");
+    expect(about).toContain("# Acerca de Telar");
+  });
+});
+
+describe("scenario 2b: ES + default about.md + an acerca.md already on the site", () => {
+  it("writes only what it creates: about.md is not given the existing acerca.md's text", async () => {
+    const acerca = "---\ntitle: Acerca\nlocalized_for: about.md\nlanguage: es\n---\n\nMi texto.\n";
+    const f = files([ABOUT_PATH, `---\ntitle: About\n---\n\n${ABOUT_V121}`], [ACERCA_PATH, acerca]);
+    const result = await applyV130Transforms(f, "es");
+    expect(result.files.get(ACERCA_PATH)).toBe(acerca);
+    expect(result.files.get(ABOUT_PATH)).toContain('Telar (Spanish for "loom")');
   });
 });
 

@@ -5,6 +5,8 @@
  * private/draft indicators, and edit button. Draft and private indicators are
  * visual only on the dashboard — clicking them navigates to the Stories tab
  * for management actions. No delete action on dashboard.
+ *
+ * @version v1.5.0-beta
  */
 
 import { Lock, LockOpen, PenLine } from "lucide-react";
@@ -13,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
 import { useRelativeTime } from "~/lib/use-relative-time";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
+import { thumbnailInfoJsonUrl } from "~/lib/object-id";
 
 interface StoryCardStory {
   id: number;
@@ -32,11 +35,14 @@ interface StoryCardProps {
   lastSynced: string | null;
   className?: string;
   isDragOverlay?: boolean;
-  coverInfo?: { thumbnail: string | null; objectId: string; imageAvailable: boolean | null } | null;
+  /** The object the site shows for the story's first content step. */
+  coverInfo?: { thumbnail: string | null; objectId: string; imageAvailable: boolean | null; sourceUrl: string | null } | null;
   siteBaseUrl?: string | null;
+  /** The site's `telar_version`, which decides the id its tiles are under. */
+  frameworkVersion?: string | null;
 }
 
-export function StoryCard({ story, stepCount, lastSynced, className = "", isDragOverlay = false, coverInfo, siteBaseUrl }: StoryCardProps) {
+export function StoryCard({ story, stepCount, lastSynced, className = "", isDragOverlay = false, coverInfo, siteBaseUrl, frameworkVersion }: StoryCardProps) {
   const { t } = useTranslation("dashboard");
   const { t: tCollab } = useTranslation("collaboration");
   const navigate = useNavigate();
@@ -54,9 +60,12 @@ export function StoryCard({ story, stepCount, lastSynced, className = "", isDrag
   );
 
   // Resolve cover thumbnail from step-1 object (same pattern as ObjectPickerDialog)
-  const needsResolve = coverInfo && !coverInfo.thumbnail && coverInfo.imageAvailable && siteBaseUrl;
-  const infoJsonUrl = needsResolve
-    ? `${siteBaseUrl}/iiif/objects/${coverInfo!.objectId}/info.json`
+  const infoJsonUrl = coverInfo
+    ? thumbnailInfoJsonUrl(
+        { objectId: coverInfo.objectId, thumbnail: coverInfo.thumbnail, imageAvailable: coverInfo.imageAvailable, sourceUrl: coverInfo.sourceUrl },
+        siteBaseUrl,
+        frameworkVersion,
+      )
     : null;
   const resolvedUrl = useIiifThumbnail(infoJsonUrl, 300);
 

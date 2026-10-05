@@ -4,6 +4,8 @@
  * Shows the auto-generated commit message as the default value. Includes
  * pedagogical help text explaining what a commit message is.
  * The Publish button is inside this component.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useState } from "react";
@@ -14,14 +16,20 @@ import { Button } from "~/components/ui/Button";
 interface CommitMessageEditorProps {
   defaultMessage: string;
   onPublish: (message: string) => void;
+  /** Closes the editor and hands back what was typed. */
+  onDone?: (message: string) => void;
   loading?: boolean;
+  /** Holds the Publish button back without the busy state `loading` shows. */
+  disabled?: boolean;
   className?: string;
 }
 
 export function CommitMessageEditor({
   defaultMessage,
   onPublish,
+  onDone,
   loading = false,
+  disabled = false,
   className = "",
 }: CommitMessageEditorProps) {
   const { t } = useTranslation("publish");
@@ -29,7 +37,7 @@ export function CommitMessageEditor({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (message.trim()) {
+    if (message.trim() && !disabled) {
       onPublish(message.trim());
     }
   }
@@ -65,12 +73,19 @@ export function CommitMessageEditor({
           </p>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between gap-3">
+          {onDone ? (
+            <Button type="button" variant="secondary" disabled={loading} onClick={() => onDone(message)}>
+              {t("publish_section.done_editing")}
+            </Button>
+          ) : (
+            <span />
+          )}
           <Button
             type="submit"
             variant="primary"
             loading={loading}
-            disabled={!message.trim() || loading}
+            disabled={!message.trim() || loading || disabled}
           >
             <Upload className="w-4 h-4" />
             {t("commit.publish_button")}

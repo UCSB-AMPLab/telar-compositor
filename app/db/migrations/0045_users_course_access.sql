@@ -1,0 +1,24 @@
+-- Course access becomes a property of the person rather than of the session.
+--
+-- It was a shared password held in an environment variable: one word, the same
+-- for everyone, answered once per session and remembered in a signed cookie.
+-- That gated ACCESS without settling WHO — the decision the design deliberately
+-- deferred — and it had two costs. The word sat in plaintext in a tracked
+-- config file, and every signed-in session had to be shown an invitation in
+-- order for the few who could answer it to find the door, so the feature
+-- announced itself to everyone it excluded.
+--
+-- A flag on the user answers the deferred question directly: access is granted
+-- to a person, once, and survives their sessions. There is no interface for it
+-- on purpose — it is set from the backend while the group is small, and the
+-- column is what a later admin surface would read if one is ever built.
+--
+-- Default 0, and NOT NULL, so the closed state is the one a row arrives in:
+-- every existing user and every new sign-up has no access until someone says
+-- otherwise. This mirrors what the environment variable had to do explicitly —
+-- an absent value meant closed, so that an unconfigured deploy could not open
+-- the feature by omission.
+--
+-- Backwards-compatible: a column with a default is invisible to code that does
+-- not select it, so a rollback to the previous worker keeps working.
+ALTER TABLE users ADD COLUMN course_access INTEGER NOT NULL DEFAULT 0;

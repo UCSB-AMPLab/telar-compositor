@@ -5,25 +5,43 @@
  * apply contract. Conflicts default to keep-mine; repo-only changes are
  * pre-accepted; deleted-here restores flow into the insert lists.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
 import type { FullSyncDiff } from "~/lib/sync.server";
-import { buildThreeWayChanges } from "~/components/features/dashboard/SyncConfirmModal";
+import { buildAllOrNothingChanges, buildThreeWayChanges } from "~/components/features/dashboard/SyncConfirmModal";
 import { emptyThreeWaySelections as emptySel } from "./sync-probe-fixtures";
 
 function baseDiff(): FullSyncDiff {
   return {
-    objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [] },
+    objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [], reordered: null },
     stories: { newStories: [], changedStories: [], missingStories: [] },
     config: { changedFields: [], versionChange: null },
     glossary: { added: [], removed: [], changed: [] },
     hasConflicts: false,
     classification: "three-way",
     suppressedEditorOnly: 0,
+    unreadableFiles: [],
   };
 }
+
+describe("the changes carry the identity of the diff they were built from", () => {
+  const HEAD = "0123456789abcdef0123456789abcdef01234567";
+  const BASE = "fedcba9876543210fedcba9876543210fedcba98";
+
+  for (const [name, build] of [["three-way", buildThreeWayChanges], ["all-or-nothing", buildAllOrNothingChanges]] as const) {
+    it(`${name}: the project, the base and the head`, () => {
+      const diff = { ...baseDiff(), projectId: 4, baseSha: BASE, headSha: HEAD };
+      expect(build(diff, emptySel())).toMatchObject({ projectId: 4, baseSha: BASE, headSha: HEAD });
+    });
+
+    it(`${name}: a base of none`, () => {
+      const diff = { ...baseDiff(), projectId: 4, baseSha: null, headSha: HEAD };
+      expect(build(diff, emptySel())).toHaveProperty("baseSha", null);
+    });
+  }
+});
 
 describe("buildThreeWayChanges — objects", () => {
   it("a conflict field defaults to keep-mine ('d1'); a repo-only field of the same object stays 'repo'", () => {
@@ -117,8 +135,8 @@ describe("buildThreeWayChanges — rows (stories, config, glossary)", () => {
   it("a story conflict defaults to reject; use-repo moves it to accept", () => {
     const diff = baseDiff();
     diff.stories.changedStories = [
-      { story_id: "s1", title: "S1", changedFields: ["title"], conflict: true, d1Values: { title: "mine" }, repoValues: { title: "repo" } },
-      { story_id: "s2", title: "S2", changedFields: ["title"], conflict: false, d1Values: {}, repoValues: {} },
+      { story_id: "s1", title: "S1", changedFields: ["title"], conflictFields: ["title"], conflict: true, d1Values: { title: "mine" }, repoValues: { title: "repo" } },
+      { story_id: "s2", title: "S2", changedFields: ["title"], conflictFields: [], conflict: false, d1Values: {}, repoValues: {} },
     ];
 
     // Defaults: conflict s1 rejected, repo-only s2 accepted.
@@ -138,7 +156,7 @@ describe("buildThreeWayChanges — rows (stories, config, glossary)", () => {
   it("new stories are pre-accepted for insert", () => {
     const diff = baseDiff();
     diff.stories.newStories = [
-      { story_id: "n1", title: "N", subtitle: null, byline: null, order: 0, isPrivate: false, showSections: true },
+      { story_id: "n1", title: "N", subtitle: null, byline: null, order: 0, isPrivate: false, showSections: true, extraColumns: "" },
     ];
     const changes = buildThreeWayChanges(diff, emptySel());
     expect(changes.stories.insertNew).toEqual(["n1"]);
@@ -147,8 +165,8 @@ describe("buildThreeWayChanges — rows (stories, config, glossary)", () => {
   it("a deleted-here (edited-there) story restores only on opt-in; genuine new still inserts", () => {
     const diff = baseDiff();
     diff.stories.newStories = [
-      { story_id: "n1", title: "N", subtitle: null, byline: null, order: 0, isPrivate: false, showSections: true },
-      { story_id: "del", title: "D", subtitle: null, byline: null, order: 0, isPrivate: false, showSections: true, deletedInCompositor: true },
+      { story_id: "n1", title: "N", subtitle: null, byline: null, order: 0, isPrivate: false, showSections: true, extraColumns: "" },
+      { story_id: "del", title: "D", subtitle: null, byline: null, order: 0, isPrivate: false, showSections: true, extraColumns: "", deletedInCompositor: true },
     ];
 
     // Default keep-deleted: genuine new inserts, deleted-here does not.
@@ -181,11 +199,11 @@ describe("buildThreeWayChanges — rows (stories, config, glossary)", () => {
   it("glossary: changed conflict defaults to reject; deleted-here term restores on opt-in", () => {
     const diff = baseDiff();
     diff.glossary.changed = [
-      { term_id: "t1", title: "T1", dbId: 1, d1Title: "mine", repoTitle: "repo", d1Definition: "", repoDefinition: "", d1RelatedTerms: "", repoRelatedTerms: "", conflict: true },
+      { term_id: "t1", title: "T1", dbId: 1, d1Title: "mine", repoTitle: "repo", d1Definition: "", repoDefinition: "", d1RelatedTerms: "", repoRelatedTerms: "", d1ExtraColumns: "", repoExtraColumns: "", changedFields: ["title"], conflictFields: ["title"], conflict: true },
     ];
     diff.glossary.added = [
-      { term_id: "add-1", title: "A", definition: "d", related_terms: "" },
-      { term_id: "del-1", title: "D", definition: "d", related_terms: "", deletedInCompositor: true },
+      { term_id: "add-1", title: "A", definition: "d", related_terms: "", extra_columns: "" },
+      { term_id: "del-1", title: "D", definition: "d", related_terms: "", extra_columns: "", deletedInCompositor: true },
     ];
 
     let changes = buildThreeWayChanges(diff, emptySel());
@@ -199,5 +217,62 @@ describe("buildThreeWayChanges — rows (stories, config, glossary)", () => {
     changes = buildThreeWayChanges(diff, sel);
     expect(changes.glossary.accept).toContain("t1");
     expect(changes.glossary.insertNew).toContain("del-1");
+  });
+});
+
+describe("object and term ids that name Object.prototype's own properties", () => {
+  const blankNew = { title: null, creator: null, description: null, period: null, year: null, object_type: null, subjects: null, source: null, credit: null, thumbnail: null, featured: false, source_url: null, dimensions: null, image_available: false };
+
+  /** What the server receives: the payload through JSON, as the form posts it. */
+  const wire = (diff: FullSyncDiff, sel = emptySel()) => JSON.parse(JSON.stringify(buildThreeWayChanges(diff, sel)));
+
+  it.each(["constructor", "__proto__"])("%s: a changed object's field choices reach the server", (id) => {
+    const diff = baseDiff();
+    diff.objects.changedObjects = [{
+      object_id: id, dbId: 1, title: "Obj", changedFields: ["title", "creator"], conflictFields: ["creator"],
+      d1Values: { title: "mine", creator: "mine-c" }, repoValues: { title: "repo", creator: "repo-c" },
+    }];
+    const untouched = wire(diff);
+    expect(Object.hasOwn(untouched.objects.fieldChoices, id)).toBe(true);
+    expect(untouched.objects.fieldChoices[id]).toEqual({ title: "repo", creator: "d1" });
+
+    const sel = emptySel();
+    sel.objectFieldChoices = Object.fromEntries([[id, { creator: "repo" as const }]]);
+    expect(wire(diff, sel).objects.fieldChoices[id]).toEqual({ title: "repo", creator: "repo" });
+  });
+
+  it.each(["constructor", "__proto__"])("%s: a deleted-here object stays deleted until the author restores it", (id) => {
+    const diff = baseDiff();
+    diff.objects.newObjects = [{ object_id: id, ...blankNew, deletedInCompositor: true }];
+    expect(wire(diff).objects.newObjectIds).toEqual([]);
+
+    const sel = emptySel();
+    sel.objectRestore = Object.fromEntries([[id, true]]);
+    expect(wire(diff, sel).objects.newObjectIds).toEqual([id]);
+  });
+
+  it.each(["constructor", "__proto__"])("%s: an object deleted on GitHub and edited here is kept until the author deletes it", (id) => {
+    const diff = baseDiff();
+    diff.objects.missingObjects = [{ object_id: id, dbId: 3, title: "Edited", usedByStories: [], editedInCompositor: true }];
+    const untouched = wire(diff);
+    expect(untouched.objects.removedObjectIds).toEqual([]);
+    expect(untouched.objects.removedDocIds).toEqual({});
+
+    const sel = emptySel();
+    sel.objectDelete = Object.fromEntries([[id, true]]);
+    const deleted = wire(diff, sel);
+    expect(deleted.objects.removedObjectIds).toEqual([id]);
+    expect(Object.hasOwn(deleted.objects.removedDocIds, id)).toBe(true);
+    expect(deleted.objects.removedDocIds[id]).toBe(3);
+  });
+
+  it.each(["constructor", "__proto__"])("%s: a deleted-here term stays deleted until the author restores it", (id) => {
+    const diff = baseDiff();
+    diff.glossary.added = [{ term_id: id, title: "D", definition: "d", related_terms: "", extra_columns: "", deletedInCompositor: true }];
+    expect(wire(diff).glossary.insertNew).toEqual([]);
+
+    const sel = emptySel();
+    sel.glossaryRestore = Object.fromEntries([[id, true]]);
+    expect(wire(diff, sel).glossary.insertNew).toEqual([id]);
   });
 });

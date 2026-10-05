@@ -14,25 +14,32 @@
  *   6. Success — brief confirmation, then page refresh
  *   7. Failed — error display with retry option
  *
+ * The Conflict and DiffReady steps list, first, what the check found wrong in
+ * the repository's sheets and step files (`diff.warnings`). The DiffReady step
+ * lists the stories whose content changed and the pages whose file changed
+ * on GitHub, each with its own choice.
+ *
  * Two comparison modes, driven by `diff.classification`:
  *   - three-way (base = repo files at head_sha available): editor-only
  *     changes are suppressed, genuine repo↔editor conflicts are surfaced
  *     inline with a per-field / per-row choice (default keep mine), and the
  *     coarse conflict-warning step is skipped. Apply builds a precise
  *     FullSyncChanges from the selections.
- *   - two-way (base unavailable): today's all-or-nothing behaviour, including
- *     the conflict-warning step keyed off unpublishedCount.
+ *   - two-way (base unavailable): all-or-nothing, with a conflict-warning step
+ *     keyed off the live count when known, else the loader's estimate.
  *
  * The sync intents live on the /dashboard action (the app's shared
  * global endpoint), so every fetcher submit here targets it
  * explicitly — a bare POST would hit the rendering route's own
  * action, which does not handle them.
  *
- * @version v1.4.2-beta
+ * @version v1.5.0-beta
  */
 
-import { useEffect, useState } from "react";
-import { useFetcher, useNavigate } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { useSiteFetcher } from "~/lib/page-site";
+import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
 import {
   AlertCircle,
   AlertTriangle,
@@ -43,9 +50,49 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Dialog } from "~/components/ui/Dialog";
-import type { FullSyncDiff, FullSyncChanges } from "~/lib/sync.server";
+import { SheetWarnings } from "~/components/ui/SheetWarnings";
+import { SheetChoicesStep, choicesQuestionOf, type SheetChoicesQuestion } from "./SheetChoicesStep";
+import type { FullSyncDiff } from "~/lib/sync.server";
+import {
+  buildAllOrNothingChanges,
+  buildThreeWayChanges,
+  contentChoiceOf,
+  contentInconclusive,
+  emptySelections,
+  hasConflictItems,
+  hasDiffChanges,
+  applyNoteKeys,
+  contentView,
+  keepMineFields,
+  listedContentChanges,
+  listedPageChanges,
+  listedPageFiles,
+  ownValue,
+  changedWhileReviewedOf,
+  successKey,
+} from "./sync-changes";
+import type { ConflictChoice, ThreeWaySelections } from "./sync-changes";
+
+// The builders and selection types live in sync-changes.ts; exported from here
+// as well, where the dialog's other modules and tests have always found them.
+export {
+  buildAllOrNothingChanges,
+  buildThreeWayChanges,
+  contentChoiceOf,
+  contentInconclusive,
+  emptySelections,
+  listedContentChanges,
+} from "./sync-changes";
+export type { ConflictChoice, ThreeWaySelections } from "./sync-changes";
+import type { CollidingColumns } from "~/lib/sync-failure.server";
 import { configFieldLabel } from "~/lib/activity-display";
 import { SyncConflictsBlock } from "./SyncConflictsBlock";
+import { SyncStoryContentBlock } from "./SyncStoryContentBlock";
+import {
+  ChangedWhileReviewedNotice, NOTHING_CHANGED_WHILE_REVIEWED, PageReviewNotices,
+  type ChangedWhileReviewed,
+} from "./SyncPageContentBlock";
+import { SyncPagesBlocks } from "./SyncPageFilesBlock";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -75,243 +122,78 @@ type SyncStep =
 
 interface SyncConfirmModalProps {
   open: boolean;
+  /** The header's count: live when `countKnown`, otherwise the loader's estimate. */
   unpublishedCount: number;
+  countKnown?: boolean;
   onClose: () => void;
+}
+
+/** What a sync action returns when it fails (see `syncFailure`). */
+interface SyncFailureData {
+  error: string;
+  message?: string;
+  collidingColumns?: CollidingColumns;
+  /** The sheet a `sheet_unreadable` failure could not read. */
+  sheet?: string;
+  /** The path of the file a `file_unreadable` failure could not read. */
+  file?: string;
 }
 
 type DiffFetcherData =
   | { ok: true; intent: "compute-full-sync-diff"; diff: FullSyncDiff }
-  | { ok: false; intent: "compute-full-sync-diff"; error: string; message?: string }
+  | ({ ok: false; intent: "compute-full-sync-diff" } & SyncFailureData)
   | null
   | undefined;
 
 type ApplyFetcherData =
-  | { ok: true; intent: "apply-full-sync"; newHeadSha: string }
-  | { ok: false; intent: "apply-full-sync"; error: string }
+  | {
+      ok: true;
+      intent: "apply-full-sync";
+      newHeadSha: string | null;
+      storyFilesInconclusive?: boolean;
+      pageFilesInconclusive?: boolean;
+    }
+  | ({ ok: false; intent: "apply-full-sync"; storyIds?: string[]; pageIds?: number[]; objectIds?: string[] } & SyncFailureData)
   | { ok: true; intent: "accept-divergence" }
   | { ok: false; intent: "accept-divergence"; error: string; message?: string }
   | null
   | undefined;
 
-/** A per-conflict choice: keep GitHub's value ("repo") or the editor's ("d1"). */
-export type ConflictChoice = "repo" | "d1";
-
-/**
- * The user's conflict resolutions, gathered by the three-way diffReady step.
- * Every record defaults to keep-mine when a key is absent, so an untouched
- * modal applies exactly the "Keep my version" product ruling.
- */
-export interface ThreeWaySelections {
-  /** objectId -> field -> choice (only conflict fields are tracked). */
-  objectFieldChoices: Record<string, Record<string, ConflictChoice>>;
-  /** deleted-here objectId -> true when the user chose Restore. */
-  objectRestore: Record<string, boolean>;
-  /** deleted-in-repo/edited-here objectId -> true when the user chose Delete. */
-  objectDelete: Record<string, boolean>;
-  /** conflict story_id -> choice. */
-  storyChoices: Record<string, ConflictChoice>;
-  /** deleted-here (repo edited, editor deleted) story_id -> true on Restore. */
-  storyRestore: Record<string, boolean>;
-  /** conflict config key -> choice. */
-  configChoices: Record<string, ConflictChoice>;
-  /** conflict changed term_id -> choice. */
-  glossaryChangedChoices: Record<string, ConflictChoice>;
-  /** deleted-here term_id -> true when the user chose Restore. */
-  glossaryRestore: Record<string, boolean>;
-}
-
-function emptySelections(): ThreeWaySelections {
-  return {
-    objectFieldChoices: {},
-    objectRestore: {},
-    objectDelete: {},
-    storyChoices: {},
-    storyRestore: {},
-    configChoices: {},
-    glossaryChangedChoices: {},
-    glossaryRestore: {},
-  };
-}
 
 // ---------------------------------------------------------------------------
-// Helper: count total changes in a diff
-// ---------------------------------------------------------------------------
-
-function hasDiffChanges(diff: FullSyncDiff): boolean {
-  return (
-    diff.objects.newObjects.length > 0 ||
-    diff.objects.changedObjects.length > 0 ||
-    diff.objects.missingObjects.length > 0 ||
-    diff.stories.newStories.length > 0 ||
-    diff.stories.changedStories.length > 0 ||
-    diff.stories.missingStories.length > 0 ||
-    diff.config.changedFields.length > 0 ||
-    diff.glossary.added.length > 0 ||
-    diff.glossary.changed.length > 0 ||
-    diff.glossary.removed.length > 0
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Helper: build all-or-nothing FullSyncChanges from a FullSyncDiff (two-way)
-// ---------------------------------------------------------------------------
-
-function buildAllOrNothingChanges(diff: FullSyncDiff): FullSyncChanges {
-  return {
-    objects: {
-      newObjectIds: diff.objects.newObjects.map((o) => o.object_id),
-      changedObjectIds: diff.objects.changedObjects.map((o) => o.object_id),
-      fieldChoices: Object.fromEntries(
-        diff.objects.changedObjects.map((o) => [
-          o.object_id,
-          Object.fromEntries(o.changedFields.map((f) => [f, "repo" as const])),
-        ])
-      ),
-      removedObjectIds: diff.objects.missingObjects.map((o) => o.object_id),
-      unregisteredObjectIds: [],
-    },
-    stories: {
-      accept: diff.stories.changedStories.map((s) => s.story_id),
-      reject: [],
-      insertNew: diff.stories.newStories.map((s) => s.story_id),
-    },
-    config: {
-      accept: diff.config.changedFields.map((c) => c.key),
-      reject: [],
-    },
-    glossary: {
-      accept: diff.glossary.changed.map((t) => t.term_id),
-      reject: [],
-      insertNew: diff.glossary.added.map((t) => t.term_id),
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Helper: build a precise FullSyncChanges from three-way selections
+// Helper: the failed step's message
 // ---------------------------------------------------------------------------
 
 /**
- * Maps the diff plus the user's conflict resolutions onto the existing
- * FullSyncChanges contract. Pure — exported for unit testing.
- *
- * Rules:
- *   - Repo-only changes (no conflict) are pre-accepted.
- *   - Object conflict fields: keep-mine -> "d1" choice, use-repo -> "repo".
- *     Non-conflict fields of a partly-conflicted object stay "repo".
- *   - Story/config/glossary conflict rows: keep-mine -> reject, use-repo ->
- *     accept.
- *   - Deleted-here objects/terms: Restore -> included in newObjectIds /
- *     insertNew; Keep-deleted -> omitted (the default).
+ * The failed step's message. A sheet the sync refused for its colliding
+ * columns names the sheet and the columns; a sheet, file or ignored-stories
+ * list it could not read is named, with nothing synced; object rows and
+ * glossary terms D1 refused, and entries it could not store, have their own messages. Any
+ * other code shows the general sync failure message, never the server's text;
+ * an answer with no code, as an unreachable one, shows the unknown-error one.
  */
-export function buildThreeWayChanges(
-  diff: FullSyncDiff,
-  sel: ThreeWaySelections,
-): FullSyncChanges {
-  const objChoice = (id: string, field: string): ConflictChoice =>
-    sel.objectFieldChoices[id]?.[field] ?? "d1";
-  const rowChoice = (map: Record<string, ConflictChoice>, id: string): ConflictChoice =>
-    map[id] ?? "d1";
-
-  // --- objects ---
-  const newObjectIds = [
-    ...diff.objects.newObjects.filter((o) => !o.deletedInCompositor).map((o) => o.object_id),
-    ...diff.objects.newObjects
-      .filter((o) => o.deletedInCompositor && sel.objectRestore[o.object_id])
-      .map((o) => o.object_id),
-  ];
-  const changedObjectIds = diff.objects.changedObjects.map((o) => o.object_id);
-  const fieldChoices: Record<string, Record<string, ConflictChoice>> = {};
-  for (const o of diff.objects.changedObjects) {
-    const conflictSet = new Set<string>(o.conflictFields);
-    fieldChoices[o.object_id] = Object.fromEntries(
-      o.changedFields.map((f) => [f, conflictSet.has(f) ? objChoice(o.object_id, f) : "repo"]),
-    );
+export function syncFailureMessage(
+  data: SyncFailureData,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  if (data.error === "colliding_columns" && data.collidingColumns) {
+    return t("sync_modal.error_colliding_columns", {
+      sheet: data.collidingColumns.sheet,
+      columns: data.collidingColumns.headers.map((h) => `"${h}"`).join(", "),
+    });
   }
-  // Unflagged missing objects are pre-accepted for removal; a deleted-in-repo/
-  // edited-here object is removed only when the user explicitly chose Delete
-  // (default keep-mine leaves it out, so the residue re-flags missing_from_repo).
-  const removedObjectIds = [
-    ...diff.objects.missingObjects.filter((o) => !o.editedInCompositor).map((o) => o.object_id),
-    ...diff.objects.missingObjects
-      .filter((o) => o.editedInCompositor && sel.objectDelete[o.object_id])
-      .map((o) => o.object_id),
-  ];
-
-  // --- stories ---
-  const storyAccept: string[] = [];
-  const storyReject: string[] = [];
-  for (const s of diff.stories.changedStories) {
-    if (!s.conflict) {
-      storyAccept.push(s.story_id);
-    } else if (rowChoice(sel.storyChoices, s.story_id) === "repo") {
-      storyAccept.push(s.story_id);
-    } else {
-      storyReject.push(s.story_id);
-    }
+  if (data.error === "sheet_unreadable" && data.sheet) {
+    return t("sync_modal.error_sheet_unreadable", { sheet: data.sheet });
   }
-
-  // --- config ---
-  const configAccept: string[] = [];
-  const configReject: string[] = [];
-  for (const c of diff.config.changedFields) {
-    if (!c.conflict) {
-      configAccept.push(c.key);
-    } else if (rowChoice(sel.configChoices, c.key) === "repo") {
-      configAccept.push(c.key);
-    } else {
-      configReject.push(c.key);
-    }
+  if (data.error === "file_unreadable" && data.file) {
+    return t("sync_modal.error_file_unreadable", { file: data.file });
   }
-
-  // --- glossary ---
-  const glossAccept: string[] = [];
-  const glossReject: string[] = [];
-  for (const t of diff.glossary.changed) {
-    if (!t.conflict) {
-      glossAccept.push(t.term_id);
-    } else if (rowChoice(sel.glossaryChangedChoices, t.term_id) === "repo") {
-      glossAccept.push(t.term_id);
-    } else {
-      glossReject.push(t.term_id);
-    }
-  }
-  const glossInsertNew = [
-    ...diff.glossary.added.filter((t) => !t.deletedInCompositor).map((t) => t.term_id),
-    ...diff.glossary.added
-      .filter((t) => t.deletedInCompositor && sel.glossaryRestore[t.term_id])
-      .map((t) => t.term_id),
-  ];
-
-  // Genuine new stories insert; a deleted-here (repo edited, editor deleted)
-  // story inserts only when the user chose Restore (default keep-deleted).
-  const storyInsertNew = [
-    ...diff.stories.newStories.filter((s) => !s.deletedInCompositor).map((s) => s.story_id),
-    ...diff.stories.newStories
-      .filter((s) => s.deletedInCompositor && sel.storyRestore[s.story_id])
-      .map((s) => s.story_id),
-  ];
-
-  return {
-    objects: { newObjectIds, changedObjectIds, fieldChoices, removedObjectIds, unregisteredObjectIds: [] },
-    stories: { accept: storyAccept, reject: storyReject, insertNew: storyInsertNew },
-    config: { accept: configAccept, reject: configReject },
-    glossary: { accept: glossAccept, reject: glossReject, insertNew: glossInsertNew },
-  };
-}
-
-/** True when the three-way diff carries at least one conflict to resolve. */
-function hasConflictItems(diff: FullSyncDiff): boolean {
-  return (
-    diff.objects.changedObjects.some((o) => o.conflictFields.length > 0) ||
-    diff.objects.newObjects.some((o) => o.deletedInCompositor) ||
-    diff.objects.missingObjects.some((o) => o.editedInCompositor) ||
-    diff.stories.changedStories.some((s) => s.conflict) ||
-    diff.stories.newStories.some((s) => s.deletedInCompositor) ||
-    diff.config.changedFields.some((c) => c.conflict) ||
-    diff.glossary.changed.some((t) => t.conflict) ||
-    diff.glossary.added.some((t) => t.deletedInCompositor)
-  );
+  if (data.error === "objects_not_added") return t("objects:sync_not_added");
+  if (data.error === "entries_refused") return t("sync_modal.error_entries_refused");
+  if (data.error === "inserts_not_added") return t("sync_modal.error_terms_not_added");
+  if (data.error === "ignore_list_unreadable") return t("sync_modal.error_ignore_list_unreadable");
+  if (data.error === undefined) return t("unknown_error");
+  return t("objects:sync_error_toast");
 }
 
 // ---------------------------------------------------------------------------
@@ -321,6 +203,11 @@ function hasConflictItems(diff: FullSyncDiff): boolean {
 interface CategorySectionProps {
   label: string;
   items: string[];
+}
+
+/** A reorder of objects as the one item it is in the objects section: no choice, applied with the sync. */
+function reorderItemsOf(diff: FullSyncDiff, label: string): string[] {
+  return diff.objects.reordered != null ? [label] : [];
 }
 
 function CategorySection({ label, items }: CategorySectionProps) {
@@ -354,25 +241,168 @@ function CategorySection({ label, items }: CategorySectionProps) {
 }
 
 // ---------------------------------------------------------------------------
+// The diffReady step's notices and actions
+// ---------------------------------------------------------------------------
+
+/** The diffReady heading's key. `filesUnread`: the story or the page files could not be read. */
+function diffReadyHeading(anythingToApply: boolean, filesUnread: boolean): string {
+  if (anythingToApply) return "sync_modal.changes_found";
+  return filesUnread ? "sync_modal.title" : "sync_modal.no_changes";
+}
+
+const NOTICE_CLASS = "font-body text-sm text-charcoal bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4";
+
+/**
+ * Why the list changed, after Keep my version was refused because GitHub
+ * moved past the commit the list was read at, or after an accept refused
+ * stories or pages edited while they were reviewed; and that the check could
+ * not read the story files or the page files.
+ */
+function ReviewNotices({
+  changedWhileReviewed,
+  pagesChangedWhileReviewed,
+  storyFilesUnread,
+  pageFilesUnread,
+  githubMovedWhileReviewed,
+}: {
+  changedWhileReviewed: ChangedWhileReviewed;
+  pagesChangedWhileReviewed: string[];
+  storyFilesUnread: boolean;
+  pageFilesUnread: boolean;
+  githubMovedWhileReviewed: boolean;
+}) {
+  const { t } = useTranslation("dashboard");
+  return (
+    <>
+      {githubMovedWhileReviewed && <p className={NOTICE_CLASS}>{t("sync_modal.accept_divergence_stale")}</p>}
+      <ChangedWhileReviewedNotice changed={changedWhileReviewed} />
+      {storyFilesUnread && <p className={NOTICE_CLASS}>{t("sync_modal.content_inconclusive")}</p>}
+      <PageReviewNotices pagesChangedWhileReviewed={pagesChangedWhileReviewed} pageFilesUnread={pageFilesUnread} />
+    </>
+  );
+}
+
+/** What applying, or keeping the Compositor's version, will do. */
+function ApplyNotes({
+  anythingToApply,
+  storyFilesUnread,
+  pageFilesUnread,
+}: {
+  anythingToApply: boolean;
+  storyFilesUnread: boolean;
+  pageFilesUnread: boolean;
+}) {
+  const { t } = useTranslation("dashboard");
+  return (
+    <>
+      {applyNoteKeys(anythingToApply, storyFilesUnread, pageFilesUnread).map((key) => (
+        <p key={key} className="font-body text-sm text-gray-600 mb-2">{t(key)}</p>
+      ))}
+    </>
+  );
+}
+
+
+interface DiffReadyActionsProps {
+  anythingToApply: boolean;
+  /** The story or the page files could not be read. */
+  filesUnread: boolean;
+  onClose: () => void;
+  onCheckAgain: () => void;
+  onKeepMine: () => void;
+  onApply: () => void;
+}
+
+/**
+ * The diffReady step's buttons. With the story or page files unread the
+ * author can check again or keep the Compositor's version, and Apply, when
+ * there is anything else to apply, says it applies the other changes.
+ */
+function DiffReadyActions({ anythingToApply, filesUnread, onClose, onCheckAgain, onKeepMine, onApply }: DiffReadyActionsProps) {
+  const { t } = useTranslation("dashboard");
+  return (
+    <div className="flex flex-wrap gap-3 justify-end mt-4">
+      <button
+        type="button"
+        onClick={onClose}
+        className="font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-5 py-2 hover:bg-cream transition-colors"
+      >
+        {anythingToApply || filesUnread ? t("cancel") : t("sync_modal.close")}
+      </button>
+      {filesUnread && (
+        <button
+          type="button"
+          onClick={onCheckAgain}
+          className="font-heading font-semibold text-sm uppercase tracking-wider border border-charcoal text-charcoal rounded-full px-5 py-2 hover:bg-charcoal hover:text-cream transition-colors"
+        >
+          {t("sync_modal.check_again")}
+        </button>
+      )}
+      {(anythingToApply || filesUnread) && (
+        <button
+          type="button"
+          onClick={onKeepMine}
+          className="font-heading font-semibold text-sm uppercase tracking-wider border border-charcoal text-charcoal rounded-full px-5 py-2 hover:bg-charcoal hover:text-cream transition-colors"
+        >
+          {t("sync_modal.use_compositor_version")}
+        </button>
+      )}
+      {anythingToApply && (
+        <button
+          type="button"
+          onClick={onApply}
+          className="font-heading font-semibold text-sm uppercase tracking-wider bg-terracotta hover:bg-terracotta/90 text-cream rounded-full px-5 py-2 transition-colors"
+        >
+          {filesUnread ? t("sync_modal.apply_other_changes") : t("sync_modal.apply_sync")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfirmModalProps) {
+export function SyncConfirmModal({ open, unpublishedCount, countKnown = true, onClose }: SyncConfirmModalProps) {
   const { t } = useTranslation("dashboard");
   const navigate = useNavigate();
   // Stable fetcher key so the hosting page can subscribe to the same
   // sync-diff response via useFetcher({ key }) and surface the
   // version-change toast (see _app.objects.tsx / useVersionChangeToast).
-  const diffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
-  const applyFetcher = useFetcher();
+  const diffFetcher = useSiteFetcher({ key: SYNC_DIFF_FETCHER_KEY });
+  const applyFetcher = useSiteFetcher();
 
   const [step, setStep] = useState<SyncStep>("confirm");
   const [diff, setDiff] = useState<FullSyncDiff | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
+  // A sheet the check refused for columns read as one field, offered for a choice instead of a message.
+  const [question, setQuestion] = useState<SheetChoicesQuestion | null>(null);
   const [selections, setSelections] = useState<ThreeWaySelections>(emptySelections);
+  // The stories an accept refused as edited while they were reviewed, named
+  // on the list the dialog checked again for them.
+  const [changedWhileReviewed, setChangedWhileReviewed] = useState<ChangedWhileReviewed>(NOTHING_CHANGED_WHILE_REVIEWED);
+  // The pages an accept refused as edited while they were reviewed, likewise.
+  const [pagesChangedWhileReviewed, setPagesChangedWhileReviewed] = useState<string[]>([]);
+  // The accept applied the other changes but, the story files unread, left
+  // the site out of sync.
+  const [appliedStillDivergent, setAppliedStillDivergent] = useState(false);
+  // The same, with the page files unread.
+  const [appliedPagesStillDivergent, setAppliedPagesStillDivergent] = useState(false);
+  // Keep my version was refused because GitHub moved past the commit the
+  // dialog showed; the dialog checked again, and says so above the result.
+  const [githubMovedWhileReviewed, setGithubMovedWhileReviewed] = useState(false);
 
   const diffData = diffFetcher.data as DiffFetcherData;
   const applyData = applyFetcher.data as ApplyFetcherData;
+
+  // The diff fetcher keeps its previous data in flight for a new submission,
+  // so a fresh compute-full-sync-diff response cannot be told apart from the
+  // stale one by presence or shape alone. Recording the object that was
+  // current when the submission went out lets the effect below recognise
+  // and ignore that same stale object when it re-runs before the real
+  // response lands.
+  const submittedDiffDataRef = useRef<DiffFetcherData>(undefined);
 
   // Reset step when modal opens or closes
   useEffect(() => {
@@ -381,6 +411,11 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       setDiff(null);
       setErrorMessage("");
       setSelections(emptySelections());
+      setChangedWhileReviewed(NOTHING_CHANGED_WHILE_REVIEWED);
+      setPagesChangedWhileReviewed([]);
+      setAppliedStillDivergent(false);
+      setAppliedPagesStillDivergent(false);
+      setGithubMovedWhileReviewed(false);
     }
   }, [open]);
 
@@ -388,38 +423,81 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
   // revalidation after an apply re-runs this effect (unpublishedCount changes)
   // with the same stale diffData, which would otherwise yank a post-apply step
   // back to diffReady/conflict. Guarding on step === "computing" pins it.
+  //
+  // step === "computing" also becomes true again on Retry -> Check changes,
+  // while diffData still holds the previous submission's response (react-router
+  // keeps a fetcher's old data until the new one resolves). Without the ref
+  // check below, that stale response would be read as the answer to the new
+  // submission and the modal would flash back to failed before the real
+  // response arrives. Ignoring the object recorded at submission time makes
+  // the effect act only on the response to its own submission, regardless of
+  // when the fetcher's state flips to submitting.
   useEffect(() => {
     if (step !== "computing") return;
     if (!diffData) return;
+    if (diffData === submittedDiffDataRef.current) return;
+    // The layout's notice speaks for a check refused because the site
+    // changed; this dialog has nothing to show for it.
+    if (isSiteChanged(diffData)) {
+      onClose();
+      return;
+    }
     if (!diffData.ok || diffData.intent !== "compute-full-sync-diff") {
-      setErrorMessage(
-        diffData.ok ? "" : (diffData.message ?? diffData.error ?? t("unknown_error"))
-      );
+      setQuestion(choicesQuestionOf(diffData));
+      setErrorMessage(diffData.ok ? "" : syncFailureMessage(diffData, t));
       setStep("failed");
       return;
     }
+    const hasChanges = hasDiffChanges(diffData.diff);
+    // Three-way surfaces conflicts inline, so the coarse warning is skipped. Two-way
+    // warns whenever the live count is unknown (the estimate misses local deletions)
+    // and otherwise only when the live count is above 0.
     setDiff(diffData.diff);
     setSelections(emptySelections());
-    const hasChanges = hasDiffChanges(diffData.diff);
-    // Three-way surfaces conflicts inline and precisely, so the coarse
-    // conflict-warning step is skipped. Two-way keeps it, keyed off
-    // unpublishedCount, exactly as before.
-    if (
-      hasChanges &&
-      diffData.diff.classification === "two-way" &&
-      unpublishedCount > 0
-    ) {
+    if (hasChanges && diffData.diff.classification === "two-way" && (!countKnown || unpublishedCount > 0)) {
       setStep("conflict");
     } else {
       setStep("diffReady");
     }
-  }, [diffData, unpublishedCount, step]);
+  }, [diffData, unpublishedCount, countKnown, step]);
+  useEffect(() => {
+    // A warning chosen from the estimate is withdrawn if the live count lands as 0.
+    if (step === "conflict" && countKnown && unpublishedCount === 0) setStep("diffReady");
+  }, [step, countKnown, unpublishedCount]);
 
   // Handle apply / accept-divergence fetcher result
   useEffect(() => {
     if (!applyData) return;
+    if (isSiteChanged(applyData)) {
+      onClose();
+      return;
+    }
     if (!applyData.ok) {
-      setErrorMessage(applyData.error ?? t("unknown_error"));
+      if (
+        (applyData.intent === "accept-divergence" && applyData.error === "accept_divergence_stale") ||
+        (applyData.intent === "apply-full-sync" && applyData.error === "sync_base_stale")
+      ) {
+        // GitHub, or the recorded head, moved past the diff the author was
+        // shown, so their choice was not saved: check again, and say why the
+        // list changed.
+        setGithubMovedWhileReviewed(true);
+        handleCheckChanges();
+        return;
+      }
+      if (handledPageRefusal(applyData)) return;
+      const names = storyNames(applyData.intent === "apply-full-sync" ? applyData.storyIds : undefined);
+      if (applyData.error === "story_changed_since_review" || applyData.error === "object_changed_since_review") {
+        // The live story, or an object's field, is no longer the one
+        // reviewed: check again, and say why the list changed.
+        setChangedWhileReviewed(changedWhileReviewedOf(applyData, names, diff));
+        handleCheckChanges();
+        return;
+      }
+      setErrorMessage(
+        applyData.error === "story_content_failed"
+          ? t("sync_modal.error_story_failed", { stories: names.join(", ") })
+          : syncFailureMessage(applyData, t),
+      );
       setStep("failed");
       return;
     }
@@ -429,12 +507,50 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       return;
     }
     if (applyData.intent === "apply-full-sync") {
+      setAppliedStillDivergent(applyData.storyFilesInconclusive === true);
+      setAppliedPagesStillDivergent(applyData.pageFilesInconclusive === true);
       setStep("success");
       setTimeout(() => window.location.reload(), 1500);
     }
   }, [applyData]);
 
+  /** The stories' names as the dialog showed them, by id. */
+  function storyNames(ids: readonly string[] | undefined): string[] {
+    return (ids ?? []).map((id) => {
+      const shown =
+        diff?.stories.content?.conclusive === true
+          ? diff.stories.content.changes.find((c) => c.story_id === id)?.title
+          : undefined;
+      return `“${shown || diff?.stories.changedStories.find((s) => s.story_id === id)?.title || id}”`;
+    });
+  }
+
+  /**
+   * An accept refused for its pages, answered: checked again, naming the
+   * pages edited while they were reviewed, or failed, naming those not saved.
+   * False for any other refusal.
+   */
+  function handledPageRefusal(data: Extract<NonNullable<ApplyFetcherData>, { ok: false }>): boolean {
+    const pages = pageNames(data.intent === "apply-full-sync" ? data.pageIds : undefined);
+    if (data.error === "page_changed_since_review") {
+      setPagesChangedWhileReviewed(pages);
+      handleCheckChanges();
+      return true;
+    }
+    if (data.error !== "page_content_failed") return false;
+    setErrorMessage(t("sync_modal.error_page_failed", { pages: pages.join(", ") }));
+    setStep("failed");
+    return true;
+  }
+
+  /** The pages' names as the dialog showed them, by id. */
+  function pageNames(ids: readonly number[] | undefined): string[] {
+    const shown = diff ? [...listedPageChanges(diff), ...listedPageFiles(diff)] : [];
+    return (ids ?? []).map((id) => `“${shown.find((c) => c.pageId === id)?.title || id}”`);
+  }
+
   function handleCheckChanges() {
+    submittedDiffDataRef.current = diffFetcher.data as DiffFetcherData;
     setStep("computing");
     diffFetcher.submit(
       { intent: "compute-full-sync-diff" },
@@ -447,7 +563,10 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
     const changes =
       diff.classification === "three-way"
         ? buildThreeWayChanges(diff, selections)
-        : buildAllOrNothingChanges(diff);
+        : buildAllOrNothingChanges(diff, selections);
+    setChangedWhileReviewed(NOTHING_CHANGED_WHILE_REVIEWED);
+    setPagesChangedWhileReviewed([]);
+    setGithubMovedWhileReviewed(false);
     setStep("applying");
     applyFetcher.submit(
       { intent: "apply-full-sync", changes: JSON.stringify(changes) },
@@ -456,9 +575,11 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
   }
 
   function handleAcceptDivergence() {
+    setGithubMovedWhileReviewed(false);
     setStep("accepting");
+    // The identity of the diff the author reviewed, never the page's state.
     applyFetcher.submit(
-      { intent: "accept-divergence" },
+      diff ? keepMineFields(diff) : { intent: "accept-divergence" },
       { method: "post", action: "/dashboard" }
     );
   }
@@ -477,7 +598,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       ...prev,
       objectFieldChoices: {
         ...prev.objectFieldChoices,
-        [objectId]: { ...(prev.objectFieldChoices[objectId] ?? {}), [field]: choice },
+        [objectId]: { ...(ownValue(prev.objectFieldChoices, objectId) ?? {}), [field]: choice },
       },
     }));
   }
@@ -505,6 +626,12 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
         kind === "story" ? "storyChoices" : kind === "config" ? "configChoices" : "glossaryChangedChoices";
       return { ...prev, [key]: { ...prev[key], [id]: choice } };
     });
+  }
+  function setStoryContentChoice(storyId: string, choice: ConflictChoice) {
+    setSelections((prev) => ({
+      ...prev,
+      storyContentChoices: { ...prev.storyContentChoices, [storyId]: choice },
+    }));
   }
   function setGlossaryRestore(termId: string, restore: boolean) {
     setSelections((prev) => ({
@@ -543,16 +670,18 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       ? diff.objects.missingObjects.filter((o) => !o.editedInCompositor)
       : diff.objects.missingObjects;
 
+    const reorderItems = reorderItemsOf(diff, t("objects:sync_order_changed"));
     const objectItems: string[] = [
       ...newObjects.map((o) => itemNew(o.object_id)),
       ...changedObjects.map((o) => itemChanged(o.object_id)),
+      ...reorderItems,
       ...missingObjects.map((o) => itemRemoved(o.object_id)),
     ];
     if (objectItems.length > 0) {
       sections.push({
         label: sectionLabel(
           t("sync_modal.objects_category"),
-          newObjects.length + changedObjects.length + missingObjects.length,
+          objectItems.length,
           changedObjects.length > 0,
         ),
         items: objectItems,
@@ -561,9 +690,13 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
 
     const storyName = (s: { title?: string | null; story_id: string }) =>
       s.title || t("common:untitled");
-    const changedStories = threeWay
+    // A story whose content changed too is on its content card, whose one
+    // choice covers its row.
+    const onContentCard = new Set(listedContentChanges(diff).map((c) => c.story_id));
+    const changedStories = (threeWay
       ? diff.stories.changedStories.filter((s) => !s.conflict)
-      : diff.stories.changedStories;
+      : diff.stories.changedStories
+    ).filter((s) => !onContentCard.has(s.story_id));
     // Deleted-here (repo edited, editor deleted) stories render in the conflicts
     // block, not the pre-accepted category list.
     const newStories = threeWay
@@ -627,7 +760,9 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
   const categorySections = buildCategorySections(Boolean(threeWay));
   const conflictsPresent = Boolean(diff && threeWay && hasConflictItems(diff));
   const suppressedCount = threeWay ? diff?.suppressedEditorOnly ?? 0 : 0;
-  const anythingToApply = categorySections.length > 0 || conflictsPresent;
+  const { contentChanges, storyFilesUnread, pageChanges, pageFiles, pageFilesUnread } = contentView(diff);
+  const filesUnread = storyFilesUnread || pageFilesUnread;
+  const anythingToApply = conflictsPresent || [categorySections, contentChanges, pageChanges, pageFiles].some((list) => list.length > 0);
 
   return (
     <Dialog open={open} onClose={onClose} className="max-w-lg p-0">
@@ -676,6 +811,9 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       {/* ------------------------------------------------------------------ */}
       {step === "conflict" && (
         <div className="p-6">
+          {/* A re-check after Keep my version was refused can land here. */}
+          {githubMovedWhileReviewed && <p className={NOTICE_CLASS}>{t("sync_modal.accept_divergence_stale")}</p>}
+          <SheetWarnings warnings={diff?.warnings ?? []} defaultOpen className="mb-4" />
           <div className="flex items-start gap-3 mb-5">
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
             <div>
@@ -683,7 +821,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
                 {t("sync_modal.title")}
               </h3>
               <p className="font-body text-sm text-gray-600">
-                {t("sync_modal.conflict_warning", { count: unpublishedCount })}
+                {countKnown ? t("sync_modal.conflict_warning", { count: unpublishedCount }) : t("sync_modal.conflict_warning_unknown")}
               </p>
             </div>
           </div>
@@ -719,10 +857,31 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       {step === "diffReady" && (
         <div className="p-6">
           <h3 className="font-heading font-semibold text-lg text-charcoal mb-4">
-            {anythingToApply ? t("sync_modal.changes_found") : t("sync_modal.no_changes")}
+            {t(diffReadyHeading(anythingToApply, filesUnread))}
           </h3>
 
           <div className="max-h-[55dvh] overflow-y-auto -mx-2 px-2">
+            <ReviewNotices
+              changedWhileReviewed={changedWhileReviewed}
+              pagesChangedWhileReviewed={pagesChangedWhileReviewed}
+              storyFilesUnread={storyFilesUnread}
+              pageFilesUnread={pageFilesUnread}
+              githubMovedWhileReviewed={githubMovedWhileReviewed}
+            />
+
+            <SheetWarnings warnings={diff?.warnings ?? []} defaultOpen className="mb-4" />
+
+            {diff && (
+              <SyncStoryContentBlock
+                changes={contentChanges}
+                rows={diff.stories.changedStories}
+                choiceOf={(change) => contentChoiceOf(change, selections)}
+                onChoice={setStoryContentChoice}
+              />
+            )}
+
+            <SyncPagesBlocks diff={diff} selections={selections} setSelections={setSelections} />
+
             {/* Conflicts block (three-way, first) */}
             {conflictsPresent && diff && (
               <SyncConflictsBlock
@@ -734,6 +893,7 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
                 onRowChoice={setRowChoice}
                 onStoryRestore={setStoryRestore}
                 onGlossaryRestore={setGlossaryRestore}
+                contentStoryIds={new Set(contentChanges.map((c) => c.story_id))}
               />
             )}
 
@@ -753,45 +913,17 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
               </p>
             )}
 
-            {anythingToApply && (
-              <p className="font-body text-sm text-gray-600 mb-2">
-                {t("sync_modal.use_compositor_helper")}
-              </p>
-            )}
-            {!anythingToApply && (
-              <p className="font-body text-sm text-gray-600 mb-2">
-                {t("sync_modal.no_changes_body")}
-              </p>
-            )}
+            <ApplyNotes anythingToApply={anythingToApply} storyFilesUnread={storyFilesUnread} pageFilesUnread={pageFilesUnread} />
           </div>
 
-          <div className="flex flex-wrap gap-3 justify-end mt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="font-heading font-semibold text-sm uppercase tracking-wider border border-gray-200 text-charcoal rounded-full px-5 py-2 hover:bg-cream transition-colors"
-            >
-              {anythingToApply ? t("cancel") : t("sync_modal.close")}
-            </button>
-            {anythingToApply && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleAcceptDivergence}
-                  className="font-heading font-semibold text-sm uppercase tracking-wider border border-charcoal text-charcoal rounded-full px-5 py-2 hover:bg-charcoal hover:text-cream transition-colors"
-                >
-                  {t("sync_modal.use_compositor_version")}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApply}
-                  className="font-heading font-semibold text-sm uppercase tracking-wider bg-terracotta hover:bg-terracotta/90 text-cream rounded-full px-5 py-2 transition-colors"
-                >
-                  {t("sync_modal.apply_sync")}
-                </button>
-              </>
-            )}
-          </div>
+          <DiffReadyActions
+            anythingToApply={anythingToApply}
+            filesUnread={filesUnread}
+            onClose={onClose}
+            onCheckAgain={handleCheckChanges}
+            onKeepMine={handleAcceptDivergence}
+            onApply={handleApply}
+          />
         </div>
       )}
 
@@ -827,14 +959,19 @@ export function SyncConfirmModal({ open, unpublishedCount, onClose }: SyncConfir
       {step === "success" && (
         <div className="p-6 flex flex-col items-center gap-4 py-12">
           <CheckCircle2 className="w-10 h-10 text-green-500" />
-          <p className="font-body text-sm text-gray-700">{t("sync_modal.success")}</p>
+          <p className="font-body text-sm text-gray-700 text-center">
+            {t(successKey(appliedStillDivergent, appliedPagesStillDivergent))}
+          </p>
         </div>
       )}
 
       {/* ------------------------------------------------------------------ */}
       {/* Failed step                                                          */}
       {/* ------------------------------------------------------------------ */}
-      {step === "failed" && (
+      {step === "failed" && question && (
+        <SheetChoicesStep className="p-6" question={question} onChosen={handleCheckChanges} onCancel={onClose} />
+      )}
+      {step === "failed" && !question && (
         <div className="p-6">
           <div className="flex flex-col items-center gap-3 py-6 mb-4">
             <AlertCircle className="w-10 h-10 text-red-500" />

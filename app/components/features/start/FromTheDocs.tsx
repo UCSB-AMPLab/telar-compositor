@@ -10,7 +10,7 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { Trans, useTranslation } from "react-i18next";
@@ -29,7 +29,7 @@ import type { LucideIcon } from "lucide-react";
 import { DOCS, type DocId } from "~/lib/docs-content";
 
 export interface FromTheDocsProps {
-  role: "convenor" | "collaborator";
+  role: "convenor" | "collaborator" | "instructor";
   state: "populated" | "empty";
   onOpenDoc: (docId: DocId) => void;
   className?: string;
@@ -39,6 +39,9 @@ export interface FromTheDocsProps {
  * Reading lists — five docs in order per role×state cell. Five items so the
  * six workflow areas are all covered, and so Configuration / Custom pages /
  * Glossary appear.
+ *
+ * Instructors read the collaborator lists: their permissions are a
+ * collaborator's, and there is no teaching list to send them to.
  */
 const READING_LISTS: Record<
   "convenor" | "collaborator",
@@ -77,7 +80,7 @@ export function FromTheDocs({ role, state, onOpenDoc, className = "" }: FromTheD
   // Titles follow the compositor's chosen UI language (descriptions already do,
   // via the from_docs.desc_* keys).
   const isEs = i18n.language?.toLowerCase().startsWith("es");
-  const docIds = READING_LISTS[role][state];
+  const docIds = READING_LISTS[role === "convenor" ? "convenor" : "collaborator"][state];
 
   return (
     <section

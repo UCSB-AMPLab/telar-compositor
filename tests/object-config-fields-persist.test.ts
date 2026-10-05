@@ -14,7 +14,7 @@
  * stubbed ctx/env and a hand-rolled DB that records every prepare/bind and
  * routes SELECTs by SQL substring.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -32,6 +32,8 @@ vi.mock("cloudflare:workers", () => ({
 }));
 
 import { ProjectCollaborationDO } from "../workers/collaboration";
+import { markLoaded } from "./helpers/claimed-document";
+import { checkD1Bind } from "./helpers/d1-memory";
 
 const TEST_PROJECT_ID = 42;
 
@@ -44,10 +46,11 @@ function makeFakeDB(rowProvider: (sql: string) => unknown[]) {
   const binds: BindCall[] = [];
   const stmt = (sql: string) => ({
     bind(...args: unknown[]) {
+      checkD1Bind(sql, args);
       binds.push({ sql, args });
       return {
         async run() {
-          return { meta: { last_row_id: 100 } };
+          return { meta: { last_row_id: 100, changes: 1 } };
         },
         async all<T>() {
           return { results: rowProvider(sql) as T[] };
@@ -71,7 +74,16 @@ function makeCtx() {
   return {
     getWebSockets: () => [] as unknown[],
     blockConcurrencyWhile: async (fn: () => Promise<void>) => fn(),
-    storage: { getAlarm: async () => null, setAlarm: async () => {} },
+    storage: {
+      getAlarm: async () => null,
+      setAlarm: async () => {},
+      // The loader and the snapshot read the generation from storage, and a
+      // load lists the log prefix before it tags an untagged blob.
+      get: async (key: string) => (key === "docGeneration" ? 0 : undefined),
+      put: async () => {},
+      list: async () => new Map(),
+      delete: async () => 0,
+    },
     acceptWebSocket: vi.fn(),
   };
 }
@@ -84,7 +96,7 @@ function makeDO(rowProvider: (sql: string) => unknown[]) {
     env as Env,
   );
   (doInstance as unknown as { projectId: number }).projectId = TEST_PROJECT_ID;
-  (doInstance as unknown as { docLoaded: boolean }).docLoaded = true;
+  markLoaded(doInstance);
   return { doInstance, binds };
 }
 

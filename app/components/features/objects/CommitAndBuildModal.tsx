@@ -9,14 +9,17 @@
  *
  * Triggered after sync-apply or add-iiif-object adds new objects.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useFetcher } from "react-router";
+import { Link } from "react-router";
+import { useSiteFetcher } from "~/lib/page-site";
+import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
 import { CheckCircle2, ExternalLink, Loader2, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
+import type { RegistrationResult } from "~/lib/register-objects.server";
 import { Button } from "~/components/ui/Button";
 
 /**
@@ -74,21 +77,38 @@ type ModalStep =
 interface Props {
   open: boolean;
   sheetsEnabled: boolean;
+  /** The objects sheet's file name on the site: objects.csv, or objetos.csv where the site holds that one. Only the commit step names it. */
+  objectsFile?: string;
+  /**
+   * The pre-commit check has not answered for this site: Confirm waits, since
+   * the commit's Sheets flag and URL check come from that answer.
+   */
+  checkPending?: boolean;
+  /** The pre-commit check could not be made: say so, and offer to run it again. */
+  checkFailed?: boolean;
+  onRetryCheck?: () => void;
   urlMismatch: { pagesUrl: string; configUrl: string } | null;
   pendingObjects: PendingObject[];
   onClose: () => void;
-  onBuildSuccess: () => void;
+  /** Called on the success step's Done, with whether a build made the tiles. */
+  onBuildSuccess: (built: boolean) => void;
   onBuildFailed: () => void;
   // For the upload flow: skip commit step, poll by run ID directly
   skipCommit?: boolean;
   dispatchRunId?: number | null;
   dispatchHtmlUrl?: string | null;
+  /** The upload's own registration of its objects, for the upload flow. */
+  registration?: RegistrationResult | null;
+  /** The project the upload committed to, for a registration retry. */
+  projectId?: number | null;
   /**
-   * Called after insert-pending-objects succeeds with the D1 ids and
-   * object_ids. Used so the objects page can mirror self-hosted uploads
-   * into the Yjs Y.Array.
+   * Called once the objects are registered, by the committing action or a
+   * retry, with the objects registered. The page writes nothing: the objects
+   * reach the shared document through the collaboration DO, which appends
+   * them and broadcasts the new state, so there is only the confirmation to
+   * surface.
    */
-  onInserted?: (inserted: Array<{ id: number; object_id: string }>) => void;
+  onRegistered?: (registered: PendingObject[]) => void;
 }
 
 type CommitData =
@@ -96,6 +116,8 @@ type CommitData =
       ok: true;
       intent: "commit-objects";
       newHeadSha: string;
+      projectId?: number;
+      registration?: RegistrationResult;
       dispatchRunId?: number | null;
       /** Commit landed but no workflow run started — skip build tracking. */
       dispatchFailed?: boolean;
@@ -171,53 +193,164 @@ function connectorClass(phase: BuildPhaseStatus): string {
 // Component
 // ---------------------------------------------------------------------------
 
-export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingObjects, onClose, onBuildSuccess, onBuildFailed, skipCommit, dispatchRunId, dispatchHtmlUrl, onInserted }: Props) {
+/**
+ * Whether a poll answer is for the build this modal is tracking. A response
+ * still in flight from an earlier operation answers for nothing. The run id
+ * is compared only where the poll names the run itself (`byRunId`, the
+ * upload flow): a poll by commit reports the runs listed for that commit, and
+ * is kept to the right operation by the reset on close.
+ */
+function pollAnswersHere(
+  pollData: PollData,
+  tracking: boolean,
+  byRunId: boolean,
+  runId: number | null,
+): pollData is Extract<PollData, { ok: true }> {
+  if (!pollData?.ok || pollData.intent !== "poll-build" || !tracking) return false;
+  return !byRunId || runId == null || pollData.runId === runId;
+}
+
+/** A finished run's phases, with those still queued marked as not part of it. */
+function settledPhases(phases: BuildPhaseStatus[]): BuildPhaseStatus[] {
+  return phases.map((p) =>
+    p.status === "queued" ? { ...p, status: "completed" as const, conclusion: "skipped" } : p,
+  );
+}
+
+/** A Map, because the key is a string from a response body. */
+const COMMIT_ERROR_HEADING_KEYS = new Map<string, string>([
+  ["stale_head", "staleHeadError"],
+  ["operation_in_progress", "upload_error_operation_in_progress"],
+  ["upgrade_required", "repo_write_upgrade_required"],
+  ["upgrade_awaits_convenor", "repo_write_upgrade_awaits_convenor"],
+  ["release_unknown", "repo_write_release_unknown"],
+]);
+
+/**
+ * The failed step's heading. A refused commit names why; the three version
+ * refusals wrote nothing, and the upgrade one is followed by its link.
+ */
+function commitFailureHeadingKey(commitError: string | null, addedBeforeBuild: boolean): string {
+  if (commitError) return COMMIT_ERROR_HEADING_KEYS.get(commitError) ?? "commitFailed";
+  return addedBeforeBuild ? "commitModal.addedBuildUnfinishedHeading" : "buildFailed";
+}
+
+/** What happened to the registration the committing action made. */
+type RegistrationState = "none" | "ok" | "failed" | "retrying";
+/** What the build that followed the commit did, as far as this modal saw. */
+type BuildState = "running" | "success" | "failed" | "skipped";
+
+/**
+ * The step to show. Registration and the build are tracked apart: the objects
+ * are registered when their commit lands, and the build decides only
+ * whether their tiles exist, so a failed registration is offered its retry
+ * while the build runs on, and a failed build is reported over objects that
+ * are already there.
+ */
+function stepFor(
+  flow: "confirm" | "committing" | "tracking" | "commit_failed",
+  registration: RegistrationState,
+  build: BuildState,
+): ModalStep {
+  if (flow === "confirm" || flow === "committing") return flow;
+  if (flow === "commit_failed") return "failed";
+  if (registration === "retrying") return "inserting";
+  if (registration === "failed") return "insert_failed";
+  if (build === "running") return "building";
+  if (build === "failed") return "failed";
+  return "success";
+}
+
+/** What the dialog says when the pre-commit check could not be made, with a button to run it again. */
+function CheckFailedNote({ failed, onRetry }: { failed?: boolean; onRetry?: () => void }) {
   const { t } = useTranslation("objects");
-  const commitFetcher = useFetcher();
-  const pollFetcher = useFetcher();
-  const insertFetcher = useFetcher();
+  if (!failed) return null;
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+      <p className="font-body text-sm text-amber-900 mb-2">{t("commitModal.checkFailed")}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="font-heading font-semibold text-xs uppercase tracking-wider border border-amber-300 text-amber-900 rounded-full px-4 py-1.5 hover:bg-amber-100 transition-colors"
+      >
+        {t("error.retry")}
+      </button>
+    </div>
+  );
+}
+
+export function CommitAndBuildModal({ open, sheetsEnabled, objectsFile = "objects.csv", checkPending, checkFailed, onRetryCheck, urlMismatch, pendingObjects, onClose, onBuildSuccess, onBuildFailed, skipCommit, dispatchRunId, dispatchHtmlUrl, registration: uploadRegistration, projectId: uploadProjectId, onRegistered }: Props) {
+  const { t } = useTranslation("objects");
+  const commitFetcher = useSiteFetcher();
+  const pollFetcher = useSiteFetcher();
+  const insertFetcher = useSiteFetcher();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [step, setStep] = useState<ModalStep>("confirm");
+  const [flow, setFlow] = useState<"confirm" | "committing" | "tracking" | "commit_failed">("confirm");
+  const [registration, setRegistration] = useState<RegistrationState>("none");
+  const [build, setBuild] = useState<BuildState>("running");
+  const [projectId, setProjectId] = useState<number | null>(null);
+  // The committing action's record of the objects, which a retry names.
+  const [operationId, setOperationId] = useState<number | null>(null);
   const [commitSha, setCommitSha] = useState<string | null>(null);
-  const [buildConclusion, setBuildConclusion] = useState<string | null>(null);
   const [buildUrl, setBuildUrl] = useState<string | null>(null);
   const [runId, setRunId] = useState<number | null>(null);
   const [phases, setPhases] = useState<BuildPhaseStatus[] | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
-  const [buildSkipped, setBuildSkipped] = useState(false);
+
+  const step = stepFor(flow, registration, build);
+  const buildSkipped = build === "skipped";
+  /** Objects committed and registered, over a build that did not succeed. */
+  const addedBeforeBuild = !commitError && pendingObjects.length > 0;
 
   const commitData = commitFetcher.data as CommitData;
   const pollData = pollFetcher.data as PollData;
 
-  // Reset state when modal opens
+  /** Take the committing action's registration result. */
+  function takeRegistration(result: RegistrationResult | null | undefined) {
+    setOperationId(result?.operationId ?? null);
+    if (pendingObjects.length === 0 || !result) {
+      setRegistration("none");
+    } else if (result.ok) {
+      setRegistration("ok");
+      onRegistered?.(pendingObjects);
+    } else {
+      setRegistration("failed");
+    }
+  }
+
+  // Reset state when the modal opens, and again when it closes, so that a
+  // reopening never starts from the last operation's flow or build: the first
+  // render after opening would otherwise poll that operation's run.
   useEffect(() => {
+    if (!open) {
+      setFlow("confirm");
+      setRegistration("none");
+      setBuild("running");
+      setRunId(null);
+      setCommitSha(null);
+      return;
+    }
     if (open) {
-      setBuildConclusion(null);
       setPhases(null);
       setCommitError(null);
-      setBuildSkipped(false);
+      setCommitSha(null);
 
       if (skipCommit) {
-        // Upload flow: image already committed, workflow already dispatched.
-        // If we have a run ID, jump straight to building and initialise run state.
-        // If dispatch failed (no run ID), jump to inserting to persist the pending object.
-        setCommitSha(null);
-        if (dispatchRunId) {
-          setStep("building");
-          setRunId(dispatchRunId);
-          setBuildUrl(dispatchHtmlUrl ?? null);
-        } else {
-          // Dispatch failed but commit succeeded — skip build tracking, insert directly.
-          setBuildSkipped(true);
-          setStep("inserting");
-          setRunId(null);
-          setBuildUrl(null);
-        }
+        // Upload flow: the images are committed, the objects registered by
+        // the upload itself, and the build dispatched, or not.
+        setFlow("tracking");
+        setProjectId(uploadProjectId ?? null);
+        takeRegistration(uploadRegistration);
+        setRunId(dispatchRunId ?? null);
+        setBuildUrl(dispatchRunId ? dispatchHtmlUrl ?? null : null);
+        setBuild(dispatchRunId ? "running" : "skipped");
       } else {
-        // Normal commit flow: start at confirm step
-        setStep("confirm");
-        setCommitSha(null);
+        setFlow("confirm");
+        setRegistration("none");
+        setBuild("running");
+        setProjectId(null);
+        setOperationId(null);
         setBuildUrl(null);
         setRunId(null);
       }
@@ -228,115 +361,96 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   // Process commit result
   useEffect(() => {
     if (!commitData) return;
+    // Refused because the site changed: nothing was committed, and the
+    // layout's notice says why. The dialog goes back to asking.
+    if (isSiteChanged(commitData)) {
+      setFlow("confirm");
+      return;
+    }
     if (commitData.ok && commitData.intent === "commit-objects") {
+      setProjectId(commitData.projectId ?? null);
+      takeRegistration(commitData.registration);
+      setFlow("tracking");
       if (commitData.dispatchFailed) {
         // The commit landed but no workflow run started — polling by SHA
-        // would spin forever on a run that doesn't exist. Register the
-        // objects directly; tiles regenerate on the next full build.
-        setBuildSkipped(true);
-        if (pendingObjects.length > 0) {
-          setStep("inserting");
-          insertFetcher.submit(
-            { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
-            { method: "post" }
-          );
-        } else {
-          setStep("success");
-        }
+        // would spin forever on a run that doesn't exist. Tiles regenerate on
+        // the next full build.
+        setBuild("skipped");
         return;
       }
       setCommitSha(commitData.newHeadSha);
-      setStep("building");
+      setBuild("running");
     } else if (!commitData.ok && commitData.intent === "commit-objects") {
       setCommitError(commitData.error);
-      setStep("failed");
+      setFlow("commit_failed");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commitData]);
 
   // Process poll results
   useEffect(() => {
-    if (!pollData?.ok || pollData.intent !== "poll-build") return;
+    // A poll refused because the site changed is not asked again, and the
+    // dialog closes: the layout's notice has said why, the build carries on
+    // without this tab, and a tracking screen that can no longer hear it
+    // would have nothing to show and no way out.
+    if (isSiteChanged(pollData)) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      onClose();
+      return;
+    }
+    if (!pollAnswersHere(pollData, flow === "tracking" && build === "running", !!skipCommit, runId)) return;
     if (pollData.buildUrl) setBuildUrl(pollData.buildUrl);
     if (pollData.runId != null) setRunId(pollData.runId);
     if (pollData.phases) setPhases(pollData.phases);
     if (pollData.buildStatus === "completed") {
-      // Mark any still-queued phases as skipped — they weren't part of this workflow
-      if (pollData.phases) {
-        setPhases(pollData.phases.map((p) =>
-          p.status === "queued"
-            ? { ...p, status: "completed" as const, conclusion: "skipped" }
-            : p
-        ));
-      }
-      setBuildConclusion(pollData.buildConclusion);
-      if (pollData.buildConclusion === "success") {
-        if (pendingObjects.length > 0) {
-          // Build succeeded — insert pending objects into D1
-          setStep("inserting");
-          insertFetcher.submit(
-            { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
-            { method: "post" }
-          );
-        } else {
-          // No pending objects (e.g. tile generation only) — go straight to success
-          setStep("success");
-        }
-      } else {
-        setStep("failed");
-      }
+      if (pollData.phases) setPhases(settledPhases(pollData.phases));
+      // Every conclusion but success, `cancelled` included, is a build that
+      // did not make the tiles. The objects are registered either way.
+      setBuild(pollData.buildConclusion === "success" ? "success" : "failed");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollData]);
 
-  // Process insert result. The failure branch matters (telar-compositor#24):
-  // without it a failed D1 registration froze the modal on "inserting" forever
-  // while the images sat committed in the repo with no D1 rows.
+  // Process a retry's result. The failure branch matters (telar-compositor#24):
+  // without it a failed D1 registration froze the modal forever while the
+  // images sat committed in the repo with no D1 rows.
   useEffect(() => {
     const data = insertFetcher.data as
-      | { ok: boolean; intent: string; inserted?: Array<{ id: number; object_id: string }>; error?: string }
+      | { ok: boolean; intent: string; error?: string }
       | null
       | undefined;
+    // Refused because the site changed: the registration is still owed, as
+    // it was before the retry, and the layout's notice says why.
+    if (isSiteChanged(data)) {
+      setRegistration("failed");
+      return;
+    }
     if (data?.ok && data.intent === "insert-pending-objects") {
-      if (onInserted && data.inserted && data.inserted.length > 0) {
-        onInserted(data.inserted);
-      }
-      setStep("success");
+      setRegistration("ok");
+      onRegistered?.(pendingObjects);
     } else if (data && !data.ok && data.intent === "insert-pending-objects") {
-      setStep("insert_failed");
+      setRegistration("failed");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insertFetcher.data]);
 
-  // Retry the D1 registration. Safe to repeat: the server action is
-  // idempotent (already-registered object_ids are skipped and echoed back
-  // with their canonical ids).
+  // Retry the registration, for the project the commit ran against, by the
+  // operation the commit recorded: the server finishes that operation if it is
+  // still owed and answers done if it is not. Safe to repeat: the ingest keeps
+  // a receipt for each operation it has applied.
   function handleInsertRetry() {
-    setStep("inserting");
+    setRegistration("retrying");
     insertFetcher.submit(
-      { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
+      {
+        intent: "insert-pending-objects",
+        operationId: String(operationId ?? ""),
+        projectId: String(projectId ?? ""),
+      },
       { method: "post" }
     );
   }
 
-  // When skipCommit and dispatch failed (step jumps directly to inserting on open),
-  // trigger D1 insert immediately so pending objects are persisted even without a build.
-  const hasTriggeredInsertRef = useRef(false);
-  useEffect(() => {
-    if (step === "inserting" && skipCommit && !dispatchRunId && !hasTriggeredInsertRef.current) {
-      hasTriggeredInsertRef.current = true;
-      insertFetcher.submit(
-        { intent: "insert-pending-objects", pendingObjects: JSON.stringify(pendingObjects) },
-        { method: "post" }
-      );
-    }
-    if (!open) {
-      hasTriggeredInsertRef.current = false;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, open]);
-
-  // Set up polling when building.
+  // Poll the build while it runs, whatever the registration is doing.
   // In the normal flow, polling requires commitSha (for SHA-based run discovery).
   // In the upload flow (skipCommit), polling uses dispatchRunId directly — no SHA needed.
   //
@@ -344,20 +458,21 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   // poll-build loop (same immediate-fire-then-setInterval shape, same
   // double-cleanup-effect pattern) but is NOT extracted into a shared hook
   // with this one — the bodies diverge materially: (1) this effect gates on
-  // a `step` state machine ("building" + commitSha/skipCommit+runId), while
-  // PublishingPopover gates on awareness booleans (isPublishing/isBuilding);
-  // (2) this effect branches the submit payload into two distinct shapes
-  // (runId-only for the upload flow vs sha+optional-runId for the commit
-  // flow), while PublishingPopover always sends sha and reads runId back out
-  // of the *previous* poll response via a ref, never from a prop; (3) this
-  // effect submits to the ambient route action (no explicit `action`), while
-  // PublishingPopover explicitly targets `action: "/publish"` since it can
-  // render from outside the /publish route. Forcing a shared hook over those
-  // three axes would either lose a real distinction or grow enough
-  // parameters to stop being simpler than two 15-line effects.
+  // the modal's build state, while PublishingPopover gates on awareness
+  // booleans (isPublishing/isBuilding); (2) this effect branches the submit
+  // payload into two distinct shapes (runId-only for the upload flow vs
+  // sha+optional-runId for the commit flow), while PublishingPopover always
+  // sends sha and reads runId back out of the *previous* poll response via a
+  // ref, never from a prop; (3) this effect submits to the ambient route
+  // action (no explicit `action`), while PublishingPopover explicitly targets
+  // `action: "/publish"` since it can render from outside the /publish route.
+  // Forcing a shared hook over those three axes would either lose a real
+  // distinction or grow enough parameters to stop being simpler than two
+  // 15-line effects.
+  const polling = open && flow === "tracking" && build === "running";
   useEffect(() => {
-    const canPollBySha = step === "building" && !!commitSha;
-    const canPollByRunId = step === "building" && !!skipCommit && !!runId;
+    const canPollBySha = polling && !!commitSha;
+    const canPollByRunId = polling && !!skipCommit && !!runId;
 
     if (!canPollBySha && !canPollByRunId) {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -389,7 +504,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, commitSha, runId, skipCommit]);
+  }, [polling, commitSha, runId, skipCommit]);
 
   // Clean up interval on unmount
   useEffect(() => {
@@ -399,7 +514,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   }, []);
 
   function handleConfirm() {
-    setStep("committing");
+    setFlow("committing");
     commitFetcher.submit(
       {
         intent: "commit-objects",
@@ -413,7 +528,8 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
   }
 
   function handleSuccessDismiss() {
-    onBuildSuccess();
+    // Only a build that succeeded made the tiles; a skipped one made none.
+    onBuildSuccess(build === "success");
   }
 
   function handleFailedDismiss() {
@@ -442,7 +558,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
               {t("commitModal.heading", { count: pendingObjects.length })}
             </h3>
             <p className="font-body text-sm text-gray-600 mb-4">
-              {t("commitModal.description", { count: pendingObjects.length })}
+              {t("commitModal.description", { count: pendingObjects.length, file: objectsFile })}
             </p>
 
             {urlMismatch && (
@@ -457,6 +573,8 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
                 <p className="font-body text-xs text-gray-600">{t("commitModal.urlFix")}</p>
               </div>
             )}
+
+            <CheckFailedNote failed={checkFailed} onRetry={onRetryCheck} />
 
             {sheetsEnabled && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
@@ -473,7 +591,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
               >
                 {t("commitModal.cancel")}
               </button>
-              <Button variant="primary" type="button" onClick={handleConfirm}>
+              <Button variant="primary" type="button" loading={checkPending} onClick={handleConfirm}>
                 {t("commitModal.confirm")}
               </Button>
             </div>
@@ -545,7 +663,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
           </div>
         )}
 
-        {/* --- Inserting step (D1 insert after build success) --- */}
+        {/* --- Inserting step (a registration retry in flight) --- */}
         {step === "inserting" && (
           <div className="p-6 flex flex-col items-center gap-3 py-10">
             <Loader2 className="w-8 h-8 text-anil animate-spin" />
@@ -619,13 +737,22 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
           <div className="p-6">
             <div className="flex flex-col items-center gap-3 py-4 mb-4">
               <XCircle className="w-12 h-12 text-red-500" />
-              <h3 className="font-heading font-semibold text-lg text-charcoal">
-                {commitError === "stale_head"
-                  ? t("staleHeadError")
-                  : commitError === "commit_failed"
-                    ? t("commitFailed")
-                    : t("buildFailed")}
+              <h3 className="font-heading font-semibold text-lg text-charcoal text-center">
+                {t(commitFailureHeadingKey(commitError, addedBeforeBuild))}
               </h3>
+              {commitError === "upgrade_required" && (
+                <Link
+                  to="/upgrade?from=/objects"
+                  className="font-body text-sm text-blue-600 hover:underline"
+                >
+                  {t("upload_upgrade_link")}
+                </Link>
+              )}
+              {addedBeforeBuild && (
+                <p className="font-body text-sm text-gray-500 text-center">
+                  {t("commitModal.addedBuildUnfinishedBody")}
+                </p>
+              )}
             </div>
 
             <div className="flex items-center justify-between">
@@ -640,13 +767,20 @@ export function CommitAndBuildModal({ open, sheetsEnabled, urlMismatch, pendingO
                   <ExternalLink className="w-3 h-3" />
                 </a>
               )}
-              <button
-                type="button"
-                onClick={handleFailedDismiss}
-                className="font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors"
-              >
-                {t("commitModal.discardChanges")}
-              </button>
+              {commitError ? (
+                <button
+                  type="button"
+                  onClick={handleFailedDismiss}
+                  className="font-heading font-semibold text-sm uppercase tracking-wider bg-red-500 hover:bg-red-600 text-white rounded-full px-6 py-2.5 transition-colors"
+                >
+                  {t("commitModal.discardChanges")}
+                </button>
+              ) : (
+                // The commit landed, so there is nothing to discard.
+                <Button variant="primary" type="button" onClick={handleFailedDismiss}>
+                  {t("commitModal.close")}
+                </Button>
+              )}
             </div>
           </div>
         )}

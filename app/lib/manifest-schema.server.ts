@@ -1,7 +1,7 @@
 /**
  * Manifest schema — types and validator for the migration manifest DSL.
  *
- * The DSL (see docs/compositor/migration-manifest-schema.md) describes
+ * The DSL describes
  * user-content transforms applied during a Telar framework upgrade. This file
  * defines the TypeScript shape of a manifest and a runtime validator that
  * rejects malformed manifests before any operation is applied.
@@ -9,9 +9,19 @@
  * Design notes:
  *   - Pure validation: no I/O, no side effects. Throws ManifestValidationError
  *     on invalid input with a JSON-pointer-style path.
- *   - Allowlist-based: the 9 operation types are exhaustively matched;
+ *   - Allowlist-based: the 10 operation types are exhaustively matched;
  *     unknown types fail validation.
+ *   - The paths an operation may write by name — a `regex_replace` match, a
+ *     `yaml_list_add` file — are held to one scope allowlist, defined here so
+ *     the validator and the runner apply the same one.
  *   - Bilingual fields ({ en, es }) resolved via resolveBilingual helper.
+ *   - A manual step's `audience` is the one field that is *not*
+ *     allowlist-based: any string is accepted (see StepAudience below). A
+ *     malformed manifest (from an untrusted or future framework release)
+ *     must not be able to reject itself out of the only route that would
+ *     fix it.
+ *
+ * @version v1.5.0-beta
  */
 
 // ---------------------------------------------------------------------------
@@ -23,28 +33,60 @@ export type Bilingual<T> = { en: T; es: T };
 export type LocalizedString = string | Bilingual<string>;
 
 /**
- * Audience for a manual upgrade step. Filters which users see the step in
- * post-upgrade guidance:
+ * The audience values this build knows the meaning of, and filters on:
  *   "all"            — everyone sees it (default when unset; feature highlights)
  *   "compositor"     — compositor users only (e.g. UI-specific instructions)
  *   "local"          — users running scripts/upgrade.py locally (CLI / build tooling)
  *   "google-sheets"  — users with Google Sheets integration enabled
  *
  * The compositor shows steps whose audience is "all", "compositor", or
- * "google-sheets" when the site has GS enabled. Local-only steps are hidden.
+ * "google-sheets" (when the site has GS enabled). "local" steps are hidden.
+ * See `isStepVisible` in app/components/features/upgrade/PostUpgradeSteps.tsx.
  */
-export type StepAudience = "all" | "compositor" | "local" | "google-sheets";
+const VALID_AUDIENCES = ["all", "compositor", "local", "google-sheets"] as const;
+export type KnownAudience = (typeof VALID_AUDIENCES)[number];
+
+/**
+ * Audience for a manual upgrade step. Not restricted to KnownAudience: a
+ * manifest from a framework release newer than this compositor build may
+ * name an audience this build doesn't recognise yet, and that is a valid
+ * manifest, not a malformed one — the schema only rejects a non-string
+ * value here. An unrecognised string must still resolve to a visible step:
+ * the framework's own contract (scripts/telar/telar_upgrade.py,
+ * `_visible_manual_steps`) errs an unknown audience towards showing, since a
+ * step nobody can see is the failure the field exists to prevent.
+ */
+export type StepAudience = KnownAudience | (string & {});
+
+/**
+ * What a manual step asks of its reader. An `action` is something
+ * the upgrade left undone that the reader may need to do; `optional` is an
+ * action that need not be done; a `note` is what changed, including how to
+ * use it. Not restricted to these: a value from a newer framework is valid,
+ * and a step with an unrecognised or absent kind is shown as unclassified,
+ * never as a note, since a note can be passed over.
+ */
+export const VALID_STEP_KINDS = ["action", "optional", "note"] as const;
+export type KnownStepKind = (typeof VALID_STEP_KINDS)[number];
+export type StepKind = KnownStepKind | (string & {});
 
 export interface ManualStep {
   description: string;
   doc_url?: string;
   audience?: StepAudience;
+  kind?: StepKind;
 }
 
 export interface Manifest {
   schema_version: 1;
   from_version: string;
   to_version: string;
+  /**
+   * The date of the release this manifest installs, `YYYY-MM-DD`, as the
+   * framework declares it for its own engine to stamp. Optional: manifests
+   * before v1.8.0 do not carry one.
+   */
+  release_date?: string;
   description: string;
   operations: Operation[];
   manual_steps: { en: ManualStep[]; es: ManualStep[] };
@@ -59,6 +101,7 @@ export type Operation =
   | FileDeleteOp
   | GitignoreAddOp
   | RegexReplaceOp
+  | YamlListAddOp
   | CreateDirectoryOp;
 
 export interface ConfigAddFieldOp {
@@ -116,9 +159,47 @@ export interface RegexReplaceOp {
   replace: string;
 }
 
+/**
+ * Values added to a top-level list in a YAML file, the text edited in place
+ * (see yaml-list-add.server.ts).
+ */
+export interface YamlListAddOp {
+  type: "yaml_list_add";
+  file: string;
+  key: string;
+  values: string[];
+}
+
 export interface CreateDirectoryOp {
   type: "create_directory";
   path: string;
+}
+
+// ---------------------------------------------------------------------------
+// Scope allowlist
+// ---------------------------------------------------------------------------
+
+const REGEX_REPLACE_SCOPE_ALLOWLIST: RegExp[] = [
+  /^[^/].*\.csv$/,
+  /^[^/].*\.yml$/,
+  /^[^/].*\.yaml$/,
+  /^[^/].*\.md$/,
+  /^[^/].*\.markdown$/,
+  /^[^/].*\.html$/,
+  /^_config\.yml$/,
+  /^\.gitignore$/,
+];
+
+/**
+ * Whether an operation may write `path`: a text file of the kinds a site
+ * owns, never an absolute path, one that climbs out with `..`, or one under
+ * `.git/`.
+ */
+export function isPathInScope(path: string): boolean {
+  if (path.startsWith("/") || path.includes("..") || path.startsWith(".git/")) {
+    return false;
+  }
+  return REGEX_REPLACE_SCOPE_ALLOWLIST.some((r) => r.test(path));
 }
 
 // ---------------------------------------------------------------------------
@@ -231,8 +312,6 @@ function requireLocalizedString(value: unknown, path: string): void {
   }
 }
 
-const VALID_AUDIENCES: StepAudience[] = ["all", "compositor", "local", "google-sheets"];
-
 function requireManualStep(value: unknown, path: string): void {
   const obj = requireObject(value, path);
   if (!("description" in obj)) {
@@ -246,12 +325,28 @@ function requireManualStep(value: unknown, path: string): void {
     requireString(obj.doc_url, `${path}/doc_url`);
   }
   if ("audience" in obj && obj.audience !== undefined) {
-    if (typeof obj.audience !== "string" || !VALID_AUDIENCES.includes(obj.audience as StepAudience)) {
+    // A non-string audience (a number, an object, ...) is a schema
+    // violation: the field is malformed, not merely unrecognised.
+    //
+    // A string audience outside VALID_AUDIENCES is accepted, even though
+    // it isn't one of the values this build knows how to filter on: a
+    // manifest naming an audience from a framework release newer than this
+    // compositor build is a valid manifest, and rejecting it here would
+    // fail the very upgrade that would bring the recognised value. See
+    // KnownAudience / StepAudience above, and isStepVisible in
+    // app/components/features/upgrade/PostUpgradeSteps.tsx, which must show such a step rather than
+    // silently drop it.
+    if (typeof obj.audience !== "string") {
       throw new ManifestValidationError(
-        `Invalid audience "${String(obj.audience)}". Expected one of: ${VALID_AUDIENCES.join(", ")}`,
+        `Invalid audience "${String(obj.audience)}": expected a string`,
         `${path}/audience`,
       );
     }
+  }
+  // Same terms as audience: a kind this build does not know is valid, and
+  // is shown as unclassified.
+  if ("kind" in obj && obj.kind !== undefined && typeof obj.kind !== "string") {
+    throw new ManifestValidationError(`Invalid kind "${String(obj.kind)}": expected a string`, `${path}/kind`);
   }
 }
 
@@ -288,31 +383,13 @@ function validateOperation(value: unknown, path: string): Operation {
   if (typeof op.type !== "string") {
     throw new ManifestValidationError("Expected string", `${path}/type`);
   }
-  switch (op.type) {
-    case "config_add_field":
-      return validateConfigAddField(op, path);
-    case "config_update_value":
-      return validateConfigUpdateValue(op, path);
-    case "config_rename_field":
-      return validateConfigRenameField(op, path);
-    case "csv_add_column":
-      return validateCsvAddColumn(op, path);
-    case "csv_rename_column":
-      return validateCsvRenameColumn(op, path);
-    case "file_delete":
-      return validateFileDelete(op, path);
-    case "gitignore_add":
-      return validateGitignoreAdd(op, path);
-    case "regex_replace":
-      return validateRegexReplace(op, path);
-    case "create_directory":
-      return validateCreateDirectory(op, path);
-    default:
-      throw new ManifestValidationError(
-        `Unknown operation type "${op.type}"`,
-        `${path}/type`,
-      );
+  if (!Object.hasOwn(OPERATION_VALIDATORS, op.type)) {
+    throw new ManifestValidationError(
+      `Unknown operation type "${op.type}"`,
+      `${path}/type`,
+    );
   }
+  return OPERATION_VALIDATORS[op.type as Operation["type"]](op, path);
 }
 
 function requireField(
@@ -425,6 +502,19 @@ function validateRegexReplace(
   return op as unknown as RegexReplaceOp;
 }
 
+function validateYamlListAdd(
+  op: Record<string, unknown>,
+  path: string,
+): YamlListAddOp {
+  const file = requireString(requireField(op, "file", path), `${path}/file`);
+  if (!isPathInScope(file)) {
+    throw new ManifestValidationError(`File outside the scope allowlist: ${file}`, `${path}/file`);
+  }
+  requireString(requireField(op, "key", path), `${path}/key`);
+  requireStringArray(requireField(op, "values", path), `${path}/values`);
+  return op as unknown as YamlListAddOp;
+}
+
 function validateCreateDirectory(
   op: Record<string, unknown>,
   path: string,
@@ -433,9 +523,32 @@ function validateCreateDirectory(
   return op as unknown as CreateDirectoryOp;
 }
 
+/** The validator for each operation type; a type not listed here is unknown. */
+const OPERATION_VALIDATORS: Readonly<
+  Record<Operation["type"], (op: Record<string, unknown>, path: string) => Operation>
+> = {
+  config_add_field: validateConfigAddField,
+  config_update_value: validateConfigUpdateValue,
+  config_rename_field: validateConfigRenameField,
+  csv_add_column: validateCsvAddColumn,
+  csv_rename_column: validateCsvRenameColumn,
+  file_delete: validateFileDelete,
+  gitignore_add: validateGitignoreAdd,
+  regex_replace: validateRegexReplace,
+  yaml_list_add: validateYamlListAdd,
+  create_directory: validateCreateDirectory,
+};
+
 // ---------------------------------------------------------------------------
 // Top-level validator
 // ---------------------------------------------------------------------------
+
+/** A date written YYYY-MM-DD that exists on the calendar: 2026-02-30 does not. */
+function isCalendarDate(text: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const parsed = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === text;
+}
 
 /**
  * Validate a parsed JSON object against the migration manifest DSL. Returns
@@ -482,6 +595,13 @@ export function validateManifest(input: unknown): Manifest {
     );
   }
   requireString(root.description, "/description");
+
+  if ("release_date" in root) {
+    const date = requireString(root.release_date, "/release_date");
+    if (!isCalendarDate(date)) {
+      throw new ManifestValidationError("Expected a date written YYYY-MM-DD", "/release_date");
+    }
+  }
 
   if (!("operations" in root)) {
     throw new ManifestValidationError("Missing `operations`", "/operations");

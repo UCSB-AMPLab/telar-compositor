@@ -18,10 +18,10 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
-import { Link } from "react-router";
+import { Form } from "react-router";
 import { useTranslation } from "react-i18next";
 import { useRelativeTime } from "~/lib/use-relative-time";
 import type { PillVariant } from "./WorkflowTile";
@@ -70,26 +70,32 @@ function OtherProjectCard({ p }: { p: OtherProjectStat }) {
   const editedRelative = useRelativeTime(p.last_edited_at);
 
   return (
-    <Link
-      to="/start"
-      className="flex flex-col gap-2 rounded-lg border border-border bg-surface px-[16px] py-[14px] hover:bg-cream hover:border-border-strong transition-colors"
-    >
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-heading font-semibold text-sm text-charcoal truncate">
-          {p.github_repo_full_name}
+    // Opens the project by making it the active one: a POST to the shared
+    // /dashboard switch-project action, as the header's switcher does.
+    <Form method="post" action="/dashboard">
+      <input type="hidden" name="intent" value="switch-project" />
+      <input type="hidden" name="projectId" value={p.id} />
+      <button
+        type="submit"
+        className="flex w-full flex-col gap-2 rounded-lg border border-border bg-surface px-[16px] py-[14px] text-left cursor-pointer hover:bg-cream hover:border-border-strong transition-colors"
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-heading font-semibold text-sm text-charcoal truncate">
+            {p.github_repo_full_name}
+          </span>
+          <span
+            className={`inline-flex items-center rounded-pill px-2 py-0.5 font-heading font-semibold text-xs ${PILL_CLASSES[status.variant]}`}
+          >
+            {t(`other_projects.${status.key}`)}
+          </span>
+        </div>
+        <span className="font-mono text-xs text-fg-muted">
+          {editedRelative
+            ? t("other_projects.edited_relative", { relative: editedRelative })
+            : ""}
         </span>
-        <span
-          className={`inline-flex items-center rounded-pill px-2 py-0.5 font-heading font-semibold text-xs ${PILL_CLASSES[status.variant]}`}
-        >
-          {t(`other_projects.${status.key}`)}
-        </span>
-      </div>
-      <span className="font-mono text-xs text-fg-muted">
-        {editedRelative
-          ? t("other_projects.edited_relative", { relative: editedRelative })
-          : ""}
-      </span>
-    </Link>
+      </button>
+    </Form>
   );
 }
 

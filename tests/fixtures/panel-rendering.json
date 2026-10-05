@@ -1,0 +1,433 @@
+{
+  "framework_commit": "93c70bdd7085becdbbf4166f32b2e1837a4a7642",
+  "markdown_version": "3.10.3",
+  "pandas_version": "3.0.5",
+  "base_url": "/telar",
+  "glossary": {
+    "IIIF": "International Image Interoperability Framework",
+    "loom": "Loom",
+    "demo-weft": "Weft",
+    "jacquard": "Jacquard & <loom>"
+  },
+  "glossary_kinds": {
+    "IIIF": "source",
+    "loom": "term",
+    "demo-weft": "place",
+    "jacquard": "machine"
+  },
+  "default_kind": "term",
+  "kinds": [
+    {
+      "id": "term",
+      "label": "Key term",
+      "icon": "bookmark"
+    },
+    {
+      "id": "source",
+      "label": "Primary source",
+      "icon": "document"
+    },
+    {
+      "id": "entity",
+      "label": "Person or entity",
+      "icon": "person"
+    },
+    {
+      "id": "place",
+      "label": "Place",
+      "icon": "pin"
+    },
+    {
+      "id": "machine",
+      "label": "Machine",
+      "icon": null
+    }
+  ],
+  "cases": [
+    {
+      "name": "maths in accordion sections",
+      "source": ":::accordion\n## One\nEquation \\(x^2\\) and $$a*b*c$$ here.\n\n\\[y_1\\]\n\n\\begin{aligned} a &= b \\end{aligned}\n\nInline $x_1$, a price of $5, and \\ce{H2O}.\n\n## Two\nPlain $$x \\\\ y$$ text.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-1\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-1-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-1-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-1-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-1-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-1-1\"\n           data-bs-parent=\"#accordion-widget-1\">\n        <div class=\"accordion-body\">\n          <p>Equation \\(x^2\\) and $$a*b*c$$ here.</p>\n<p>\\[y_1\\]</p>\n<p>\\begin{aligned} a &amp;= b \\end{aligned}</p>\n<p>Inline $x_1$, a price of $5, and \\ce{H2O}.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-1-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-1-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-1-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-1-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-1-2\"\n           data-bs-parent=\"#accordion-widget-1\">\n        <div class=\"accordion-body\">\n          <p>Plain $$x \\\\ y$$ text.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "maths in tabs",
+      "source": ":::tabs\n## One\nEquation \\(x^2\\) and $$a*b*c$$ here.\n\n\\[y_1\\]\n\n\\begin{aligned} a &= b \\end{aligned}\n\nInline $x_1$, a price of $5, and \\ce{H2O}.\n\n## Two\nMore $\\{x\\}$.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-tabs\">\n\n  <ul class=\"nav nav-tabs\" role=\"tablist\">\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link active\"\n              id=\"tab-widget-2-1-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-2-1\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-2-1\"\n              aria-selected=\"true\">\n        One\n      </button>\n    </li>\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link \"\n              id=\"tab-widget-2-2-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-2-2\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-2-2\"\n              aria-selected=\"false\">\n        Two\n      </button>\n    </li>\n\n  </ul>\n\n\n  <div class=\"tab-content\">\n\n    <div class=\"tab-pane fade show active\"\n         id=\"tab-widget-2-1\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-2-1-tab\">\n      <div class=\"tab-pane-content\">\n        <p>Equation \\(x^2\\) and $$a*b*c$$ here.</p>\n<p>\\[y_1\\]</p>\n<p>\\begin{aligned} a &amp;= b \\end{aligned}</p>\n<p>Inline $x_1$, a price of $5, and \\ce{H2O}.</p>\n      </div>\n    </div>\n\n    <div class=\"tab-pane fade \"\n         id=\"tab-widget-2-2\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-2-2-tab\">\n      <div class=\"tab-pane-content\">\n        <p>More $\\{x\\}$.</p>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "maths in bibliography entries",
+      "source": ":::bibliography\nAuthor. On $\\alpha$ and \\(\\beta\\).\n\nSecond $$a*b$$ entry.\n:::",
+      "html": "<div class=\"telar-widget-bibliography\">\n\n  <div class=\"telar-bib-entry\"><p>Author. On $\\alpha$ and \\(\\beta\\).</p></div>\n\n  <div class=\"telar-bib-entry\"><p>Second $$a*b$$ entry.</p></div>\n\n</div>"
+    },
+    {
+      "name": "maths in a caption and credit",
+      "source": ":::carousel\nimage: https://example.org/a.jpg\nalt: A\nwidth: 1000\nheight: 500\ncaption: Area \\(r^2\\) and $$a <b$$\ncredit: After $x_1$ and *this*\n:::",
+      "html": "<div class=\"telar-widget telar-widget-carousel\">\n  <div id=\"carousel-widget-4\" class=\"carousel slide carousel-size-compact\" data-bs-ride=\"false\">\n\n    <div class=\"carousel-indicators\">\n\n      <button type=\"button\" data-bs-target=\"#carousel-widget-4\"\n              data-bs-slide-to=\"0\"\n              class=\"active\" aria-current=\"true\"\n              aria-label=\"Slide 1\"></button>\n\n    </div>\n\n\n    <div class=\"carousel-inner\">\n\n      <div class=\"carousel-item active\">\n        <div class=\"carousel-image-container\">\n          <img src=\"https://example.org/a.jpg\"\n               alt=\"A\"\n               class=\"d-block carousel-image\">\n        </div>\n\n        <div class=\"carousel-caption-below\">\n\n          <p class=\"caption-text\">Area \\(r^2\\) and $$a &lt;b$$</p>\n\n\n          <p class=\"caption-credit\"><small>After $x_1$ and <em>this</em></small></p>\n\n        </div>\n\n      </div>\n\n    </div>\n\n\n    <button class=\"carousel-control-prev\" type=\"button\"\n            data-bs-target=\"#carousel-widget-4\" data-bs-slide=\"prev\">\n      <span class=\"carousel-control-prev-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Previous</span>\n    </button>\n    <button class=\"carousel-control-next\" type=\"button\"\n            data-bs-target=\"#carousel-widget-4\" data-bs-slide=\"next\">\n      <span class=\"carousel-control-next-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Next</span>\n    </button>\n  </div>\n</div>"
+    },
+    {
+      "name": "maths in a note",
+      "source": "Text[^n].\n\n[^n]: Note \\(x^2\\) and $$a*b*c$$ with $x_1$.",
+      "html": "<p>Text<sup id=\"fnref:n\"><a class=\"footnote-ref\" href=\"#fn:n\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:n\">\n<p>Note \\(x^2\\) and $$a*b*c$$ with $x_1$.&#160;<a class=\"footnote-backref\" href=\"#fnref:n\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "entities and angle brackets in formulas",
+      "source": ":::accordion\n## One\nSum $$a &lt; b$$ and \\(c < d\\) and $x &amp; y_1$.\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-5\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-5-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-5-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-5-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-5-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-5-1\"\n           data-bs-parent=\"#accordion-widget-5\">\n        <div class=\"accordion-body\">\n          <p>Sum $$a &lt; b$$ and \\(c &lt; d\\) and $x &amp; y_1$.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-5-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-5-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-5-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-5-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-5-2\"\n           data-bs-parent=\"#accordion-widget-5\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "entities in a caption formula",
+      "source": ":::carousel\nimage: https://example.org/a.jpg\nalt: A\nwidth: 1000\nheight: 500\ncaption: Cap $$a &lt; b$$ and $$c < d$$\n:::",
+      "html": "<div class=\"telar-widget telar-widget-carousel\">\n  <div id=\"carousel-widget-6\" class=\"carousel slide carousel-size-compact\" data-bs-ride=\"false\">\n\n    <div class=\"carousel-indicators\">\n\n      <button type=\"button\" data-bs-target=\"#carousel-widget-6\"\n              data-bs-slide-to=\"0\"\n              class=\"active\" aria-current=\"true\"\n              aria-label=\"Slide 1\"></button>\n\n    </div>\n\n\n    <div class=\"carousel-inner\">\n\n      <div class=\"carousel-item active\">\n        <div class=\"carousel-image-container\">\n          <img src=\"https://example.org/a.jpg\"\n               alt=\"A\"\n               class=\"d-block carousel-image\">\n        </div>\n\n        <div class=\"carousel-caption-below\">\n\n          <p class=\"caption-text\">Cap $$a &lt; b$$ and $$c &lt; d$$</p>\n\n\n        </div>\n\n      </div>\n\n    </div>\n\n\n    <button class=\"carousel-control-prev\" type=\"button\"\n            data-bs-target=\"#carousel-widget-6\" data-bs-slide=\"prev\">\n      <span class=\"carousel-control-prev-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Previous</span>\n    </button>\n    <button class=\"carousel-control-next\" type=\"button\"\n            data-bs-target=\"#carousel-widget-6\" data-bs-slide=\"next\">\n      <span class=\"carousel-control-next-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Next</span>\n    </button>\n  </div>\n</div>"
+    },
+    {
+      "name": "footnotes in one accordion section",
+      "source": ":::accordion\n## One\nFirst[^b] then[^a] again[^b].\n\n[^a]: Note A with \\(x^2\\)\n[^b]: Note *B*\n[^u]: Unreferenced\n\n## Two\nA literal [^b] here.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-7\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-7-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-7-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-7-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-7-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-7-1\"\n           data-bs-parent=\"#accordion-widget-7\">\n        <div class=\"accordion-body\">\n          <p>First<sup id=\"fnref:widget-7-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-7-1-b\">1</a></sup> then<sup id=\"fnref:widget-7-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-7-1-a\">2</a></sup> again<sup id=\"fnref2:widget-7-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-7-1-b\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-7-1-b\">\n<p>Note <em>B</em>&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-7-1-b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a><a class=\"footnote-backref\" href=\"#fnref2:widget-7-1-b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-7-1-a\">\n<p>Note A with \\(x^2\\)&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-7-1-a\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-7-1-u\">\n<p>Unreferenced&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-7-1-u\" title=\"Jump back to footnote 3 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-7-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-7-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-7-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-7-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-7-2\"\n           data-bs-parent=\"#accordion-widget-7\">\n        <div class=\"accordion-body\">\n          <p>A literal [^b] here.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "footnotes in two tabs sharing a label",
+      "source": ":::tabs\n## One\nX[^s].\n\n[^s]: S one\n\n## Two\nY[^s] and[^missing].\n\n[^s]: S two\n:::",
+      "html": "<div class=\"telar-widget telar-widget-tabs\">\n\n  <ul class=\"nav nav-tabs\" role=\"tablist\">\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link active\"\n              id=\"tab-widget-8-1-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-8-1\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-8-1\"\n              aria-selected=\"true\">\n        One\n      </button>\n    </li>\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link \"\n              id=\"tab-widget-8-2-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-8-2\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-8-2\"\n              aria-selected=\"false\">\n        Two\n      </button>\n    </li>\n\n  </ul>\n\n\n  <div class=\"tab-content\">\n\n    <div class=\"tab-pane fade show active\"\n         id=\"tab-widget-8-1\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-8-1-tab\">\n      <div class=\"tab-pane-content\">\n        <p>X<sup id=\"fnref:widget-8-1-s\"><a class=\"footnote-ref\" href=\"#fn:widget-8-1-s\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-8-1-s\">\n<p>S one&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-8-1-s\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n      </div>\n    </div>\n\n    <div class=\"tab-pane fade \"\n         id=\"tab-widget-8-2\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-8-2-tab\">\n      <div class=\"tab-pane-content\">\n        <p>Y<sup id=\"fnref:widget-8-2-s\"><a class=\"footnote-ref\" href=\"#fn:widget-8-2-s\">1</a></sup> and[^missing].</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-8-2-s\">\n<p>S two&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-8-2-s\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "footnotes in bibliography entries",
+      "source": ":::bibliography\nFirst[^a] entry.\n[^a]: Note\n\nSecond[^a] entry.\n[^a]: Other\n:::",
+      "html": "<div class=\"telar-widget-bibliography\">\n\n  <div class=\"telar-bib-entry\"><p>First<sup id=\"fnref:widget-9-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-9-1-a\">1</a></sup> entry.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-9-1-a\">\n<p>Note&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-9-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div></div>\n\n  <div class=\"telar-bib-entry\"><p>Second<sup id=\"fnref:widget-9-2-a\"><a class=\"footnote-ref\" href=\"#fn:widget-9-2-a\">1</a></sup> entry.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-9-2-a\">\n<p>Other&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-9-2-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div></div>\n\n</div>"
+    },
+    {
+      "name": "a duplicated label in a section",
+      "source": ":::accordion\n## One\nA[^d].\n\n[^d]: First\n[^d]: Second\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-10\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-10-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-10-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-10-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-10-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-10-1\"\n           data-bs-parent=\"#accordion-widget-10\">\n        <div class=\"accordion-body\">\n          <p>A<sup id=\"fnref:widget-10-1-d\"><a class=\"footnote-ref\" href=\"#fn:widget-10-1-d\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-10-1-d\">\n<p>Second&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-10-1-d\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-10-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-10-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-10-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-10-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-10-2\"\n           data-bs-parent=\"#accordion-widget-10\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a reference inside a note in a section",
+      "source": ":::accordion\n## One\nA[^a].\n\n[^a]: See[^b]\n[^b]: B\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-11\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-11-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-11-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-11-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-11-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-11-1\"\n           data-bs-parent=\"#accordion-widget-11\">\n        <div class=\"accordion-body\">\n          <p>A<sup id=\"fnref:widget-11-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-11-1-a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-11-1-a\">\n<p>See<sup id=\"fnref:widget-11-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-11-1-b\">2</a></sup>&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-11-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-11-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-11-1-b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-11-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-11-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-11-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-11-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-11-2\"\n           data-bs-parent=\"#accordion-widget-11\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "references in a note's code and maths",
+      "source": ":::accordion\n## One\nA[^a] and $x^{[^b]}$.\n\n[^a]: Code `[^b]`, $$y[^b]$$ but[^b]\n[^b]: B\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-12\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-12-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-12-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-12-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-12-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-12-1\"\n           data-bs-parent=\"#accordion-widget-12\">\n        <div class=\"accordion-body\">\n          <p>A<sup id=\"fnref:widget-12-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-12-1-a\">1</a></sup> and $x^{[^b]}$.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-12-1-a\">\n<p>Code <code>[^b]</code>, $$y[^b]$$ but<sup id=\"fnref:widget-12-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-12-1-b\">2</a></sup>&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-12-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-12-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-12-1-b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-12-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-12-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-12-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-12-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-12-2\"\n           data-bs-parent=\"#accordion-widget-12\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a note referenced from a later note",
+      "source": ":::accordion\n## One\nA[^a].\n\n[^a]: A\n[^b]: See[^a]\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-13\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-13-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-13-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-13-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-13-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-13-1\"\n           data-bs-parent=\"#accordion-widget-13\">\n        <div class=\"accordion-body\">\n          <p>A<sup id=\"fnref:widget-13-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-13-1-a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-13-1-a\">\n<p>A&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-13-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a><a class=\"footnote-backref\" href=\"#fnref2:widget-13-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-13-1-b\">\n<p>See<sup id=\"fnref2:widget-13-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-13-1-a\">1</a></sup>&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-13-1-b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-13-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-13-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-13-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-13-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-13-2\"\n           data-bs-parent=\"#accordion-widget-13\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "Unicode spaces in and around formulas",
+      "source": ":::accordion\n## One\nA $ a*b*c^2$ b $a*b*c^2 $ c $ a*b*y_1$ d $﻿a*b*z_1﻿$ e $a*b*w_1$ f $\u001fa*b*t_1$ g  $a*b*v_1$  h $ a*b*u_1$.\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-14\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-14-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-14-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-14-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-14-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-14-1\"\n           data-bs-parent=\"#accordion-widget-14\">\n        <div class=\"accordion-body\">\n          <p>A $ a<em>b</em>c^2$ b $a<em>b</em>c^2 $ c $ a<em>b</em>y_1$ d $﻿a*b*z_1﻿$ e $a<em>b</em>w_1$ f $\u001fa<em>b</em>t_1$ g  $a*b*v_1$  h $ a<em>b</em>u_1$.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-14-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-14-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-14-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-14-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-14-2\"\n           data-bs-parent=\"#accordion-widget-14\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a formula inside another formula",
+      "source": ":::accordion\n## One\nPrice $x $$y$$ z$ end.\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-15\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-15-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-15-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-15-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-15-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-15-1\"\n           data-bs-parent=\"#accordion-widget-15\">\n        <div class=\"accordion-body\">\n          <p>Price $x $$y$$ z$ end.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-15-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-15-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-15-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-15-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-15-2\"\n           data-bs-parent=\"#accordion-widget-15\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a reference in a note's continuation paragraph",
+      "source": ":::accordion\n## One\nA[^a].\n\n[^a]: First paragraph.\n\n    See[^b] here.\n[^b]: B\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-16\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-16-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-16-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-16-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-16-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-16-1\"\n           data-bs-parent=\"#accordion-widget-16\">\n        <div class=\"accordion-body\">\n          <p>A<sup id=\"fnref:widget-16-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-16-1-a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-16-1-a\">\n<p>First paragraph.</p>\n<p>See<sup id=\"fnref:widget-16-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-16-1-b\">2</a></sup> here.&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-16-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-16-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-16-1-b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-16-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-16-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-16-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-16-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-16-2\"\n           data-bs-parent=\"#accordion-widget-16\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "code in a note's continuation paragraph",
+      "source": ":::accordion\n## One\nA[^a].\n\n[^a]: Text.\n\n        code [^b]\n\n    After[^b].\n[^b]: B\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-17\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-17-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-17-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-17-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-17-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-17-1\"\n           data-bs-parent=\"#accordion-widget-17\">\n        <div class=\"accordion-body\">\n          <p>A<sup id=\"fnref:widget-17-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-17-1-a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-17-1-a\">\n<p>Text.</p>\n<pre><code>code [^b]\n</code></pre>\n<p>After<sup id=\"fnref:widget-17-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-17-1-b\">2</a></sup>.&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-17-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-17-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-17-1-b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-17-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-17-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-17-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-17-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-17-2\"\n           data-bs-parent=\"#accordion-widget-17\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "an astral character in a formula",
+      "source": ":::accordion\n## One\nA $😀$$x*y*z_1$ b.\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-18\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-18-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-18-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-18-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-18-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-18-1\"\n           data-bs-parent=\"#accordion-widget-18\">\n        <div class=\"accordion-body\">\n          <p>A $😀$$x<em>y</em>z_1$ b.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-18-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-18-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-18-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-18-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-18-2\"\n           data-bs-parent=\"#accordion-widget-18\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a reference inside an HTML tag",
+      "source": ":::accordion\n## One\nA <span title=\"[^b]\">tag</span> here.\n\n[^b]: B\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-19\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-19-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-19-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-19-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-19-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-19-1\"\n           data-bs-parent=\"#accordion-widget-19\">\n        <div class=\"accordion-body\">\n          <p>A <span title=\"[^b]\">tag</span> here.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-19-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-19-1-b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-19-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-19-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-19-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-19-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-19-2\"\n           data-bs-parent=\"#accordion-widget-19\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a reference inside an HTML tag and in its text",
+      "source": ":::accordion\n## One\nA <span title=\"[^b]\">see[^b]</span> here.\n\n[^b]: B\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-20\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-20-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-20-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-20-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-20-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-20-1\"\n           data-bs-parent=\"#accordion-widget-20\">\n        <div class=\"accordion-body\">\n          <p>A <span title=\"[^b]\">see<sup id=\"fnref:widget-20-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-20-1-b\">1</a></sup></span> here.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-20-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-20-1-b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-20-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-20-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-20-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-20-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-20-2\"\n           data-bs-parent=\"#accordion-widget-20\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a reference inside a link's title",
+      "source": ":::accordion\n## One\nA <a href=\"https://example.org\" title=\"[^b]\">link</a> and[^b].\n\n[^b]: B\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-21\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-21-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-21-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-21-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-21-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-21-1\"\n           data-bs-parent=\"#accordion-widget-21\">\n        <div class=\"accordion-body\">\n          <p>A <a href=\"https://example.org\" title=\"[^b]\">link</a> and<sup id=\"fnref:widget-21-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-21-1-b\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-21-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-21-1-b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-21-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-21-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-21-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-21-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-21-2\"\n           data-bs-parent=\"#accordion-widget-21\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "a caption takes no footnotes",
+      "source": ":::carousel\nimage: https://example.org/a.jpg\nalt: A\nwidth: 1000\nheight: 500\ncaption: Caption[^a] text\n:::",
+      "html": "<div class=\"telar-widget telar-widget-carousel\">\n  <div id=\"carousel-widget-22\" class=\"carousel slide carousel-size-compact\" data-bs-ride=\"false\">\n\n    <div class=\"carousel-indicators\">\n\n      <button type=\"button\" data-bs-target=\"#carousel-widget-22\"\n              data-bs-slide-to=\"0\"\n              class=\"active\" aria-current=\"true\"\n              aria-label=\"Slide 1\"></button>\n\n    </div>\n\n\n    <div class=\"carousel-inner\">\n\n      <div class=\"carousel-item active\">\n        <div class=\"carousel-image-container\">\n          <img src=\"https://example.org/a.jpg\"\n               alt=\"A\"\n               class=\"d-block carousel-image\">\n        </div>\n\n        <div class=\"carousel-caption-below\">\n\n          <p class=\"caption-text\">Caption[^a] text</p>\n\n\n        </div>\n\n      </div>\n\n    </div>\n\n\n    <button class=\"carousel-control-prev\" type=\"button\"\n            data-bs-target=\"#carousel-widget-22\" data-bs-slide=\"prev\">\n      <span class=\"carousel-control-prev-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Previous</span>\n    </button>\n    <button class=\"carousel-control-next\" type=\"button\"\n            data-bs-target=\"#carousel-widget-22\" data-bs-slide=\"next\">\n      <span class=\"carousel-control-next-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Next</span>\n    </button>\n  </div>\n</div>"
+    },
+    {
+      "name": "maths inside maths in sections",
+      "source": ":::accordion\n## One\nPrice $x $$y$$ z$ end, $\\ce{H2O}$, Sum $$a $b^2$ c$$ end, Then \\( a $$b^2$$ \\) end.\n\n## Two\nMore.\n:::",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-23\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-23-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-23-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-23-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-23-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-23-1\"\n           data-bs-parent=\"#accordion-widget-23\">\n        <div class=\"accordion-body\">\n          <p>Price $x $$y$$ z$ end, $\\ce{H2O}$, Sum $$a $b^2$ c$$ end, Then \\( a $$b^2$$ \\) end.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-23-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-23-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-23-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-23-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-23-2\"\n           data-bs-parent=\"#accordion-widget-23\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "maths inside maths in a caption and credit",
+      "source": ":::carousel\nimage: https://example.org/a.jpg\nalt: A\nwidth: 1000\nheight: 500\ncaption: Cap $x $$a<b$$ z$ end\ncredit: By $\\ce{H2O}$\n:::",
+      "html": "<div class=\"telar-widget telar-widget-carousel\">\n  <div id=\"carousel-widget-24\" class=\"carousel slide carousel-size-compact\" data-bs-ride=\"false\">\n\n    <div class=\"carousel-indicators\">\n\n      <button type=\"button\" data-bs-target=\"#carousel-widget-24\"\n              data-bs-slide-to=\"0\"\n              class=\"active\" aria-current=\"true\"\n              aria-label=\"Slide 1\"></button>\n\n    </div>\n\n\n    <div class=\"carousel-inner\">\n\n      <div class=\"carousel-item active\">\n        <div class=\"carousel-image-container\">\n          <img src=\"https://example.org/a.jpg\"\n               alt=\"A\"\n               class=\"d-block carousel-image\">\n        </div>\n\n        <div class=\"carousel-caption-below\">\n\n          <p class=\"caption-text\">Cap $x $$a&lt;b$$ z$ end</p>\n\n\n          <p class=\"caption-credit\"><small>By $\\ce{H2O}$</small></p>\n\n        </div>\n\n      </div>\n\n    </div>\n\n\n    <button class=\"carousel-control-prev\" type=\"button\"\n            data-bs-target=\"#carousel-widget-24\" data-bs-slide=\"prev\">\n      <span class=\"carousel-control-prev-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Previous</span>\n    </button>\n    <button class=\"carousel-control-next\" type=\"button\"\n            data-bs-target=\"#carousel-widget-24\" data-bs-slide=\"next\">\n      <span class=\"carousel-control-next-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Next</span>\n    </button>\n  </div>\n</div>"
+    }
+  ],
+  "panels": [
+    {
+      "name": "front matter with a title",
+      "source": "---\ntitle: \"A \\\"quoted\\\" title\"\n---\n\nBody text.",
+      "title": "A \"quoted\" title",
+      "html": "<p>Body text.</p>"
+    },
+    {
+      "name": "front matter without a title is content",
+      "source": "---\nauthor: Someone\n---\n\nBody text.",
+      "title": "",
+      "html": "<hr />\n<h2>author: Someone</h2>\n<p>Body text.</p>"
+    },
+    {
+      "name": "a rule at the top is not front matter",
+      "source": "---\n\nBody under a rule.\n\n---\n\nMore.",
+      "title": "",
+      "html": "<hr />\n<p>Body under a rule.</p>\n<hr />\n<p>More.</p>"
+    },
+    {
+      "name": "soft breaks become line breaks",
+      "source": "First line\nsecond line\n\nNew paragraph.",
+      "title": "",
+      "html": "<p>First line<br />\nsecond line</p>\n<p>New paragraph.</p>"
+    },
+    {
+      "name": "lists without a blank line",
+      "source": "Intro line\n- one\n- two\n\nAfter.\n\n1. first\n2. second",
+      "title": "",
+      "html": "<p>Intro line<br />\n- one<br />\n- two</p>\n<p>After.</p>\n<ol>\n<li>first</li>\n<li>second</li>\n</ol>"
+    },
+    {
+      "name": "emphasis, links, code and a table",
+      "source": "*a* **b** `c` [d](https://example.org/d)\n\n| x | y |\n|:--|--:|\n| 1 | 2 |",
+      "title": "",
+      "html": "<p><em>a</em> <strong>b</strong> <code>c</code> <a href=\"https://example.org/d\">d</a></p>\n<table>\n<thead>\n<tr>\n<th style=\"text-align: left;\">x</th>\n<th style=\"text-align: right;\">y</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align: left;\">1</td>\n<td style=\"text-align: right;\">2</td>\n</tr>\n</tbody>\n</table>"
+    },
+    {
+      "name": "glossary references in any case and with aliases",
+      "source": "The [[iiif]] standard, [[IIIF|the framework]], [[demo-weft]] and [[missing]].",
+      "title": "",
+      "html": "<p>The <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">International Image Interoperability Framework</a> standard, <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">the framework</a>, <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"demo-weft\" data-term-url=\"/telar/glossary/demo-weft/\" data-demo=\"true\">Weft</a> and <span class=\"glossary-link-error\" data-term-id=\"missing\">⚠️ [[missing]]</span>.</p>"
+    },
+    {
+      "name": "glossary aliases holding Markdown",
+      "source": "[[IIIF|*emphasised* alias]] and [[loom|a `code` alias]].",
+      "title": "",
+      "html": "<p><a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">&lt;em&gt;emphasised&lt;/em&gt; alias</a> and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">a &lt;code&gt;code&lt;/code&gt; alias</a>.</p>"
+    },
+    {
+      "name": "a glossary reference inside code",
+      "source": "Write `[[iiif]]` to link, or\n\n    [[loom]] in a block",
+      "title": "",
+      "html": "<p>Write <code>[[iiif]]</code> to link, or</p>\n<pre><code>[[loom]] in a block\n</code></pre>"
+    },
+    {
+      "name": "glossary references in code elements and a fenced block",
+      "source": "Press <kbd>[[iiif]]</kbd> or <samp>[[loom]]</samp>.\n\n```\n[[iiif]]\n```\n\nBut [[loom]] links.",
+      "title": "",
+      "html": "<p>Press <kbd>[[iiif]]</kbd> or <samp>[[loom]]</samp>.</p>\n<pre><code>[[iiif]]\n</code></pre>\n<p>But <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">Loom</a> links.</p>"
+    },
+    {
+      "name": "a glossary reference in a widget section",
+      "source": ":::accordion\n## One\nSee [[iiif]] here.\n\n## Two\nAnd [[Loom|looms]].\n:::",
+      "title": "",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-25\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-25-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-25-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-25-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-25-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-25-1\"\n           data-bs-parent=\"#accordion-widget-25\">\n        <div class=\"accordion-body\">\n          <p>See <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">International Image Interoperability Framework</a> here.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-25-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-25-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-25-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-25-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-25-2\"\n           data-bs-parent=\"#accordion-widget-25\">\n        <div class=\"accordion-body\">\n          <p>And <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">looms</a>.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "glossary references in a caption, a credit and a bibliography entry",
+      "source": ":::carousel\nimage: https://example.org/a.jpg\nalt: A\nwidth: 1000\nheight: 500\ncaption: A [[iiif]] image\ncredit: By [[Loom|the loom]]\n:::\n\n:::bibliography\nAuthor. On [[IIIF]].\n\nOther. On [[nothing]].\n:::",
+      "title": "",
+      "html": "<div class=\"telar-widget telar-widget-carousel\">\n  <div id=\"carousel-widget-26\" class=\"carousel slide carousel-size-compact\" data-bs-ride=\"false\">\n\n    <div class=\"carousel-indicators\">\n\n      <button type=\"button\" data-bs-target=\"#carousel-widget-26\"\n              data-bs-slide-to=\"0\"\n              class=\"active\" aria-current=\"true\"\n              aria-label=\"Slide 1\"></button>\n\n    </div>\n\n\n    <div class=\"carousel-inner\">\n\n      <div class=\"carousel-item active\">\n        <div class=\"carousel-image-container\">\n          <img src=\"https://example.org/a.jpg\"\n               alt=\"A\"\n               class=\"d-block carousel-image\">\n        </div>\n\n        <div class=\"carousel-caption-below\">\n\n          <p class=\"caption-text\">A <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">International Image Interoperability Framework</a> image</p>\n\n\n          <p class=\"caption-credit\"><small>By <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">the loom</a></small></p>\n\n        </div>\n\n      </div>\n\n    </div>\n\n\n    <button class=\"carousel-control-prev\" type=\"button\"\n            data-bs-target=\"#carousel-widget-26\" data-bs-slide=\"prev\">\n      <span class=\"carousel-control-prev-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Previous</span>\n    </button>\n    <button class=\"carousel-control-next\" type=\"button\"\n            data-bs-target=\"#carousel-widget-26\" data-bs-slide=\"next\">\n      <span class=\"carousel-control-next-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Next</span>\n    </button>\n  </div>\n</div>\n\n<div class=\"telar-widget-bibliography\">\n\n  <div class=\"telar-bib-entry\"><p>Author. On <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">International Image Interoperability Framework</a>.</p></div>\n\n  <div class=\"telar-bib-entry\"><p>Other. On <span class=\"glossary-link-error\" data-term-id=\"nothing\">⚠️ [[nothing]]</span>.</p></div>\n\n</div>"
+    },
+    {
+      "name": "glossary references in section titles",
+      "source": ":::accordion\n## The [[iiif]] standard\nBody.\n\n##   [[Loom|looms]] & <b>kin</b> \nMore.\n:::\n\n:::tabs\n## [[missing]] \"tab\"\nOne.\n\n## [[DEMO-WEFT]]\nTwo.\n:::",
+      "title": "",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-28\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-28-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-28-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-28-1\">\n          The <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">International Image Interoperability Framework</a> standard\n        </button>\n      </h3>\n      <div id=\"collapse-widget-28-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-28-1\"\n           data-bs-parent=\"#accordion-widget-28\">\n        <div class=\"accordion-body\">\n          <p>Body.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-28-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-28-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-28-2\">\n          <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">looms</a> &amp; &lt;b&gt;kin&lt;/b&gt;\n        </button>\n      </h3>\n      <div id=\"collapse-widget-28-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-28-2\"\n           data-bs-parent=\"#accordion-widget-28\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>\n\n<div class=\"telar-widget telar-widget-tabs\">\n\n  <ul class=\"nav nav-tabs\" role=\"tablist\">\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link active\"\n              id=\"tab-widget-29-1-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-29-1\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-29-1\"\n              aria-selected=\"true\">\n        <span class=\"glossary-link-error\" data-term-id=\"missing\">⚠️ [[missing]]</span> &#34;tab&#34;\n      </button>\n    </li>\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link \"\n              id=\"tab-widget-29-2-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-29-2\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-29-2\"\n              aria-selected=\"false\">\n        <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"demo-weft\" data-term-url=\"/telar/glossary/demo-weft/\" data-demo=\"true\">Weft</a>\n      </button>\n    </li>\n\n  </ul>\n\n\n  <div class=\"tab-content\">\n\n    <div class=\"tab-pane fade show active\"\n         id=\"tab-widget-29-1\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-29-1-tab\">\n      <div class=\"tab-pane-content\">\n        <p>One.</p>\n      </div>\n    </div>\n\n    <div class=\"tab-pane fade \"\n         id=\"tab-widget-29-2\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-29-2-tab\">\n      <div class=\"tab-pane-content\">\n        <p>Two.</p>\n      </div>\n    </div>\n\n  </div>\n</div>"
+    },
+    {
+      "name": "glossary references inside formulas",
+      "source": "Sum $$x + [[iiif]]$$ and \\([[Loom]]_1\\) and $[[missing]]^2$.\n\n:::accordion\n## One\nIn $$a [[IIIF|b]] c$$ here.\n\n## Two\nMore.\n:::\n\n:::carousel\nimage: https://example.org/a.jpg\nalt: A\nwidth: 1000\nheight: 500\ncaption: Cap $$[[loom]] < 1$$ end\n:::",
+      "title": "",
+      "html": "<p>Sum $$x + [[iiif]]$$ and \\([[Loom]]_1\\) and $[[missing]]^2$.</p>\n<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-30\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-30-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-30-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-30-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-30-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-30-1\"\n           data-bs-parent=\"#accordion-widget-30\">\n        <div class=\"accordion-body\">\n          <p>In $$a [[IIIF|b]] c$$ here.</p>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-30-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-30-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-30-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-30-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-30-2\"\n           data-bs-parent=\"#accordion-widget-30\">\n        <div class=\"accordion-body\">\n          <p>More.</p>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>\n\n<div class=\"telar-widget telar-widget-carousel\">\n  <div id=\"carousel-widget-31\" class=\"carousel slide carousel-size-compact\" data-bs-ride=\"false\">\n\n    <div class=\"carousel-indicators\">\n\n      <button type=\"button\" data-bs-target=\"#carousel-widget-31\"\n              data-bs-slide-to=\"0\"\n              class=\"active\" aria-current=\"true\"\n              aria-label=\"Slide 1\"></button>\n\n    </div>\n\n\n    <div class=\"carousel-inner\">\n\n      <div class=\"carousel-item active\">\n        <div class=\"carousel-image-container\">\n          <img src=\"https://example.org/a.jpg\"\n               alt=\"A\"\n               class=\"d-block carousel-image\">\n        </div>\n\n        <div class=\"carousel-caption-below\">\n\n          <p class=\"caption-text\">Cap $$[[loom]] &lt; 1$$ end</p>\n\n\n        </div>\n\n      </div>\n\n    </div>\n\n\n    <button class=\"carousel-control-prev\" type=\"button\"\n            data-bs-target=\"#carousel-widget-31\" data-bs-slide=\"prev\">\n      <span class=\"carousel-control-prev-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Previous</span>\n    </button>\n    <button class=\"carousel-control-next\" type=\"button\"\n            data-bs-target=\"#carousel-widget-31\" data-bs-slide=\"next\">\n      <span class=\"carousel-control-next-icon\" aria-hidden=\"true\"></span>\n      <span class=\"visually-hidden\">Next</span>\n    </button>\n  </div>\n</div>"
+    },
+    {
+      "name": "relative and absolute images with captions",
+      "source": "![A map](maps/map.jpg){md}\nA *map* of $x_1$ places\n\n![B](https://example.org/b.png)\ncaption: Credit [[iiif]]\n\n![C](c.jpg){full}\n\nAfter.",
+      "title": "",
+      "html": "<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/maps/map.jpg\" alt=\"A map\" class=\"img-md\"><figcaption class=\"telar-image-caption\">A <em>map</em> of $x_1$ places</figcaption></figure>\n\n<figure class=\"telar-image-figure\"><img src=\"https://example.org/b.png\" alt=\"B\"><figcaption class=\"telar-image-caption\">Credit <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">International Image Interoperability Framework</a></figcaption></figure>\n\n<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/c.jpg\" alt=\"C\" class=\"img-full\"></figure>\n\n<p>After.</p>"
+    },
+    {
+      "name": "an image after text on the next line",
+      "source": "Some text\n![D](d.jpg)\nIts caption",
+      "title": "",
+      "html": "<p>Some text</p>\n<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/d.jpg\" alt=\"D\"><figcaption class=\"telar-image-caption\">Its caption</figcaption></figure>"
+    },
+    {
+      "name": "root-relative and protocol-relative images",
+      "source": "![E](/assets/e.png)\n\n![F](//cdn.example.org/f.png){sm}",
+      "title": "",
+      "html": "<figure class=\"telar-image-figure\"><img src=\"/assets/e.png\" alt=\"E\"></figure>\n\n<figure class=\"telar-image-figure\"><img src=\"//cdn.example.org/f.png\" alt=\"F\" class=\"img-sm\"></figure>"
+    },
+    {
+      "name": "maths in each delimiter",
+      "source": "Equation \\(x^2\\) and $$a*b*c$$ here.\n\n\\[y_1\\]\n\n\\begin{aligned} a &= b \\end{aligned}\n\nInline $x_1$, a price of $5, and \\ce{H2O}.",
+      "title": "",
+      "html": "<p>Equation \\(x^2\\) and $$a*b*c$$ here.</p>\n<p>\\[y_1\\]</p>\n<p>\\begin{aligned} a &amp;= b \\end{aligned}</p>\n<p>Inline $x_1$, a price of $5, and \\ce{H2O}.</p>"
+    },
+    {
+      "name": "footnotes at the top level and in widget sections",
+      "source": "Top[^a] text.\n\n:::tabs\n## One\nIn a tab[^a].\n\n[^a]: Tab note\n\n## Two\nPlain.\n:::\n\nAfter[^b].\n\n[^a]: Top note\n[^b]: Second top note",
+      "title": "",
+      "html": "<p>Top<sup id=\"fnref:a\"><a class=\"footnote-ref\" href=\"#fn:a\">1</a></sup> text.</p>\n<div class=\"telar-widget telar-widget-tabs\">\n\n  <ul class=\"nav nav-tabs\" role=\"tablist\">\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link active\"\n              id=\"tab-widget-32-1-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-32-1\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-32-1\"\n              aria-selected=\"true\">\n        One\n      </button>\n    </li>\n\n    <li class=\"nav-item\" role=\"presentation\">\n      <button class=\"nav-link \"\n              id=\"tab-widget-32-2-tab\"\n              data-bs-toggle=\"tab\"\n              data-bs-target=\"#tab-widget-32-2\"\n              type=\"button\"\n              role=\"tab\"\n              aria-controls=\"tab-widget-32-2\"\n              aria-selected=\"false\">\n        Two\n      </button>\n    </li>\n\n  </ul>\n\n\n  <div class=\"tab-content\">\n\n    <div class=\"tab-pane fade show active\"\n         id=\"tab-widget-32-1\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-32-1-tab\">\n      <div class=\"tab-pane-content\">\n        <p>In a tab<sup id=\"fnref:widget-32-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-32-1-a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-32-1-a\">\n<p>Tab note&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-32-1-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n      </div>\n    </div>\n\n    <div class=\"tab-pane fade \"\n         id=\"tab-widget-32-2\"\n         role=\"tabpanel\"\n         aria-labelledby=\"tab-widget-32-2-tab\">\n      <div class=\"tab-pane-content\">\n        <p>Plain.</p>\n      </div>\n    </div>\n\n  </div>\n</div>\n\n<p>After<sup id=\"fnref:b\"><a class=\"footnote-ref\" href=\"#fn:b\">2</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:a\">\n<p>Top note&#160;<a class=\"footnote-backref\" href=\"#fnref:a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:b\">\n<p>Second top note&#160;<a class=\"footnote-backref\" href=\"#fnref:b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "an entity in alt text",
+      "source": "![Loom &#91;Telar&#93;](a.jpg)\n\n![Loom [Telar]](b.jpg)\n\n![x &amp; y & z < \" q](c.jpg)",
+      "title": "",
+      "html": "<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/a.jpg\" alt=\"Loom [Telar]\"></figure>\n\n<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/b.jpg\" alt=\"Loom [Telar]\"></figure>\n\n<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/c.jpg\" alt=\"x &amp; y &amp; z &lt; &quot; q\"></figure>"
+    },
+    {
+      "name": "an entity in link text",
+      "source": "[Loom &#91;Telar&#93;](https://example.org/a) and [Loom [Telar]](https://example.org/b).",
+      "title": "",
+      "html": "<p><a href=\"https://example.org/a\">Loom &#91;Telar&#93;</a> and <a href=\"https://example.org/b\">Loom [Telar]</a>.</p>"
+    },
+    {
+      "name": "a lone bracket",
+      "source": "![Loom &#91;Telar](a.jpg)\n\n[Loom &#93; x](https://example.org/a) and [&#91;](https://example.org/b).",
+      "title": "",
+      "html": "<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/a.jpg\" alt=\"Loom [Telar\"></figure>\n\n<p><a href=\"https://example.org/a\">Loom &#93; x</a> and <a href=\"https://example.org/b\">&#91;</a>.</p>"
+    },
+    {
+      "name": "brackets two levels deep",
+      "source": "![A &#91;b &#91;c&#93;&#93; d](a.jpg)\n\n[A &#91;b &#91;c&#93;&#93; d](https://example.org/a)",
+      "title": "",
+      "html": "<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/a.jpg\" alt=\"A [b [c]] d\"></figure>\n\n<p><a href=\"https://example.org/a\">A &#91;b &#91;c&#93;&#93; d</a></p>"
+    },
+    {
+      "name": "escaped glossary syntax",
+      "source": "Text &#91;&#91;loom&#93;&#93; and [&#91;&#91;loom&#93;&#93;](https://example.org/a) and [&#91;loom&#93;](https://example.org/b).",
+      "title": "",
+      "html": "<p>Text &#91;&#91;loom&#93;&#93; and <a href=\"https://example.org/a\">&#91;&#91;loom&#93;&#93;</a> and <a href=\"https://example.org/b\">&#91;loom&#93;</a>.</p>"
+    },
+    {
+      "name": "escaped glossary syntax in alt text",
+      "source": "![&#91;&#91;loom&#93;&#93;](a.jpg)",
+      "title": "",
+      "html": "<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/a.jpg\" alt=\"[[loom]]\"></figure>"
+    },
+    {
+      "name": "a glossary reference inside a tag and after a prose angle bracket",
+      "source": "<span title=\"[[loom]]\">t</span> and x < [[loom]] > y.",
+      "title": "",
+      "html": "<p><span title=\"[[loom]]\">t</span> and x &lt; <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">Loom</a> &gt; y.</p>"
+    },
+    {
+      "name": "an image whose alt text nests brackets two deep",
+      "source": "![a [[IIIF]] b](b.jpg)",
+      "title": "",
+      "html": "<p><img alt=\"a [[IIIF]] b\" src=\"b.jpg\" /></p>"
+    },
+    {
+      "name": "escaped brackets in a caption",
+      "source": "![A](a.jpg)\nCap &#91;&#91;loom&#93;&#93; and `&#91;x&#93;` and [[loom|b &#93; c]]",
+      "title": "",
+      "html": "<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/a.jpg\" alt=\"A\"><figcaption class=\"telar-image-caption\">Cap &#91;&#91;loom&#93;&#93; and <code>&amp;#91;x&amp;#93;</code> and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">b ] c</a></figcaption></figure>"
+    },
+    {
+      "name": "glossary display text holding a bracket or a pipe",
+      "source": "[[loom|a [b c]], [[loom|a &#93; b]], [[loom|a &#124; b]] and [[loom|x & y]].",
+      "title": "",
+      "html": "<p><a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">a [b c</a>, <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">a ] b</a>, <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">a | b</a> and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">x &amp; y</a>.</p>"
+    },
+    {
+      "name": "a bracket entity after an angle bracket",
+      "source": "Text <&#91;> and </&#93;> and a <&#124; end.",
+      "title": "",
+      "html": "<p>Text &lt;&#91;&gt; and &lt;/&#93;&gt; and a &lt;&#124; end.</p>"
+    },
+    {
+      "name": "a reference label holding a bracket entity",
+      "source": "[x][&#91;] and [y][&#X5B;]\n\n[&#91;]: https://example.org/a\n[&#x5b;]: https://example.org/b",
+      "title": "",
+      "html": "<p><a href=\"https://example.org/a\">x</a> and <a href=\"https://example.org/b\">y</a></p>"
+    },
+    {
+      "name": "images inside a line of text",
+      "source": "Text ![Loom &#91;Telar&#93;](maps/a%20b.jpg) inline, ![B](/assets/b.png) and ![C](https://example.org/c.jpg \"T\") end.",
+      "title": "",
+      "html": "<p>Text <img alt=\"Loom &#91;Telar&#93;\" src=\"/telar/telar-content/objects/maps/a%20b.jpg\" /> inline, <img alt=\"B\" src=\"/assets/b.png\" /> and <img alt=\"C\" src=\"https://example.org/c.jpg\" title=\"T\" /> end.</p>"
+    },
+    {
+      "name": "addresses with parentheses and spaces",
+      "source": "[t](https://example.org/a_%28b%29%20c)\n\n![i](a%20b%29.jpg)\n\n![j](https://example.org/c%28d%29.jpg)",
+      "title": "",
+      "html": "<p><a href=\"https://example.org/a_%28b%29%20c\">t</a></p>\n<figure class=\"telar-image-figure\"><img src=\"/telar/telar-content/objects/a%20b%29.jpg\" alt=\"i\"></figure>\n\n<figure class=\"telar-image-figure\"><img src=\"https://example.org/c%28d%29.jpg\" alt=\"j\"></figure>"
+    },
+    {
+      "name": "a glossary reference in a link's text",
+      "source": "[see [[iiif]]](https://example.org/a), [[[loom]]](https://example.org/b) and [[IIIF|this]].",
+      "title": "",
+      "html": "<p><a href=\"https://example.org/a\">see International Image Interoperability Framework</a>, <a href=\"https://example.org/b\">Loom</a> and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">this</a>.</p>"
+    },
+    {
+      "name": "a glossary reference in a raw anchor",
+      "source": "<a href=\"https://example.org/a\">see [[Loom|*a* `b`]]</a> and [[loom]]",
+      "title": "",
+      "html": "<p><a href=\"https://example.org/a\">see &lt;em&gt;a&lt;/em&gt; &lt;code&gt;b&lt;/code&gt;</a> and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">Loom</a></p>"
+    },
+    {
+      "name": "a glossary reference in text-only content",
+      "source": "<textarea>[[iiif]]</textarea> and [[loom]]\n\n<div><textarea><a>[[iiif]]</textarea> [[loom]]</div>",
+      "title": "",
+      "html": "<textarea>[[iiif]]</textarea>\n<p>and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">Loom</a></p>\n<div><textarea><a>[[iiif]]</textarea> <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">Loom</a></div>"
+    },
+    {
+      "name": "glossary callouts on the right and on the left",
+      "source": "Before.\n\n:::glossary\nentry: iiif\n:::\n\nBetween [[loom]].\n\n:::glossary\nentry: loom\nalign: left\n:::\n\nAfter.",
+      "title": "",
+      "html": "<p>Before.</p>\n<a href=\"#\" class=\"glossary-inline-link glossary-callout glossary-callout--right\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\" data-glossary-kind=\"source\"> <svg class=\"glossary-callout-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M6.5 2.75h7.25l4 4V21.25H6.5z\"/><path d=\"M13.75 2.75v4h4\"/><path d=\"M9.25 12.25h5.5M9.25 15.75h5.5\"/></svg> <span class=\"glossary-callout-text\"> <span class=\"glossary-callout-kind\">Primary source</span> <span class=\"glossary-callout-title\">International Image Interoperability Framework</span> </span> <svg class=\"glossary-callout-arrow\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 5.5l6.5 6.5L9 18.5\"/></svg> </a>\n\n<p>Between <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\">Loom</a>.</p>\n<a href=\"#\" class=\"glossary-inline-link glossary-callout glossary-callout--left\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\" data-glossary-kind=\"term\"> <svg class=\"glossary-callout-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M6.75 3.25h10.5v17.5L12 16.75l-5.25 4z\"/></svg> <span class=\"glossary-callout-text\"> <span class=\"glossary-callout-kind\">Key term</span> <span class=\"glossary-callout-title\">Loom</span> </span> <svg class=\"glossary-callout-arrow\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 5.5l6.5 6.5L9 18.5\"/></svg> </a>\n\n<p>After.</p>"
+    },
+    {
+      "name": "a glossary callout for a site kind and for a demo entry",
+      "source": ":::glossary\nentry: jacquard\n:::\n\n:::glossary\nentry: DEMO-WEFT\nalign: right\n:::",
+      "title": "",
+      "html": "<a href=\"#\" class=\"glossary-inline-link glossary-callout glossary-callout--right\" data-term-id=\"jacquard\" data-term-url=\"/telar/glossary/jacquard/\" data-glossary-kind=\"machine\"> <svg class=\"glossary-callout-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><circle cx=\"12\" cy=\"12\" r=\"8.75\"/><path d=\"M12 7.5v5.5\"/><circle cx=\"12\" cy=\"16.5\" r=\".6\" fill=\"currentColor\"/></svg> <span class=\"glossary-callout-text\"> <span class=\"glossary-callout-kind\">Machine</span> <span class=\"glossary-callout-title\">Jacquard &amp; &lt;loom&gt;</span> </span> <svg class=\"glossary-callout-arrow\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 5.5l6.5 6.5L9 18.5\"/></svg> </a>\n\n<a href=\"#\" class=\"glossary-inline-link glossary-callout glossary-callout--right\" data-term-id=\"demo-weft\" data-term-url=\"/telar/glossary/demo-weft/\" data-glossary-kind=\"place\" data-demo=\"true\"> <svg class=\"glossary-callout-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M12 21.25s-6.25-6-6.25-11a6.25 6.25 0 0 1 12.5 0c0 5-6.25 11-6.25 11z\"/><circle cx=\"12\" cy=\"10.25\" r=\"2.25\"/></svg> <span class=\"glossary-callout-text\"> <span class=\"glossary-callout-kind\">Place</span> <span class=\"glossary-callout-title\">Weft</span> </span> <svg class=\"glossary-callout-arrow\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 5.5l6.5 6.5L9 18.5\"/></svg> </a>"
+    },
+    {
+      "name": "a glossary callout for an unknown entry",
+      "source": "Text.\n\n:::glossary\nentry: missing\nalign: left\n:::",
+      "title": "",
+      "html": "<p>Text.</p>\n<span class=\"glossary-link-error\" data-term-id=\"missing\">⚠️ [[missing]]</span>"
+    },
+    {
+      "name": "a glossary callout with no entry",
+      "source": ":::glossary\nalign: left\n:::\n\nText.",
+      "title": "",
+      "html": "<span class=\"glossary-link-error\" data-term-id=\"\">⚠️ [[]]</span>\n\n<p>Text.</p>"
+    },
+    {
+      "name": "a glossary callout with a side that is neither",
+      "source": ":::glossary\nentry: loom\nalign: centre\n:::",
+      "title": "",
+      "html": "<a href=\"#\" class=\"glossary-inline-link glossary-callout glossary-callout--right\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\" data-glossary-kind=\"term\"> <svg class=\"glossary-callout-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M6.75 3.25h10.5v17.5L12 16.75l-5.25 4z\"/></svg> <span class=\"glossary-callout-text\"> <span class=\"glossary-callout-kind\">Key term</span> <span class=\"glossary-callout-title\">Loom</span> </span> <svg class=\"glossary-callout-arrow\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 5.5l6.5 6.5L9 18.5\"/></svg> </a>"
+    },
+    {
+      "name": "a glossary callout naming an entity",
+      "source": ":::glossary\nentry: a &amp;amp; b\n:::",
+      "title": "",
+      "html": "<span class=\"glossary-link-error\" data-term-id=\"a &amp;amp;amp; b\">⚠️ [[a &amp;amp; b]]</span>"
+    },
+    {
+      "name": "glossary callouts with Spanish sides",
+      "source": ":::glossary\nentry: IIIF\nalign: Derecha\n:::\n\n:::glossary\nentry: loom\nalign: IZQUIERDÁ\n:::",
+      "title": "",
+      "html": "<a href=\"#\" class=\"glossary-inline-link glossary-callout glossary-callout--right\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\" data-glossary-kind=\"source\"> <svg class=\"glossary-callout-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M6.5 2.75h7.25l4 4V21.25H6.5z\"/><path d=\"M13.75 2.75v4h4\"/><path d=\"M9.25 12.25h5.5M9.25 15.75h5.5\"/></svg> <span class=\"glossary-callout-text\"> <span class=\"glossary-callout-kind\">Primary source</span> <span class=\"glossary-callout-title\">International Image Interoperability Framework</span> </span> <svg class=\"glossary-callout-arrow\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 5.5l6.5 6.5L9 18.5\"/></svg> </a>\n\n<a href=\"#\" class=\"glossary-inline-link glossary-callout glossary-callout--left\" data-term-id=\"loom\" data-term-url=\"/telar/glossary/loom/\" data-glossary-kind=\"term\"> <svg class=\"glossary-callout-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M6.75 3.25h10.5v17.5L12 16.75l-5.25 4z\"/></svg> <span class=\"glossary-callout-text\"> <span class=\"glossary-callout-kind\">Key term</span> <span class=\"glossary-callout-title\">Loom</span> </span> <svg class=\"glossary-callout-arrow\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M9 5.5l6.5 6.5L9 18.5\"/></svg> </a>"
+    }
+  ]
+}

@@ -1,17 +1,19 @@
 /**
- * This file is the library powering the site-upgrade flow — version
- * comparison, framework tree diffing, line-based config mutation, GitHub
- * Releases lookup, manifest-chain loading, and best-effort publish-time
+ * This file is the library powering the site-upgrade flow — framework tree
+ * diffing, line-based config mutation, GitHub Releases lookup,
+ * manifest-chain loading, and best-effort publish-time
  * healing of build-critical framework files missing from a user's repo.
  *
  * Design notes:
- *   - Pure functions (parseTelarVersion, compareVersions, compareTelarVersion,
- *     isFrameworkPath, findMissingFrameworkFiles, buildYmlUsesNpmCi,
- *     updateTelarVersionInConfig) are unit-testable without any network calls.
+ *   - Pure functions (isFrameworkPath, findMissingFrameworkFiles,
+ *     buildYmlUsesNpmCi, updateTelarVersionInConfig) are unit-testable without
+ *     any network calls. Version parsing and comparison live in
+ *     telar-version.ts.
  *   - Async functions (fetchLatestRelease, fetchAllReleases,
  *     getFrameworkTreeAtTag, computeUpgradeDiff, checkTelarVersion,
- *     fetchFrameworkFilesAtVersion, healMissingFrameworkFiles) interact
- *     with the GitHub REST API and are tested with mocked fetch.
+ *     fetchFrameworkFilesAtVersion, frameworkTagExists, resolveHealTag,
+ *     dropUnneededLockfile, healMissingFrameworkFiles) interact with the
+ *     GitHub REST API and are tested with mocked fetch.
  *   - `_config.yml` mutation is line-based (not full YAML parse) to preserve
  *     comments, whitespace, and user-authored content exactly.
  *   - checkTelarVersion fails open: if the GitHub API is unreachable, the
@@ -21,99 +23,62 @@
  *     blocked; the missing file retries on the next publish.
  *
  * Framework repo: UCSB-AMPLab/telar (public — user OAuth token is sufficient).
- * Truncation note: the framework repo has no IIIF tiles, so the 100,000-entry
- * git tree limit is not a concern for getFrameworkTreeAtTag. For user repo
+ * Truncation note: the framework repo has no IIIF tiles, so its tree stays
+ * under the 100,000-entry git tree limit; a truncated release tree fails the
+ * read (getFrameworkTreeAtTag) rather than being diffed. For user repo
  * trees, framework paths are shallow and appear before IIIF tiles
  * alphabetically, so they will be present even in a truncated tree. Revisit
  * if truncation is ever detected in practice.
  *
- * @version v1.4.3-beta
+ * @version v1.5.0-beta
  */
 
-import { githubHeaders, decodeGitHubContent, getRepoTree, getFileContent } from "~/lib/github.server";
+import { githubHeaders, getRepoTree, getFileContent, getFileBytesAtRef } from "~/lib/github.server";
+import { arrayBufferToBase64 } from "~/lib/upload.server";
 import type { TreeEntry } from "~/lib/github.server";
 import type { CommitFile } from "~/lib/commit.server";
-import { validateManifest, type Manifest } from "~/lib/manifest-schema.server";
+import {
+  ManifestValidationError,
+  isPathInScope,
+  validateManifest,
+  type Language,
+  type Manifest,
+  type Operation,
+} from "~/lib/manifest-schema.server";
+import { applyOperation } from "~/lib/manifest-runner.server";
+import { BUILT_IN_PAGES } from "~/lib/framework-page-frontmatter.server";
 import { BUNDLED_MANIFESTS } from "~/../migrations";
-import { normalizeVersionTag, stripVersionPrefix } from "~/lib/version";
+import { compareTelarVersion, compareVersions, frameworkVersionForTag, parseTelarVersion } from "~/lib/telar-version";
 import { mutateYamlBlock } from "~/lib/config-yaml-block.server";
+import {
+  DELIVERED_WHEN_ABSENT,
+  FRAMEWORK_FILES,
+  FRAMEWORK_PREFIXES,
+  isFrameworkPath,
+} from "~/lib/framework-paths.server";
+import {
+  DEV_ONLY_FILES_PATH,
+  KNOWN_DEV_ONLY_FRAMEWORK_FILES,
+  isDevOnlyPath,
+  releaseDevOnlyEntries,
+  type ReleaseFileRead,
+} from "~/lib/dev-only-paths.server";
+import {
+  ReleaseFileUnreadableError,
+  ReleaseListUnreadableError,
+  ReleaseManifestInvalidError,
+  ReleaseTreeUnreadableError,
+} from "~/lib/upgrade-reads.server";
+
+export { FRAMEWORK_FILES, FRAMEWORK_PREFIXES, isFrameworkPath };
 
 const GITHUB_API = "https://api.github.com";
 const FRAMEWORK_OWNER = "UCSB-AMPLab";
 const FRAMEWORK_REPO = "telar";
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Minimum Telar version the compositor supports. Sites older than this must
- *  run the manual upgrade script before connecting. */
-export const MIN_SUPPORTED_VERSION = "v0.9.0-beta";
-
-/** Path prefixes that belong to the Telar framework (not user content). */
-export const FRAMEWORK_PREFIXES = [
-  "_layouts/",
-  "_includes/",
-  "_sass/",
-  "assets/",
-  "scripts/",
-  ".github/workflows/",
-  "_data/languages/",
-  "_data/themes/",
-] as const;
-
-/** Individual files that belong to the Telar framework.
- *
- * Dependency manifests (package.json, package-lock.json, Gemfile, Gemfile.lock,
- * requirements.txt) must travel with upgrades: the framework's JS/Ruby/Python
- * build steps break when source files (e.g. scroll-engine.js) import libraries
- * that haven't been added to the user's manifest. Before they were listed here,
- * upgrades shipped new framework code without bumping the deps and CI failed with
- * unresolved-module errors.
- *
- * package-lock.json specifically: the framework now builds user sites with
- * `npm install` (no lockfile required), so it is NOT delivered universally. The
- * publish-time heal scopes lockfile delivery to legacy sites whose
- * .github/workflows/build.yml still runs `npm ci` — those break at the build
- * step without a committed lockfile. See healMissingFrameworkFiles /
- * buildYmlUsesNpmCi. It stays listed here so findMissingFrameworkFiles still
- * detects its absence; the heal then decides whether to actually deliver it.
- */
-export const FRAMEWORK_FILES = [
-  "_data/navigation.yml",
-  // Framework-owned KaTeX config. Its consumers (_includes/katex.html, both
-  // layouts, assets/js/katex-loader.js) are prefix-delivered, but _data/ is
-  // only covered via languages/ and themes/, so this file must be listed here
-  // explicitly.
-  "_data/katex.yml",
-  "CHANGELOG.md",
-  // README.md is the only v1.3.0 framework file not covered by FRAMEWORK_PREFIXES.
-  "README.md",
-  // Dependency manifests — source files assume these deps, CI fails otherwise.
-  // package-lock.json is listed for detection only; the heal delivers it just to
-  // legacy `npm ci` sites (see the package-lock.json note above).
-  "package.json",
-  "package-lock.json",
-  "Gemfile",
-  "Gemfile.lock",
-  "requirements.txt",
-  // Framework-owned root files users don't customise.
-  "LICENSE",
-  "NOTICE",
-  "pytest.ini",
-  "vitest.config.js",
-] as const;
-
-// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface TelarVersion {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string | null;
-}
 
 export interface TelarRelease {
   tagName: string;
@@ -138,8 +103,6 @@ export interface UpgradeDiff {
   additions: CommitFile[];
   /** Framework paths present in the user's repo but absent in the release tree. */
   deletions: string[];
-  /** Version and release_date to patch into _config.yml. */
-  configPatch: { version: string; releaseDate: string } | null;
   /** Grouped file counts for the upgrade summary UI. */
   summary: UpgradeSummary;
 }
@@ -147,82 +110,6 @@ export interface UpgradeDiff {
 // ---------------------------------------------------------------------------
 // Pure functions
 // ---------------------------------------------------------------------------
-
-/**
- * Parses a Telar version tag string (e.g. "v0.9.0" or "v0.9.0-beta") into
- * a structured version object. Returns null for unparseable strings.
- */
-export function parseTelarVersion(tag: string): TelarVersion | null {
-  if (!tag) return null;
-
-  // Strip leading "v"
-  const stripped = stripVersionPrefix(tag);
-
-  // Split on "-" to separate the prerelease suffix
-  const dashIdx = stripped.indexOf("-");
-  const versionPart = dashIdx >= 0 ? stripped.slice(0, dashIdx) : stripped;
-  const prerelease = dashIdx >= 0 ? stripped.slice(dashIdx + 1) : null;
-
-  const parts = versionPart.split(".");
-  if (parts.length !== 3) return null;
-
-  const major = parseInt(parts[0], 10);
-  const minor = parseInt(parts[1], 10);
-  const patch = parseInt(parts[2], 10);
-
-  if (isNaN(major) || isNaN(minor) || isNaN(patch)) return null;
-
-  return { major, minor, patch, prerelease };
-}
-
-/**
- * Compares two Telar version tag strings.
- *
- * Returns:
- *   -1 if a is older than b
- *    0 if equal
- *    1 if a is newer than b
- *
- * Pre-release versions are treated as older than the equivalent release
- * (e.g. "v0.9.0-beta" < "v0.9.0"). Two identical pre-release tags are equal.
- */
-export function compareVersions(a: string, b: string): -1 | 0 | 1 {
-  const va = parseTelarVersion(a);
-  const vb = parseTelarVersion(b);
-
-  // Treat unparseable as oldest possible version
-  if (!va && !vb) return 0;
-  if (!va) return -1;
-  if (!vb) return 1;
-
-  if (va.major !== vb.major) return va.major > vb.major ? 1 : -1;
-  if (va.minor !== vb.minor) return va.minor > vb.minor ? 1 : -1;
-  if (va.patch !== vb.patch) return va.patch > vb.patch ? 1 : -1;
-
-  // Same major.minor.patch — compare prerelease
-  // null (release) > any prerelease string
-  if (va.prerelease === vb.prerelease) return 0;
-  if (va.prerelease === null) return 1;  // a is release, b is pre-release
-  if (vb.prerelease === null) return -1; // b is release, a is pre-release
-
-  // Both have prerelease — compare lexicographically
-  return va.prerelease > vb.prerelease ? 1 : va.prerelease < vb.prerelease ? -1 : 0;
-}
-
-/**
- * Returns true if the given path belongs to the Telar framework and should be
- * updated during an upgrade.
- *
- * Note: _config.yml always returns false — it is handled separately via
- * updateTelarVersionInConfig to avoid overwriting user values.
- */
-export function isFrameworkPath(path: string): boolean {
-  if (path === "_config.yml") return false;
-  if ((FRAMEWORK_FILES as readonly string[]).includes(path)) return true;
-  return (FRAMEWORK_PREFIXES as readonly string[]).some((prefix) =>
-    path.startsWith(prefix),
-  );
-}
 
 /**
  * Returns the FRAMEWORK_FILES entries that are entirely absent from a user
@@ -285,8 +172,7 @@ export async function fetchFrameworkFilesAtVersion(
   const results = await Promise.all(
     paths.map(async (path) => {
       try {
-        const content = await getFrameworkFileContent(token, path, tagName);
-        return content !== null ? { path, content } : null;
+        return await getFrameworkFile(token, path, tagName);
       } catch {
         return null;
       }
@@ -296,8 +182,159 @@ export async function fetchFrameworkFilesAtVersion(
 }
 
 /**
+ * Whether `tagName` names a published release on the framework repo. Uses
+ * the Releases API (`releases/tags/<tag>`) rather than a tree or content
+ * fetch — the same lookup `fetchLatestRelease` uses for a pinned tag. The
+ * lookup asks whether a *published release* exists for that tag, which is
+ * what the heal needs, since it fetches release-tagged content; a 404 here
+ * does not establish that the git tag itself is absent — releases and tags
+ * are distinct — only that no release is published under it.
+ *
+ * Returns false for a 404 (no published release under that tag). Any other
+ * non-OK status throws, so a transient GitHub error is not misread as "no
+ * release published here".
+ */
+async function frameworkTagExists(token: string, tagName: string): Promise<boolean> {
+  const res = await fetch(
+    `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/releases/tags/${encodeURIComponent(tagName)}`,
+    { headers: githubHeaders(token) },
+  );
+  if (res.status === 404) return false;
+  if (!res.ok) {
+    throw new Error(`GitHub API error checking release tag ${tagName}: ${res.status}`);
+  }
+  return true;
+}
+
+/** The outcome of resolving the heal's tag — see {@link resolveHealTag}. */
+type HealTagResolution =
+  | { kind: "resolved"; tag: string }
+  | { kind: "mismatch"; pinnedTag: string }
+  | { kind: "unresolved" };
+
+/**
+ * Resolves the tag the heal should fetch missing files at: `tagName` (the
+ * site's stamped version) when it names a real framework release, else
+ * `pinnedTag` (the deployment's `TELAR_RELEASE_TAG`) — but only when the pin
+ * is plausibly the site's own release. A release candidate stamps the
+ * release it is a candidate for, so a genuine candidate's stamp and its
+ * deployment's pin carry the same framework version (`frameworkVersionForTag`
+ * on each must agree); a pin that resolves but names a different release is
+ * rejected rather than used, since healing from it would take a missing
+ * file from an unrelated release into this site's repo. `pinnedTag` is
+ * checked only when `tagName` does not resolve — a site whose stamp names a
+ * real tag never has the pin consulted.
+ *
+ * Returns `{ kind: "resolved", tag }` on success, `{ kind: "mismatch",
+ * pinnedTag }` when the pin resolves but is for a different release than
+ * the stamp, or `{ kind: "unresolved" }` when neither resolves. The caller
+ * turns each outcome into its own warning.
+ */
+async function resolveHealTag(
+  frameworkToken: string,
+  tagName: string,
+  pinnedTag?: string,
+): Promise<HealTagResolution> {
+  if (await frameworkTagExists(frameworkToken, tagName)) {
+    return { kind: "resolved", tag: tagName };
+  }
+  if (!pinnedTag || !(await frameworkTagExists(frameworkToken, pinnedTag))) {
+    return { kind: "unresolved" };
+  }
+  if (frameworkVersionForTag(tagName) !== frameworkVersionForTag(pinnedTag)) {
+    return { kind: "mismatch", pinnedTag };
+  }
+  return { kind: "resolved", tag: pinnedTag };
+}
+
+/** Renders a pinned tag for the heal's skip warning: quoted, or "(none)" when unset. */
+function describePinnedTagForWarning(pinnedTag?: string): string {
+  return pinnedTag ? `"${pinnedTag}"` : "(none)";
+}
+
+/**
+ * package-lock.json is delivered ONLY to legacy sites whose build.yml still
+ * runs `npm ci` — the framework otherwise builds with `npm install` and needs
+ * no lockfile. The extra build.yml read is paid only when the lockfile is
+ * actually among the missing files; sites missing nothing else pay nothing.
+ * Fail-OPEN by dropping the lockfile whenever npm ci can't be positively
+ * confirmed (build.yml uses npm install, is absent, or fails to read), so an
+ * unneeded lockfile is never delivered.
+ */
+async function dropUnneededLockfile(
+  projectToken: string, owner: string, repo: string, missing: string[], ref?: string,
+): Promise<string[]> {
+  if (!missing.includes("package-lock.json")) return missing;
+  let usesNpmCi = false;
+  try {
+    const buildYml = await getFileContent(
+      projectToken,
+      owner,
+      repo,
+      ".github/workflows/build.yml",
+      ref,
+    );
+    usesNpmCi = buildYml !== null && buildYmlUsesNpmCi(buildYml);
+  } catch {
+    usesNpmCi = false;
+  }
+  return usesNpmCi ? missing : missing.filter((p) => p !== "package-lock.json");
+}
+
+/**
+ * `paths` without the developer-only paths of the release at `tagName`, which
+ * a site does not carry and the heal therefore never restores. When the list
+ * cannot be read, the framework files a release's list is known to name are
+ * withheld and the rest restored, so an outage never delivers them and never
+ * holds back the files a site does need.
+ */
+async function withoutDevOnlyPaths(
+  frameworkToken: string, tagName: string, paths: string[],
+): Promise<string[]> {
+  let entries: readonly string[];
+  try {
+    entries = await releaseDevOnlyEntries(
+      (path) => fetchFrameworkFile(frameworkToken, path, tagName),
+      frameworkVersionForTag(tagName),
+    );
+  } catch (err) {
+    console.warn("healMissingFrameworkFiles: developer-only list unreadable; withholding the known ones —", err);
+    entries = KNOWN_DEV_ONLY_FRAMEWORK_FILES;
+  }
+  return paths.filter((path) => !isDevOnlyPath(path, entries));
+}
+
+/**
  * Best-effort publish-time heal: restores framework files that are entirely
- * missing from the user's repo, fetched at the site's pinned version tag.
+ * missing from the user's repo.
+ *
+ * The tag to fetch them at is resolved, not assumed:
+ *   1. The site's stamped version, normalised into tag shape — this stays
+ *      first on purpose. The heal restores files that are entirely missing,
+ *      and they should match the version the site is actually on; falling
+ *      straight to a pin would drop a mismatched framework version's copy of
+ *      a missing file into an unrelated site. Note: resolving to a real
+ *      release only proves the release exists, not that it is the release
+ *      the site actually ran. A stamp that names a real but incorrect
+ *      release (a handful of historical prereleases mis-stamp their own
+ *      predecessor) heals from that incorrect release's files, and nothing
+ *      here can detect it — the stamp is the only evidence available, and it
+ *      is wrong.
+ *   2. If that tag does not resolve to a real framework release — a release
+ *      candidate's stamp names the release it is a candidate for, not its own
+ *      tag, so this is the expected case for a site on a pre-release — fall
+ *      back to `pinnedTag` (the deployment's `TELAR_RELEASE_TAG`), when set
+ *      AND it names the same release as the stamp (`frameworkVersionForTag`
+ *      on each must agree). A pin that resolves but is for a different
+ *      release is never used — that would take a missing file from an
+ *      unrelated release into this site's repo. The pin is only ever
+ *      consulted here: when the stamped tag already resolves, it is never
+ *      checked.
+ *   3. If neither resolves — no pin is set, the pin doesn't exist, or the
+ *      pin exists but names a different release — the heal is skipped with
+ *      a distinct warning naming both tags tried, so an unresolvable or
+ *      mismatched tag can never look like a clean "nothing was missing"
+ *      result.
  *
  * NEVER throws and NEVER blocks publish — any failure (falsy tag, tree read
  * error, content fetch error) degrades to an empty result, and the missing
@@ -306,17 +343,24 @@ export async function fetchFrameworkFilesAtVersion(
  * delays a fix, whereas a stale snapshot would ship wrong data.
  *
  * Additive only — returns files to ADD; it does not detect or overwrite files
- * the user already has (that is the upgrade flow's responsibility).
+ * the user already has. A developer-only path of the release is never
+ * restored: a site does not carry one. projectToken reads the project's repo; frameworkToken
+ * fetches the separate, public framework repo (never covered by that install).
  */
 export async function healMissingFrameworkFiles(
-  token: string,
-  owner: string,
-  repo: string,
-  tagName: string,
+  projectToken: string, owner: string, repo: string, tagName: string, frameworkToken: string,
+  pinnedTag?: string,
+  ref?: string,
 ): Promise<CommitFile[]> {
   if (!tagName) return [];
   try {
-    const { tree, truncated } = await getRepoTree(token, owner, repo);
+    // Every read of the project's own repository is taken at `ref` when the
+    // caller names one. A publish names the revision it is committing against,
+    // because a read without one takes the repository's DEFAULT branch: on a
+    // site whose default is not the branch being published, this heal judged a
+    // file missing from a branch nobody was publishing and added a framework
+    // copy over the one the target branch already had.
+    const { tree, truncated } = await getRepoTree(projectToken, owner, repo, ref);
     // A truncated tree (very large repos — e.g. thousands of self-hosted IIIF
     // tiles exceeding GitHub's 100k-entry recursive limit) may OMIT framework
     // files that are actually present. Treating them as missing would re-fetch
@@ -332,33 +376,31 @@ export async function healMissingFrameworkFiles(
     let missing = findMissingFrameworkFiles(paths);
     if (missing.length === 0) return [];
 
-    // package-lock.json is delivered ONLY to legacy sites whose build.yml still
-    // runs `npm ci` — the framework otherwise builds with `npm install` and
-    // needs no lockfile. We only pay the extra build.yml read when the lockfile
-    // is actually among the missing files; sites missing nothing else pay
-    // nothing. Fail-OPEN by dropping the lockfile whenever we can't positively
-    // confirm npm ci (build.yml uses npm install, is absent, or fails to read),
-    // so we never deliver an unneeded lockfile.
-    if (missing.includes("package-lock.json")) {
-      let usesNpmCi = false;
-      try {
-        const buildYml = await getFileContent(
-          token,
-          owner,
-          repo,
-          ".github/workflows/build.yml",
-        );
-        usesNpmCi = buildYml !== null && buildYmlUsesNpmCi(buildYml);
-      } catch {
-        usesNpmCi = false;
-      }
-      if (!usesNpmCi) {
-        missing = missing.filter((p) => p !== "package-lock.json");
-        if (missing.length === 0) return [];
-      }
+    missing = await dropUnneededLockfile(projectToken, owner, repo, missing, ref);
+    if (missing.length === 0) return [];
+
+    // Resolve the tag once, up front — letting per-file 404s stand in for
+    // this is exactly the ambiguity being fixed (a nonexistent tag makes
+    // every file fetch fail, so the batch silently returns [] indistinguishable
+    // from "nothing was missing").
+    const resolution = await resolveHealTag(frameworkToken, tagName, pinnedTag);
+    if (resolution.kind === "mismatch") {
+      console.warn(
+        `healMissingFrameworkFiles: pinned tag "${resolution.pinnedTag}" is for a different ` +
+          `release than the stamped tag "${tagName}" — skipping heal`,
+      );
+      return [];
+    }
+    if (resolution.kind === "unresolved") {
+      console.warn(
+        `healMissingFrameworkFiles: unable to resolve a framework release tag — ` +
+          `stamped tag "${tagName}" not found, pinned tag ${describePinnedTagForWarning(pinnedTag)} not found; skipping heal`,
+      );
+      return [];
     }
 
-    return await fetchFrameworkFilesAtVersion(token, missing, tagName);
+    const delivered = await withoutDevOnlyPaths(frameworkToken, resolution.tag, missing);
+    return await fetchFrameworkFilesAtVersion(frameworkToken, delivered, resolution.tag);
   } catch (err) {
     // warn, not error: this is a best-effort skip (publish still succeeds), so
     // a transient GitHub 5xx here should not trip error-level log alerts.
@@ -368,9 +410,23 @@ export async function healMissingFrameworkFiles(
 }
 
 /**
+ * The `telar.release_date` an upgrade stamps: the date the framework declares
+ * for the release, carried by the last manifest of the chain, which is the
+ * one that installs it. The framework's own engine stamps the same declared
+ * date, so a site reads the same value whichever route upgraded it.
+ * A manifest from before v1.8.0 carries none, and then the release's
+ * publication date stands in, as the UTC day GitHub records.
+ */
+export function releaseDateForUpgrade(chain: Manifest[], publishedAt: string): string {
+  return chain.at(-1)?.release_date ?? publishedAt.slice(0, 10);
+}
+
+/**
  * Updates telar.version and telar.release_date inside the telar: block of a
- * _config.yml string using line-based iteration. All other content (user
- * values, comments, whitespace) is preserved verbatim.
+ * _config.yml string using line-based iteration. Content outside those two
+ * lines (user values, comments, whitespace) is preserved verbatim; the
+ * `version:` and `release_date:` lines themselves are rewritten whole, so a
+ * trailing comment on either line is not preserved.
  *
  * Delegates the block-walking (enter on `telar:`, exit on the next
  * non-indented non-comment non-empty line) to the shared
@@ -450,6 +506,72 @@ export function partitionWorkflowFiles(
 }
 
 /**
+ * The deletions the site has, by the tree prepare listed at the
+ * head the commit is made on. A truncated tree can omit a path the site has,
+ * so it cannot show one absent, and every deletion is kept; the commit narrows
+ * its deletions to the paths present at that head in any case.
+ */
+export function deletionsPresentInTree(
+  deletions: string[],
+  tree: TreeEntry[],
+  truncated: boolean,
+): string[] {
+  if (truncated) return deletions;
+  const present = new Set(tree.filter((e) => e.type === "blob").map((e) => e.path));
+  return deletions.filter((path) => present.has(path));
+}
+
+/**
+ * The upgrade's file changes. Additions are the tree diff's, overwritten by
+ * every file the manifest chain and the page transforms hold; deletions are
+ * the union of both. A path is never carried both ways: deleting is what the
+ * manifest says, so every path either side deletes is dropped from the
+ * additions, whether or not the site has it (a file the release ships and the
+ * manifest deletes is not delivered). Only then are the manifest's deletions
+ * narrowed to the paths the site's tree has; the tree diff's are taken from
+ * that tree already.
+ */
+export function mergeUpgradeChanges(
+  diff: { additions: CommitFile[]; deletions: string[] },
+  manifest: { files: Map<string, string>; deletions: string[] },
+  site: { tree: TreeEntry[]; truncated: boolean },
+): { additions: CommitFile[]; deletions: string[] } {
+  const additions = new Map<string, CommitFile>();
+  for (const add of diff.additions) additions.set(add.path, add);
+  for (const [path, content] of manifest.files) additions.set(path, { path, content });
+  for (const path of [...diff.deletions, ...manifest.deletions]) additions.delete(path);
+  const present = deletionsPresentInTree(manifest.deletions, site.tree, site.truncated);
+  return {
+    additions: Array.from(additions.values()),
+    deletions: Array.from(new Set([...diff.deletions, ...present])),
+  };
+}
+
+/**
+ * The upgrade as the review page shows it: the changes the commit makes,
+ * from the same merge, with the manifest's deletions as the chain names them
+ * and the summary counted over the merged additions and deletions. A path the
+ * manifest deletes is not counted as an addition.
+ */
+export function reviewedUpgradeDiff(
+  diff: { additions: CommitFile[]; deletions: string[] },
+  manifestDeletions: string[],
+  site: { tree: TreeEntry[]; truncated: boolean },
+): UpgradeDiff {
+  const merged = mergeUpgradeChanges(diff, { files: new Map(), deletions: manifestDeletions }, site);
+  return { ...merged, summary: buildUpgradeSummary(merged.additions, merged.deletions) };
+}
+
+/** The individually listed framework files the summary counts as data files. */
+const DATA_FILE_PATHS: ReadonlySet<string> = new Set([
+  "_data/navigation.yml",
+  "_data/katex.yml",
+  "_data/glossary_kinds.yml",
+  "CHANGELOG.md",
+  "README.md",
+]);
+
+/**
  * Maps a framework file path to a summary category for display grouping.
  */
 export function categorizeFrameworkPath(path: string): keyof UpgradeSummary {
@@ -461,10 +583,7 @@ export function categorizeFrameworkPath(path: string): keyof UpgradeSummary {
   if (
     path.startsWith("_data/languages/") ||
     path.startsWith("_data/themes/") ||
-    path === "_data/navigation.yml" ||
-    path === "_data/katex.yml" ||
-    path === "CHANGELOG.md" ||
-    path === "README.md"
+    DATA_FILE_PATHS.has(path)
   ) {
     return "dataFiles";
   }
@@ -509,16 +628,66 @@ export function buildUpgradeSummary(
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches the latest release from UCSB-AMPLab/telar via the GitHub Releases API.
+ * A release lookup GitHub answered with an error status. It carries the
+ * status and, for a rate-limit answer (403 or 429), when GitHub says the next
+ * request may be made: `Retry-After` in seconds, or `x-ratelimit-reset` as an
+ * epoch second when `x-ratelimit-remaining` is 0. Both are null otherwise.
+ * The message is the one callers have always logged.
  */
-export async function fetchLatestRelease(token: string): Promise<TelarRelease> {
+export class ReleaseLookupError extends Error {
+  readonly status: number;
+  readonly retryAfterSeconds: number | null;
+  readonly rateLimitResetEpochSeconds: number | null;
+
+  constructor(res: Response) {
+    super(`GitHub API error fetching latest release: ${res.status}`);
+    this.name = "ReleaseLookupError";
+    this.status = res.status;
+    const rateLimited = res.status === 403 || res.status === 429;
+    const headers = res.headers;
+    this.retryAfterSeconds = rateLimited ? readHeaderNumber(headers, "retry-after") : null;
+    const exhausted = headers?.get("x-ratelimit-remaining") === "0";
+    this.rateLimitResetEpochSeconds =
+      rateLimited && exhausted ? readHeaderNumber(headers, "x-ratelimit-reset") : null;
+  }
+}
+
+/** A non-negative numeric header, or null when absent or unreadable. */
+function readHeaderNumber(headers: Headers | undefined, name: string): number | null {
+  const raw = headers?.get(name);
+  if (raw == null || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Fetches the release UCSB-AMPLab/telar is to be upgraded to, via the GitHub
+ * Releases API.
+ *
+ * With no `releaseTag` — the deployment's normal state — the target is
+ * `releases/latest`, GitHub's newest published non-prerelease. An empty string
+ * counts as no tag, so a deployment can carry the variable unset.
+ *
+ * A non-empty `releaseTag` targets `releases/tags/<tag>` instead, which is the
+ * only lookup that resolves a prerelease. That is the point of the parameter:
+ * a deployment pinned to a release candidate rehearses the upgrade against it
+ * before the release is published.
+ *
+ * An error status throws ReleaseLookupError; a network failure throws
+ * whatever fetch threw.
+ */
+export async function fetchLatestRelease(
+  token: string,
+  releaseTag?: string,
+): Promise<TelarRelease> {
+  const target = releaseTag
+    ? `releases/tags/${encodeURIComponent(releaseTag)}`
+    : "releases/latest";
   const res = await fetch(
-    `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/releases/latest`,
+    `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/${target}`,
     { headers: githubHeaders(token) },
   );
-  if (!res.ok) {
-    throw new Error(`GitHub API error fetching latest release: ${res.status}`);
-  }
+  if (!res.ok) throw new ReleaseLookupError(res);
   const release = (await res.json()) as {
     tag_name: string;
     body: string;
@@ -533,7 +702,8 @@ export async function fetchLatestRelease(token: string): Promise<TelarRelease> {
 
 /**
  * Fetches all releases from UCSB-AMPLab/telar, sorted by version descending.
- * Uses the list releases endpoint (max 100 per page).
+ * Uses the list releases endpoint (max 100 per page). Excludes GitHub
+ * prereleases and drafts — they aren't part of the published upgrade path.
  */
 export async function fetchAllReleases(token: string): Promise<TelarRelease[]> {
   const res = await fetch(
@@ -547,12 +717,16 @@ export async function fetchAllReleases(token: string): Promise<TelarRelease[]> {
     tag_name: string;
     body: string;
     published_at: string;
+    prerelease: boolean;
+    draft: boolean;
   }>;
-  const mapped: TelarRelease[] = releases.map((r) => ({
-    tagName: r.tag_name,
-    body: r.body ?? "",
-    publishedAt: r.published_at,
-  }));
+  const mapped: TelarRelease[] = releases
+    .filter((r) => !r.prerelease && !r.draft)
+    .map((r) => ({
+      tagName: r.tag_name,
+      body: r.body ?? "",
+      publishedAt: r.published_at,
+    }));
   // Sort by version descending (newest first)
   return mapped.sort((a, b) => compareVersions(b.tagName, a.tagName));
 }
@@ -561,45 +735,151 @@ export async function fetchAllReleases(token: string): Promise<TelarRelease[]> {
  * Fetches the full recursive file tree for a specific release tag of the
  * UCSB-AMPLab/telar framework repo.
  *
- * The framework repo has no IIIF tiles, so truncation is not a concern here.
- * The Git Trees API accepts tag names directly as the tree_sha parameter.
+ * The Git Trees API accepts tag names directly as the tree_sha parameter. A
+ * tree that cannot be read, or comes back truncated, throws
+ * ReleaseTreeUnreadableError naming the release: a partial tree would read
+ * the paths it leaves out as files the release does not ship, and delete
+ * them.
  */
 async function getFrameworkTreeAtTag(
   token: string,
   tagName: string,
 ): Promise<TreeEntry[]> {
-  const res = await fetch(
-    `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/git/trees/${tagName}?recursive=1`,
-    { headers: githubHeaders(token) },
-  );
-  if (!res.ok) {
-    throw new Error(
-      `GitHub API error fetching framework tree at ${tagName}: ${res.status}`,
+  let data: { tree: TreeEntry[]; truncated: boolean };
+  try {
+    const res = await fetch(
+      `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/git/trees/${encodeURIComponent(tagName)}?recursive=1`,
+      { headers: githubHeaders(token) },
     );
+    if (!res.ok) throw new Error(`GitHub API error fetching framework tree at ${tagName}: ${res.status}`);
+    data = (await res.json()) as { tree: TreeEntry[]; truncated: boolean };
+  } catch (err) {
+    throw new ReleaseTreeUnreadableError(frameworkVersionForTag(tagName), { cause: err });
   }
-  const data = (await res.json()) as { tree: TreeEntry[]; truncated: boolean };
+  if (data.truncated !== false || !Array.isArray(data.tree)) {
+    throw new ReleaseTreeUnreadableError(frameworkVersionForTag(tagName));
+  }
   return data.tree;
 }
 
 /**
- * Fetches a file's content from the framework repo at a specific release tag.
- * Returns null if the file is not found (404).
+ * A file of the framework release the upgrade delivers, as it is committed.
+ * The tree listed it, so a 404 is as much a failure as an error status or a
+ * network throw: each throws ReleaseFileUnreadableError naming the path and
+ * the release, since leaving the file out would commit an upgrade without it.
  */
-async function getFrameworkFileContent(
+async function releaseFile(token: string, path: string, tagName: string): Promise<CommitFile> {
+  let file: ReleaseFileRead;
+  try {
+    file = await fetchFrameworkFile(token, path, tagName, { write: true });
+  } catch (err) {
+    throw new ReleaseFileUnreadableError(path, frameworkVersionForTag(tagName), { cause: err });
+  }
+  if (file.kind !== "found") throw new ReleaseFileUnreadableError(path, frameworkVersionForTag(tagName));
+  return asCommitFile(path, file);
+}
+
+/** A found release file as a commit writes it: text, or its bytes in base64. */
+function asCommitFile(path: string, file: { content: string; encoding?: "base64" }): CommitFile {
+  return file.encoding ? { path, content: file.content, encoding: file.encoding } : { path, content: file.content };
+}
+
+/**
+ * A framework file at a release tag as the heal writes it, or null for any
+ * answer that is not the whole file.
+ */
+async function getFrameworkFile(token: string, path: string, tagName: string): Promise<CommitFile | null> {
+  const file = await fetchFrameworkFile(token, path, tagName, { write: true });
+  return file.kind === "found" ? asCommitFile(path, file) : null;
+}
+
+/**
+ * A framework file at a release tag, telling a file the release does not ship
+ * (404) apart from one that could not be read. `getFrameworkFile` answers
+ * null for both, which is right for a caller filling gaps and wrong for one
+ * that must not mistake an outage for an answer.
+ *
+ * The read is `getFileAtRef`'s strict one: a file of 1 MB or more is read
+ * again as raw bytes, and an answer whose bytes are not the file's `size`
+ * fails, as does a network throw. Whether the file is text is decided from
+ * its bytes: valid UTF-8 is text, anything else is binary.
+ *
+ * `write` is for a caller that commits the file, which must be the release's
+ * bytes so its blob is the release's: text keeps a leading byte-order mark,
+ * and a binary file comes as its bytes in base64 (`encoding: "base64"`).
+ * Without it the mark is dropped from text, and a binary file fails, for a
+ * caller that parses what it reads.
+ */
+export async function fetchFrameworkFile(
   token: string,
   path: string,
   tagName: string,
-): Promise<string | null> {
-  const res = await fetch(
-    `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/contents/${path}?ref=${tagName}`,
-    { headers: githubHeaders(token) },
-  );
-  if (!res.ok) return null;
-  const data = (await res.json()) as { content?: string; encoding?: string };
-  if (data.encoding === "base64" && data.content) {
-    return decodeGitHubContent(data.content);
+  options?: { write?: boolean },
+): Promise<ReleaseFileRead> {
+  const read = await getFileBytesAtRef(token, FRAMEWORK_OWNER, FRAMEWORK_REPO, path, tagName);
+  if (read.status === "absent") return { kind: "absent" };
+  if (read.status === "error") return { kind: "failed" };
+  const write = options?.write === true;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(read.bytes);
+  } catch {
+    return write
+      ? { kind: "found", content: arrayBufferToBase64(read.bytes.slice().buffer), encoding: "base64" }
+      : { kind: "failed" };
   }
-  return null;
+  return { kind: "found", content: text.startsWith("\uFEFF") && !write ? text.slice(1) : text };
+}
+
+/**
+ * Whether an upgrade writes the release's copy of a framework path: where the
+ * site has none, or has a different one, except that a DELIVERED_WHEN_ABSENT
+ * path the site already has is the site's own. A truncated tree can omit a
+ * path the site has, so it cannot show such a path absent.
+ */
+function upgradeDelivers(
+  path: string,
+  userSha: string | undefined,
+  releaseSha: string,
+  userTreeTruncated: boolean,
+): boolean {
+  const siteOwned = DELIVERED_WHEN_ABSENT.includes(path);
+  if (userSha === undefined) return !(siteOwned && userTreeTruncated);
+  return userSha !== releaseSha && !siteOwned;
+}
+
+/**
+ * Whether an upgrade deletes a framework path the release no longer ships,
+ * never a DELIVERED_WHEN_ABSENT one.
+ */
+function upgradeDeletes(path: string, releaseMap: Map<string, string>): boolean {
+  return !releaseMap.has(path) && !DELIVERED_WHEN_ABSENT.includes(path);
+}
+
+/**
+ * The developer-only entries of the release whose tree is `releaseTree`. A
+ * release whose tree does not list the file (every release before 1.8.0)
+ * has none, and is not asked for it.
+ */
+async function releaseTreeDevOnlyEntries(
+  token: string,
+  releaseTree: TreeEntry[],
+  releaseTag: string,
+): Promise<string[]> {
+  if (!releaseTree.some((entry) => entry.path === DEV_ONLY_FILES_PATH)) return [];
+  return releaseDevOnlyEntries(
+    (path) => fetchFrameworkFile(token, path, releaseTag),
+    frameworkVersionForTag(releaseTag),
+  );
+}
+
+/**
+ * Whether the tree diff compares `path`: a framework path that is not one of
+ * the release's developer-only paths. The diff neither adds nor deletes a
+ * developer-only path; a site's own copy is the manifest's to delete.
+ */
+function isDiffedFrameworkPath(path: string, devOnly: readonly string[]): boolean {
+  return isFrameworkPath(path) && !isDevOnlyPath(path, devOnly);
 }
 
 /**
@@ -608,36 +888,44 @@ async function getFrameworkFileContent(
  *
  * Algorithm:
  *   1. Fetch the framework tree at the release tag.
- *   2. Build SHA maps for both trees, filtered to isFrameworkPath entries.
+ *   2. Build SHA maps for both trees, filtered to isFrameworkPath entries
+ *      that are not developer-only paths of the release.
  *   3. For each framework path in the release tree:
- *      - If absent from user tree OR SHA differs: fetch content and add to additions.
+ *      - If absent from user tree OR SHA differs: fetch content and add to additions,
+ *        except a DELIVERED_WHEN_ABSENT path the user tree already has.
  *   4. For each framework path in the user tree:
- *      - If absent from release tree: add to deletions.
- *   5. Extract version and release date from the tag for configPatch.
- *   6. Build summary counts.
+ *      - If absent from release tree: add to deletions, except a
+ *        DELIVERED_WHEN_ABSENT path.
+ *   5. Build summary counts.
+ *
+ * A release tree that cannot be read whole throws ReleaseTreeUnreadableError;
+ * a developer-only list or release file that cannot be read throws
+ * ReleaseFileUnreadableError. Nothing is left out of the diff.
  */
 export async function computeUpgradeDiff(
   token: string,
   userTree: TreeEntry[],
   releaseTag: string,
-  options: { fetchContent?: boolean } = {},
+  options: { fetchContent?: boolean; userTreeTruncated?: boolean } = {},
 ): Promise<UpgradeDiff> {
   const fetchContent = options.fetchContent ?? true;
+  const userTreeTruncated = options.userTreeTruncated ?? false;
 
   // 1. Fetch framework tree at the release tag
   const releaseTree = await getFrameworkTreeAtTag(token, releaseTag);
+  const devOnly = await releaseTreeDevOnlyEntries(token, releaseTree, releaseTag);
 
   // 2. Build SHA maps filtered to framework paths (blobs only)
   const releaseMap = new Map<string, string>();
   for (const entry of releaseTree) {
-    if (entry.type === "blob" && isFrameworkPath(entry.path)) {
+    if (entry.type === "blob" && isDiffedFrameworkPath(entry.path, devOnly)) {
       releaseMap.set(entry.path, entry.sha);
     }
   }
 
   const userMap = new Map<string, string>();
   for (const entry of userTree) {
-    if (entry.type === "blob" && isFrameworkPath(entry.path)) {
+    if (entry.type === "blob" && isDiffedFrameworkPath(entry.path, devOnly)) {
       userMap.set(entry.path, entry.sha);
     }
   }
@@ -649,13 +937,9 @@ export async function computeUpgradeDiff(
   // (fetchContent=true, default) still fetches real content for the commit.
   const additions: CommitFile[] = [];
   for (const [path, releaseSha] of releaseMap.entries()) {
-    const userSha = userMap.get(path);
-    if (userSha === undefined || userSha !== releaseSha) {
+    if (upgradeDelivers(path, userMap.get(path), releaseSha, userTreeTruncated)) {
       if (fetchContent) {
-        const content = await getFrameworkFileContent(token, path, releaseTag);
-        if (content !== null) {
-          additions.push({ path, content });
-        }
+        additions.push(await releaseFile(token, path, releaseTag));
       } else {
         additions.push({ path, content: "" });
       }
@@ -665,73 +949,39 @@ export async function computeUpgradeDiff(
   // 4. Compute deletions (framework files in user repo absent from release)
   const deletions: string[] = [];
   for (const path of userMap.keys()) {
-    if (!releaseMap.has(path)) {
+    if (upgradeDeletes(path, releaseMap)) {
       deletions.push(path);
     }
   }
 
-  // 5. Extract version and release date from the tag name
-  // Tag format: "v0.9.1" — release_date is not available from tree alone,
-  // use the tag name for version and today's date as a fallback.
-  // The upgrade route action should pass the actual release publishedAt date
-  // when building the configPatch.
-  const version = stripVersionPrefix(releaseTag);
-  const configPatch = { version, releaseDate: new Date().toISOString().slice(0, 10) };
-
-  // 6. Build summary
+  // 5. Build summary
   const summary = buildUpgradeSummary(additions, deletions);
 
-  return { additions, deletions, configPatch, summary };
-}
-
-/**
- * Pure version-comparison logic extracted from checkTelarVersion.
- *
- * Derives needsUpgrade and isBelowMinimum from a pre-fetched latestTag and the
- * site's current version, with no network calls. Callers that cache the latest
- * tag (e.g. github-status.server.ts) can call this directly.
- *
- * Fails open: if latestTag is null, returns { needsUpgrade: false,
- * isBelowMinimum: false } rather than blocking the user.
- */
-export function compareTelarVersion(
-  siteVersion: string | null,
-  latestTag: string | null,
-): { needsUpgrade: boolean; isBelowMinimum: boolean } {
-  if (!latestTag) return { needsUpgrade: false, isBelowMinimum: false };
-
-  // Normalise site version: the DB stores version without "v" prefix
-  const siteTag = siteVersion ? normalizeVersionTag(siteVersion) : null;
-
-  const isBelowMinimum = siteTag
-    ? compareVersions(siteTag, MIN_SUPPORTED_VERSION) < 0
-    : false;
-
-  const needsUpgrade = siteTag
-    ? compareVersions(siteTag, latestTag) < 0
-    : false;
-
-  return { needsUpgrade, isBelowMinimum };
+  return { additions, deletions, summary };
 }
 
 /**
  * Checks whether the user's site needs an upgrade.
  *
- * Fetches the latest release from GitHub and compares against the site's
+ * Fetches the target release from GitHub and compares against the site's
  * current version. Fails open: if the GitHub API is unreachable, returns
  * needsUpgrade: false rather than blocking the user.
  *
+ * `releaseTag` pins the comparison to one release rather than the newest
+ * published one; see fetchLatestRelease.
+ *
  * Returns:
- *   needsUpgrade    — true if siteVersion is older than the latest release
- *   latestTag       — the latest release tag, or null if API call failed
+ *   needsUpgrade    — true if siteVersion is older than the target release
+ *   latestTag       — the target release tag, or null if API call failed
  *   isBelowMinimum  — true if siteVersion is older than MIN_SUPPORTED_VERSION
  */
 export async function checkTelarVersion(
   token: string,
   siteVersion: string | null,
+  releaseTag?: string,
 ): Promise<{ needsUpgrade: boolean; latestTag: string | null; isBelowMinimum: boolean }> {
   try {
-    const latest = await fetchLatestRelease(token);
+    const latest = await fetchLatestRelease(token, releaseTag);
     const { needsUpgrade, isBelowMinimum } = compareTelarVersion(siteVersion, latest.tagName);
     return { needsUpgrade, latestTag: latest.tagName, isBelowMinimum };
   } catch {
@@ -794,7 +1044,15 @@ export async function fetchReleaseManifest(
       `GitHub API error fetching migration asset for ${tagName}: ${assetRes.status}`,
     );
   }
-  const raw = await assetRes.json();
+  // A body that is not JSON is a manifest that does not validate, as an
+  // invalid shape is; a body cut off in transit throws something else.
+  let raw: unknown;
+  try {
+    raw = await assetRes.json();
+  } catch (err) {
+    if (err instanceof SyntaxError) throw new ManifestValidationError("migration.json is not JSON", "$");
+    throw err;
+  }
   // Validator throws ManifestValidationError on invalid shape.
   const validated = validateManifest(raw);
   manifestCache.set(tagName, validated);
@@ -850,25 +1108,44 @@ export function chainManifests(
  *      version chains (e.g. v1.2.0 → v1.2.1 → v1.3.0 where v1.3.0's manifest
  *      starts at 1.2.1, not 1.2.0).
  *   3. Legacy fallback (`v{deadEnd}`, bare `deadEnd`, bare `toVersion`) for
- *      non-semver tags or transient list-API failures.
+ *      non-semver tags.
  *
- * Returns null when no candidate yields a matching manifest.
+ * Returns null when no candidate yields a matching manifest. Throws
+ * ReleaseManifestInvalidError when a candidate's manifest does not validate,
+ * ReleaseFileUnreadableError when a candidate's release or manifest cannot be
+ * read, and ReleaseListUnreadableError when the listing cannot be read. Each
+ * names the candidate's release, not the target's.
  */
 async function discoverNextManifest(
   token: string,
   deadEnd: string,
   toVersion: string,
+  releaseTag?: string,
 ): Promise<Manifest | null> {
+  // A tag with no release or no manifest (null), or whose manifest starts
+  // elsewhere, is passed over. Any other failure, a manifest that does not
+  // validate included, stops the search: passing over an unreadable manifest
+  // could build the chain from a later one, or report none.
   const tryTag = async (tag: string): Promise<Manifest | null> => {
+    let m: Manifest | null;
     try {
-      const m = await fetchReleaseManifest(token, tag);
-      if (m && m.from_version === deadEnd) return m;
-    } catch {
-      // Non-404 errors bubble up to the caller eventually; for discovery we
-      // treat any fetch failure as "try the next tag".
+      m = await fetchReleaseManifest(token, tag);
+    } catch (err) {
+      const version = frameworkVersionForTag(tag);
+      if (err instanceof ManifestValidationError) throw new ReleaseManifestInvalidError(version, { cause: err });
+      throw new ReleaseFileUnreadableError("migration.json", version, { cause: err });
     }
-    return null;
+    return m && m.from_version === deadEnd ? m : null;
   };
+
+  // 0. A pinned deployment names the release its manifest must come from.
+  // The release listing below drops prereleases, so a pinned release candidate
+  // is invisible to every other branch of this search and has to be asked for
+  // by name.
+  if (releaseTag) {
+    const pinned = await tryTag(releaseTag);
+    if (pinned) return pinned;
+  }
 
   // 1. Single-hop fast path.
   const direct = await tryTag(`v${toVersion}`);
@@ -878,11 +1155,11 @@ async function discoverNextManifest(
   const dSemver = parseTelarVersion(deadEnd);
   const tSemver = parseTelarVersion(toVersion);
   if (dSemver && tSemver) {
-    let releases: TelarRelease[] = [];
+    let releases: TelarRelease[];
     try {
       releases = await fetchAllReleases(token);
-    } catch {
-      // Listing failed — fall through to legacy fallback below.
+    } catch (err) {
+      throw new ReleaseListUnreadableError({ cause: err });
     }
     const candidates = releases
       .map((r) => ({ tag: r.tagName, sv: parseTelarVersion(r.tagName) }))
@@ -925,6 +1202,7 @@ export async function loadManifestChain(
   token: string,
   fromVersion: string,
   toVersion: string,
+  releaseTag?: string,
 ): Promise<Manifest[]> {
   if (fromVersion === toVersion) return [];
   const accumulated: Manifest[] = [...BUNDLED_MANIFESTS];
@@ -937,7 +1215,12 @@ export async function loadManifestChain(
       const match = msg.match(/no manifest from ([^\s]+)/);
       if (!match) throw err;
       const deadEnd = match[1];
-      const fetched = await discoverNextManifest(token, deadEnd, toVersion);
+      const fetched = await discoverNextManifest(
+        token,
+        deadEnd,
+        toVersion,
+        releaseTag,
+      );
       if (!fetched) {
         throw new Error(
           `Missing migration manifest for upgrade path ${deadEnd} → (toward ${toVersion}). ` +
@@ -953,39 +1236,76 @@ export async function loadManifestChain(
   );
 }
 
+/** The project sheets a glob-scoped CSV operation is assumed to name. */
+const PROJECT_SHEETS: readonly string[] = [
+  "telar-content/spreadsheets/project.csv",
+  "telar-content/spreadsheets/proyecto.csv",
+];
+
+/**
+ * The file a glob names when it has no wildcard, and so can name only
+ * itself, provided an operation may write it; otherwise none.
+ */
+function literalGlobPaths(glob: string): string[] {
+  return !/[*?[\]{}]/.test(glob) && isPathInScope(glob) ? [glob] : [];
+}
+
+/** The files each operation type reads, from the operation alone. */
+const REFERENCED_FILES: {
+  readonly [K in Operation["type"]]: (op: Extract<Operation, { type: K }>) => readonly string[];
+} = {
+  config_add_field: () => ["_config.yml"],
+  config_update_value: () => ["_config.yml"],
+  config_rename_field: () => ["_config.yml"],
+  // The runner deletes a path without reading it, so a path is never fetched
+  // only to be deleted; whether the site has it is read from its tree.
+  file_delete: () => [],
+  gitignore_add: () => [".gitignore"],
+  csv_add_column: () => PROJECT_SHEETS,
+  csv_rename_column: () => PROJECT_SHEETS,
+  // A guarded page-line edit names its page literally: the pages are loaded
+  // after the chain runs, so a page it does not load here it never sees.
+  regex_replace: (op) => [...PROJECT_SHEETS, ...literalGlobPaths(op.file_glob)],
+  yaml_list_add: (op) => [op.file],
+  create_directory: () => [],
+};
+
+function filesReferencedBy(op: Operation): readonly string[] {
+  const referenced = REFERENCED_FILES[op.type] as ((op: Operation) => readonly string[]) | undefined;
+  return referenced ? referenced(op) : [];
+}
+
 /**
  * Collect the set of repo-relative paths the manifest chain will need to
  * read before applyManifestChain runs. For ops scoped by file_glob, this is
- * heuristic — we cannot fully expand globs statically. Callers extend with
- * known file sets (e.g. always include _config.yml).
+ * heuristic — we cannot fully expand globs statically: a glob with no
+ * wildcard names its own file, and the project sheets stand in for the
+ * rest. Callers extend with known file sets (e.g. always include _config.yml).
  */
 export function collectFilesReferencedByChain(chain: Manifest[]): Set<string> {
   const paths = new Set<string>();
   for (const m of chain) {
     for (const op of m.operations) {
-      switch (op.type) {
-        case "config_add_field":
-        case "config_update_value":
-        case "config_rename_field":
-          paths.add("_config.yml");
-          break;
-        case "file_delete":
-          for (const p of op.paths) paths.add(p);
-          break;
-        case "gitignore_add":
-          paths.add(".gitignore");
-          break;
-        case "csv_add_column":
-        case "csv_rename_column":
-        case "regex_replace":
-          // Glob-scoped — known CSV paths enumerated here.
-          paths.add("telar-content/spreadsheets/project.csv");
-          paths.add("telar-content/spreadsheets/proyecto.csv");
-          break;
-        case "create_directory":
-          break;
-      }
+      for (const path of filesReferencedBy(op)) paths.add(path);
     }
   }
   return paths;
+}
+
+/**
+ * Runs again, over `files`, the chain's `regex_replace` operations whose glob
+ * names a built-in page literally. The v1.3.0 ingest runs after the chain and
+ * writes the 1.3.0 template's page lines over a 1.2.x site's pages, so a
+ * later release's guarded line edit has to follow it; the edits replace an
+ * exact line with one that does not match again, so a second run is safe.
+ */
+export function reapplyBuiltInPageEdits(chain: Manifest[], files: Map<string, string>, lang: Language): void {
+  for (const m of chain) {
+    for (const op of m.operations) {
+      if (op.type !== "regex_replace") continue;
+      if (literalGlobPaths(op.file_glob).some((path) => Object.hasOwn(BUILT_IN_PAGES, path))) {
+        applyOperation(files, op, lang, []);
+      }
+    }
+  }
 }

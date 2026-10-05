@@ -1,0 +1,12 @@
+-- When the Compositor last gave a project's object ids GitHub's spelling.
+--
+-- @version v1.5.0-beta
+--
+-- legacy_ids_repaired_at: set by the first sync check an author starts on the
+-- project, which gives each object id an import stripped the
+-- spelling GitHub's objects.csv writes, judged against the recorded version as
+-- it stands then. Once set, no id is paired as a legacy stripping anywhere, and
+-- every id difference is an ordinary change. NULL on every project until that
+-- check runs; while it is NULL, a publish or objects commit that would write a
+-- stripped id is refused and the author is sent to the sync.
+ALTER TABLE projects ADD COLUMN legacy_ids_repaired_at text;

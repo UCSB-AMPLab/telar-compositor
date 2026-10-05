@@ -14,7 +14,8 @@
     "deploy": "wrangler deploy",
     "predeploy:staging": "npm run build && node scripts/patch-staging-config.cjs && npm run smoke",
     "deploy:staging": "wrangler deploy -c build/server/wrangler.json",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "parity:regenerate": "node scripts/parity-regenerate.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
@@ -30,10 +31,13 @@
     "@tailwindcss/vite": "^4.2.1",
     "@vimeo/player": "^2.30.3",
     "drizzle-orm": "^0.44.1",
+    "entities": "^6.0.1",
     "i18next": "^25.2.1",
     "i18next-browser-languagedetector": "^8.0.4",
     "isbot": "^5.1.36",
     "js-yaml": "^4.1.1",
+    "katex": "0.16.21",
+    "knap": "0.4.2",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.4",
     "openseadragon": "^6.0.2",
@@ -53,6 +57,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.28.0",
+    "@cloudflare/vitest-plugin": "^1.1.4",
     "@cloudflare/workers-types": "^4.20260511.1",
     "@react-router/dev": "^7.12.0",
     "@testing-library/jest-dom": "^6.9.1",
@@ -68,7 +73,7 @@
     "typescript": "^5.8.3",
     "vite": "^7.3.1",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.3",
+    "vitest": "^4.1.11",
     "wrangler": "^4.73.0"
   }
 }

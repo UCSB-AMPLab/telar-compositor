@@ -12,8 +12,8 @@ When a bundled manifest or Python migration changes:
 ./scripts/generate-manifest-snapshots.sh
 ```
 
-Requires: `python3`, `PyYAML`, local clones of `telar/` and `user-sites/` at
-`/Users/juancobo/Databases/storytelling/`.
+Requires: `python3`, `PyYAML`, local clones of the framework template and of the user sites, named by the
+environment variables `TELAR_ROOT` and `USER_SITES_ROOT`.
 
 ## Structure
 

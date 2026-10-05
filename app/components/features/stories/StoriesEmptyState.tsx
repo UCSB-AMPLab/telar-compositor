@@ -9,6 +9,8 @@
  * the parent (via the onCreateNew callback) so this component stays a
  * pure presentational invitation with no knowledge of how a story comes
  * into being.
+ *
+ * @version v1.5.0-beta
  */
 
 import { BookOpen } from "lucide-react";
@@ -16,10 +18,24 @@ import { useTranslation } from "react-i18next";
 
 interface StoriesEmptyStateProps {
   onCreateNew: () => void;
+  /**
+   * The shared document has not synced yet, so an empty list means "not loaded",
+   * not "no stories". The invitation to create the first story is withheld.
+   */
+  awaitingSync?: boolean;
 }
 
-export function StoriesEmptyState({ onCreateNew }: StoriesEmptyStateProps) {
+export function StoriesEmptyState({ onCreateNew, awaitingSync = false }: StoriesEmptyStateProps) {
   const { t } = useTranslation("stories");
+
+  if (awaitingSync) {
+    return (
+      <div role="status" className="flex flex-col items-center justify-center py-20 text-center">
+        <span className="inline-block w-2 h-2 rounded-full bg-gray-300 animate-pulse mb-3" aria-hidden="true" />
+        <p className="font-body text-sm text-gray-500">{t("loading_state")}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">

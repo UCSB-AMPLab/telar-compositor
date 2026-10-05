@@ -5,10 +5,12 @@
  *   - home.tsx ("/") redirects to /start (reversing the earlier /objects
  *     landing)
  *   - /homepage redirects to /pages/index
- *   - a collaborator hitting /publish redirects to /objects?denied=publish
- *     and /upgrade redirects to /objects?denied=upgrade
+ *   - every project role hitting /publish or /upgrade is NOT redirected —
+ *     both are open to convenor, collaborator and instructor alike — while
+ *     a caller the role lookup answers nothing for redirects to
+ *     /objects?denied=publish|upgrade
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -142,11 +144,67 @@ describe("/homepage redirect", () => {
 });
 
 // ---------------------------------------------------------------------------
-// collaborator hitting /publish or /upgrade is redirected with ?denied=
+// /publish and /upgrade: open to every project role, redirected with
+// ?denied= for a caller holding no membership row.
 // ---------------------------------------------------------------------------
-describe("collaborator gated-route guard", () => {
-  it("redirects a collaborator on /publish to /objects?denied=publish", async () => {
+describe("gated-route guard", () => {
+  it("does not redirect a collaborator on /publish", async () => {
     mocks.getUserRole.mockResolvedValue("collaborator");
+    mocks.resolveActiveProject.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site" },
+    });
+    const { loader } = await import("../app/routes/_app");
+    const res = await captureRedirect(loader as never, {
+      request: new Request("https://example.workers.dev/publish"),
+      context: makeContext(7),
+    });
+    expect(res).toBeNull();
+  });
+
+  it("does not redirect a collaborator on /upgrade", async () => {
+    mocks.getUserRole.mockResolvedValue("collaborator");
+    mocks.resolveActiveProject.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site" },
+    });
+    const { loader } = await import("../app/routes/_app");
+    const res = await captureRedirect(loader as never, {
+      request: new Request("https://example.workers.dev/upgrade"),
+      context: makeContext(7),
+    });
+    expect(res).toBeNull();
+  });
+
+  it("does not redirect an instructor on /publish", async () => {
+    mocks.getUserRole.mockResolvedValue("instructor");
+    mocks.resolveActiveProject.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site" },
+    });
+    const { loader } = await import("../app/routes/_app");
+    const res = await captureRedirect(loader as never, {
+      request: new Request("https://example.workers.dev/publish"),
+      context: makeContext(7),
+    });
+    expect(res).toBeNull();
+  });
+
+  it("does not redirect an instructor on /upgrade", async () => {
+    mocks.getUserRole.mockResolvedValue("instructor");
+    mocks.resolveActiveProject.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site" },
+    });
+    const { loader } = await import("../app/routes/_app");
+    const res = await captureRedirect(loader as never, {
+      request: new Request("https://example.workers.dev/upgrade"),
+      context: makeContext(7),
+    });
+    expect(res).toBeNull();
+  });
+
+  // The guard's refusal branch: a project resolves but the role lookup
+  // answers nothing. Pinned so the branch keeps its behaviour while every
+  // project role passes through it.
+  it("redirects a caller with no role row on /publish to /objects?denied=publish", async () => {
+    mocks.getUserRole.mockResolvedValue(null);
     mocks.resolveActiveProject.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site" },
     });
@@ -159,8 +217,8 @@ describe("collaborator gated-route guard", () => {
     expect(res!.headers.get("Location")).toBe("/objects?denied=publish");
   });
 
-  it("redirects a collaborator on /upgrade to /objects?denied=upgrade", async () => {
-    mocks.getUserRole.mockResolvedValue("collaborator");
+  it("redirects a caller with no role row on /upgrade to /objects?denied=upgrade", async () => {
+    mocks.getUserRole.mockResolvedValue(null);
     mocks.resolveActiveProject.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site" },
     });

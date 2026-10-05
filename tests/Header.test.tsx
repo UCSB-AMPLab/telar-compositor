@@ -8,7 +8,7 @@
  * Does NOT duplicate the bug-report-panel-open assertions already pinned in
  * tests/Header.bug-report.test.tsx.
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
@@ -118,5 +118,17 @@ describe("Header user menu — role chip + report item", () => {
   it("renders a 'Report a problem' item in the user menu", () => {
     const { container } = renderHeaderMenuOpen();
     expect(container.textContent).toContain("user_menu.report_problem");
+  });
+});
+
+describe("Header at phone width", () => {
+  it("hides the Staging badge below the sm breakpoint so the left group keeps the room for the project selector", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <Header user={baseUser} hasProject={true} environment="staging" />
+      </MemoryRouter>,
+    );
+    const badge = Array.from(container.querySelectorAll("span")).find((n) => n.textContent === "Staging");
+    expect(badge?.className).toContain("max-sm:hidden");
   });
 });

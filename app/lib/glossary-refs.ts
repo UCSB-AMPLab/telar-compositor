@@ -5,6 +5,9 @@
  * functions are pure over a `Y.Doc` (and arguments); they carry no React or
  * component state so they can be sampled headlessly in tests.
  *
+ * A layer's `:::glossary` callout names a term by its `entry:` line, which
+ * counts and is rewritten like a link (glossary-callout.ts reads the block).
+ *
  * Scan scope is the framework's three link-bearing surfaces:
  *   - story → step → layer `content` Y.Text ONLY (never layer title /
  *     button_label / step question / answer)
@@ -24,11 +27,12 @@
  *     ONE transaction, highest-index-first; returns the occurrence count
  *   - `countGlossaryLinks(ydoc, termId)` — dry-run occurrence count, no mutation
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import * as Y from "yjs";
 import { getYText } from "~/lib/yjs-helpers";
+import { glossaryCalloutEntries } from "~/lib/glossary-callout";
 
 /**
  * The locked glossary link regex. Group 1 = term_id, group 2 = optional
@@ -128,6 +132,9 @@ export function buildTermRefIndex(ydoc: Y.Doc): Map<string, TermRef[]> {
             layerNumber,
           });
         }
+        for (const { id } of glossaryCalloutEntries(content)) {
+          push(id, { kind: "story", termId: id, storyId, storyTitle, stepNumber, layerNumber });
+        }
       }
     }
   }
@@ -187,7 +194,7 @@ interface LinkMatch {
  * a replacement string that rewrites only the term_id while preserving the
  * `|display` alias and the surrounding bracket/whitespace shape.
  */
-function collectMatches(text: string, oldId: string, newId: string): LinkMatch[] {
+function collectMatches(text: string, oldId: string, newId: string, callouts: boolean): LinkMatch[] {
   const out: LinkMatch[] = [];
   const re = freshLinkRe();
   let m: RegExpExecArray | null;
@@ -199,6 +206,11 @@ function collectMatches(text: string, oldId: string, newId: string): LinkMatch[]
     const replacement =
       display !== undefined ? `[[${newId}|${display.trim()}]]` : `[[${newId}]]`;
     out.push({ index: m.index, length: whole.length, replacement });
+  }
+  if (callouts) {
+    for (const { id, from, to } of glossaryCalloutEntries(text)) {
+      if (id === oldId) out.push({ index: from, length: to - from, replacement: newId });
+    }
   }
   return out;
 }
@@ -219,7 +231,7 @@ function applyMatches(yText: Y.Text, matches: LinkMatch[]): void {
 }
 
 /** All layer-content / definition / body Y.Texts in the doc (full scan scope). */
-function eachLinkBearingText(ydoc: Y.Doc, fn: (t: Y.Text) => void): void {
+function eachLinkBearingText(ydoc: Y.Doc, fn: (t: Y.Text, isLayer: boolean) => void): void {
   const stories = ydoc.getArray<Y.Map<unknown>>("stories");
   for (let si = 0; si < stories.length; si++) {
     const steps = stories.get(si).get("steps");
@@ -229,7 +241,7 @@ function eachLinkBearingText(ydoc: Y.Doc, fn: (t: Y.Text) => void): void {
       if (!(layers instanceof Y.Array)) continue;
       for (let li = 0; li < layers.length; li++) {
         const content = getYText(layers.get(li) as Y.Map<unknown>, "content");
-        if (content) fn(content);
+        if (content) fn(content, true);
       }
     }
   }
@@ -237,13 +249,13 @@ function eachLinkBearingText(ydoc: Y.Doc, fn: (t: Y.Text) => void): void {
   const glossary = ydoc.getArray<Y.Map<unknown>>("glossary");
   for (let gi = 0; gi < glossary.length; gi++) {
     const def = getYText(glossary.get(gi), "definition");
-    if (def) fn(def);
+    if (def) fn(def, false);
   }
 
   const pages = ydoc.getArray<Y.Map<unknown>>("pages");
   for (let pi = 0; pi < pages.length; pi++) {
     const body = getYText(pages.get(pi), "body");
-    if (body) fn(body);
+    if (body) fn(body, false);
   }
 }
 
@@ -266,8 +278,8 @@ export function rewriteGlossaryLinks(
 ): number {
   let total = 0;
   ydoc.transact(() => {
-    eachLinkBearingText(ydoc, (yText) => {
-      const matches = collectMatches(yText.toString(), oldId, newId);
+    eachLinkBearingText(ydoc, (yText, isLayer) => {
+      const matches = collectMatches(yText.toString(), oldId, newId, isLayer);
       if (matches.length === 0) return;
       total += matches.length;
       applyMatches(yText, matches);
@@ -283,13 +295,14 @@ export function rewriteGlossaryLinks(
  */
 export function countGlossaryLinks(ydoc: Y.Doc, termId: string): number {
   let total = 0;
-  eachLinkBearingText(ydoc, (yText) => {
+  eachLinkBearingText(ydoc, (yText, isLayer) => {
     const re = freshLinkRe();
     let m: RegExpExecArray | null;
     const text = yText.toString();
     while ((m = re.exec(text)) !== null) {
       if (m[1].trim() === termId) total++;
     }
+    if (isLayer) total += glossaryCalloutEntries(text).filter((e) => e.id === termId).length;
   });
   return total;
 }

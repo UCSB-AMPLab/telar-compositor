@@ -13,7 +13,7 @@
  *   - csv-export.server: OBJECTS_CSV_COLUMNS + BILINGUAL_ROW
  *   - import.server: COLUMN_NAME_MAPPING, KNOWN_OBJECT_KEYS
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -274,26 +274,8 @@ describe("COLUMN_NAME_MAPPING vs registry import declarations", () => {
         // are pinned by their dedicated structural tests, not this diff.
         if (canonical.length === 0) continue;
         const accepted = new Set(canonical);
-        if (entity === "objects" && field.name === "object_type") {
-          // Legacy fallback: mapObjectsCsv reads the raw `object_type` column
-          // (row.medium_genre || row.object_type), so the header is accepted
-          // post-transform without being renamed to medium_genre.
-          accepted.add("object_type");
-        }
         for (const header of field.import.headers) {
           const lower = header.toLowerCase();
-          if (entity === "objects" && field.name === "object_type" && lower === "object_type") {
-            // Deliberately absent from COLUMN_NAME_MAPPING: transformHeader
-            // passes it through verbatim and the mapper's legacy fallback
-            // consumes it. Adding a mapping entry would rename the column to
-            // medium_genre and silently change the fallback/extra_columns
-            // semantics — pin the absence.
-            expect(
-              COLUMN_NAME_MAPPING[lower],
-              `objects.object_type legacy header "object_type" gained a COLUMN_NAME_MAPPING entry`,
-            ).toBeUndefined();
-            continue;
-          }
           const target = COLUMN_NAME_MAPPING[lower];
           expect(
             target,
@@ -315,6 +297,13 @@ describe("COLUMN_NAME_MAPPING vs registry import declarations", () => {
         for (const col of csvColumns(entity, field)) claimed.add(col);
       }
     }
+    // `iiif_manifest` resolves to itself and to no published column: the
+    // objects mapper consumes it as the fallback source of `source_url` and
+    // only `source_url` is ever written back out, which is what the framework's
+    // prefer-non-empty `get_source_url` expects to read. The identity entry
+    // exists so a capitalised header normalises to the name the mapper reads,
+    // so it is a mapping target with no field of its own by design.
+    claimed.add("iiif_manifest");
     for (const [header, target] of Object.entries(COLUMN_NAME_MAPPING)) {
       expect(
         claimed.has(target),
@@ -329,12 +318,20 @@ describe("COLUMN_NAME_MAPPING vs registry import declarations", () => {
 // ---------------------------------------------------------------------------
 
 describe("KNOWN_OBJECT_KEYS vs OBJECTS_CSV_COLUMNS", () => {
-  it("equals the CSV column set plus the object_type legacy fallback", () => {
-    // `object_type` is not a published column (v1.0.0 renamed it to
-    // medium_genre) but the mapper still reads it as a legacy fallback, so it
-    // must stay a consumed first-class key — otherwise a legacy CSV's
-    // object_type cell would be double-captured into extra_columns.
-    const expected = new Set<string>([...OBJECTS_CSV_COLUMNS, "object_type"]);
+  it("equals the CSV column set plus the iiif_manifest legacy fallback", () => {
+    // Every key the mapper consumes must be here, or its cell is captured into
+    // extra_columns as well as its field and republished as a second column
+    // claiming the same canonical name.
+    //
+    // `object_type` is NOT here: the header mapping renames it (and `medium`,
+    // and the Spanish spellings) onto `medium_genre` before the mapper sees a
+    // row, so no such key survives to be captured.
+    //
+    // `iiif_manifest` IS here without being a published column: the mapper
+    // reads it as the fallback source of `source_url` and only `source_url` is
+    // written back out, matching the framework's prefer-non-empty
+    // `get_source_url`.
+    const expected = new Set<string>([...OBJECTS_CSV_COLUMNS, "iiif_manifest"]);
     expect([...KNOWN_OBJECT_KEYS].sort()).toEqual([...expected].sort());
   });
 });

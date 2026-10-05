@@ -14,11 +14,16 @@
  * pages get a synthetic entry keyed by `_tempId` so the user can still focus
  * them while typing the title.
  *
- * @version v1.2.0-beta
+ * The menu preview (`menuPreviewEntries`) shows the saved entries alone, as
+ * the publish writes them.
+ *
+ * @version v1.5.0-beta
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import { mergeNavItemsWithPages, type NavItem, type PageLike } from "~/lib/nav-merge";
+import { menuPreviewEntries, mergeNavItemsWithPages, type NavItem, type PageLike } from "~/lib/nav-merge";
 
 const builtins: NavItem[] = [
   { type: "builtin", key: "home", label: "Home", visible: true },
@@ -183,5 +188,27 @@ describe("mergeNavItemsWithPages", () => {
     const pages: PageLike[] = [{ slug: "", title: "", _tempId: "uuid-1" }];
     const result = mergeNavItemsWithPages(builtins, pages);
     expect(result[result.length - 1].label).toBe("Untitled");
+  });
+});
+
+describe("menuPreviewEntries", () => {
+  const about: PageLike = { slug: "about", title: "About" };
+
+  it("shows no entry for a page with no saved entry, as the publish writes none", () => {
+    const merged = mergeNavItemsWithPages(builtins, [about]);
+    expect(merged.map((i) => i.key ?? i.slug)).toEqual(["home", "collection", "glossary", "about"]);
+    expect(menuPreviewEntries(builtins, merged, () => false).map((i) => i.key ?? i.slug)).toEqual(["home", "collection", "glossary"]);
+  });
+
+  it("shows a page's saved entry, less an untitled page", () => {
+    const saved: NavItem[] = [...builtins, { type: "page", slug: "about", label: "About", visible: true }];
+    const merged = mergeNavItemsWithPages(saved, [about]);
+    expect(menuPreviewEntries(saved, merged, () => false).map((i) => i.key ?? i.slug)).toEqual(["home", "collection", "glossary", "about"]);
+    expect(menuPreviewEntries(saved, merged, (i) => i.slug === "about").map((i) => i.key ?? i.slug)).toEqual(["home", "collection", "glossary"]);
+  });
+
+  it("is the one the route renders", () => {
+    const route = readFileSync(resolve(__dirname, "../app/routes/_app.pages.tsx"), "utf8");
+    expect(route).toMatch(/const navSimItems = menuPreviewEntries\(baseNavItems, effectiveNavItems, isUntitledPageItem\)/);
   });
 });

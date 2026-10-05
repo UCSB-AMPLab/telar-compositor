@@ -6,18 +6,19 @@
  * First block: source-level assertions that the three former
  * RestrictionBanner call sites (publish, upgrade, dashboard) no longer import
  * or render RestrictionBanner, and that publish/upgrade read role via the
- * typed useIsConvenor() hook rather than the ad-hoc useRouteLoaderData cast.
- * The component file itself is deleted, so a runtime import test is not
- * possible; the conversion is asserted against the route source.
+ * typed useIsPublisher() hook (the shared publishing-role set)
+ * rather than the ad-hoc useRouteLoaderData cast. The component file itself
+ * is deleted, so a runtime import test is not possible; the conversion is
+ * asserted against the route source.
  *
- * Later blocks cover the ask-convenor affordance, the
- * denied-toast, the /objects empty-state hint, and the server-gate integrity
- * assertions proving don't-render never replaced the server boundary.
+ * Later blocks cover the popover's Publish affordance, the denied-toast,
+ * the /objects empty-state hint, and the server-gate integrity assertions
+ * proving don't-render never replaced the server boundary.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
@@ -29,15 +30,28 @@ const publishSrc = readFileSync(join(APP_DIR, "routes", "_app.publish.tsx"), "ut
 const upgradeSrc = readFileSync(join(APP_DIR, "routes", "_app.upgrade.tsx"), "utf-8");
 const dashboardSrc = readFileSync(join(APP_DIR, "routes", "_app.dashboard.tsx"), "utf-8");
 const objectsSrc = readFileSync(join(APP_DIR, "routes", "_app.objects.tsx"), "utf-8");
+const objectDetailSrc = readFileSync(
+  join(APP_DIR, "routes", "_app.objects.$objectId.tsx"),
+  "utf-8",
+);
 
 // --- mocks for the component-level UnpublishedPopover assertions ------------
 
-// Controllable role: tests flip `mockIsConvenor` before rendering.
-let mockIsConvenor = true;
-vi.mock("~/hooks/use-role", () => ({
-  useIsConvenor: () => mockIsConvenor,
-  useRole: () => (mockIsConvenor ? "convenor" : "collaborator"),
-}));
+// Controllable role: tests set `mockRole` before rendering.
+//
+// useIsPublisher delegates to the real isPublishingRole rather than
+// restating the membership set: a mock that restates it answers from its
+// own copy, so the footer would keep rendering against the old set after
+// the real one changed.
+let mockRole: "convenor" | "collaborator" | "instructor" | null = "convenor";
+vi.mock("~/hooks/use-role", async () => {
+  const { isPublishingRole } = await import("~/lib/publishing-roles");
+  return {
+    useIsConvenor: () => mockRole === "convenor",
+    useIsPublisher: () => isPublishingRole(mockRole),
+    useRole: () => mockRole,
+  };
+});
 
 // i18n: identity-ish map covering both the popover keys and the common:role.*
 // affordance key.
@@ -54,9 +68,10 @@ const I18N_MAP: Record<string, string> = {
   "unpublished.added": "added",
   "unpublished.review": "Review all changes",
   "unpublished.publish": "Publish",
-  "common:role.ask_convenor_publish": "Ask convenor to publish",
 };
 vi.mock("react-i18next", () => ({
+  Trans: ({ i18nKey, values }: { i18nKey: string; values?: Record<string, unknown> }) =>
+    `${i18nKey} ${JSON.stringify(values ?? {})}`,
   useTranslation: () => ({
     t: (key: string, opts?: Record<string, unknown>) => {
       let out = I18N_MAP[key] ?? key;
@@ -83,6 +98,7 @@ const summary: ChangeSummary = {
   pages: emptyBucket(),
   glossary: emptyBucket(),
   settings: { changed: [] },
+  objectOrder: { changed: false },
   landing: { changed: false },
   navigation: { changed: false },
   fileChanges: { addedStoryFiles: [], removedStoryFiles: [] },
@@ -109,9 +125,9 @@ describe("RestrictionBanner retirement", () => {
     }
   });
 
-  it("reads role via useIsConvenor() on publish and upgrade (not the ad-hoc cast)", () => {
+  it("reads role via useIsPublisher() on publish and upgrade (not the ad-hoc cast)", () => {
     for (const src of [publishSrc, upgradeSrc]) {
-      expect(src).toContain("useIsConvenor");
+      expect(src).toContain("useIsPublisher");
       expect(src).toContain('from "~/hooks/use-role"');
       // The ad-hoc role cast is gone.
       expect(src).not.toContain('useRouteLoaderData("routes/_app") as { userRole?: string }');
@@ -119,28 +135,43 @@ describe("RestrictionBanner retirement", () => {
   });
 });
 
-// --- ask-convenor affordance -----------------------------
+// --- the popover's Publish affordance -----------------------------
 
 describe("UnpublishedPopover role gating", () => {
   beforeEach(() => {
-    mockIsConvenor = true;
+    mockRole = "convenor";
   });
 
   it("shows the Publish action (navigation to /publish) for a convenor", () => {
-    mockIsConvenor = true;
+    mockRole = "convenor";
     const { container } = renderPopover();
     const publishCta = Array.from(
       container.querySelectorAll('a[href="/publish"]'),
     ).find((a) => a.className.includes("bg-terracotta"));
     expect(publishCta).toBeTruthy();
-    expect(container.textContent).not.toContain("Ask convenor to publish");
   });
 
-  it("shows 'Ask convenor to publish' (no /publish link) for a collaborator", () => {
-    mockIsConvenor = false;
+  it("shows the Publish action for a collaborator too", () => {
+    mockRole = "collaborator";
     const { container } = renderPopover();
-    expect(screen.getByText("Ask convenor to publish")).toBeTruthy();
-    // The collaborator footer exposes no /publish navigation at all.
+    const publishCta = Array.from(
+      container.querySelectorAll('a[href="/publish"]'),
+    ).find((a) => a.className.includes("bg-terracotta"));
+    expect(publishCta).toBeTruthy();
+  });
+
+  it("shows the Publish action for an instructor too", () => {
+    mockRole = "instructor";
+    const { container } = renderPopover();
+    const publishCta = Array.from(
+      container.querySelectorAll('a[href="/publish"]'),
+    ).find((a) => a.className.includes("bg-terracotta"));
+    expect(publishCta).toBeTruthy();
+  });
+
+  it("exposes no /publish navigation to a caller with no membership", () => {
+    mockRole = null;
+    const { container } = renderPopover();
     expect(container.querySelector('a[href="/publish"]')).toBeNull();
   });
 });
@@ -150,6 +181,16 @@ describe("UnpublishedPopover role gating", () => {
 // The objects route's toast effect and empty-state hint are exercised in the
 // browser; here we pin the wiring at the source level (the route is a large
 // SSR module with heavy DB/Yjs deps that make full render impractical).
+
+describe("the refusal copy names no role an instructor-gate no longer refuses", () => {
+  const common = JSON.parse(
+    readFileSync(join(APP_DIR, "i18n", "locales", "en", "common.json"), "utf-8"),
+  ) as { role: Record<string, string> };
+
+  it.each(["denied_publish", "denied_upgrade"])("%s does not say an instructor cannot", (key) => {
+    expect(common.role[key]).not.toMatch(/instructor/i);
+  });
+});
 
 describe("/objects denied-toast + empty-state hint", () => {
   it("reads the ?denied= param and fires a one-time info toast", () => {
@@ -162,8 +203,10 @@ describe("/objects denied-toast + empty-state hint", () => {
   });
 
   it("renders the empty-state hint with a link to /config", () => {
-    expect(objectsSrc).toContain('objects.empty_body');
-    expect(objectsSrc).toContain('to="/config"');
+    const emptyStateSrc = readFileSync(join(APP_DIR, "components", "features", "objects", "ObjectsEmptyState.tsx"), "utf-8");
+    expect(objectsSrc).toContain("<ObjectsEmptyState");
+    expect(emptyStateSrc).toContain('objects.empty_body');
+    expect(emptyStateSrc).toContain('to="/config"');
   });
 });
 
@@ -182,20 +225,36 @@ const appSrc = readFileSync(join(APP_DIR, "routes", "_app.tsx"), "utf-8");
 describe("server gates remain intact (security)", () => {
   it("keeps every requireOwner guard on the gated /dashboard intents", () => {
     const guards = dashboardSrc.match(/requireOwner\(db, activeProject\.id, user\.id\)/g) ?? [];
-    // The 9 per-intent guards (generate-invite, send-invite, cancel-invite,
-    // remove-member, compute-full-sync-diff, apply-full-sync,
+    // The 8 per-intent guards on the session's site (generate-invite,
+    // send-invite, remove-member, compute-full-sync-diff, apply-full-sync,
     // accept-divergence, restore-orphan-drafts, ignore-orphans) are all
     // present. autosave-config and reorder are retired (v1.4.0-beta) and
     // never contributed to this count — they were requireProjectMember
     // guards, not requireOwner.
-    expect(guards.length).toBe(9);
-    expect(dashboardSrc).toContain(
-      'import { getUserProjects, requireOwner } from "~/lib/membership.server"',
+    expect(guards.length).toBe(8);
+    // cancel-invite is gated on the invite row's own site.
+    expect(dashboardSrc).toContain("await requireOwner(db, invite.project_id, userId);");
+    // The gate helpers come from membership.server and nowhere else. The
+    // course-aware code gate sits alongside requireOwner rather than
+    // replacing it: the nine intents above are single-project operations
+    // that stay convenor-only.
+    expect(dashboardSrc).toMatch(
+      /import \{[^}]*\brequireOwner\b[^}]*\} from "~\/lib\/membership\.server"/s,
     );
   });
 
-  it("keeps the _app.objects server gate (userRole !== convenor)", () => {
-    expect(objectsSrc).toContain('resolvedDel.userRole !== "convenor"');
+  it("keeps the convenor gate on the repository delete", () => {
+    // The delete lives on the object's own detail route, so the gate is
+    // asserted where the operation is: `fromRepo` is the repository cleanup
+    // and admits the convenor alone, while the compositor-only half also
+    // admits the object's creator.
+    expect(objectDetailSrc).toContain('const isConvenor = resolved.userRole === "convenor";');
+    expect(objectDetailSrc).toContain(
+      "if (fromRepo ? !isConvenor : !(isConvenor || createdByCaller))",
+    );
+    // The list route handles no delete-object intent, so there is no second
+    // gate to keep in step with this one.
+    expect(objectsSrc).not.toContain('case "delete-object"');
   });
 
   it("keeps the use-structural-ops canDelete role gate (convenor or owner)", () => {

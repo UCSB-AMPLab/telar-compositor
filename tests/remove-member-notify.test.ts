@@ -8,7 +8,7 @@
  * Pattern mirrors tests/stories.action.test.ts (flush-yjs-snapshot intent)
  * and tests/dashboard-autosave-config.test.ts (db chain mocking style).
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -31,7 +31,9 @@ function makeDbMock() {
   return {
     select: vi.fn(() => selectChain),
     delete: vi.fn(() => deleteChain),
+    insert: vi.fn(() => ({ select: vi.fn(() => ({})) })),
     update: vi.fn(),
+    batch: vi.fn(async () => [[], []]),
   };
 }
 
@@ -95,6 +97,9 @@ function buildRequest(targetUserId: number): Request {
   const form = new URLSearchParams();
   form.set("intent", "remove-member");
   form.set("userId", String(targetUserId));
+  // siteId matches the mocked resolveActiveProject's project id (99), which
+  // resolvePageProject's page-site gate compares it against.
+  form.set("siteId", "99");
   return new Request("https://compositor.telar.org/dashboard", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

@@ -1,0 +1,29 @@
+-- When a project's authorship was recovered from its Yjs document.
+--
+-- The recovery reads what the CRDT kept and the D1 snapshot discarded, and it
+-- runs once per project rather than per page view: from the moment it ships, the
+-- Durable Object records contributors as edits arrive, and this fills in only
+-- what happened before that.
+--
+-- The column exists so the backfill is RESUMABLE and OBSERVABLE. There are
+-- hundreds of projects, each needing its Durable Object woken and its document
+-- walked, which is more than one request should attempt. The sweep takes the
+-- next batch of projects where this is null, so an interrupted run continues
+-- where it stopped instead of starting again, and an operator can see how much
+-- is left rather than inferring it.
+--
+-- Written inside the same D1 batch as the recovery's own writes, so a project is
+-- marked done only if the writes landed. A run that fails half way leaves the
+-- project unmarked and the next sweep picks it up — and re-running is harmless
+-- anyway, since the created_by UPDATE only fills nulls and the contributor rows
+-- are UPSERTs.
+--
+-- It also records something that cannot be recovered twice. Resetting a project
+-- rebuilds its document from the D1 rows, which constructs fresh Yjs objects
+-- owned by the server and destroys the per-session authorship this reads. A
+-- project reset before its recovery has run has lost that history permanently,
+-- and this column is how anyone can tell afterwards which projects those were.
+--
+-- Backwards-compatible: a nullable column is invisible to code that does not
+-- select it, so a rollback to the previous worker keeps working.
+ALTER TABLE projects ADD COLUMN authorship_recovered_at text;

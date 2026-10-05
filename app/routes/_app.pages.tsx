@@ -15,7 +15,7 @@
  * once the user edits it. That lets the user create a new page
  * without immediately committing to a URL.
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import { asc, eq, and } from "drizzle-orm";
@@ -24,7 +24,16 @@ import { redirect, useFetcher, useOutletContext } from "react-router";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import * as Y from "yjs";
 import { decrypt } from "~/lib/crypto.server";
+import { resolveProjectToken } from "~/lib/github-app.server";
+import { isTransientGitHubFailure } from "~/lib/github.server";
+import { SheetUnreadableError } from "~/lib/unreadable-file.server";
 import { scanRepoPages } from "~/lib/import.server";
+import { pagesImportCommit, recordPagesImport, reducedPagesScan } from "~/lib/page-files-record.server";
+import type { SheetWarning } from "~/lib/sheet-warnings";
+import { capturePagesOnLoad } from "~/lib/page-capture.server";
+import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
+import type { IngestPageInsert } from "../../workers/collaboration";
+import { partitionOnIdentityDomain } from "../../workers/can-delete";
 import { DndContext, closestCenter } from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
 import {
@@ -37,7 +46,10 @@ import type { Route } from "./+types/_app.pages";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { project_pages, project_members, users } from "~/db/schema";
-import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
+import { resolveActiveProjectFromRequest, resolvePageProject, siteChangedAnswer } from "~/lib/active-project.server";
+import { requireProjectMember } from "~/lib/membership.server";
+import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
+import { useSiteFetcher } from "~/lib/page-site";
 import { normaliseSlug, makeUniqueSlug, isTemporaryPageSlug } from "~/lib/slug";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
@@ -49,14 +61,20 @@ import { DocsLink } from "~/components/ui/DocsLink";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
+import { compareByOrderKey, readOrderKey } from "~/lib/field-order";
 import { useToast } from "~/hooks/use-toast";
 import { keyFor } from "~/lib/item-key";
 import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
-import { mergeNavItemsWithPages } from "~/lib/nav-merge";
+import { menuPreviewEntries, mergeNavItemsWithPages } from "~/lib/nav-merge";
+import { removeNavEntries } from "~/lib/pages-screen";
+import { buildSidebarRows } from "~/lib/pages-sidebar-rows";
+import { navReconcileSignature, reconcileNavPageSlugs } from "~/lib/nav-reconcile";
 import { findYMapByIdOrTempId, getYText, reorderNavArray, sanitizeNavArray } from "~/lib/yjs-helpers";
 import { HomepageEditor } from "~/components/features/pages/HomepageEditor";
 import { PagesSidebar, HOME_ROW_KEY, type PagesSidebarRow } from "~/components/features/pages/PagesSidebar";
 import { loadHomepageEditorData } from "~/lib/homepage-editor-data.server";
+import { answerReadsWhenUnreachable, isUnreachableAnswer } from "~/lib/unreachable-write";
+import { useRetryWhileUnreachable } from "~/lib/use-retry-unreachable";
 
 export const handle = { i18n: ["common", "pages", "editor", "structural"] };
 
@@ -77,11 +95,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   }
   const { project: activeProject, userRole } = resolved;
 
-  const pages = await db
-    .select()
-    .from(project_pages)
-    .where(eq(project_pages.project_id, activeProject.id))
-    .orderBy(asc(project_pages.order));
+  const pages = await capturePagesOnLoad(
+    env,
+    user,
+    activeProject,
+    userRole,
+    await db
+      .select()
+      .from(project_pages)
+      .where(eq(project_pages.project_id, activeProject.id))
+      .orderBy(asc(project_pages.order)),
+  );
 
   const memberRows = await db
     .select({
@@ -117,6 +141,28 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 // Action
 // ---------------------------------------------------------------------------
 
+/**
+ * Saves a page's body on the page row's own site, which is the one the page
+ * showed it on, for a member of that site, whichever site the session names.
+ */
+async function autosavePageBody(db: ReturnType<typeof getDb>, userId: number, formData: FormData) {
+  const pageId = Number(formData.get("projectId"));
+  const value = formData.get("value") as string;
+  if (!pageId || value === null) throw new Response("Bad request", { status: 400 });
+  const [page] = await db
+    .select({ project_id: project_pages.project_id })
+    .from(project_pages)
+    .where(eq(project_pages.id, pageId))
+    .limit(1);
+  if (!page) throw new Response("Not found", { status: 404 });
+  await requireProjectMember(db, page.project_id, userId);
+  await db
+    .update(project_pages)
+    .set({ body: value, updated_at: new Date().toISOString() })
+    .where(eq(project_pages.id, pageId));
+  return { ok: true, intent: "autosave-page-body" };
+}
+
 export async function action({ request, context }: Route.ActionArgs) {
   const user = context.get(userContext);
   if (!user) throw new Response("Unauthorized", { status: 401 });
@@ -126,34 +172,22 @@ export async function action({ request, context }: Route.ActionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
-  const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
-  if (!resolved) {
+  // Handled before the page-site check: it acts on the page row's own site.
+  if (intent === "autosave-page-body") return autosavePageBody(db, user.id, formData);
+
+  // Every other intent acts on the session's site, and only when the page
+  // that posted it showed that site.
+  const resolved = await resolvePageProject(request, env, user.id, formData);
+  if (resolved.kind === "site_changed") {
+    return siteChangedAnswer(intent, resolved.currentSiteName);
+  }
+  if (resolved.kind === "no_project") {
     throw new Response("Not found", { status: 404 });
   }
-  const { project: activeProject } = resolved;
+  const { project: activeProject, userRole } = resolved;
   const activeProjectId = activeProject.id;
 
   switch (intent) {
-    case "autosave-page-body": {
-      const pageId = Number(formData.get("projectId"));
-      const value = formData.get("value") as string;
-      if (!pageId || value === null) throw new Response("Bad request", { status: 400 });
-
-      const bodyPageRows = await db
-        .select({ id: project_pages.id })
-        .from(project_pages)
-        .where(and(eq(project_pages.id, pageId), eq(project_pages.project_id, activeProjectId)))
-        .limit(1);
-
-      if (bodyPageRows.length === 0) throw new Response("Not found", { status: 404 });
-
-      await db
-        .update(project_pages)
-        .set({ body: value, updated_at: new Date().toISOString() })
-        .where(eq(project_pages.id, pageId));
-
-      return { ok: true, intent: "autosave-page-body" };
-    }
 
     // ---- Surface existing repo pages on the empty-state ----
     case "scan-repo-pages": {
@@ -173,25 +207,54 @@ export async function action({ request, context }: Route.ActionArgs) {
       try {
         // decrypt is inside the guard too — a corrupted token would otherwise
         // throw past the fail-open design straight into the 500 this comment
-        // warns about.
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        // warns about. resolveProjectToken hands the installation token only
+        // to a publishing role, falling back to the convenor's own on a mint
+        // failure — this intent carries no role gate of its own, so a
+        // non-member reads no more than their own GitHub account already can.
+        const userToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const [owner, repo] = activeProject.github_repo_full_name.split("/");
-        const pages = await scanRepoPages(token, owner, repo);
-        return { ok: true, intent: "scan-repo-pages", pages };
+        const token = await resolveProjectToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          activeProject.installation_id,
+          userToken,
+          userRole,
+        );
+        // A page whose bytes are not valid UTF-8 is named here, before the
+        // import stores it.
+        const warnings: SheetWarning[] = [];
+        // The commit the import reads, so the list is what it will bring in.
+        const scanCommit = await pagesImportCommit({ token, owner, repo }, activeProject.head_sha);
+        const scanned = await scanRepoPages(token, owner, repo, scanCommit, { warnings, repair: "import_then_publish" });
+        const { pages } = await reducedPagesScan(env.DB, activeProjectId, scanned);
+        return { ok: true, intent: "scan-repo-pages", pages, warnings };
       } catch (err) {
         console.error("scan-repo-pages failed; degrading to empty state:", err);
-        return { ok: true, intent: "scan-repo-pages", pages: [] };
+        return scanFailureAnswer(err);
       }
     }
 
     case "import-pages": {
-      // Insert one or more discovered pages into D1 for the active project.
-      // Slugs may be filtered via repeated `slugs` form fields; omitting them
-      // imports every page returned by scanRepoPages. Slugs that already exist
-      // in D1 are skipped (no overwrite — drift handling is out of scope per
-      // and reported in `already_present` so the UI can surface
-      // them. The client effect mirrors the returned `pages` into the active
-      // Yjs document so the editor hydrates immediately.
+      // Bring one or more repo pages into the active project THROUGH the
+      // collaboration DO's /ingest-sync endpoint. Slugs may be filtered via
+      // repeated `slugs` form fields; omitting them imports every page
+      // returned by scanRepoPages. A slug the project already holds is skipped
+      // (no overwrite) and named in `already_present` so the UI can surface it.
+      //
+      // This action writes NO project_pages row itself, and must not be given
+      // one back. `project_pages(project_id, slug)` is UNIQUE, and the
+      // snapshot's slug re-key seeds its minted key from a read taken many
+      // statements before the batch that carries the resulting UPDATE. A row
+      // inserted here inside that window takes the minted slug, the UPDATE
+      // aborts, and D1 discards the whole batch — while the re-keyed document
+      // survives in the blob write that precedes it, so every retry re-issues
+      // the same colliding UPDATE and the project's snapshot never recovers.
+      // Routing through the DO removes the second writer: the page lands in the
+      // Y.Doc inside blockConcurrencyWhile, the snapshot in that same gate
+      // writes the row, and the mint's taken-key set already covers it.
+      //
+      // The DO broadcasts the new document state to connected editors, so the
+      // page appears in the tab without a client-side mirror step.
       const requestedSlugs = formData.getAll("slugs").map((s) => String(s));
       // Same fail-open guard as scan-repo-pages: getRepoTree throws on a
       // non-2xx (e.g. an empty repo's tree 404s), and decrypt throws on a
@@ -200,10 +263,27 @@ export async function action({ request, context }: Route.ActionArgs) {
       // uncaught one still white-screens the tab. Return a structured failure
       // so the client can clear its spinners and toast.
       let allPages: Awaited<ReturnType<typeof scanRepoPages>>;
+      // The files the reduction to one file per page removed, recorded with no
+      // page, and the page each served one is served at.
+      let removedFiles: string[];
+      let servedAt: Record<string, string>;
+      // The commit scanned: the recorded head when there is one, so the pages
+      // brought in are those of the commit the Compositor has read (R10).
+      let scanCommit: string;
       try {
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        const userToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const [owner, repo] = activeProject.github_repo_full_name.split("/");
-        allPages = await scanRepoPages(token, owner, repo);
+        const token = await resolveProjectToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          activeProject.installation_id,
+          userToken,
+          userRole,
+        );
+        scanCommit = await pagesImportCommit({ token, owner, repo }, activeProject.head_sha);
+        ({ pages: allPages, removed: removedFiles, servedAt } = await reducedPagesScan(
+          env.DB, activeProjectId, await scanRepoPages(token, owner, repo, scanCommit),
+        ));
       } catch (err) {
         console.error("import-pages scan failed:", err);
         return {
@@ -218,47 +298,174 @@ export async function action({ request, context }: Route.ActionArgs) {
         ? allPages.filter((p) => requestedSlugs.includes(p.slug))
         : allPages;
 
-      // Skip slugs that are already in D1 — never overwrite existing pages.
-      const existingPages = await db
-        .select({ slug: project_pages.slug })
-        .from(project_pages)
-        .where(eq(project_pages.project_id, activeProjectId));
-      const existingSlugs = new Set(existingPages.map((p) => p.slug));
-
-      const toInsert = candidatePages.filter((p) => !existingSlugs.has(p.slug));
-      const alreadyPresent = candidatePages
-        .filter((p) => existingSlugs.has(p.slug))
-        .map((p) => p.slug);
-
-      const now = new Date().toISOString();
-      // Capture each inserted row's real D1 id so the client mirrors the Y.Map
-      // with that `_id` (not null). A null `_id` would make the next snapshot
-      // INSERT a second row with the same slug → UNIQUE(project_id, slug) clash.
-      const insertedIdBySlug: Record<string, number> = {};
-      for (const page of toInsert) {
-        const [row] = await db
-          .insert(project_pages)
-          .values({
-            project_id: activeProjectId,
-            title: page.title,
-            slug: page.slug,
-            body: page.body,
-            order: page.order,
-            created_by: user.id,
-            created_at: now,
-            updated_at: now,
-          })
-          .returning({ id: project_pages.id });
-        if (row) insertedIdBySlug[page.slug] = row.id;
+      // Nothing to import: answer without waking the DO. An empty ingest would
+      // still cost a snapshot on a project that has no reason to take one.
+      if (candidatePages.length === 0) {
+        return {
+          ok: true,
+          intent: "import-pages",
+          imported: 0,
+          pages: [],
+          already_present: [],
+        };
       }
 
+      // `order` is deliberately not sent: a page's place is its order_key, which
+      // the DO mints at the end of the pages array, and the "order" column is
+      // the dense rank the snapshot derives from that. Sending the repo's
+      // integer would set a column the next snapshot overwrites.
+      //
+      // A slug is an identity value: the snapshot's dedupe and re-key read it
+      // by rendering whatever stands at the key, so a value that is not a
+      // non-empty string either claims a colleague's page or lands unkeyed.
+      // The repo scan should never produce one, which is why this is defence
+      // in depth rather than the fix — the DO refuses it too, and that
+      // boundary covers every producer.
+      const vetted = partitionOnIdentityDomain(candidatePages, "pages", (p) => p.slug);
+      if (vetted.refused.length > 0) {
+        // By position, never by value: rendering an untrusted value to name it
+        // is the operation that makes one into a colleague's key.
+        console.error(
+          `import-pages: refused ${vetted.refused.length} scanned page(s) for project ` +
+            `${activeProjectId} at position(s) ${vetted.refused.join(", ")} — slug out of domain`,
+        );
+      }
+
+      // Nothing legal to import, so the DO is not woken — the same reason the
+      // empty-candidate answer above skips it. The answer is still a failure:
+      // the author asked for pages and got none.
+      if (vetted.accepted.length === 0) {
+        return {
+          ok: false,
+          intent: "import-pages",
+          imported: 0,
+          pages: [],
+          already_present: [],
+        };
+      }
+
+      const inserts: IngestPageInsert[] = vetted.accepted.map((p) => ({
+        slug: p.slug,
+        title: p.title,
+        body: p.body,
+        frontmatter: p.frontmatter,
+        created_by: user.id,
+      }));
+
+      const headers = await makeInternalMarkerHeaders(
+        activeProjectId,
+        env.SESSION_SECRET,
+        "ingest-sync",
+      );
+      const stub = env.COLLABORATION.get(
+        env.COLLABORATION.idFromName(String(activeProjectId)),
+      );
+
+      // The fetch (and the JSON parse below) sit inside this guard because a
+      // DO rejection is not the same event as a non-2xx response: an
+      // exception escaping a blockConcurrencyWhile callback gets the
+      // instance terminated by Cloudflare, and the in-flight fetch rejects
+      // rather than answering. Left unguarded, that rejection would escape
+      // this action past the structured failure below, and React Router's
+      // root error boundary would replace the whole Pages tab, stranding the
+      // client's import spinners and disabled buttons. The ingest is
+      // idempotent by slug either way, so a rejection and a bad response are
+      // both told to the user as the same retryable failure — the client
+      // does not currently act differently on the reason, only on ok.
+      let ingestBody: {
+        insertedPages?: Record<string, number>;
+        applied?: { pageInsert?: number };
+        skipped?: { pageInsert?: string[] };
+        failed?: { pageInsert?: string[] };
+        refused?: { pageInsert?: number[] };
+      };
+      try {
+        const ingestRes = await stub.fetch(
+          new Request("https://internal/ingest-sync", {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ pages: { insert: inserts } }),
+          }),
+        );
+        if (!ingestRes.ok) {
+          // The ingest is idempotent by slug, so the honest answer is a failure
+          // the user can retry — not a success that wrote nothing.
+          console.error(
+            `import-pages ingest failed for project ${activeProjectId}: DO returned ${ingestRes.status}`,
+          );
+          return {
+            ok: false,
+            intent: "import-pages",
+            imported: 0,
+            pages: [],
+            already_present: [],
+          };
+        }
+
+        // Presence is the DO's answer, not a pre-read of D1: the document is what
+        // the snapshot writes from, and asking D1 here would be the read-then-write
+        // gap this route was moved off.
+        ingestBody = (await ingestRes.json()) as {
+          insertedPages?: Record<string, number>;
+          applied?: { pageInsert?: number };
+          skipped?: { pageInsert?: string[] };
+          failed?: { pageInsert?: string[] };
+          refused?: { pageInsert?: number[] };
+        };
+      } catch (err) {
+        console.error(
+          `import-pages ingest unreachable for project ${activeProjectId}:`,
+          err,
+        );
+        return {
+          ok: false,
+          intent: "import-pages",
+          imported: 0,
+          pages: [],
+          already_present: [],
+        };
+      }
+      const alreadyPresent = ingestBody.skipped?.pageInsert ?? [];
+      // A refused INSERT is its own outcome: the endpoint reports it separately
+      // because a row D1 does not hold is neither imported nor already present,
+      // and listing it here would tell the author their page arrived.
+      const notWritten = new Set([
+        ...alreadyPresent,
+        ...(ingestBody.failed?.pageInsert ?? []),
+      ]);
+      // Slugs the DO's own boundary refused, by position in the arm sent from
+      // here. Each had already passed the identical rule above, so a non-empty
+      // list means the two disagree and is worth its own log.
+      const outOfDomainAt = ingestBody.refused?.pageInsert ?? [];
+      if (outOfDomainAt.length > 0) {
+        console.error(
+          `import-pages: the DO refused ${outOfDomainAt.length} page(s) for project ` +
+            `${activeProjectId} at position(s) ${outOfDomainAt.join(", ")} — slug out of ` +
+            `domain after this action accepted it`,
+        );
+      }
+      for (const position of outOfDomainAt) {
+        const slug = inserts[position]?.slug;
+        if (slug !== undefined) notWritten.add(slug);
+      }
+      // Only the vetted pages could have been imported; a refused one is
+      // reported through neither list, because its slug is the value the
+      // domain rule rejected and naming it is the rendering being prevented.
+      const imported = vetted.accepted.filter((p) => !notWritten.has(p.slug));
+      // Each page inserted maps its file to the id the ingest answered for it.
+      // A removed file the site serves is recorded only when the page it is
+      // served at is in D1 now, inserted here or already held: otherwise the
+      // next publish would delete the text that page is shown with.
+      const held = new Set([...Object.keys(ingestBody.insertedPages ?? {}), ...alreadyPresent]);
+      const removedRecorded = removedFiles.filter((name) => !(name in servedAt) || held.has(servedAt[name]));
+      await recordPagesImport(env.DB, activeProjectId, scanCommit, ingestBody.insertedPages, removedRecorded);
+
       return {
-        ok: true,
+        ok: vetted.refused.length === 0 && outOfDomainAt.length === 0,
         intent: "import-pages",
-        imported: toInsert.length,
-        pages: toInsert,
+        imported: ingestBody.applied?.pageInsert ?? imported.length,
+        pages: imported,
         already_present: alreadyPresent,
-        insertedIdBySlug,
       };
     }
 
@@ -280,6 +487,8 @@ interface PageItem {
   _tempId?: string | null;
   _createdBy?: number | null;
   _yIndex?: number;
+  /** Fractional index the list sorts by; null on a doc awaiting the backfill. */
+  _orderKey?: string | null;
   _yMap?: Y.Map<unknown> | null;
 }
 
@@ -314,9 +523,10 @@ function yMapToPageItem(yMap: Y.Map<unknown>, yIndex: number): PageItem {
   const id = (yMap.get("_id") as number | null) ?? 0;
   const tempId = (yMap.get("_temp_id") as string | null) ?? null;
   const createdBy = (yMap.get("created_by") as number | null) ?? null;
-  const order = typeof yMap.get("order") === "number"
-    ? (yMap.get("order") as number)
-    : yIndex;
+  // The rank, not the ordering: the document carries order_key alone, and the
+  // dense `order` D1 column is derived from it at snapshot time. Filled in
+  // below from the sorted position, so nothing here has to guess.
+  const order = yIndex;
 
   return {
     id,
@@ -327,6 +537,7 @@ function yMapToPageItem(yMap: Y.Map<unknown>, yIndex: number): PageItem {
     _tempId: tempId,
     _createdBy: createdBy,
     _yIndex: yIndex,
+    _orderKey: readOrderKey(yMap),
     _yMap: yMap,
   };
 }
@@ -347,6 +558,65 @@ function computeContributors(
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
+
+/**
+ * A `scan-repo-pages` that fails in transit is answered unreachable, as the
+ * server's own answer to a scan GitHub did not complete is
+ * (`answerReadsWhenUnreachable`). Every other intent reaches the server action
+ * unchanged.
+ */
+export async function clientAction({ request, serverAction }: Route.ClientActionArgs) {
+  return answerReadsWhenUnreachable(request, serverAction, ["scan-repo-pages"]);
+}
+
+/**
+ * The answer to a scan that threw. GitHub or the network failing to answer is
+ * not an empty repository: it is answered unreachable, and the page says the
+ * check could not be made and asks again (`useRetryWhileUnreachable`), where an
+ * empty list would stand for the visit. A page file that cannot be read is the
+ * same: the scan would otherwise offer less than the repository holds. Every
+ * other failure (an empty repository, a refused credential) degrades to the
+ * plain empty state.
+ */
+function scanFailureAnswer(err: unknown) {
+  if (isTransientGitHubFailure(err) || err instanceof SheetUnreadableError) {
+    return { ok: false as const, reason: "unreachable" as const, intent: "scan-repo-pages" as const, pages: [], warnings: [] };
+  }
+  return { ok: true as const, intent: "scan-repo-pages" as const, pages: [], warnings: [] };
+}
+
+/** The Pages tab scan's answer. */
+type ScanAnswer<P> = {
+  ok: boolean;
+  intent: "scan-repo-pages";
+  pages: P[];
+  /** The pages found whose bytes are not valid UTF-8, named before any import. */
+  warnings?: SheetWarning[];
+};
+
+/** The pages a scan found and what it warned of, or none before an answer. */
+function scanned<P>(data: ScanAnswer<P> | undefined): { pages: P[]; warnings: SheetWarning[] } {
+  if (!data?.ok || data.intent !== "scan-repo-pages") return { pages: [], warnings: [] };
+  return { pages: data.pages, warnings: data.warnings ?? [] };
+}
+
+/** Whether the scan for importable pages failed where an empty list would otherwise stand. */
+function scanCouldNotBeMade(pageCount: number, data: unknown): boolean {
+  return pageCount === 0 && isUnreachableAnswer(data);
+}
+
+function ScanNotMadeNote({ failed, onRetry }: { failed: boolean; onRetry: () => void }) {
+  const { t } = useTranslation("pages");
+  if (!failed) return null;
+  return (
+    <div role="note" className="flex items-center gap-3 font-body text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+      <span>{t("scan_not_made")}</span>
+      <button type="button" onClick={onRetry} className="font-semibold underline hover:text-amber-900">
+        {t("scan_retry")}
+      </button>
+    </div>
+  );
+}
 
 export default function PagesPage({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation("pages");
@@ -376,18 +646,13 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // re-import the whole site.
   // ------------------------------------------------------------------
   type ScannedPage = { slug: string; title: string; body: string; order: number };
-  const repoScanFetcher = useFetcher<{
-    ok: boolean;
-    intent: "scan-repo-pages";
-    pages: ScannedPage[];
-  }>();
-  const importFetcher = useFetcher<{
+  const repoScanFetcher = useSiteFetcher<ScanAnswer<ScannedPage>>();
+  const importFetcher = useSiteFetcher<{
     ok: boolean;
     intent: "import-pages";
     imported: number;
     pages: ScannedPage[];
     already_present: string[];
-    insertedIdBySlug?: Record<string, number>;
   }>();
   const [importingSlugs, setImportingSlugs] = useState<Set<string>>(new Set());
   const repoScanRequestedRef = useRef(false);
@@ -395,9 +660,23 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // ------------------------------------------------------------------
   // Source of truth: Yjs when available, loader data otherwise
   // ------------------------------------------------------------------
-  const yjsPages = useYjsArraySync(
+  const yjsPagesUnsorted = useYjsArraySync(
     ydoc ? ydoc.getArray<Y.Map<unknown>>("pages") : null,
     yMapToPageItem,
+  );
+
+  // A page's place is its order_key, not its Y.Array position. `order` is then
+  // the rank in that order — the same number the snapshot writes to D1 — so the
+  // two never disagree about what "third page" means. The `_yIndex` tie-break
+  // keeps the sort total for a document the backfill has not reached yet.
+  const yjsPages = useMemo(
+    () =>
+      yjsPagesUnsorted === null
+        ? null
+        : [...yjsPagesUnsorted]
+            .sort(compareByOrderKey)
+            .map((p, i) => ({ ...p, order: i })),
+    [yjsPagesUnsorted],
   );
 
   const useYjs = ydoc !== null && ops !== null && yjsPages !== null;
@@ -418,56 +697,36 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayPages.length]);
 
+  // A scan that failed in transit is asked again while the list is empty, so
+  // the import banner appears once the connection returns.
+  useRetryWhileUnreachable(
+    repoScanFetcher.data,
+    () => repoScanFetcher.submit({ intent: "scan-repo-pages" }, { method: "post" }),
+    displayPages.length === 0,
+  );
+
   // ------------------------------------------------------------------
-  // When the import action returns, mirror the imported page
-  // records into the active Yjs document. The page rows already landed in
-  // D1 via the action; mirroring into Yjs hydrates the editor immediately
-  // so the user does not need to reload. Mirrors the addPage shape from
-  // use-structural-ops.ts:309-331.
+  // Clear the per-row spinners once the import action answers.
+  //
+  // There is no mirror-into-Yjs step here: the action posts the pages to the
+  // collaboration DO, which appends them to the shared document and broadcasts
+  // the new state, so the tab hydrates over the socket like any other edit.
+  // Writing them locally as well would push a second Y.Map for each slug and
+  // hand the snapshot's dedupe pass a collision to resolve.
   // ------------------------------------------------------------------
   useEffect(() => {
     if (importFetcher.state !== "idle") return;
     const data = importFetcher.data;
     if (!data || data.intent !== "import-pages") return;
-    if (!data.ok) {
-      // The action's repo scan failed (e.g. the repo tree 404'd). Clear the
-      // per-row spinners so the import banner is retryable rather than stuck,
-      // and surface a generic error toast.
-      setImportingSlugs(new Set());
-      showToast({ message: tCommon("error"), type: "destructive" });
-      return;
-    }
-    if (!ydoc || data.pages.length === 0) return;
-    const pagesArray = ydoc.getArray<Y.Map<unknown>>("pages");
-    // Skip pages already in Yjs (defensive: D1 already gates duplicates;
-    // this guards against a race where Yjs received the same slug between
-    // the import POST landing and the response arriving here).
-    const existingSlugs = new Set<string>();
-    for (let i = 0; i < pagesArray.length; i++) {
-      const s = pagesArray.get(i).get("slug") as string;
-      if (s) existingSlugs.add(s);
-    }
-    ydoc.transact(() => {
-      for (const page of data.pages) {
-        if (existingSlugs.has(page.slug)) continue;
-        const pageMap = new Y.Map<unknown>();
-        // Mirror with the real D1 id so the snapshot UPDATEs this row instead of
-        // INSERTing a duplicate slug (which would clash on UNIQUE(project_id, slug)).
-        pageMap.set("_id", data.insertedIdBySlug?.[page.slug] ?? null);
-        pageMap.set("_temp_id", crypto.randomUUID());
-        pageMap.set("created_by", currentUserId);
-        const titleY = new Y.Text();
-        titleY.insert(0, page.title);
-        pageMap.set("title", titleY);
-        pageMap.set("slug", page.slug);
-        const bodyY = new Y.Text();
-        bodyY.insert(0, page.body);
-        pageMap.set("body", bodyY);
-        pageMap.set("order", pagesArray.length);
-        pagesArray.push([pageMap]);
-      }
-    });
     setImportingSlugs(new Set());
+    // The layout's notice speaks for an import refused because the site
+    // changed.
+    if (!data.ok && !isSiteChanged(data)) {
+      // The repo scan or the ingest failed. Clear the spinners so the import
+      // banner is retryable rather than stuck, and surface a generic error
+      // toast — the import is idempotent by slug, so a retry is safe.
+      showToast({ message: tCommon("error"), type: "destructive" });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importFetcher.state, importFetcher.data]);
 
@@ -519,6 +778,38 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     config.observeDeep(recomputeNav);
     return () => config.unobserveDeep(recomputeNav);
   }, [ydoc]);
+
+  // ------------------------------------------------------------------
+  // Follow a Durable Object re-key through the nav array.
+  //
+  // A nav entry addresses its page by slug alone. When two members rename
+  // their pages onto one free slug, the DO keeps both pages by re-keying the
+  // loser (`deduplicateYArray`), which moves a slug the menu still holds the
+  // old value of: the keeper gets two entries, the re-keyed page none. The
+  // published menu comes from `config.navigation` via `navigation_json`, so
+  // the stale copy is what ships — and this route is the only place holding
+  // both the page list and the nav array, which is what the repair needs.
+  // ------------------------------------------------------------------
+  // The dependency is the repair's own signature, not a field list written out
+  // here: a hand-kept copy of what the function reads drifts from it, and the
+  // drift is invisible — the repair simply does not run on the change it
+  // missed, and a re-keyed page stays unlinked until something else re-runs it.
+  const navReconcileDep = useMemo(
+    () => navReconcileSignature(displayPages, navItems),
+    [displayPages, navItems],
+  );
+
+  useEffect(() => {
+    if (!ydoc || !useYjs) return;
+    const navArray = ydoc.getMap("config").get("navigation");
+    if (!(navArray instanceof Y.Array)) return;
+    reconcileNavPageSlugs(
+      navArray,
+      displayPages.map((p) => ({ slug: p.slug, title: p.title })),
+      { mutate: true, ydoc },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ydoc, useYjs, navReconcileDep]);
 
   // Site title from Yjs config
   const [siteTitle, setSiteTitle] = useState("");
@@ -796,6 +1087,9 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // had any entries, leaving new pages reachable from `pagesArray` but with no
   // tab to click.
   const baseNavItems = navItems.length > 0 ? navItems : defaultNavItems;
+  // The sidebar lists every page that can be selected. The publish writes
+  // saved entries only, so the menu preview leaves the added ones out
+  // (`menuPreviewEntries`).
   const effectiveNavItems = mergeNavItemsWithPages(baseNavItems, displayPages, {
     untitledLabel: t("untitled"),
   });
@@ -843,55 +1137,22 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     if (!page) return !item.slug;
     return !(page.title ?? "").trim();
   };
-  const navSimItems = effectiveNavItems.filter((item) => !isUntitledPageItem(item));
+  const navSimItems = menuPreviewEntries(baseNavItems, effectiveNavItems, isUntitledPageItem);
   const navSimSortableIds = navSimItems.map((item, i) => navSortableId(item, i));
 
-  // sidebarIdToFullIdx: each titled content page's sidebar sortable id →
-  // its index in the FULL effectiveNavItems array (== its index in the live
-  // navArray for persisted entries). Untitled pages get NO entry here, so a
-  // drag involving them resolves to null and is bailed.
-  const sidebarIdToFullIdx = new Map<string, number>();
-  const contentRows: PagesSidebarRow[] = [];
-  const untitledRows: PagesSidebarRow[] = [];
+  /** Whether this member may delete a page. */
+  const canDeletePage = (page: PageItem): boolean =>
+    useYjs && !!page._yMap && ops!.canDelete(page._yMap);
 
-  for (let fullIdx = 0; fullIdx < effectiveNavItems.length; fullIdx++) {
-    const item = effectiveNavItems[fullIdx];
-    if (item.type !== "page") continue;
-
-    // Resolve the underlying page (by slug for persisted entries, by _tempId
-    // for synthetic untitled entries) to derive the stable selection key.
-    const page = item.slug
-      ? pageBySlug.get(item.slug)
-      : item._tempId
-        ? displayPages.find((p) => p._tempId === item._tempId)
-        : undefined;
-    if (!page) continue;
-
-    const selectKey = keyFor(page);
-    const sortableId = navSortableId(item, fullIdx);
-    const isUntitled = !(page.title ?? "").trim();
-    const canDelete =
-      isConvenor && (useYjs ? (page._yMap ? ops!.canDelete(page._yMap) : true) : false);
-
-    if (isUntitled) {
-      untitledRows.push({
-        selectKey,
-        sortableId,
-        label: page.title?.trim() || t("untitled_needs_title"),
-        isUntitled: true,
-        canDelete,
-      });
-    } else {
-      sidebarIdToFullIdx.set(sortableId, fullIdx);
-      contentRows.push({
-        selectKey,
-        sortableId,
-        label: page.title.trim(),
-        isUntitled: false,
-        canDelete,
-      });
-    }
-  }
+  // One row per page entry, in menu order (`buildSidebarRows`);
+  // `sidebarIdToFullIdx` maps each sortable row to its entry's index in the
+  // FULL menu, which is its index in the live navArray.
+  const { contentRows, untitledRows, sidebarIdToFullIdx } = buildSidebarRows({
+    items: effectiveNavItems,
+    pages: displayPages,
+    sortableId: navSortableId,
+    canDelete: canDeletePage,
+  });
 
   // Builtin labels
   const builtinLabels: Record<string, string> = {
@@ -912,34 +1173,18 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   } | null>(null);
 
   function openDeleteModalFor(page: PageItem) {
-    const contributors = computeContributors(
-      page._createdBy ?? null,
-      currentUserId,
-      members as Member[]
-    );
+    const contributors = computeContributors(page._createdBy ?? null, currentUserId, members as Member[]);
     setDeleteTarget({ page, contributors });
   }
 
+  // The page goes in one transaction and the menu entry naming it in a
+  // second, as a page's entry always has.
   function confirmDelete() {
     if (!deleteTarget) return;
     const { page } = deleteTarget;
     if (useYjs) {
       ops!.deletePage(page.id > 0 ? page.id : null, page._tempId ?? null);
-      if (ydoc && page.slug) {
-        const config = ydoc.getMap("config");
-        const navArray = config.get("navigation") as unknown;
-        if (navArray instanceof Y.Array) {
-          ydoc.transact(() => {
-            for (let i = 0; i < navArray.length; i++) {
-              const item = navArray.get(i) as Record<string, unknown>;
-              if (item.type === "page" && item.slug === page.slug) {
-                navArray.delete(i, 1);
-                break;
-              }
-            }
-          });
-        }
-      }
+      if (ydoc && page.slug) removeNavEntries(ydoc, [page.slug]);
     }
     setDeleteTarget(null);
   }
@@ -949,6 +1194,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   useRemoteDeleteToast({
     items: displayPages,
     enabled: useYjs,
+    scope: ydoc,
     getLabel: (p) => p.title || p.slug,
   });
 
@@ -1026,7 +1272,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   }
 
   function handleDeleteClick(page: PageItem) {
-    if (useYjs && page._yMap && !ops!.canDelete(page._yMap)) return;
+    if (!canDeletePage(page)) return;
     openDeleteModalFor(page);
   }
 
@@ -1051,11 +1297,10 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
   // connected repo has importable pages, offer to pull them in. Rendered ABOVE
   // the two-column shell (rather than replacing the whole view) so the pinned
   // Home row stays editable in-place.
-  const scanData = repoScanFetcher.data;
-  const scannedPages = scanData?.ok && scanData.intent === "scan-repo-pages"
-    ? scanData.pages
-    : [];
+  const { pages: scannedPages, warnings: scanWarnings } = scanned(repoScanFetcher.data);
   const showImportVariant = displayPages.length === 0 && scannedPages.length > 0;
+  // The scan could not be made: an empty list is not the answer.
+  const scanFailed = scanCouldNotBeMade(displayPages.length, repoScanFetcher.data);
 
   return (
     <div className={`flex flex-col ${publishLock}`}>
@@ -1067,6 +1312,10 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
         </p>
         <p className="font-body text-sm text-gray-500">{t("nav_bar_instructions")}</p>
         {openDoc && <DocsLink docId="pages" onOpenDoc={openDoc} />}
+        <ScanNotMadeNote
+          failed={scanFailed}
+          onRetry={() => repoScanFetcher.submit({ intent: "scan-repo-pages" }, { method: "post" })}
+        />
       </div>
 
       {/* Repo-import recovery banner (only when no content pages exist yet) */}
@@ -1074,6 +1323,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
         <div className="mx-6 mb-2">
           <PagesRepoImportEmptyState
             pages={scannedPages.map((p) => ({ slug: p.slug, title: p.title }))}
+            warnings={scanWarnings}
             onImportAll={handleImportAll}
             onImportOne={handleImportOne}
             isImporting={importFetcher.state !== "idle"}
@@ -1126,7 +1376,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
                       isSelected={page ? key === selectedKey : false}
                       onSelect={() => { if (page) setSelectedKey(keyFor(page)); }}
                       onDelete={page ? () => handleDeleteClick(page) : undefined}
-                      canDelete={page && useYjs && page._yMap ? ops!.canDelete(page._yMap) : false}
+                      canDelete={page ? canDeletePage(page) : false}
                       isIncomplete={page ? incompletePageKeys.has(keyFor(page)) : false}
                     />
                   );

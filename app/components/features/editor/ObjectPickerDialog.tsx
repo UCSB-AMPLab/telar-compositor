@@ -7,6 +7,8 @@
  *
  * For self-hosted IIIF objects (no stored thumbnail), resolves thumbnails
  * from info.json via useIiifThumbnail.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useState } from "react";
@@ -14,12 +16,14 @@ import { useTranslation } from "react-i18next";
 import { ImageOff, Search } from "lucide-react";
 import { Dialog } from "~/components/ui/Dialog";
 import { useIiifThumbnail } from "~/lib/use-iiif-thumbnail";
+import { thumbnailInfoJsonUrl } from "~/lib/object-id";
 
 interface ObjectInfo {
   object_id: string;
   title: string | null;
   thumbnail: string | null;
   image_available: boolean | null;
+  source_url?: string | null;
 }
 
 interface ObjectPickerDialogProps {
@@ -29,6 +33,8 @@ interface ObjectPickerDialogProps {
   objects: ObjectInfo[];
   currentObjectId: string | null;
   siteBaseUrl: string | null;
+  /** The site's `telar_version`, which decides the id its tiles are under. */
+  frameworkVersion?: string | null;
 }
 
 /** Per-object card that resolves its own thumbnail when needed. */
@@ -36,19 +42,22 @@ function ObjectCard({
   obj,
   isSelected,
   siteBaseUrl,
+  frameworkVersion,
   onSelect,
 }: {
   obj: ObjectInfo;
   isSelected: boolean;
   siteBaseUrl: string | null;
+  frameworkVersion?: string | null;
   onSelect: (objectId: string) => void;
 }) {
   const { t } = useTranslation("common");
   // For self-hosted objects without a stored thumbnail, resolve from info.json
-  const needsResolve = !obj.thumbnail && obj.image_available && siteBaseUrl;
-  const infoJsonUrl = needsResolve
-    ? `${siteBaseUrl}/iiif/objects/${obj.object_id}/info.json`
-    : null;
+  const infoJsonUrl = thumbnailInfoJsonUrl(
+    { objectId: obj.object_id, thumbnail: obj.thumbnail, imageAvailable: obj.image_available, sourceUrl: obj.source_url },
+    siteBaseUrl,
+    frameworkVersion,
+  );
   const resolvedUrl = useIiifThumbnail(infoJsonUrl, 300);
 
   // Upscale stored IIIF thumbnails (from external manifests) that are too small
@@ -101,6 +110,7 @@ export function ObjectPickerDialog({
   objects,
   currentObjectId,
   siteBaseUrl,
+  frameworkVersion,
 }: ObjectPickerDialogProps) {
   const { t } = useTranslation("editor");
   const [query, setQuery] = useState("");
@@ -165,6 +175,7 @@ export function ObjectPickerDialog({
                 obj={obj}
                 isSelected={obj.object_id === currentObjectId}
                 siteBaseUrl={siteBaseUrl}
+                frameworkVersion={frameworkVersion}
                 onSelect={handleSelect}
               />
             ))}

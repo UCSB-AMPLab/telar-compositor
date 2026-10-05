@@ -18,12 +18,31 @@
  *  6. wordMsoSpan — strip <span style="mso-*"> wrappers, preserving text
  *  7. wordMsoEmptyParagraph — strip empty MsoNormal paragraphs
  *  8. emptySpan — strip whitespace-only <span> elements (Google Docs detritus)
+ *  9. pastedImage — `![alt](src)` with the alt text escaped and the address
+ *     encoded as `authorText` states
+ * 10. pastedLink — `[text](href)` with the address encoded the same way,
+ *     in place of Turndown's backslashes before parentheses
+ *
+ * Text is escaped as Turndown escapes it, except that a bracket is written
+ * `&#91;` or `&#93;` rather than `\[` or `\]`: a backslash before a bracket
+ * is a maths delimiter on the site (see authorText.ts).
  *
  * Post-processing normalises smart quotes and typographic dashes to ASCII equivalents.
+ *
+ * Both direct dispatches, the converted markdown and the plain-text fallback,
+ * bypass CodeMirror's clipboard input filters, so each runs `cleanText` itself.
+ *
+ * @version v1.5.0-beta
  */
 
 import { EditorView } from "@codemirror/view";
 import type TurndownService from "turndown";
+import { cleanText } from "~/lib/unsafe-text";
+import {
+  encodeUrlForMarkdown,
+  escapeBracketsForMarkdown,
+  escapeEveryBracket,
+} from "~/components/ui/markdown-editor/authorText";
 
 /** Domains whose iframes are preserved as raw HTML on paste. */
 const VIDEO_EMBED_DOMAINS = [
@@ -61,6 +80,8 @@ export async function getTurndown() {
   if (!td) {
     const TurndownService = (await import("turndown")).default;
     td = new TurndownService({ headingStyle: "atx", bulletListMarker: "-" });
+    const turndownEscape = td.escape.bind(td);
+    td.escape = (text: string) => turndownEscape(escapeEveryBracket(text));
 
     // Rule 1: Preserve YouTube/Vimeo iframes as raw HTML
     td.addRule("videoIframe", {
@@ -147,8 +168,38 @@ export async function getTurndown() {
         !node.textContent?.trim(),
       replacement: () => "",
     });
+
+    // Rule 9: images, as Turndown writes them but for the alt text and address.
+    td.addRule("pastedImage", {
+      filter: "img",
+      replacement: (_content: string, node) => {
+        const img = node as HTMLElement;
+        const src = img.getAttribute("src") ?? "";
+        if (!src) return "";
+        const alt = cleanAttribute(img.getAttribute("alt"));
+        const title = cleanAttribute(img.getAttribute("title"));
+        const titlePart = title ? ` "${title}"` : "";
+        return `![${escapeBracketsForMarkdown(alt)}](${encodeUrlForMarkdown(src)}${titlePart})`;
+      },
+    });
+
+    // Rule 10: links, as Turndown's inlineLink writes them but for the address.
+    td.addRule("pastedLink", {
+      filter: (node: HTMLElement) => node.nodeName === "A" && !!node.getAttribute("href"),
+      replacement: (content: string, node) => {
+        const a = node as HTMLElement;
+        const title = cleanAttribute(a.getAttribute("title"));
+        const titlePart = title ? ` "${title.replace(/"/g, '\\"')}"` : "";
+        return `[${content}](${encodeUrlForMarkdown(a.getAttribute("href") ?? "")}${titlePart})`;
+      },
+    });
   }
   return td;
+}
+
+/** Turndown's `cleanAttribute`: runs of line breaks in an attribute folded to one. */
+function cleanAttribute(attribute: string | null): string {
+  return attribute ? attribute.replace(/(\n+\s*)+/g, "\n") : "";
 }
 
 /**
@@ -210,10 +261,10 @@ export function handleRichPaste(event: ClipboardEvent, view: EditorView): boolea
       const cleanHtml = stripWordArtefacts(html);
       let markdown = turndown.turndown(cleanHtml);
       markdown = normaliseQuotesAndDashes(markdown);
-      view.dispatch(view.state.replaceSelection(markdown));
+      view.dispatch(view.state.replaceSelection(cleanText(markdown)));
     } catch {
       if (plainFallback) {
-        view.dispatch(view.state.replaceSelection(plainFallback));
+        view.dispatch(view.state.replaceSelection(cleanText(plainFallback)));
       }
     }
   })();

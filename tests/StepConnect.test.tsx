@@ -1,17 +1,24 @@
 // @vitest-environment jsdom
 /**
- * This file pins the `StepConnect` private-repo warning truth-table.
+ * This file pins the `StepConnect` private-repo notice truth-table.
+ *
+ * The notice asks to be acknowledged and then stops asking. It reads a
+ * repository's visibility and nothing else: the account's GitHub plan decides
+ * whether Pages will serve the site, and the Compositor cannot see it, because
+ * `GET /user` returns `plan` only to a token holding the `user` scope and
+ * sign-in does not request it. A truth-table with a plan column in it would be
+ * pinning a value that is always null.
  *
  * Four cases:
- *  A. private repo + githubPlan="free"  → warning visible, Continue disabled
- *  B. private repo + githubPlan=null     → warning visible, Continue disabled (defensive)
- *  C. private repo + githubPlan="pro"   → warning hidden, Continue enabled
- *  D. public repo  + githubPlan=null     → warning hidden, Continue enabled
+ *  A. private repo, not acknowledged  → notice visible, Continue disabled
+ *  B. private repo, acknowledged      → notice hidden, Continue enabled
+ *  C. public repo                     → notice hidden, Continue enabled
+ *  D. acknowledging one repo does not acknowledge the next one selected
  *
  * Mirrors tests/CreateSiteForm.test.tsx fetcher-registry pattern; StepConnect
  * calls useFetcher exactly once (unlinkFetcher), so the modulo is 1.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -55,6 +62,9 @@ vi.mock("react-router", () => ({
     return fetcherRegistry[slot];
   },
   Form: (props: React.FormHTMLAttributes<HTMLFormElement>) => <form {...props} />,
+  // The gate's door: StepConnect reads `?course=1` to decide whether to offer
+  // the unlock prompt at all.
+  useSearchParams: () => [new URLSearchParams(window.location.search), vi.fn()],
   Link: ({ to, children }: { to: string; children: React.ReactNode }) => (
     <a href={String(to)}>{children}</a>
   ),
@@ -70,7 +80,7 @@ function resetFetchers() {
   fetcherCallIdx = 0;
 }
 
-// A private repo selected by default in baseProps. Case D overrides .private = false.
+// A private repo selected by default in baseProps. Case C overrides .private = false.
 const privateRepo: RepoWithInstallation = {
   id: 1,
   name: "private-repo",
@@ -89,8 +99,8 @@ const privateRepo: RepoWithInstallation = {
 // component renders one selectable row; clicking selects it.
 function makeBaseProps(overrides: Partial<{
   repos: RepoWithInstallation[];
-  githubPlan: string | null | undefined;
-  installations: Array<{ id: number; target_type: "User" | "Organization"; account: { login: string; avatar_url: string } }>;
+  courseGateOpen?: boolean;
+  installations?: Array<{ id: number; target_type: "User" | "Organization"; account: { login: string; avatar_url: string } }>;
 }> = {}) {
   return {
     repos: overrides.repos ?? [privateRepo],
@@ -105,9 +115,9 @@ function makeBaseProps(overrides: Partial<{
     connectedProjects: [],
     orphanRepoNames: [],
     onSelect: vi.fn(),
-    githubPlan: overrides.githubPlan,
     hasInstallations: true,
     githubAppSlug: "telar-compositor",
+    courseGateOpen: overrides.courseGateOpen ?? true,
   } as Parameters<typeof StepConnect>[0];
 }
 
@@ -126,39 +136,39 @@ function renderAndSelect(props: Parameters<typeof StepConnect>[0]) {
   return utils;
 }
 
-describe("StepConnect — private-repo warning", () => {
+describe("StepConnect — private-repo notice", () => {
   beforeEach(() => {
     resetFetchers();
   });
 
-  it("renders warning and disables Continue when private repo + free plan", () => {
-    renderAndSelect(makeBaseProps({ githubPlan: "free" }));
-    expect(screen.getByText(/step_connect\.private_repo_warning_title/)).toBeDefined();
-    const continueBtn = screen.getByRole("button", {
+  function continueButton() {
+    return screen.getByRole("button", {
       name: /step_connect\.continue/i,
     }) as HTMLButtonElement;
-    expect(continueBtn.disabled).toBe(true);
-  });
+  }
 
-  it("renders warning and disables Continue when private repo + null plan (defensive)", () => {
-    renderAndSelect(makeBaseProps({ githubPlan: null }));
+  function acknowledge() {
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: /step_connect\.private_repo_warning_ack/i }),
+      );
+    });
+  }
+
+  it("shows the notice and holds Continue until it is acknowledged", () => {
+    renderAndSelect(makeBaseProps());
     expect(screen.getByText(/step_connect\.private_repo_warning_title/)).toBeDefined();
-    const continueBtn = screen.getByRole("button", {
-      name: /step_connect\.continue/i,
-    }) as HTMLButtonElement;
-    expect(continueBtn.disabled).toBe(true);
+    expect(continueButton().disabled).toBe(true);
   });
 
-  it("hides warning and enables Continue when private repo + paid plan", () => {
-    renderAndSelect(makeBaseProps({ githubPlan: "pro" }));
+  it("clears the notice and releases Continue once acknowledged", () => {
+    renderAndSelect(makeBaseProps());
+    acknowledge();
     expect(screen.queryByText(/step_connect\.private_repo_warning_title/)).toBeNull();
-    const continueBtn = screen.getByRole("button", {
-      name: /step_connect\.continue/i,
-    }) as HTMLButtonElement;
-    expect(continueBtn.disabled).toBe(false);
+    expect(continueButton().disabled).toBe(false);
   });
 
-  it("hides warning and enables Continue when public repo, regardless of plan", () => {
+  it("never shows the notice for a public repo", () => {
     const publicRepo: RepoWithInstallation = {
       ...(privateRepo as unknown as Record<string, unknown>),
       id: 2,
@@ -166,12 +176,36 @@ describe("StepConnect — private-repo warning", () => {
       full_name: "octocat/public-repo",
       private: false,
     } as unknown as RepoWithInstallation;
-    renderAndSelect(makeBaseProps({ repos: [publicRepo], githubPlan: null }));
+    renderAndSelect(makeBaseProps({ repos: [publicRepo] }));
     expect(screen.queryByText(/step_connect\.private_repo_warning_title/)).toBeNull();
-    const continueBtn = screen.getByRole("button", {
-      name: /step_connect\.continue/i,
-    }) as HTMLButtonElement;
-    expect(continueBtn.disabled).toBe(false);
+    expect(continueButton().disabled).toBe(false);
+  });
+
+  it("does not carry one repository's acknowledgement to another", () => {
+    // The acknowledgement is held as a repository's full name rather than as a
+    // flag precisely so this cannot happen. Holding it as a boolean passes
+    // every case above and fails only here.
+    const second: RepoWithInstallation = {
+      ...(privateRepo as unknown as Record<string, unknown>),
+      id: 3,
+      name: "other-private",
+      full_name: "octocat/other-private",
+      private: true,
+    } as unknown as RepoWithInstallation;
+
+    render(<StepConnect {...makeBaseProps({ repos: [privateRepo, second] })} />);
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /octocat\/private-repo/ }));
+    });
+    acknowledge();
+    expect(continueButton().disabled).toBe(false);
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /octocat\/other-private/ }));
+    });
+    expect(screen.getByText(/step_connect\.private_repo_warning_title/)).toBeDefined();
+    expect(continueButton().disabled).toBe(true);
   });
 });
 
@@ -183,17 +217,17 @@ describe("StepConnect — create-in-org install path", () => {
   it("always offers the account 'Change' trigger in the create view, even with a single account", () => {
     // A user with the app installed only on their personal account must still be
     // able to open the account modal — it's the in-flow path to install on an org.
-    render(<StepConnect {...makeBaseProps({ githubPlan: "pro" })} />);
+    render(<StepConnect {...makeBaseProps()} />);
     act(() => {
-      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.title/i }));
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.kind_site/i }));
     });
     expect(screen.getByText(/create_site\.account_picker\.change/)).toBeDefined();
   });
 
   it("opening the account modal surfaces the install-on-another-org CTA", () => {
-    render(<StepConnect {...makeBaseProps({ githubPlan: "pro" })} />);
+    render(<StepConnect {...makeBaseProps()} />);
     act(() => {
-      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.title/i }));
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.kind_site/i }));
     });
     act(() => {
       fireEvent.click(screen.getByText(/create_site\.account_picker\.change/));
@@ -205,7 +239,6 @@ describe("StepConnect — create-in-org install path", () => {
 
   it("selecting an org row re-targets the create flow to that organization", () => {
     const props = makeBaseProps({
-      githubPlan: "pro",
       installations: [
         { id: 42, target_type: "User", account: { login: "octocat", avatar_url: "" } },
         { id: 77, target_type: "Organization", account: { login: "acme-org", avatar_url: "" } },
@@ -213,7 +246,7 @@ describe("StepConnect — create-in-org install path", () => {
     });
     render(<StepConnect {...props} />);
     act(() => {
-      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.title/i }));
+      fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.kind_site/i }));
     });
     // Defaults to the personal account.
     expect(screen.getByText("octocat")).toBeDefined();
@@ -243,4 +276,52 @@ describe("StepConnect — create-in-org install path", () => {
     expect(orgRow.className).toMatch(/border-terracotta/);
     expect(personalRow.className).not.toMatch(/border-terracotta/);
   });
+});
+
+
+/**
+ * Which kinds a session is offered, and what it learns from the ones it is not.
+ *
+ * The choice used to live inside the create form, which meant the form had to
+ * announce that courses exist — to every session, including the ones that
+ * could not have them — in order to offer the choice to the ones that could.
+ * A locked session saw an invitation, opened a dialog, and read that courses
+ * were in testing for a small group it was not in.
+ *
+ * Here a session without course access is offered one card and told nothing —
+ * and there is no door to find, because access is no longer something a
+ * session can answer for. It is granted to a person on `users.course_access`,
+ * from the backend, and the screen only reads it.
+ */
+describe("StepConnect — what a session is offered to create", () => {
+  it("offers both kinds, with their descriptions, to a session with course access", () => {
+    render(<StepConnect {...makeBaseProps({ courseGateOpen: true })} />);
+    expect(screen.getByRole("button", { name: /create_site\.form\.kind_site/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /create_site\.form\.kind_course/i })).toBeTruthy();
+    expect(screen.getByText("create_site.form.kind_course_hint")).toBeTruthy();
+  });
+
+  it("offers only a site to a session without it, and no hint that courses exist", () => {
+    render(<StepConnect {...makeBaseProps({ courseGateOpen: false })} />);
+    expect(screen.getByRole("button", { name: /create_site\.form\.kind_site/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /create_site\.form\.kind_course/i })).toBeNull();
+    expect(screen.queryByText("create_site.form.kind_course_hint")).toBeNull();
+    // Not the invitation either — that was the whole complaint.
+    expect(screen.queryByText("course:gate_locked_cta")).toBeNull();
+  });
+
+  it("opens the create form on the kind whose card was clicked", () => {
+    // The card IS the decision now, so it has to carry it. Read off the class
+    // code field, which the form withdraws for a course and only for a course:
+    // a course cannot join a course.
+    const { unmount } = render(<StepConnect {...makeBaseProps({ courseGateOpen: true })} />);
+    fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.kind_course/i }));
+    expect(screen.queryByLabelText(/create_site\.form\.course_code_label/i)).toBeNull();
+    unmount();
+
+    render(<StepConnect {...makeBaseProps({ courseGateOpen: true })} />);
+    fireEvent.click(screen.getByRole("button", { name: /create_site\.form\.kind_site/i }));
+    expect(screen.getByLabelText(/create_site\.form\.course_code_label/i)).toBeTruthy();
+  });
+
 });

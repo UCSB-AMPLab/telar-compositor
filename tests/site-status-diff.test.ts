@@ -21,7 +21,7 @@ function emptyDiff(): FullSyncDiff {
       newObjects: [],
       changedObjects: [],
       missingObjects: [],
-      unregisteredFiles: [],
+      unregisteredFiles: [], reordered: null,
     },
     stories: {
       newStories: [],
@@ -40,6 +40,7 @@ function emptyDiff(): FullSyncDiff {
     hasConflicts: false,
     classification: "two-way",
     suppressedEditorOnly: 0,
+    unreadableFiles: [],
   };
 }
 

@@ -4,10 +4,15 @@
  * Shows GitHub avatar, username, role badge, and (for convenors only) an
  * always-visible kebab menu (MoreVertical) that opens a Remove dropdown item.
  * The kebab is only rendered when isConvenor=true (defence-in-depth; the
- * server-side requireOwner guard is the primary control).
+ * server-side requireOwner guard is the primary control). A collaborator
+ * row's kebab shows everywhere; an instructor row's kebab shows only when
+ * isCourseProject is true — instructor membership on a child site is tied
+ * to the course and can only end by leaving it, not by removal here.
  *
  * The kebab is wired to the existing onRemove callback so the Remove action
  * is always accessible (including on touch devices).
+ *
+ * @version v1.5.0-beta
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -25,11 +30,20 @@ interface MemberRowProps {
   /** Database userId — required when onRemoveRequest is used. */
   userId?: number;
   username: string;
-  role: "convenor" | "collaborator";
+  role: "convenor" | "collaborator" | "instructor";
   isPending?: boolean;
   isCurrentUserOwner: boolean;
   /** True when the current user is the convenor — gates the kebab. */
   isConvenor?: boolean;
+  /**
+   * True when the project this row belongs to IS a course project, not a
+   * child site enrolled in one. An instructor row's kebab only ever shows
+   * here — course staff management (removing a co-instructor) belongs to
+   * the course project's own member list. On a child, instructor
+   * membership is tied to the course and protected from removal by any
+   * door but leaving it (design §5).
+   */
+  isCourseProject?: boolean;
   /** Legacy: called when the Remove item is clicked (TeamPanel pattern). */
   onRemove?: () => void;
   /**
@@ -121,12 +135,20 @@ export function MemberRow({
   isPending = false,
   isCurrentUserOwner,
   isConvenor = false,
+  isCourseProject = false,
   onRemove,
   onRemoveRequest,
   className,
 }: MemberRowProps) {
   const avatarUrl = `https://avatars.githubusercontent.com/u/${githubId}?s=64`;
-  const canShowKebab = isConvenor && role === "collaborator" && !isPending;
+  // Collaborator rows: removable by the convenor everywhere, as before.
+  // Instructor rows: removable only from the course project's own member
+  // list (staff management), never from a child's — there, instructor
+  // membership is tied to the course and can only end by leaving it.
+  const canShowKebab =
+    isConvenor &&
+    !isPending &&
+    (role === "collaborator" || (role === "instructor" && isCourseProject));
 
   return (
     <div

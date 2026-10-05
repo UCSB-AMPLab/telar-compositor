@@ -23,7 +23,7 @@
  * fails open: it returns the stored timestamps without the commit message
  * rather than erroring (mirrors the `_app` loader's fail-open posture).
  *
- * @version v1.4.1-beta
+ * @version v1.5.0-beta
  */
 
 import type { Route } from "./+types/api.site-status";
@@ -50,14 +50,18 @@ import {
   getCachedLatestTag,
   type DerivedGithubStatus,
 } from "~/lib/github-status.server";
-import { compareTelarVersion } from "~/lib/upgrade.server";
-import { getInstallationInfo } from "~/lib/github-app.server";
+import { refreshTeamAccess } from "~/lib/team-access.server";
+import { readOwnRepoAccess } from "~/lib/own-repo-access.server";
+import { compareTelarVersion } from "~/lib/telar-version";
+import { getInstallationInfo, resolveProjectToken } from "~/lib/github-app.server";
 import {
   computeChangeSummary,
   buildEntityHashes,
 } from "~/lib/publish.server";
 import type { PublishSnapshot } from "~/lib/publish.server";
 import { computeFullSyncDiff } from "~/lib/sync.server";
+import { legacyRecordRef } from "~/lib/legacy-object-ids.server";
+import { readSiteTelarVersion } from "~/lib/site-version.server";
 import type { FullSyncDiff } from "~/lib/sync.server";
 
 const GITHUB_API = "https://api.github.com";
@@ -115,6 +119,7 @@ function countChangeSummary(summary: ReturnType<typeof computeChangeSummary>): n
   if (summary.settings.changed.length > 0) n += 1;
   if (summary.landing.changed) n += 1;
   if (summary.navigation.changed) n += 1;
+  if (summary.objectOrder.changed) n += 1;
   return n;
 }
 
@@ -125,14 +130,32 @@ function countChangeSummary(summary: ReturnType<typeof computeChangeSummary>): n
  * silently drift. The pill's `aggregateSyncDiff` reads all-zero from it.
  */
 const EMPTY_FULL_SYNC_DIFF = {
-  objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [] },
+  objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [], reordered: null },
   stories: { newStories: [], changedStories: [], missingStories: [] },
   config: { changedFields: [], versionChange: null },
   glossary: { added: [], removed: [], changed: [] },
   hasConflicts: false,
   classification: "two-way",
   suppressedEditorOnly: 0,
+  unreadableFiles: [],
 } satisfies FullSyncDiff;
+
+/**
+ * The byte length of a project's saved Yjs state, or `null` when the row holds
+ * no blob or does not exist.
+ *
+ * The length is computed by SQLite and the blob never crosses the binding, so a
+ * project close to D1's own cap costs this route nothing to report. The id is
+ * bound, and it is the active project's, resolved and membership-checked by the
+ * loader before this is reached.
+ */
+async function savedStateBytes(env: Env, projectId: number): Promise<number | null> {
+  const row = await env.DB
+    .prepare("SELECT length(yjs_state) AS bytes FROM projects WHERE id = ?")
+    .bind(projectId)
+    .first<{ bytes: number | null }>();
+  return typeof row?.bytes === "number" ? row.bytes : null;
+}
 
 /** The four payloads this route can serve. */
 const ALLOWED_PAYLOADS = ["unpublished", "out-of-sync", "in-sync", "gh-status"] as const;
@@ -194,8 +217,21 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         return Response.json(EMPTY_FULL_SYNC_DIFF);
       }
       try {
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        // resolveProjectToken hands the installation token only to a
+        // publishing role — a private repo a member is not a GitHub
+        // collaborator on would otherwise fail open to an empty diff for
+        // them alone, hiding real drift. This intent carries no role gate of
+        // its own, so a non-member reads no more than their own GitHub
+        // account already can.
+        const userToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const [owner, repo] = activeProject.github_repo_full_name.split("/");
+        const token = await resolveProjectToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          activeProject.installation_id,
+          userToken,
+          role,
+        );
         const diff = await computeFullSyncDiff(
           activeProject.id,
           token,
@@ -203,6 +239,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           repo,
           db,
           activeProject.head_sha ?? null,
+          {
+            frameworkVersion: await readSiteTelarVersion(db, activeProject.id),
+            legacyRef: activeProject.legacy_ids_repaired_at == null ? legacyRecordRef(activeProject) : undefined,
+          },
         );
         return Response.json(diff);
       } catch {
@@ -216,11 +256,19 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       // GitHub call needed). The commit MESSAGE for head_sha is not stored, so
       // fetch it lazily — and fail open: on any GitHub error, return the
       // timestamps WITHOUT the message rather than erroring.
+      //
+      // The saved state's size comes from a query of its own, scoped to the
+      // active project the membership check above resolved and asking for the
+      // LENGTH alone: the blob itself may be megabytes, and nothing here needs
+      // its bytes. It sits in `base`, so every fail-open return below carries
+      // it too. A missing row, and a row whose blob is NULL, are both `null`.
+      const blobBytes = await savedStateBytes(env, activeProject.id);
       const base = {
         last_published_at: activeProject.last_published_at,
         head_sha: activeProject.head_sha,
         last_synced_at: activeProject.last_synced_at,
         commitMessage: null as string | null,
+        blobBytes,
       };
 
       if (!activeProject.head_sha || !activeProject.github_repo_full_name?.includes("/")) {
@@ -228,8 +276,20 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
 
       try {
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        // Same rule as out-of-sync: resolveProjectToken hands the
+        // installation token only to a publishing role — a private repo the
+        // collaborator cannot read would otherwise silently drop the commit
+        // message for them alone; an instructor or non-member here still
+        // reads no more than their own GitHub account already can.
+        const userToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const [owner, repo] = activeProject.github_repo_full_name.split("/");
+        const token = await resolveProjectToken(
+          env.GITHUB_APP_ID,
+          env.GITHUB_PRIVATE_KEY,
+          activeProject.installation_id,
+          userToken,
+          role,
+        );
         const res = await fetch(
           `${GITHUB_API}/repos/${owner}/${repo}/commits/${activeProject.head_sha}`,
           { headers: githubHeaders(token) },
@@ -267,16 +327,41 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         unpublishedCount = undefined; // keep the loader proxy on the client
       }
 
+      // The team page's repository-access read rides this poll under its own
+      // claim and the installation token, so the caller's token and the
+      // status refresh below cannot stop it. It never throws, and nothing it
+      // does reaches the answer.
+      try {
+        await refreshTeamAccess(env, db, activeProject, now);
+      } catch (teamErr) {
+        console.warn("[gh-status] team access refresh failed", teamErr);
+      }
+
       let proj: typeof projects.$inferSelect | undefined; // hoisted so the catch can derive from it
       try {
         // Decrypt once; reuse for the refresh and the tag fetch.
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
+        // resolveProjectToken hands the installation token only to a
+        // publishing role: this poll writes the SHARED gh_* cache columns
+        // every project member's browser reads, so a collaborator's own
+        // token failing on a private repo would otherwise stall the whole
+        // project's status for everyone. An instructor or non-member here
+        // still reads no more than their own GitHub account already can.
+        const userToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
         const projRows = await db.select().from(projects).where(eq(projects.id, activeProject.id)).limit(1);
         proj = projRows[0];
+        // Not bound to the page's site: these cache columns describe the
+        // session's site, and what is written is true of it whichever tab asked.
         if (proj && isStale(proj.gh_checked_at, now)) {
           const claimed = await claimRefresh(db, proj.id, now);
           if (claimed) {
-            await refreshGithubStatus(proj, token, db, now);
+            const token = await resolveProjectToken(
+              env.GITHUB_APP_ID,
+              env.GITHUB_PRIVATE_KEY,
+              proj.installation_id,
+              userToken,
+              role,
+            );
+            await refreshGithubStatus(proj, token, db, now, { env, userId: user.id });
             // Same claim window: refresh the workflows-permission cache that
             // drives the "approve updated permissions" login modal. App-JWT
             // call, off the per-navigation hot path. Fail-open — a failure
@@ -310,7 +395,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           .select({ telar_version: project_config.telar_version })
           .from(project_config)
           .where(eq(project_config.project_id, activeProject.id));
-        const tag = await getCachedLatestTag(token, now);
+        // The framework's latest-release tag — a separate, public repo the
+        // project's installation is not granted, so this stays on the user's
+        // own token regardless of role.
+        const tag = await getCachedLatestTag(userToken, now, env.TELAR_RELEASE_TAG);
         const cmp = compareTelarVersion(configRows[0]?.telar_version ?? null, tag);
         return Response.json({
           repoUnavailable: proj?.gh_repo_available === 0,
@@ -319,6 +407,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           isBelowMinimum: cmp.isBelowMinimum,
           latestTelarTag: tag,
           unpublishedCount,
+          ownRepoAccess: await readOwnRepoAccess(db, activeProject.id, user.id),
         } satisfies DerivedGithubStatus);
       } catch (err) {
         // Fail open like the sibling cases — but derive from whatever cache row we
@@ -333,6 +422,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           isBelowMinimum: false,
           latestTelarTag: null,
           unpublishedCount,
+          ownRepoAccess: await readOwnRepoAccess(db, activeProject.id, user.id),
         } satisfies DerivedGithubStatus);
       }
     }

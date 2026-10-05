@@ -3,6 +3,7 @@ import {
   settingsChangeI18nKey,
   SETTINGS_CHANGE_FALLBACK_KEY,
 } from "~/lib/settings-change-i18n";
+import enPublish from "~/i18n/locales/en/publish.json";
 
 describe("settingsChangeI18nKey", () => {
   it("maps flat managed fields to change_<key>", () => {
@@ -26,6 +27,25 @@ describe("settingsChangeI18nKey", () => {
     );
     expect(settingsChangeI18nKey({ key: "collection_mode", label: "off" })).toBe(
       "change_collection_mode_off",
+    );
+  });
+
+  it("maps the glossary kinds, whose value is a JSON list, to change_glossary_kinds", () => {
+    const value = JSON.stringify([{ id: "place", label: "Place", heading: "Places" }]);
+    expect(settingsChangeI18nKey({ key: "glossary.kinds", label: "glossary.kinds", value })).toBe(
+      "change_glossary_kinds",
+    );
+    expect(enPublish.auto_commit.change_glossary_kinds).toBe("update the glossary kinds");
+  });
+
+  it("maps skip_stories via its on/off label", () => {
+    // Named, not slugged from its block path: the setting publishes under
+    // development-features but its copy is about the setting, not the block.
+    expect(settingsChangeI18nKey({ key: "skip_stories", label: "on" })).toBe(
+      "change_skip_stories_on",
+    );
+    expect(settingsChangeI18nKey({ key: "skip_stories", label: "off" })).toBe(
+      "change_skip_stories_off",
     );
   });
 

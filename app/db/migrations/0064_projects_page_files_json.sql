@@ -1,0 +1,13 @@
+-- The page files the Compositor answers for, at a commit.
+--
+-- @version v1.5.0-beta
+--
+-- page_files_json: NULL until a writer records it (the import, onboarding, the
+-- sync's accept, Keep my version, a landed publish, the status refresh, or the
+-- Pages screen's import). Otherwise {"commit": "<sha>", "files": {"<name>":
+-- <page id> | null}}: each .md file directly in telar-content/texts/pages/
+-- that the Compositor answers for, by name, mapped to the page written to or
+-- read from it, or to null for a file GitHub added that the author chose not
+-- to take, which the next publish deletes. "commit" is the commit the files
+-- were read or written at; while head_sha is NULL it is the pages base.
+ALTER TABLE projects ADD COLUMN page_files_json text;

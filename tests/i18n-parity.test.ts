@@ -6,12 +6,19 @@
  * missing from a locale JSON — or present in EN but dropped from ES — passes those
  * tests silently. This test closes that gap: it reads the actual JSON files.
  *
- * @version v1.4.0-beta
+ * One exception is allowed, and it is enumerated key by key in
+ * `tests/helpers/awaiting-spanish.ts`: a string whose Colombian Spanish is
+ * drafted and reviewed separately from the build that adds the English. That
+ * list is the whole exception — a key not on it is still a failure in either
+ * direction, and an entry on it that has gained its Spanish is a failure too.
+ *
+ * @version v1.5.0-beta
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { awaitingSpanish } from "./helpers/awaiting-spanish";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const enDir = join(here, "..", "app", "i18n", "locales", "en");
@@ -53,9 +60,20 @@ describe("i18n locale parity (en ⇄ es)", () => {
     it(`${file}: en and es have identical key sets`, () => {
       const en = leafKeys(loadJson(enDir, file)).sort();
       const es = leafKeys(loadJson(esDir, file)).sort();
-      const missingInEs = en.filter((k) => !es.includes(k));
+      const pending = awaitingSpanish(file);
+      const missingInEs = en.filter((k) => !es.includes(k) && !pending.includes(k));
       const extraInEs = es.filter((k) => !en.includes(k));
       expect({ missingInEs, extraInEs }).toEqual({ missingInEs: [], extraInEs: [] });
+    });
+
+    it(`${file}: every key awaiting Spanish is in en and absent from es`, () => {
+      const en = leafKeys(loadJson(enDir, file));
+      const es = leafKeys(loadJson(esDir, file));
+      const pending = awaitingSpanish(file);
+      expect({
+        notInEn: pending.filter((k) => !en.includes(k)),
+        alreadyTranslated: pending.filter((k) => es.includes(k)),
+      }).toEqual({ notInEn: [], alreadyTranslated: [] });
     });
 
     it(`${file}: no empty string values in either locale`, () => {

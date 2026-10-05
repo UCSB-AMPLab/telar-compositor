@@ -1,38 +1,25 @@
 // @vitest-environment jsdom
 /**
- * upgrade-reload.test.tsx — edge-transition reload hook tests.
+ * A collaborator's page reloads when another user's upgrade has succeeded,
+ * and on nothing else.
  *
- * When isUpgrading transitions true -> false
- * (and no upgradeError), collaborators call window.location.reload() exactly
- * once. Owners never reload — they stay on the "upgrade complete" screen.
+ * The decision that an upgrade succeeded is made in `~/lib/freeze-view` (see
+ * freeze-view.test.ts); this holds the component to acting on that decision
+ * alone — in particular, not to reading a freeze that lifted as a finished
+ * upgrade, which an expiry or a dropped socket also does.
  *
- * Verifies the ReloadOnUpgradeComplete component extracted from _app.tsx.
+ * @version v1.5.0-beta
  */
 
-import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
 import { ReloadOnUpgradeComplete } from "~/components/layout/ReloadOnUpgradeComplete";
 
-// ---------------------------------------------------------------------------
-// Mock use-collaboration so we can drive context values imperatively per test.
-// ---------------------------------------------------------------------------
-
-const mockContext = {
-  provider: { awareness: { setLocalStateField: vi.fn() } } as unknown as {
-    awareness: { setLocalStateField: (field: string, value: unknown) => void };
-  } | null,
-  isUpgrading: false,
-  upgradeError: false,
-};
+const mockContext = { isUpgrading: false, upgradeError: false, upgradeSucceeded: false };
 
 vi.mock("~/hooks/use-collaboration", () => ({
   useCollaborationContext: () => mockContext,
 }));
-
-// ---------------------------------------------------------------------------
-// reload spy harness
-// ---------------------------------------------------------------------------
 
 let reloadSpy: ReturnType<typeof vi.fn>;
 
@@ -45,54 +32,32 @@ beforeEach(() => {
   });
   mockContext.isUpgrading = false;
   mockContext.upgradeError = false;
-  mockContext.provider = {
-    awareness: { setLocalStateField: vi.fn() },
-  };
+  mockContext.upgradeSucceeded = false;
 });
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("ReloadOnUpgradeComplete", () => {
-  it("does not reload when isUpgrading never transitions", () => {
-    mockContext.isUpgrading = false;
-    render(<ReloadOnUpgradeComplete isOwner={false} />);
+  it("reloads once another user's upgrade has succeeded", () => {
+    const { rerender } = render(<ReloadOnUpgradeComplete />);
     expect(reloadSpy).not.toHaveBeenCalled();
-  });
-
-  it("reloads collaborator when isUpgrading transitions true -> false with no error", () => {
-    mockContext.isUpgrading = true;
-    const { rerender } = render(<ReloadOnUpgradeComplete isOwner={false} />);
-    expect(reloadSpy).not.toHaveBeenCalled();
-    mockContext.isUpgrading = false;
-    rerender(<ReloadOnUpgradeComplete isOwner={false} />);
+    mockContext.upgradeSucceeded = true;
+    rerender(<ReloadOnUpgradeComplete />);
     expect(reloadSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT reload owner on same transition", () => {
+  it("does not reload when the freeze lifts without a success", () => {
     mockContext.isUpgrading = true;
-    const { rerender } = render(<ReloadOnUpgradeComplete isOwner={true} />);
+    const { rerender } = render(<ReloadOnUpgradeComplete />);
     mockContext.isUpgrading = false;
-    rerender(<ReloadOnUpgradeComplete isOwner={true} />);
+    rerender(<ReloadOnUpgradeComplete />);
     expect(reloadSpy).not.toHaveBeenCalled();
   });
 
-  it("does NOT reload on transition when upgradeError=true", () => {
+  it("does not reload on a failed upgrade", () => {
     mockContext.isUpgrading = true;
-    const { rerender } = render(<ReloadOnUpgradeComplete isOwner={false} />);
+    const { rerender } = render(<ReloadOnUpgradeComplete />);
     mockContext.isUpgrading = false;
     mockContext.upgradeError = true;
-    rerender(<ReloadOnUpgradeComplete isOwner={false} />);
-    expect(reloadSpy).not.toHaveBeenCalled();
-  });
-
-  it("does NOT reload when provider is null", () => {
-    mockContext.isUpgrading = true;
-    mockContext.provider = null;
-    const { rerender } = render(<ReloadOnUpgradeComplete isOwner={false} />);
-    mockContext.isUpgrading = false;
-    rerender(<ReloadOnUpgradeComplete isOwner={false} />);
+    rerender(<ReloadOnUpgradeComplete />);
     expect(reloadSpy).not.toHaveBeenCalled();
   });
 });

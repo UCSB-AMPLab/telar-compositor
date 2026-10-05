@@ -1,3 +1,12 @@
+/**
+ * The bundled i18next resource tree — every namespace JSON for every locale,
+ * imported statically so the worker ships translations with the bundle rather
+ * than fetching them. A namespace file on disk is only live once it appears
+ * both here and in `config.ts`'s `namespaces` list.
+ *
+ * @version v1.5.0-beta
+ */
+
 import type { Resource } from "i18next";
 
 import enAccount from "./en/account.json";
@@ -22,6 +31,8 @@ import enPopover from "./en/popover.json";
 import enStart from "./en/start.json";
 import enProjectSwitcher from "./en/project_switcher.json";
 import enReleaseNotes from "./en/release-notes.json";
+import enCourse from "./en/course.json";
+import enContributions from "./en/contributions.json";
 
 import esAccount from "./es/account.json";
 import esCommon from "./es/common.json";
@@ -45,6 +56,8 @@ import esPopover from "./es/popover.json";
 import esStart from "./es/start.json";
 import esProjectSwitcher from "./es/project_switcher.json";
 import esReleaseNotes from "./es/release-notes.json";
+import esCourse from "./es/course.json";
+import esContributions from "./es/contributions.json";
 
 export default {
   en: {
@@ -70,6 +83,8 @@ export default {
     start: enStart,
     project_switcher: enProjectSwitcher,
     "release-notes": enReleaseNotes,
+    course: enCourse,
+    contributions: enContributions,
   },
   es: {
     account: esAccount,
@@ -94,5 +109,7 @@ export default {
     start: esStart,
     project_switcher: esProjectSwitcher,
     "release-notes": esReleaseNotes,
+    course: esCourse,
+    contributions: esContributions,
   },
 } satisfies Resource;

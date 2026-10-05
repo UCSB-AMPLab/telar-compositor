@@ -8,6 +8,9 @@
 #   - A Python migration script changes in telar/
 #   - A new fixture is added
 #
+# Environment: USER_SITES_ROOT (the user-site clones) and TELAR_ROOT (the
+# framework template checkout).
+#
 # Snapshot tests run in CI only when manifest or runner code changes, so
 # regeneration is rare.
 #
@@ -26,8 +29,9 @@
 set -euo pipefail
 
 FIXTURES_ROOT="$(cd "$(dirname "$0")/.." && pwd)/tests/fixtures/manifest-snapshots"
-USER_SITES_ROOT="/Users/juancobo/Databases/storytelling/user-sites"
-TELAR_ROOT="/Users/juancobo/Databases/storytelling/telar"
+# Local clones of user sites and of the framework template, named by the caller.
+: "${USER_SITES_ROOT:?set USER_SITES_ROOT to the directory holding the user-site clones}"
+: "${TELAR_ROOT:?set TELAR_ROOT to the root of the framework template checkout}"
 
 declare -a FIXTURES=(
   "mirl-story-v092-to-v120:mirl-story"

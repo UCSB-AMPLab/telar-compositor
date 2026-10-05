@@ -12,12 +12,33 @@
  * URL mismatch), a mandatory `configure-site` step fixes them
  * before Done.
  *
- * @version v1.4.0-beta
+ * The create flow's two project-level answers — what is being created, and
+ * the class code that joins the new site to a course — ride the repo it
+ * hands off and are forwarded here into the import submission, alongside
+ * `origin`. The action spends them; what comes back is an outcome the notice
+ * below renders, and it is rendered by the shell rather than by a step
+ * because the join is settled during sync but still worth reading on review
+ * and on done.
+ *
+ * The server checks the installation against the repository again on every
+ * import submission, and answers `scopeBlocked` when it does not reach it.
+ * That answer arrives after the author has left the connect step, where the
+ * installation prompt renders, so the shell goes back to it and keeps the
+ * refused submission: granting access submits that again, with its intent and
+ * fields, rather than a plain import.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useSearchParams } from "react-router";
+import { useTranslation } from "react-i18next";
+import { forgetSite, rememberSite } from "~/lib/tab-site";
+import { isUnreachableAnswer } from "~/lib/unreachable-write";
+import { useRetryWhileUnreachable } from "~/lib/use-retry-unreachable";
 import type { ImportResult } from "~/lib/import.server";
+import type { SubmittedChoice } from "~/lib/upgrade-sheets.server";
+import type { ImportScopeBlocked } from "~/lib/onboarding-create-site.server";
 import type { RepoWithInstallation } from "~/routes/onboarding";
 import type { Installation } from "~/lib/github.server";
 import type { AuthenticatedUser } from "~/middleware/auth.server";
@@ -26,10 +47,30 @@ import { StepConnect } from "./StepConnect";
 import { StepSync } from "./StepSync";
 import { StepReview } from "./StepReview";
 import { StepDone } from "./StepDone";
+import { CourseJoinNotice } from "./CourseJoinNotice";
 import { SiteConfigConfirmation } from "./SiteConfigConfirmation";
 import { deriveSiteUrl } from "~/lib/site-identity";
 
 type Step = "connect" | "sync" | "review" | "configure-site" | "done";
+
+/**
+ * Forward the create form's project-level answers into an import
+ * submission. Omitted when absent rather than sent empty, so the
+ * connect-an-existing-repo path posts exactly what it always did.
+ */
+function setCourseFields(formData: FormData, repo: RepoWithInstallation) {
+  if (repo.kind) formData.set("kind", repo.kind);
+  if (repo.courseCode) formData.set("course_code", repo.courseCode);
+}
+
+type ImportAnswer = ImportResult | ImportScopeBlocked;
+
+function isScopeBlocked(answer: ImportAnswer): answer is ImportScopeBlocked {
+  return (answer as Partial<ImportScopeBlocked>).scopeBlocked === true;
+}
+
+/** An import submission's fields, kept so a refused one can be sent again unchanged. */
+type ImportSubmission = Array<[string, string]>;
 
 // Discriminated union for the `intent=check-installation-scope` response.
 // Mirrors the shape returned by `/onboarding` action — see
@@ -53,14 +94,15 @@ interface WizardShellProps {
   repos: RepoWithInstallation[];
   installations: Installation[];
   connectedProjects: ConnectedProject[];
-  user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email" | "github_plan">;
+  user: Pick<AuthenticatedUser, "github_id" | "github_login" | "github_name" | "github_email">;
   hasInstallations: boolean;
   orphanRepoNames?: string[];
   githubAppSlug: string;
+  courseGateOpen: boolean;
   className?: string;
 }
 
-export function WizardShell({ repos, installations, connectedProjects, user, hasInstallations, orphanRepoNames = [], githubAppSlug, className = "" }: WizardShellProps) {
+export function WizardShell({ repos, installations, connectedProjects, user, hasInstallations, orphanRepoNames = [], githubAppSlug, courseGateOpen, className = "" }: WizardShellProps) {
   const [step, setStep] = useState<Step>("connect");
   const [selectedRepo, setSelectedRepo] = useState<RepoWithInstallation | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -73,7 +115,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   const [urlMismatch, setUrlMismatch] = useState<{ pagesUrl: string; configUrl: string } | null>(null);
   const [configChecked, setConfigChecked] = useState(false);
 
-  const fetcher = useFetcher<ImportResult>();
+  const fetcher = useFetcher<ImportAnswer>();
   const configCheckFetcher = useFetcher();
   const configFixFetcher = useFetcher();
   const completeFetcher = useFetcher();
@@ -88,20 +130,25 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   // the pre-check returns `inScope:false`, cleared when the user picks
   // another repo or grants access.
   const [scopeBlocked, setScopeBlocked] = useState<RepoWithInstallation | null>(null);
-  const resumeChecked = useRef(false);
+  // The import submission the server refused as out of scope, sent again
+  // when the author grants access. Null when the prompt was raised by the
+  // client's own pre-check, which has no submission behind it yet.
+  const [blockedSubmission, setBlockedSubmission] = useState<ImportSubmission | null>(null);
+  const lastImportSubmission = useRef<ImportSubmission | null>(null);
+  const handledImportAnswer = useRef<ImportAnswer | null>(null);
+  const resumedId = useRef(0);
   const [searchParams] = useSearchParams();
 
-  // Auto-resume: if there's an incomplete project, jump to config check.
-  // Prefer ?resume=<id> when present (explicit Resume click on the connected
-  // list); otherwise fall back to the first incomplete project found.
+  // Auto-resume only on an explicit ?resume=<id>, each id once. Without it the
+  // wizard opens at the connect step, where each unfinished project offers its
+  // own Resume, so an author with one abandoned setup can still add or create
+  // another site. Resume is a navigation within this route, which keeps the
+  // component mounted, so the effect follows the id rather than the mount.
+  const requestedResumeId = Number(searchParams.get("resume")) || 0;
   useEffect(() => {
-    if (resumeChecked.current) return;
-    resumeChecked.current = true;
-    const requestedId = Number(searchParams.get("resume"));
-    const incomplete =
-      (requestedId
-        ? connectedProjects.find((p) => p.id === requestedId && !p.onboarding_completed)
-        : null) ?? connectedProjects.find((p) => !p.onboarding_completed);
+    if (!requestedResumeId || resumedId.current === requestedResumeId) return;
+    resumedId.current = requestedResumeId;
+    const incomplete = connectedProjects.find((p) => p.id === requestedResumeId && !p.onboarding_completed);
     if (incomplete) {
       setProjectId(incomplete.id);
       configCheckFetcher.submit(
@@ -110,10 +157,23 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [requestedResumeId]);
 
-  // When fetcher data arrives, process the result
-  const fetcherData = fetcher.data as ImportResult | undefined;
+  // When fetcher data arrives, process the result. A scope refusal is not an
+  // import result; the effect below answers it.
+  const fetcherAnswer = fetcher.data;
+  const fetcherData = fetcherAnswer && !isScopeBlocked(fetcherAnswer) ? fetcherAnswer : undefined;
+
+  const submitImport = (submission: ImportSubmission) => {
+    lastImportSubmission.current = submission;
+    const formData = new FormData();
+    for (const [key, value] of submission) formData.set(key, value);
+    fetcher.submit(formData, { method: "post", action: "/onboarding" });
+  };
+
+  const submitImportForm = (formData: FormData) => {
+    submitImport([...formData.entries()].map(([key, value]) => [key, String(value)]));
+  };
 
   // `proceedToImport` is the original body of `handleSelectRepo` — extracted
   // so the response-handling useEffect below can call it after the scope
@@ -127,7 +187,8 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     // Created sites import their own born-clean content; mark origin so the row
     // records "created" rather than "imported".
     if (repo.createdThisRun) formData.set("origin", "created");
-    fetcher.submit(formData, { method: "post", action: "/onboarding" });
+    setCourseFields(formData, repo);
+    submitImportForm(formData);
   };
 
   // Fire the scope pre-check BEFORE intent=import. On in-scope,
@@ -140,6 +201,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     // Stale-prompt guard — clear any prior block before issuing a new
     // check, so picking a fresh repo never leaves a misleading prompt up.
     setScopeBlocked(null);
+    setBlockedSubmission(null);
     scopeFetcher.submit(
       {
         intent: "check-installation-scope",
@@ -184,7 +246,60 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     formData.set("installation_id", String(selectedRepo.installationId));
     formData.set("repo_full_name", selectedRepo.full_name);
     formData.set("sheets_url", sheetsUrl);
-    fetcher.submit(formData, { method: "post", action: "/onboarding" });
+    // The retry is the same creation over again — the first attempt aborted
+    // before it wrote a project row — so it carries the same two answers.
+    setCourseFields(formData, selectedRepo);
+    submitImportForm(formData);
+  };
+
+  // The author's column choices for a sheet the import refused: the same
+  // submission again, carrying the challenge and the choices that answer it.
+  const handleChooseColumns = (challenge: string, choices: SubmittedChoice[]) => {
+    const last = (lastImportSubmission.current ?? []).filter(([key]) => key !== "sheet_challenge" && key !== "sheet_choices");
+    setImportResult(null);
+    submitImport([...last, ["sheet_challenge", challenge], ["sheet_choices", JSON.stringify(choices)]]);
+  };
+
+  // The author's answer to a default branch other than `main`: the server
+  // moves the repository onto `main` and imports it, deciding what to change
+  // from GitHub rather than from what the sync step showed.
+  const handleFixDefaultBranch = () => {
+    if (!selectedRepo) return;
+    setImportResult(null);
+
+    const formData = new FormData();
+    formData.set("intent", "fix_default_branch");
+    formData.set("installation_id", String(selectedRepo.installationId));
+    formData.set("repo_full_name", selectedRepo.full_name);
+    if (selectedRepo.createdThisRun) formData.set("origin", "created");
+    setCourseFields(formData, selectedRepo);
+    submitImportForm(formData);
+  };
+
+  // The server found the installation does not reach the repository. The
+  // prompt renders on the connect step only, so the author is taken back
+  // there, with the refused submission kept for the prompt's retry.
+  useEffect(() => {
+    const answer = fetcher.data;
+    if (fetcher.state !== "idle" || !answer || answer === handledImportAnswer.current) return;
+    handledImportAnswer.current = answer;
+    if (!isScopeBlocked(answer) || !selectedRepo) return;
+    setBlockedSubmission(lastImportSubmission.current);
+    setScopeBlocked(selectedRepo);
+    setStep("connect");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.data, fetcher.state]);
+
+  const handleScopeResolved = (repo: RepoWithInstallation) => {
+    setScopeBlocked(null);
+    const refused = blockedSubmission;
+    setBlockedSubmission(null);
+    if (!refused) {
+      proceedToImport(repo);
+      return;
+    }
+    setStep("sync");
+    submitImport(refused);
   };
 
   const handleBack = () => {
@@ -198,8 +313,19 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     setStep("review");
   };
 
+  // A refused completion leaves the session where it was, and the tab
+  // remembers the site it showed.
+  const forgottenSite = useRef<number | null>(null);
+  const completeAnswer = completeFetcher.data as { ok?: boolean } | undefined;
+  useEffect(() => {
+    if (completeAnswer?.ok === false) rememberSite(forgottenSite.current);
+  }, [completeAnswer]);
+
   const markOnboardingComplete = () => {
     if (projectId != null) {
+      // `complete-onboarding` makes the new site the session's; a tab still
+      // remembering the old one would switch the session back in the layout.
+      forgottenSite.current = forgetSite();
       completeFetcher.submit(
         { intent: "complete-onboarding", project_id: String(projectId) },
         { method: "post", action: "/onboarding" },
@@ -237,8 +363,18 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   // Process config check result
   const configCheckData = configCheckFetcher.data as
     | { ok: true; intent: "check-site-config"; sheetsEnabled: boolean; pagesNotEnabled: boolean; urlMismatch: { pagesUrl: string; configUrl: string } | null }
+    | { ok: false; reason: "unreachable"; intent: "check-site-config" }
     | null
     | undefined;
+
+  // A check that could not be made is asked again; Continue asks it too.
+  useRetryWhileUnreachable(configCheckData, () => {
+    if (projectId == null) return;
+    configCheckFetcher.submit(
+      { intent: "check-site-config", project_id: String(projectId) },
+      { method: "post", action: "/onboarding" },
+    );
+  });
 
   useEffect(() => {
     if (configCheckData?.ok && configCheckData.intent === "check-site-config") {
@@ -279,7 +415,12 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     | null
     | undefined;
 
+  // The code and GitHub's own text are held apart. Concatenated into one
+  // string they read the same on screen, but the consumer selects its copy by
+  // comparing the code exactly, so a branch that gains a message stops matching
+  // itself and falls through to the generic card without anything failing.
   const [configFixError, setConfigFixError] = useState<string | null>(null);
+  const [configFixMessage, setConfigFixMessage] = useState<string | null>(null);
   const [installationId, setInstallationId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -287,7 +428,8 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     if (configFixData.ok) {
       markOnboardingComplete();
     } else {
-      setConfigFixError(configFixData.message ? `${configFixData.error}: ${configFixData.message}` : configFixData.error);
+      setConfigFixError(configFixData.error);
+      setConfigFixMessage(configFixData.message ?? null);
       if (!configFixData.ok && configFixData.installationId) {
         setInstallationId(configFixData.installationId);
       }
@@ -315,6 +457,14 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
         className="mb-8"
       />
 
+      {/* The join outcome, once the import has reported one. Outlives the
+          sync step that produced it, so it sits in the shell. */}
+      {currentResult?.courseJoin && step !== "connect" && (
+        <CourseJoinNotice outcome={currentResult.courseJoin} className="mb-6" />
+      )}
+
+      <ConfigCheckNote failed={isUnreachableAnswer(configCheckData) && configCheckFetcher.state === "idle"} />
+
       {/* Step content */}
       {step === "connect" && (
         <StepConnect
@@ -324,14 +474,11 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
           connectedProjects={connectedProjects}
           orphanRepoNames={orphanRepoNames}
           onSelect={handleSelectRepo}
-          githubPlan={user.github_plan}
           hasInstallations={hasInstallations}
           githubAppSlug={githubAppSlug}
+          courseGateOpen={courseGateOpen}
           scopeBlocked={scopeBlocked}
-          onScopeResolved={(repo) => {
-            setScopeBlocked(null);
-            proceedToImport(repo);
-          }}
+          onScopeResolved={handleScopeResolved}
           isCheckingScope={scopeFetcher.state !== "idle"}
         />
       )}
@@ -343,6 +490,8 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
           onBack={handleBack}
           onContinue={handleContinueToReview}
           onRetryWithUrl={handleRetryWithUrl}
+          onFixDefaultBranch={handleFixDefaultBranch}
+          onChooseColumns={handleChooseColumns}
         />
       )}
 
@@ -362,6 +511,8 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
           pagesNotEnabled={pagesNotEnabled}
           urlMismatch={urlMismatch}
           error={configFixError}
+          errorMessage={configFixMessage}
+          repoFullName={selectedRepo?.full_name ?? null}
           installationId={installationId}
           onConfirmed={handleFixConfig}
           onSkip={markOnboardingComplete}
@@ -381,5 +532,16 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
         />
       )}
     </div>
+  );
+}
+
+/** What the wizard says when the site-configuration check could not be made. */
+function ConfigCheckNote({ failed }: { failed: boolean }) {
+  const { t } = useTranslation("onboarding");
+  if (!failed) return null;
+  return (
+    <p role="status" className="font-body text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-6">
+      {t("site_config.check_failed")}
+    </p>
   );
 }

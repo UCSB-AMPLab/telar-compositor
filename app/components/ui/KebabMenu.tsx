@@ -24,7 +24,7 @@
  *     `bg-terracotta` — terracotta backgrounds are reserved for
  *     primary destructive CTAs).
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import {
@@ -36,6 +36,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { MoreVertical } from "lucide-react";
+import { useOverlayOpen } from "~/hooks/use-overlay-open";
 
 export interface KebabMenuItem {
   label: string;
@@ -61,6 +62,7 @@ export function KebabMenu({
   className = "",
 }: KebabMenuProps) {
   const [open, setOpen] = useState(false);
+  useOverlayOpen(open);
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);

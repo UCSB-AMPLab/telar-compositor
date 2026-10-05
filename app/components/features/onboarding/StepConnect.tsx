@@ -7,7 +7,7 @@
  * search filter. Already-connected repos show a "Connected" badge
  * and an "Unlink" button instead of being selectable.
  *
- * @version v1.4.0-beta
+ * @version v1.5.0-beta
  */
 
 import { useMemo, useState } from "react";
@@ -16,6 +16,7 @@ import { GitBranch, Lock, AlertTriangle, Link2Off, Plus, ArrowRight, Play } from
 import { Trans, useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
 import { CreateSiteForm } from "./CreateSiteForm";
+import type { ProjectKind } from "~/lib/import.server";
 import { AccountModal, type AccountInstallationOption } from "./AccountModal";
 import { InstallationScopePrompt } from "./InstallationScopePrompt";
 import type { RepoWithInstallation } from "~/routes/onboarding";
@@ -34,9 +35,12 @@ interface StepConnectProps {
   connectedProjects: ConnectedProject[];
   orphanRepoNames?: string[];
   onSelect: (repo: RepoWithInstallation) => void;
-  githubPlan?: string | null;
   hasInstallations: boolean;
   githubAppSlug: string;
+  // Whether this session has answered the course password. Passed down
+  // rather than read here: the answer is the route loader's, and the form
+  // below is the only thing that acts on it.
+  courseGateOpen: boolean;
   // Scope-block state lifted to WizardShell parent.
   // `scopeBlocked` is the repo whose pre-check returned `inScope:false`;
   // when set, the InstallationScopePrompt renders inside the slot below.
@@ -59,9 +63,9 @@ export function StepConnect({
   connectedProjects,
   orphanRepoNames = [],
   onSelect,
-  githubPlan,
   hasInstallations,
   githubAppSlug,
+  courseGateOpen,
   scopeBlocked = null,
   onScopeResolved,
   isCheckingScope = false,
@@ -71,7 +75,16 @@ export function StepConnect({
   const [selected, setSelected] = useState<RepoWithInstallation | null>(null);
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "create">("list");
+  // What the create form will build. Decided here rather than inside the form,
+  // so that a session with no course access is never shown that courses exist:
+  // the second card simply is not rendered, and there is nothing on the create
+  // form to hint at it.
+  const [createKind, setCreateKind] = useState<ProjectKind>("site");
   const [accountModalOpen, setAccountModalOpen] = useState(false);
+  // Which repository's private-repo notice has been acknowledged, by full name
+  // rather than a flag, so that acknowledging one repository cannot carry over
+  // to the next one selected.
+  const [privateAcknowledged, setPrivateAcknowledged] = useState<string | null>(null);
   // `scopeBlocked` state lives in WizardShell now —
   // received as a prop and rendered in the existing slot below.
 
@@ -163,6 +176,7 @@ export function StepConnect({
             installationId={activeInstallation.installationId}
             onSelect={onSelect}
             onBack={() => setViewMode("list")}
+            kind={createKind}
           />
         </>
       )}
@@ -274,11 +288,12 @@ export function StepConnect({
                         {t("step_connect.resume")}
                       </Link>
                     )}
-                    {/* Removal is handled on the Account page (Connected sites →
-                        Delete project) — a working type-to-confirm flow. The
-                        in-onboarding unlink modal was removed; this links there. */}
+                    {/* Removal happens on the Account page (Connected sites
+                        → Delete/Leave project) — carrying the project id so
+                        that row's own removal confirmation opens on arrival
+                        instead of landing on the top of the page. */}
                     <Link
-                      to="/account"
+                      to={`/account?remove=${project.id}`}
                       className="inline-flex items-center gap-1 text-xs font-heading font-semibold uppercase tracking-wider text-red-600 hover:bg-red-50 border border-red-200 rounded-full px-3 py-1 transition-colors cursor-pointer"
                       title={t("step_connect.unlink")}
                     >
@@ -302,12 +317,34 @@ export function StepConnect({
         </h3>
       )}
 
-      {/* Create-new-site CTA — sits above the search input. */}
-      <div className="mb-4">
-        <Button variant="primary" onClick={() => setViewMode("create")}>
-          <Plus className="w-4 h-4" />
-          {t("create_site.form.title")}
-        </Button>
+      {/* What to create — sits above the search input.
+          Each kind is its own entry point, carrying the sentence that says
+          what it is for. The choice used to be made inside the create form,
+          which meant the form had to ANNOUNCE that courses exist to every
+          session in order to offer the one that could not have them. Here a
+          session without course access sees one card and learns nothing. */}
+      <div className="mb-4 flex flex-col gap-2">
+        {(courseGateOpen ? (["site", "course"] as const) : (["site"] as const)).map(
+          (option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => {
+                setCreateKind(option);
+                setViewMode("create");
+              }}
+              className="w-full text-left rounded-lg border border-gray-200 p-3 hover:border-anil-deep transition-colors cursor-pointer"
+            >
+              <span className="flex items-center gap-1.5 font-heading font-semibold text-sm text-charcoal">
+                <Plus className="w-4 h-4" />
+                {t(`create_site.form.kind_${option}`)}
+              </span>
+              <span className="mt-0.5 block font-body text-xs text-gray-500">
+                {t(`create_site.form.kind_${option}_hint`)}
+              </span>
+            </button>
+          ),
+        )}
       </div>
 
       {/* Search input */}
@@ -389,10 +426,16 @@ export function StepConnect({
         </a>
       </div>
 
-      {/* Private repo + free plan warning. Treat a null/undefined plan as
-          potentially-free — fails safe (worst case: a paying user
-          we have no plan info for sees a redundant, dismissible warning). */}
-      {selected?.private && (githubPlan == null || githubPlan === "free") && (
+      {/* GitHub Pages does not serve a private repository on a free plan, so a
+          private repository is worth saying out loud here. It is not a reason to
+          refuse the import: the Compositor cannot see which plan the account is
+          on — `GET /user` returns `plan` only to a token holding the `user`
+          scope, which sign-in does not request — and a repository's visibility
+          is the author's to set and to change at any time afterwards. So this
+          asks to be acknowledged and then gets out of the way; the place that
+          can tell an author what actually went wrong is the failure itself,
+          where GitHub has answered. */}
+      {selected?.private && privateAcknowledged !== selected.full_name && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 mb-6">
           <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
           <div>
@@ -423,6 +466,13 @@ export function StepConnect({
                 }}
               />
             </p>
+            <button
+              type="button"
+              onClick={() => setPrivateAcknowledged(selected.full_name)}
+              className="mt-2 font-heading font-semibold text-xs uppercase tracking-wider rounded-full border border-amber-400 text-amber-900 px-3 py-1 hover:bg-amber-100 transition-colors"
+            >
+              {t("step_connect.private_repo_warning_ack")}
+            </button>
           </div>
         </div>
       )}
@@ -432,7 +482,7 @@ export function StepConnect({
       <div className="flex justify-end">
         <Button
           variant="primary"
-          disabled={!selected || (selected.private && (githubPlan == null || githubPlan === "free"))}
+          disabled={!selected || (selected.private && privateAcknowledged !== selected.full_name)}
           loading={isCheckingScope}
           onClick={() => selected && onSelect(selected)}
         >

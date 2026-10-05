@@ -25,7 +25,7 @@
  * normalisation, Windows-line-ending repos would silently no-op every
  * transform.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 // (No drizzle / db imports — every function in this module is pure and operates
@@ -45,6 +45,7 @@
 
 export { V121_FRONTMATTER_DEFAULTS } from "~/lib/v130-framework-labels";
 import { V121_FRONTMATTER_DEFAULTS } from "~/lib/v130-framework-labels";
+import { reducedPageFileChanges } from "~/lib/page-frontmatter.server";
 
 // ---------------------------------------------------------------------------
 // V1.2.1 body literals — Transform A comparison targets
@@ -267,18 +268,35 @@ export function splitFrontmatter(content: string): {
  * Helper used by import.server.ts to recognise the canonical
  * v1.3.0 welcome liquid block so it doesn't get mirrored into D1 as a
  * compositor-authored welcome_body. Tolerates whitespace; matches both the
- * `assign lang` opener and the `markdownify` closer.
+ * `assign lang` opener and the `markdownify` closer. The welcome line is the
+ * v1.3.0 one or the v1.8.0 one, which falls back to the English welcome for a
+ * language pack without its own; an upgrade to 1.8.0 writes the second over
+ * the first.
  */
 export function isV130WelcomeLiquidBlock(body: string): boolean {
+  const split = splitWelcomeLiquidBlock(body);
+  return split !== null && split.rest === "";
+}
+
+const STOCK_WELCOME_BLOCK =
+  /^\{%\s*assign\s+lang\s*=\s*site\.data\.languages\[site\.telar_language\]\s*\|\s*default:\s*site\.data\.languages\.en\s*%\}[\s\S]*?\{\{\s*lang\.index_page\.welcome\s*(?:\|\s*default:\s*site\.data\.languages\.en\.index_page\.welcome\s*)?\|\s*markdownify\s*\}\}/;
+
+/**
+ * The stock welcome block at the start of a body, and what follows it. `null`
+ * when the body does not open with the block. `rest` is the author's own text
+ * after the block, trimmed, and is empty when the block stands alone.
+ */
+export function splitWelcomeLiquidBlock(body: string): { block: string; rest: string } | null {
   const normalised = normalizeBody(body);
-  const hasAssignLang = /^\{%\s*assign\s+lang\s*=\s*site\.data\.languages\[site\.telar_language\]\s*\|\s*default:\s*site\.data\.languages\.en\s*%\}/m.test(
-    normalised,
-  );
-  const hasWelcomeRender =
-    /\{\{\s*lang\.index_page\.welcome\s*\|\s*markdownify\s*\}\}/m.test(
-      normalised,
-    );
-  return hasAssignLang && hasWelcomeRender;
+  const match = normalised.match(STOCK_WELCOME_BLOCK);
+  if (!match) return null;
+  return { block: match[0], rest: normalised.slice(match[0].length).trim() };
+}
+
+/** The author's text in a stored welcome body: what follows the stock block, or the body itself. */
+export function welcomeTextOf(stored: string | null): string {
+  const body = stored ?? "";
+  return splitWelcomeLiquidBlock(body)?.rest ?? body;
 }
 
 // ---------------------------------------------------------------------------
@@ -543,7 +561,27 @@ export async function applyV130Transforms(
   );
   if (aAbout.changed) changes.push(aAbout.reason);
 
+  // 7. One file per page: a page file created here is reduced for the site's
+  //    language before it is written, so the template's acerca.md becomes
+  //    about.md's text and is not written itself.
+  reduceCreatedPages(files, created, language);
+
   return { files, created, changes };
+}
+
+/**
+ * The page files `created` reduced to one file per page for the site's
+ * language: a created file the reduction removes is not written, and the page
+ * it is served at takes its text.
+ */
+function reduceCreatedPages(files: Map<string, string>, created: string[], language: "en" | "es"): void {
+  const pages = new Map([...files].filter(([path]) => path.startsWith("telar-content/texts/pages/")));
+  const { writes, deletions } = reducedPageFileChanges(pages, language);
+  for (const { path, content, from } of writes) if (created.includes(from)) files.set(path, content);
+  for (const path of deletions.filter((p) => created.includes(p))) {
+    files.delete(path);
+    created.splice(created.indexOf(path), 1);
+  }
 }
 
 // ---------------------------------------------------------------------------
