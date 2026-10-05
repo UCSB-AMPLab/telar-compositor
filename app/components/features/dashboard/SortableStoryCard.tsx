@@ -4,6 +4,8 @@
  * Wraps StoryCard with useSortable to enable drag-to-reorder within the
  * dashboard grid. Applies transform/transition styles from dnd-kit and
  * dims the card to 40% opacity while dragging.
+ *
+ * @version v1.5.0-beta
  */
 
 import { useSortable } from "@dnd-kit/sortable";
@@ -25,11 +27,13 @@ interface SortableStoryCardProps {
   story: SortableStoryCardStory;
   stepCount: number;
   lastSynced: string | null;
-  coverInfo?: { thumbnail: string | null; objectId: string; imageAvailable: boolean | null } | null;
+  coverInfo?: { thumbnail: string | null; objectId: string; imageAvailable: boolean | null; sourceUrl: string | null } | null;
   siteBaseUrl?: string | null;
+  /** The site's `telar_version`, which decides the id its tiles are under. */
+  frameworkVersion?: string | null;
 }
 
-export function SortableStoryCard({ story, stepCount, lastSynced, coverInfo, siteBaseUrl }: SortableStoryCardProps) {
+export function SortableStoryCard({ story, stepCount, lastSynced, coverInfo, siteBaseUrl, frameworkVersion }: SortableStoryCardProps) {
   const {
     attributes,
     listeners,
@@ -59,6 +63,7 @@ export function SortableStoryCard({ story, stepCount, lastSynced, coverInfo, sit
         lastSynced={lastSynced}
         coverInfo={coverInfo}
         siteBaseUrl={siteBaseUrl}
+        frameworkVersion={frameworkVersion}
       />
     </div>
   );

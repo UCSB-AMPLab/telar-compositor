@@ -31,9 +31,16 @@ describe("getObjectStepCounts — row mapping", () => {
       { object_id: "burro", count: 1 },
     ];
     const db = stubReturning(rows);
-    const counts = await getObjectStepCounts(db, 42);
+    const counts = await getObjectStepCounts(db, 42, [{ object_id: "telar-placeholder" }, { object_id: "burro" }], "1.7.0");
     expect(counts).toEqual({ "telar-placeholder": 3, burro: 1 });
     expect(counts).not.toHaveProperty("null");
+  });
+
+  it("counts an object whose id names an Object.prototype property as a number", async () => {
+    const db = stubReturning([{ object_id: "constructor", count: 1 }]);
+    const counts = await getObjectStepCounts(db, 42, [{ object_id: "constructor" }, { object_id: "toString" }], "1.8.0");
+    expect(counts.constructor).toBe(1);
+    expect(Object.keys(counts)).toEqual(["constructor"]);
   });
 });
 

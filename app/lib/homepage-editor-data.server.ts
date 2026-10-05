@@ -12,18 +12,24 @@
  * → canned text / placeholder fallthrough) moved here verbatim from the
  * homepage loader. Behaviour is unchanged.
  *
- * @version v1.3.0-beta
+ * A story's cover is the object the site shows for its first content step,
+ * found as the framework matches a step to an object (`stepObjectResolver`),
+ * so a step naming `map` has the object written `map.jpg` as its cover.
+ *
+ * @version v1.5.0-beta
  */
 
 import { asc, and, eq, gt, inArray } from "drizzle-orm";
+import { objectsSheetOrder } from "~/lib/objects.server";
 import { stories, steps, project_config, objects, project_landing } from "~/db/schema";
 import type { getDb } from "~/lib/db.server";
+import { stepObjectResolver } from "~/lib/object-id";
 import {
   WELCOME_BODY_LOCALISED,
   V121_FRONTMATTER_DEFAULTS,
 } from "~/lib/v130-framework-labels";
 import {
-  isV130WelcomeLiquidBlock,
+  welcomeTextOf,
   normalizeBody,
   V121_BODIES,
 } from "~/lib/v130-ingest.server";
@@ -64,16 +70,16 @@ export async function loadHomepageEditorData(
   // v1.2.1 literal, and the byte-equal v1.3.0 canned EN/ES text.
   let landing = landingRow;
   if (landingRow) {
-    const welcomeBody = landingRow.welcome_body ?? "";
+    // A row stored with the block ahead of the author's text shows the text.
+    const welcomeBody = welcomeTextOf(landingRow.welcome_body);
     const welcomeIsDefault =
       welcomeBody.trim() === "" ||
-      isV130WelcomeLiquidBlock(welcomeBody) ||
       normalizeBody(welcomeBody) === normalizeBody(V121_BODIES.index) ||
       welcomeBody === WELCOME_BODY_LOCALISED.en ||
       welcomeBody === WELCOME_BODY_LOCALISED.es;
     landing = {
       ...landingRow,
-      welcome_body: welcomeIsDefault ? null : landingRow.welcome_body,
+      welcome_body: welcomeIsDefault ? null : welcomeBody,
       stories_heading:
         landingRow.stories_heading === V121_FRONTMATTER_DEFAULTS.stories_heading
           ? null
@@ -95,10 +101,13 @@ export async function loadHomepageEditorData(
     .where(eq(stories.project_id, project.id))
     .orderBy(asc(stories.order));
 
+  // In the order a publish writes them to objects.csv, which decides the row
+  // a step shows where two share the site's id.
   const projectObjects = await db
     .select()
     .from(objects)
-    .where(eq(objects.project_id, project.id));
+    .where(eq(objects.project_id, project.id))
+    .orderBy(objectsSheetOrder());
 
   const siteBaseUrl = config?.url
     ? `${config.url}${config.baseurl ?? ""}`
@@ -128,25 +137,20 @@ export async function loadHomepageEditorData(
     if (row.object_id) storyCoverObjectIds[row.story_id] = row.object_id;
   }
 
-  const coverObjectIdValues = Object.values(storyCoverObjectIds);
-  const coverObjects = coverObjectIdValues.length > 0
-    ? await db
-        .select({ object_id: objects.object_id, thumbnail: objects.thumbnail, image_available: objects.image_available })
-        .from(objects)
-        .where(and(eq(objects.project_id, project.id), inArray(objects.object_id, coverObjectIdValues)))
-    : [];
-
-  const objectThumbnailMap: Record<string, { thumbnail: string | null; image_available: boolean | null }> = {};
-  for (const obj of coverObjects) {
-    objectThumbnailMap[obj.object_id] = { thumbnail: obj.thumbnail, image_available: obj.image_available };
-  }
-
-  const storyCoverMap: Record<number, { thumbnail: string | null; objectId: string; imageAvailable: boolean | null }> = {};
-  for (const [storyIdStr, objectId] of Object.entries(storyCoverObjectIds)) {
-    const storyId = Number(storyIdStr);
-    const objInfo = objectThumbnailMap[objectId];
-    if (objInfo) {
-      storyCoverMap[storyId] = { thumbnail: objInfo.thumbnail, objectId, imageAvailable: objInfo.image_available };
+  const showsFor = stepObjectResolver(projectObjects, config?.telar_version ?? null);
+  const storyCoverMap: Record<
+    number,
+    { thumbnail: string | null; objectId: string; imageAvailable: boolean | null; sourceUrl: string | null }
+  > = {};
+  for (const [storyIdStr, stepObject] of Object.entries(storyCoverObjectIds)) {
+    const cover = showsFor(stepObject);
+    if (cover) {
+      storyCoverMap[Number(storyIdStr)] = {
+        thumbnail: cover.thumbnail,
+        objectId: cover.object_id,
+        imageAvailable: cover.image_available,
+        sourceUrl: cover.source_url,
+      };
     }
   }
 
