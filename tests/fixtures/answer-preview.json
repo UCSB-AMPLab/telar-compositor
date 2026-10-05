@@ -1,0 +1,675 @@
+{
+  "framework_commit": "93c70bdd7085becdbbf4166f32b2e1837a4a7642",
+  "markdown_version": "3.10.3",
+  "budget": 18,
+  "line_chars": 53,
+  "break_lines": 2,
+  "max_paragraphs": 5,
+  "small_type_lines": 15,
+  "base_url": "/telar",
+  "glossary": {
+    "IIIF": "International Image Interoperability Framework",
+    "loom": "Loom",
+    "demo-weft": "Weft"
+  },
+  "cases": [
+    {
+      "name": "paragraphs and a soft break",
+      "source": "First line\nsecond line.\n\nSecond paragraph.",
+      "html": "<p>First line<br />\nsecond line.</p>\n<p>Second paragraph.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 6,
+        "paragraphs": 2,
+        "lines": 5
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a hard break",
+      "source": "One  \ntwo",
+      "html": "<p>One<br />\ntwo</p>",
+      "kinds": [],
+      "measure": {
+        "words": 2,
+        "paragraphs": 1,
+        "lines": 2
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "emphasis, code and links",
+      "source": "*a* and _b_, **c**, `d` and [e](https://example.org/e \"Title\").",
+      "html": "<p><em>a</em> and <em>b</em>, <strong>c</strong>, <code>d</code> and <a href=\"https://example.org/e\" title=\"Title\">e</a>.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 7,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "smart quotes, dashes and an ellipsis",
+      "source": "\"Quoted\" and 'single' -- en --- em ... it's",
+      "html": "<p>&ldquo;Quoted&rdquo; and &lsquo;single&rsquo; &ndash; en &mdash; em &hellip; it&rsquo;s</p>",
+      "kinds": [],
+      "measure": {
+        "words": 9,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "inline HTML and entities",
+      "source": "x < y & z, <em>raw</em> &copy; &#169; &amp;",
+      "html": "<p>x &lt; y &amp; z, <em>raw</em> &copy; &#169; &amp;</p>",
+      "kinds": [],
+      "measure": {
+        "words": 9,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a bare address stays text",
+      "source": "See https://example.org/page and <https://example.org/auto>.",
+      "html": "<p>See https://example.org/page and <a href=\"https://example.org/auto\">https://example.org/auto</a>.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 4,
+        "paragraphs": 1,
+        "lines": 2
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "currency is not maths",
+      "source": "It cost $5 and $10.",
+      "html": "<p>It cost $5 and $10.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 5,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "maths in each delimiter",
+      "source": "Inline $x_1$, display $$a+b$$, paren \\(x^2\\), bracket \\[y_1\\], chem \\ce{H2O}.",
+      "html": "<p>Inline $x_1$, display $$a+b$$, paren \\(x^2\\), bracket \\[y_1\\], chem \\ce{H2O}.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 10,
+        "paragraphs": 1,
+        "lines": 3
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "maths holding Markdown characters",
+      "source": "$a*b*c^2$ and $$x_{1}*y_{2}$$",
+      "html": "<p>$a*b*c^2$ and $$x_{1}*y_{2}$$</p>",
+      "kinds": [],
+      "measure": {
+        "words": 3,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "maths holding HTML characters",
+      "source": "$$a<b$$ and $$c & d$$ and $$e &lt; f$$",
+      "html": "<p>$$a&lt;b$$ and $$c &amp; d$$ and $$e &lt; f$$</p>",
+      "kinds": [],
+      "measure": {
+        "words": 5,
+        "paragraphs": 1,
+        "lines": 2
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "maths in a link's title",
+      "source": "[a](https://example.org/a \"\\(x\\)\") and \\(y\\)",
+      "html": "<p><a href=\"https://example.org/a\" title=\"\\(x\\)\">a</a> and \\(y\\)</p>",
+      "kinds": [],
+      "measure": {
+        "words": 3,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "glossary references in any case",
+      "source": "The [[iiif]] standard and [[IIIF|the framework]].",
+      "html": "<p>The <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">International Image Interoperability Framework</a> standard and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">the framework</a>.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 9,
+        "paragraphs": 1,
+        "lines": 2
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "an unknown glossary term",
+      "source": "A [[Missing Term]] and [[missing|shown]] here.",
+      "html": "<p>A <span class=\"glossary-link-error\" data-term-id=\"Missing Term\">⚠️ [[Missing Term]]</span> and <span class=\"glossary-link-error\" data-term-id=\"missing\">⚠️ [[missing]]</span> here.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 8,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a demo glossary term",
+      "source": "The [[demo-weft]].",
+      "html": "<p>The <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"demo-weft\" data-term-url=\"/telar/glossary/demo-weft/\" data-demo=\"true\">Weft</a>.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 2,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "glossary references inside formulas",
+      "source": "Sum $$x + [[iiif]]$$ and \\([[loom]]\\).",
+      "html": "<p>Sum $$x + [[iiif]]$$ and \\([[loom]]\\).</p>",
+      "kinds": [],
+      "measure": {
+        "words": 4,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a glossary reference inside code",
+      "source": "Write `[[iiif]]` to link.",
+      "html": "<p>Write <code>[[iiif]]</code> to link.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 4,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a glossary reference in a link's text",
+      "source": "[see [[iiif]]](https://example.org/a) and [[IIIF|this]].",
+      "html": "<p><a href=\"https://example.org/a\">see International Image Interoperability Framework</a> and <a href=\"#\" class=\"glossary-inline-link\" data-term-id=\"IIIF\" data-term-url=\"/telar/glossary/iiif/\">this</a>.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 7,
+        "paragraphs": 1,
+        "lines": 2
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "headings become paragraphs",
+      "source": "# Heading\n\nText\n\n## Second",
+      "html": "<p>Heading</p>\n<p>Text</p>\n<p>Second</p>",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 3,
+        "paragraphs": 3,
+        "lines": 7
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "lists become paragraphs",
+      "source": "- one\n- two\n\n1. first\n2. second",
+      "html": "\n<p>one</p>\n<p>two</p>\n\n<p>first</p>\n\n<p>second</p>\n",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 4,
+        "paragraphs": 4,
+        "lines": 10
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a nested list",
+      "source": "- one\n    - inner\n- two",
+      "html": "\n<p>one</p>\n<p>inner</p>\n\n\n<p>two</p>\n",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 3,
+        "paragraphs": 3,
+        "lines": 7
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a quote becomes paragraphs",
+      "source": "> quoted\n>\n> again",
+      "html": "\n<p>quoted</p>\n<p>again</p>\n",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 2,
+        "lines": 4
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a rule is removed",
+      "source": "Above\n\n---\n\nBelow",
+      "html": "<p>Above</p>\n\n<p>Below</p>",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 2,
+        "lines": 4
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "an image is removed",
+      "source": "Text ![img](a.png) after.",
+      "html": "<p>Text  after.</p>",
+      "kinds": [
+        "media"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "an answer that is only an image",
+      "source": "![img](a.png)",
+      "html": "",
+      "kinds": [
+        "media"
+      ],
+      "measure": {
+        "words": 0,
+        "paragraphs": 0,
+        "lines": 0
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "an embed is removed",
+      "source": "Watch <iframe src=\"https://example.org/v\"></iframe> this.",
+      "html": "<p>Watch  this.</p>",
+      "kinds": [
+        "media"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a table is removed",
+      "source": "Before\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter",
+      "html": "<p>Before</p>\n\n<p>After</p>",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 2,
+        "lines": 4
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a fenced code block is removed",
+      "source": "Before\n\n```\ncode\n```\n\nAfter",
+      "html": "<p>Before</p>\n\n<p>After</p>",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 2,
+        "lines": 4
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "an indented code block is removed",
+      "source": "Text\n\n    code line\n\nAfter",
+      "html": "<p>Text</p>\n\n<p>After</p>",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 2,
+        "lines": 4
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a footnote is removed",
+      "source": "A note[^1] here.\n\n[^1]: The note",
+      "html": "<p>A note here.</p>\n",
+      "kinds": [
+        "footnotes"
+      ],
+      "measure": {
+        "words": 3,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "two footnotes and a reference without a definition",
+      "source": "A[^a] and b[^b] and c[^c].\n\n[^a]: One\n[^b]: Two",
+      "html": "<p>A and b and c[^c].</p>\n",
+      "kinds": [
+        "footnotes"
+      ],
+      "measure": {
+        "words": 5,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a footnote reference inside code",
+      "source": "Write `[^1]` here[^1].\n\n[^1]: Note",
+      "html": "<p>Write <code>[^1]</code> here.</p>\n",
+      "kinds": [
+        "footnotes"
+      ],
+      "measure": {
+        "words": 3,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a glossary callout",
+      "source": "Before.\n\n:::glossary\nentry: carta\n:::\n\nAfter.",
+      "html": "<p>Before.</p>\n<p>After.</p>",
+      "kinds": [
+        "widgets"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 2,
+        "lines": 4
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a widget line with no closing line",
+      "source": "Before.\n\n:::glossary\nentry: carta\n\nAfter.",
+      "html": "<p>Before.</p>\n<p>:::glossary<br />\nentry: carta</p>\n<p>After.</p>",
+      "kinds": [],
+      "measure": {
+        "words": 5,
+        "paragraphs": 3,
+        "lines": 8
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "an indented widget",
+      "source": "Before.\n  :::accordion\n  ## One\n  words\n  :::\nAfter.",
+      "html": "<p>Before.<br />\nAfter.</p>",
+      "kinds": [
+        "widgets"
+      ],
+      "measure": {
+        "words": 2,
+        "paragraphs": 1,
+        "lines": 2
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "Unicode spaces",
+      "source": "a b cd",
+      "html": "<p>a b cd</p>",
+      "kinds": [],
+      "measure": {
+        "words": 4,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "the budget exactly",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word</p>",
+      "kinds": [],
+      "measure": {
+        "words": 191,
+        "paragraphs": 1,
+        "lines": 18
+      },
+      "cut": false,
+      "long": true
+    },
+    {
+      "name": "cut at a plain word",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…</p>",
+      "kinds": [],
+      "measure": {
+        "words": 196,
+        "paragraphs": 1,
+        "lines": 19
+      },
+      "cut": true,
+      "long": true
+    },
+    {
+      "name": "past the normal type",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word</p>",
+      "kinds": [],
+      "measure": {
+        "words": 160,
+        "paragraphs": 1,
+        "lines": 16
+      },
+      "cut": false,
+      "long": true
+    },
+    {
+      "name": "within the normal type",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word</p>",
+      "kinds": [],
+      "measure": {
+        "words": 159,
+        "paragraphs": 1,
+        "lines": 15
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "paragraph breaks count lines",
+      "source": "word word word word word word word word word word word word word word word word word word word word\n\nword word word word word word word word word word word word word word word word word word word word\n\nword word word word word word word word word word word word word word word word word word word word\n\nword word word word word word word word word word word word word word word word word word word word\n\nword word word word word word word word word word word word word word word word word word word word",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word</p>\n<p>word word word word word word word word word word word word word word word word word word word word</p>\n<p>word word word word word word word word word word word word word word word word word word word word</p>\n<p>word word word word word word word word word word word word word word word word word word word word</p>\n<p>word word word word word word word word word word word word word word word word word word word word</p>",
+      "kinds": [],
+      "measure": {
+        "words": 100,
+        "paragraphs": 5,
+        "lines": 18
+      },
+      "cut": false,
+      "long": true
+    },
+    {
+      "name": "hard breaks start segments",
+      "source": "word word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word\nword word word word word word word word word word word word word word word word word word word word",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word<br />\nword word word word word word word word word word word word word word word word word word word word</p>",
+      "kinds": [],
+      "measure": {
+        "words": 180,
+        "paragraphs": 1,
+        "lines": 18
+      },
+      "cut": false,
+      "long": true
+    },
+    {
+      "name": "more paragraphs than the card holds",
+      "source": "w0\n\nw1\n\nw2\n\nw3\n\nw4\n\nw5\n\nw6",
+      "html": "<p>w0</p>\n<p>w1</p>\n<p>w2</p>\n<p>w3</p>\n<p>w4…</p>",
+      "kinds": [],
+      "measure": {
+        "words": 7,
+        "paragraphs": 7,
+        "lines": 19
+      },
+      "cut": true,
+      "long": false
+    },
+    {
+      "name": "cut back from a link",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word [two words](https://example.org/x) tail tail",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…</p>",
+      "kinds": [],
+      "measure": {
+        "words": 193,
+        "paragraphs": 1,
+        "lines": 19
+      },
+      "cut": true,
+      "long": true
+    },
+    {
+      "name": "cut back from a glossary link",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word [[IIIF|two words]] tail tail",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…</p>",
+      "kinds": [],
+      "measure": {
+        "words": 193,
+        "paragraphs": 1,
+        "lines": 19
+      },
+      "cut": true,
+      "long": true
+    },
+    {
+      "name": "a cut inside emphasis",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word *a b cccccc* tail",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word <em>a b…</em></p>",
+      "kinds": [],
+      "measure": {
+        "words": 193,
+        "paragraphs": 1,
+        "lines": 19
+      },
+      "cut": true,
+      "long": true
+    },
+    {
+      "name": "maths is one word in the cut",
+      "source": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word $a + b_1$ tail tail",
+      "html": "<p>word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…</p>",
+      "kinds": [],
+      "measure": {
+        "words": 192,
+        "paragraphs": 1,
+        "lines": 19
+      },
+      "cut": true,
+      "long": true
+    },
+    {
+      "name": "a formula counts its placeholder's characters",
+      "source": "abcdefghij abcdefghij abcdefghi $$x$$",
+      "html": "<p>abcdefghij abcdefghij abcdefghi $$x$$</p>",
+      "kinds": [],
+      "measure": {
+        "words": 4,
+        "paragraphs": 1,
+        "lines": 1
+      },
+      "cut": false,
+      "long": false
+    },
+    {
+      "name": "a long list is cut",
+      "source": "- w0\n- w1\n- w2\n- w3\n- w4\n- w5\n- w6\n- w7\n- w8\n- w9",
+      "html": "\n<p>w0</p>\n<p>w1</p>\n<p>w2</p>\n<p>w3</p>\n<p>w4…</p>",
+      "kinds": [
+        "markup"
+      ],
+      "measure": {
+        "words": 10,
+        "paragraphs": 10,
+        "lines": 28
+      },
+      "cut": true,
+      "long": false
+    }
+  ]
+}

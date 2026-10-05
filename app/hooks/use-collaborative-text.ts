@@ -11,10 +11,10 @@
  * (yText is null) the hook falls back to `initialValue` and
  * updates local state directly so the field remains usable.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import * as Y from "yjs";
 
 /**
@@ -39,17 +39,40 @@ export function useCollaborativeText(
   yText: Y.Text | null,
   initialValue: string,
   defaultValues?: readonly string[]
-): { value: string; handleChange: (newValue: string) => void } {
+): {
+  value: string;
+  handleChange: (newValue: string) => void;
+  currentValue: () => string;
+  lastWriteIsOwn: () => boolean;
+} {
   const [rawValue, setRawValue] = useState(initialValue);
+  // The same text the state holds, kept for a caller that has to know what the
+  // document says NOW: a remote edit updates the document and SCHEDULES the
+  // render that shows it, so a caller reading the rendered value in between
+  // reads text the document has already moved past.
+  const liveValue = useRef(initialValue);
+  // The origin this binding's own transactions carry, and whether the latest
+  // change to the text was one of them. Judged by transaction and not by
+  // value: a collaborator who deletes a character and types the same one back
+  // leaves the text equal to this binding's last write, and their edit is
+  // still theirs.
+  const ownOrigin = useRef({});
+  const ownWriteIsLatest = useRef(false);
 
   useEffect(() => {
     if (!yText) return;
 
     // Sync initial state from the live Yjs doc.
     // The doc may already have edits from other clients since the SSR render.
-    setRawValue(yText.toString());
+    liveValue.current = yText.toString();
+    setRawValue(liveValue.current);
+    ownWriteIsLatest.current = false;
 
-    const observer = () => setRawValue(yText.toString());
+    const observer = (event: Y.YTextEvent) => {
+      ownWriteIsLatest.current = event.transaction.origin === ownOrigin.current;
+      liveValue.current = yText.toString();
+      setRawValue(liveValue.current);
+    };
     yText.observe(observer);
     return () => yText.unobserve(observer);
   }, [yText]);
@@ -58,6 +81,8 @@ export function useCollaborativeText(
     (newValue: string) => {
       if (!yText) {
         // Fallback: local-only state before Yjs connects (SSR, pre-connection).
+        liveValue.current = newValue;
+        ownWriteIsLatest.current = true;
         setRawValue(newValue);
         return;
       }
@@ -66,7 +91,7 @@ export function useCollaborativeText(
       yText.doc?.transact(() => {
         yText.delete(0, yText.length);
         yText.insert(0, newValue);
-      });
+      }, ownOrigin.current);
     },
     [yText]
   );
@@ -75,8 +100,36 @@ export function useCollaborativeText(
   // as empty so the placeholder takes over. The underlying Y.Text retains
   // the value (no destructive mutation); the next user edit replaces it
   // cleanly via handleChange's full-replace transaction.
-  const value =
-    defaultValues && defaultValues.includes(rawValue) ? "" : rawValue;
+  const displayed = useCallback(
+    (raw: string) => (defaultValues && defaultValues.includes(raw) ? "" : raw),
+    [defaultValues],
+  );
+  const value = displayed(rawValue);
 
-  return { value, handleChange };
+  /**
+   * What the field holds at the moment of the call — the shared document
+   * itself where there is one, past any render still to come.
+   */
+  const currentValue = useCallback(
+    () => displayed(yText ? yText.toString() : liveValue.current),
+    [displayed, yText],
+  );
+
+  /**
+   * Whether the latest change to the text was this binding's own write. Before
+   * the connection the value is local and every change to it is this one's.
+   */
+  const lastWriteIsOwn = useCallback(() => ownWriteIsLatest.current, []);
+
+  return { value, handleChange, currentValue, lastWriteIsOwn };
 }
+
+/**
+ * What the hook returns. A component that renders a field it may unmount
+ * (InPlaceText) holds the binding itself and passes it to the field, so a
+ * draft kept before the Y.Text connects outlives the field.
+ */
+export type CollaborativeText = ReturnType<typeof useCollaborativeText> & {
+  /** Set by an owner that closes the field itself: the field registers the settle the owner runs before it reads the draft. */
+  registerSettle?: (settle: () => void) => () => void;
+};

@@ -4,7 +4,7 @@
  * loader-resolved locale, and distinguishes bot user-agents from
  * humans so crawlers get a non-streamed response.
  *
- * @version v1.2.0-beta
+ * @version v1.5.0-beta
  */
 
 import type { AppLoadContext, EntryContext } from "react-router";
@@ -16,6 +16,7 @@ import { createInstance } from "i18next";
 import { initReactI18next } from "react-i18next";
 import resources from "~/i18n/locales";
 import { getLocale } from "~/i18n/i18next.server";
+import "~/lib/html-unescape.server";
 
 export const streamTimeout = 5_000;
 

@@ -1,0 +1,56 @@
+{
+  "framework_commit": "93c70bdd7085becdbbf4166f32b2e1837a4a7642",
+  "markdown_version": "3.10.3",
+  "cases": [
+    {
+      "name": "definitions in another order than references",
+      "source": "Second[^z] then first[^old].\n\n[^old]: Earlier definition\n[^z]: Later",
+      "html": "<p>Second<sup id=\"fnref:z\"><a class=\"footnote-ref\" href=\"#fn:z\">1</a></sup> then first<sup id=\"fnref:old\"><a class=\"footnote-ref\" href=\"#fn:old\">2</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:z\">\n<p>Later&#160;<a class=\"footnote-backref\" href=\"#fnref:z\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:old\">\n<p>Earlier definition&#160;<a class=\"footnote-backref\" href=\"#fnref:old\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "a note referenced twice",
+      "source": "A[^a] b[^b] c[^a].\n\n[^b]: B\n[^a]: A",
+      "html": "<p>A<sup id=\"fnref:a\"><a class=\"footnote-ref\" href=\"#fn:a\">1</a></sup> b<sup id=\"fnref:b\"><a class=\"footnote-ref\" href=\"#fn:b\">2</a></sup> c<sup id=\"fnref2:a\"><a class=\"footnote-ref\" href=\"#fn:a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:a\">\n<p>A&#160;<a class=\"footnote-backref\" href=\"#fnref:a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a><a class=\"footnote-backref\" href=\"#fnref2:a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "an undefined reference",
+      "source": "A[^missing] b[^b].\n\n[^b]: B",
+      "html": "<p>A[^missing] b<sup id=\"fnref:b\"><a class=\"footnote-ref\" href=\"#fn:b\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "an unreferenced definition",
+      "source": "A[^b].\n\n[^u]: Unreferenced\n[^b]: B",
+      "html": "<p>A<sup id=\"fnref:b\"><a class=\"footnote-ref\" href=\"#fn:b\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:u\">\n<p>Unreferenced&#160;<a class=\"footnote-backref\" href=\"#fnref:u\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "only unreferenced definitions",
+      "source": "Text.\n\n[^u]: U\n[^v]: V",
+      "html": "<p>Text.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:u\">\n<p>U&#160;<a class=\"footnote-backref\" href=\"#fnref:u\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:v\">\n<p>V&#160;<a class=\"footnote-backref\" href=\"#fnref:v\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "a duplicate definition",
+      "source": "A[^d] b[^e].\n\n[^e]: E\n[^d]: First\n[^d]: Second",
+      "html": "<p>A<sup id=\"fnref:d\"><a class=\"footnote-ref\" href=\"#fn:d\">1</a></sup> b<sup id=\"fnref:e\"><a class=\"footnote-ref\" href=\"#fn:e\">2</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:d\">\n<p>Second&#160;<a class=\"footnote-backref\" href=\"#fnref:d\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:e\">\n<p>E&#160;<a class=\"footnote-backref\" href=\"#fnref:e\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "a reference inside a note",
+      "source": "A[^a].\n\n[^a]: See[^b]\n[^b]: B",
+      "html": "<p>A<sup id=\"fnref:a\"><a class=\"footnote-ref\" href=\"#fn:a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:a\">\n<p>See<sup id=\"fnref:b\"><a class=\"footnote-ref\" href=\"#fn:b\">2</a></sup>&#160;<a class=\"footnote-backref\" href=\"#fnref:a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:b\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "references in code",
+      "source": "Text `[^a]` and[^a].\n\n```\n[^a]: in code\n```\n\n[^a]: Real",
+      "html": "<p>Text <code>[^a]</code> and<sup id=\"fnref:a\"><a class=\"footnote-ref\" href=\"#fn:a\">1</a></sup>.</p>\n<pre><code>[^a]: in code\n</code></pre>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:a\">\n<p>Real&#160;<a class=\"footnote-backref\" href=\"#fnref:a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "accordion sections and the top level",
+      "source": ":::accordion\n## One\nX[^s] y[^r].\n\n[^r]: R\n[^s]: S\n\n## Two\nZ[^s].\n\n[^s]: Other S\n:::\n\nTop[^t] and[^u].\n\n[^u]: U\n[^t]: T",
+      "html": "<div class=\"telar-widget telar-widget-accordion\">\n  <div class=\"accordion\" id=\"accordion-widget-1\">\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-1-1\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-1-1\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-1-1\">\n          One\n        </button>\n      </h3>\n      <div id=\"collapse-widget-1-1\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-1-1\"\n           data-bs-parent=\"#accordion-widget-1\">\n        <div class=\"accordion-body\">\n          <p>X<sup id=\"fnref:widget-1-1-s\"><a class=\"footnote-ref\" href=\"#fn:widget-1-1-s\">1</a></sup> y<sup id=\"fnref:widget-1-1-r\"><a class=\"footnote-ref\" href=\"#fn:widget-1-1-r\">2</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-1-1-s\">\n<p>S&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-1-1-s\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-1-1-r\">\n<p>R&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-1-1-r\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n    <div class=\"accordion-item\">\n      <h3 class=\"accordion-header\" id=\"heading-widget-1-2\">\n        <button class=\"accordion-button collapsed\"\n                type=\"button\"\n                data-bs-toggle=\"collapse\"\n                data-bs-target=\"#collapse-widget-1-2\"\n                aria-expanded=\"false\"\n                aria-controls=\"collapse-widget-1-2\">\n          Two\n        </button>\n      </h3>\n      <div id=\"collapse-widget-1-2\"\n           class=\"accordion-collapse collapse\"\n           aria-labelledby=\"heading-widget-1-2\"\n           data-bs-parent=\"#accordion-widget-1\">\n        <div class=\"accordion-body\">\n          <p>Z<sup id=\"fnref:widget-1-2-s\"><a class=\"footnote-ref\" href=\"#fn:widget-1-2-s\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-1-2-s\">\n<p>Other S&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-1-2-s\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>\n        </div>\n      </div>\n    </div>\n\n  </div>\n</div>\n\n<p>Top<sup id=\"fnref:t\"><a class=\"footnote-ref\" href=\"#fn:t\">1</a></sup> and<sup id=\"fnref:u\"><a class=\"footnote-ref\" href=\"#fn:u\">2</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:t\">\n<p>T&#160;<a class=\"footnote-backref\" href=\"#fnref:t\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:u\">\n<p>U&#160;<a class=\"footnote-backref\" href=\"#fnref:u\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div>"
+    },
+    {
+      "name": "bibliography entries",
+      "source": ":::bibliography\nFirst[^b][^a] entry.\n[^a]: A\n[^b]: B\n\nSecond[^a].\n[^a]: Other A\n:::",
+      "html": "<div class=\"telar-widget-bibliography\">\n\n  <div class=\"telar-bib-entry\"><p>First<sup id=\"fnref:widget-2-1-b\"><a class=\"footnote-ref\" href=\"#fn:widget-2-1-b\">1</a></sup><sup id=\"fnref:widget-2-1-a\"><a class=\"footnote-ref\" href=\"#fn:widget-2-1-a\">2</a></sup> entry.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-2-1-b\">\n<p>B&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-2-1-b\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n<li id=\"fn:widget-2-1-a\">\n<p>A&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-2-1-a\" title=\"Jump back to footnote 2 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div></div>\n\n  <div class=\"telar-bib-entry\"><p>Second<sup id=\"fnref:widget-2-2-a\"><a class=\"footnote-ref\" href=\"#fn:widget-2-2-a\">1</a></sup>.</p>\n<div class=\"footnote\">\n<hr />\n<ol>\n<li id=\"fn:widget-2-2-a\">\n<p>Other A&#160;<a class=\"footnote-backref\" href=\"#fnref:widget-2-2-a\" title=\"Jump back to footnote 1 in the text\">&#8617;</a></p>\n</li>\n</ol>\n</div></div>\n\n</div>"
+    }
+  ]
+}

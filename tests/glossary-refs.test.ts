@@ -8,7 +8,7 @@
  * cross-refs, and page `body`. The link regex captures group 1 as term_id
  * (`[[term_id|display]]`).
  *
- * @version v1.3.0-beta
+ * @version v1.5.0-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -304,5 +304,29 @@ describe("countGlossaryLinks (dry-run for impact panel)", () => {
     expect(n).toBe(3);
     // Dry-run: nothing changed.
     expect(allYTextStrings(doc)).toEqual(before);
+  });
+});
+
+describe("glossary callouts as references", () => {
+  const callouts = "Intro [[mit-a]].\n\n:::glossary\nentry: mit-a\nalign: left\n:::\n\n:::glossary\n  entry :   other  \n:::";
+  const docWithCallouts = () =>
+    buildDoc({
+      stories: [{ story_id: "s1", title: "T", steps: [{ step_number: 1, layers: [{ layer_number: 1, content: callouts }] }] }],
+    });
+
+  it("counts and indexes a callout's entry with the term's links", () => {
+    const doc = docWithCallouts();
+    expect(countGlossaryLinks(doc, "mit-a")).toBe(2);
+    expect(countGlossaryLinks(doc, "other")).toBe(1);
+    expect(buildTermRefIndex(doc).get("mit-a")).toHaveLength(2);
+  });
+
+  it("rewrites only the id of a callout's entry, keeping its other lines and spacing", () => {
+    const doc = docWithCallouts();
+    expect(rewriteGlossaryLinks(doc, "mit-a", "mita")).toBe(2);
+    expect(rewriteGlossaryLinks(doc, "other", "another")).toBe(1);
+    expect(allYTextStrings(doc)).toContain(
+      "Intro [[mita]].\n\n:::glossary\nentry: mita\nalign: left\n:::\n\n:::glossary\n  entry :   another  \n:::",
+    );
   });
 });
