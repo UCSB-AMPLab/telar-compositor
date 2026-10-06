@@ -22,14 +22,14 @@
  * quick-create) are role-gated in the UI; the server-side gates remain
  * the real boundary.
  *
- * @version v1.5.0-beta
+ * @version v1.5.1-beta
  */
 
 import { eq } from "drizzle-orm";
 import { redirect, useSearchParams, useOutletContext } from "react-router";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import * as Y from "yjs";
-import { AlertTriangle, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Route } from "./+types/_app.glossary";
 import { userContext } from "~/middleware/auth.server";
@@ -541,7 +541,6 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
               disabled={isPublishing || !ops}
               className="inline-flex items-center gap-1.5 bg-anil hover:bg-anil-hover text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-4 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Plus className="w-4 h-4" />
               {t("new_term_button")}
             </button>
           )}
@@ -601,8 +600,8 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
           </div>
         ) : (
           <div className="flex-1 min-h-0 flex">
-            {/* Left column: title, term_id, used-in, definition */}
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {/* Left half: title, term_id, used-in, definition */}
+            <div className="flex-1 basis-0 min-w-0 min-h-0 flex flex-col overflow-hidden">
               {/* TERM TITLE section */}
               <div className="px-6 pt-6 pb-4 shrink-0">
                 <label className="block font-heading text-xs font-semibold text-fg-muted uppercase tracking-wider mb-2">
@@ -698,18 +697,18 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
               </div>
             </div>
 
-            {/* Right column: live reader preview. Hidden below lg — on a phone
-                or tablet-portrait there's no room for a third pane beside the
-                term rail and editor, so the preview was running off-screen.
-                The editor fills the width instead; the preview returns at lg+. */}
-            <div className="hidden lg:flex shrink-0">
+            {/* Right half: live reader preview, the same width as the editor so
+                a definition with headings, lists or images reads as it will on
+                the site. Hidden below lg, where there is no room for a third
+                pane beside the term rail and editor; the editor fills the width. */}
+            <div className="hidden lg:flex flex-1 basis-0 min-w-0 min-h-0">
               <GlossaryPreviewPane
                 yMap={selectedTerm.yMap}
                 theme={theme}
                 termVersion={termVersion}
                 titleLabel={selectedTerm.title}
                 kindLabel={kindLabelOf(kinds, selectedTerm.kind)}
-                className="m-6 ml-0"
+                className="m-6 ml-0 flex-1 min-w-0 min-h-0"
               />
             </div>
           </div>

@@ -11,9 +11,9 @@
  * `from`, which is how the server reports a changed id; after a save, every
  * entry of a renamed kind is moved to its new id in the document.
  *
- * @version v1.5.0-beta
+ * @version v1.5.1-beta
  */
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type * as Y from "yjs";
 import { Dialog } from "~/components/ui/Dialog";
@@ -24,12 +24,12 @@ import { useToast } from "~/hooks/use-toast";
 import {
   isAcceptedKind,
   validateSiteKinds,
-  type GlossaryKindOption,
   type GlossaryKinds,
   type KindProblem,
   type SiteKindDraft,
   type SiteKindProblems,
 } from "~/lib/glossary-kinds";
+import { useKindName } from "~/components/features/glossary/GlossaryKindSelect";
 import { countEntriesByKind, glossaryEntryKinds, renameEntryKinds } from "~/lib/glossary-kind-entries";
 
 type Field = "id" | "label" | "heading" | "values";
@@ -117,19 +117,33 @@ export function GlossaryKindsDialog({ open, onClose, ...rest }: GlossaryKindsDia
   );
 }
 
-function problemText(t: (key: string, vars?: Record<string, unknown>) => string, problem: KindProblem): string {
-  return t(problem.key, { value: problem.value, kind: problem.kind });
+/**
+ * A problem names the kind that holds a value. The dialog lists standard kinds
+ * in the interface language, so a standard kind, known by its id, is named the
+ * same way; a site kind is named by its label.
+ */
+const StandardKindName = createContext<(id: string) => string | undefined>(() => undefined);
+
+function problemText(
+  t: (key: string, vars?: Record<string, unknown>) => string,
+  problem: KindProblem,
+  standardName: (id: string) => string | undefined,
+): string {
+  const kind = (problem.standardKind && standardName(problem.standardKind)) || problem.kind;
+  return t(problem.key, { value: problem.value, kind });
 }
 
-function StandardKinds({ core }: { core: GlossaryKindOption[] }) {
+function StandardKinds({ kinds }: { kinds: GlossaryKinds }) {
   const { t } = useTranslation("glossary");
+  const name = useKindName(kinds);
+  const core = kinds.core;
   return (
     <section className="mt-4">
       <h3 className="font-heading text-sm font-semibold text-charcoal">{t("kinds_standard_heading")}</h3>
       <ul className="mt-2 space-y-1">
         {core.map((kind) => (
           <li key={kind.id} className="font-body text-sm text-charcoal">
-            <span className="font-mono text-xs">{kind.id}</span> · {kind.label}
+            <span className="font-mono text-xs">{kind.id}</span> · {name(kind)}
           </li>
         ))}
       </ul>
@@ -206,12 +220,13 @@ interface SiteKindRowProps {
 
 function RowNotes({ row, count }: { row: KindRow; count: number }) {
   const { t } = useTranslation("glossary");
+  const standardName = useContext(StandardKindName);
   const renamed = row.from !== undefined && row.id.trim() !== row.from;
   return (
     <>
       {row.repoProblem && (
         <p className="font-body text-xs text-terracotta">
-          {t("kind_unusable_in_repo", { problem: problemText(t, row.repoProblem) })}
+          {t("kind_unusable_in_repo", { problem: problemText(t, row.repoProblem, standardName) })}
         </p>
       )}
       {count > 0 && <p className="font-body text-xs text-fg-muted">{t("kind_entries_using", { count })}</p>}
@@ -223,9 +238,10 @@ function RowNotes({ row, count }: { row: KindRow; count: number }) {
 function SiteKindRow({ row, problems, shown, count, defaultLabel, onChange, onBlur, onRemove }: SiteKindRowProps) {
   const { t } = useTranslation("glossary");
   const [confirming, setConfirming] = useState(false);
+  const standardName = useContext(StandardKindName);
   const errorOf = (field: Field) => {
     const problem = problems[field];
-    return problem && shown(field) ? problemText(t, problem) : undefined;
+    return problem && shown(field) ? problemText(t, problem, standardName) : undefined;
   };
   return (
     <li className="rounded-lg border border-gray-200 p-3 space-y-2" data-testid="site-kind">
@@ -316,11 +332,18 @@ function KindsEditor({ onClose, kinds: current, stored: currentStored, ydoc }: E
     fetcher.submit(saveForm(draft.payload, stored, kinds.repoSite), { method: "post" });
   };
 
+  const kindName = useKindName(kinds);
+  const standardName = (id: string) => {
+    const standard = kinds.core.find((kind) => kind.id === id);
+    return standard ? kindName(standard) : undefined;
+  };
+
   return (
+    <StandardKindName.Provider value={standardName}>
     <div>
       <h2 className="font-heading text-lg font-semibold text-charcoal">{t("kinds_title")}</h2>
       <p className="mt-2 font-body text-sm text-fg-muted">{t("kinds_intro")}</p>
-      <StandardKinds core={kinds.core} />
+      <StandardKinds kinds={kinds} />
       <section className="mt-6">
         <h3 className="font-heading text-sm font-semibold text-charcoal">{t("kinds_site_heading")}</h3>
         {draft.rows.length === 0 && <p className="mt-2 font-body text-sm text-fg-muted">{t("kinds_none")}</p>}
@@ -347,5 +370,6 @@ function KindsEditor({ onClose, kinds: current, stored: currentStored, ydoc }: E
         <Button onClick={submitKinds} loading={fetcher.state !== "idle"}>{t("kinds_save")}</Button>
       </div>
     </div>
+    </StandardKindName.Provider>
   );
 }

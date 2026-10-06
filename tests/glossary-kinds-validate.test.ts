@@ -13,7 +13,7 @@
  * and values verbatim, with each `panel_label` written as the English label
  * the language file gives it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.1-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -165,8 +165,8 @@ describe("validateSiteKinds, field by field", () => {
       { id: "lugar", label: "L", heading: "L" },
       { id: "own", label: "O", heading: "O", values: ["Términó"] },
     ]);
-    expect(byId).toEqual({ id: { key: "kind_error_id_taken", value: "lugar", kind: "Place" } });
-    expect(byValue).toEqual({ values: { key: "kind_error_value_taken", value: "Términó", kind: "Key term" } });
+    expect(byId).toEqual({ id: { key: "kind_error_id_taken", value: "lugar", kind: "Place", standardKind: "place" } });
+    expect(byValue).toEqual({ values: { key: "kind_error_value_taken", value: "Términó", kind: "Key term", standardKind: "term" } });
   });
 
   it("accepts an empty list", () => {
@@ -240,5 +240,23 @@ describe("the stored form", () => {
     ]);
     expect(kinds.options.map((o) => o.id)).toEqual(["term", "source", "entity", "place", "species"]);
     expect(kinds.site.map((k) => [k.id, Object.keys(k.problems)])).toEqual([["species", []], ["Place", ["id"]]]);
+  });
+});
+
+describe("the kind a taken value belongs to", () => {
+  const core = parseGlossaryKinds(CORE, null, null).core;
+
+  it("names a standard owner by its id as well as its label", () => {
+    const [problems] = validateSiteKinds(core, [{ id: "place", label: "Sitio", heading: "Sitios", values: [] }]);
+    expect(problems.id).toMatchObject({ key: "kind_error_id_taken", standardKind: "place" });
+  });
+
+  it("gives a site owner no standard id, even when its label is a standard kind's", () => {
+    const [, problems] = validateSiteKinds(core, [
+      { id: "creature", label: "Key term", heading: "Creatures", values: ["bicho"] },
+      { id: "plant", label: "Plant", heading: "Plants", values: ["bicho"] },
+    ]);
+    expect(problems.values).toMatchObject({ key: "kind_error_value_taken", kind: "Key term" });
+    expect(problems.values?.standardKind).toBeUndefined();
   });
 });

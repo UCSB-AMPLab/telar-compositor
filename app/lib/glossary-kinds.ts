@@ -11,7 +11,7 @@
  * framework's terms: it needs a label and a heading, and none of its id or
  * values may already belong to an earlier kind.
  *
- * @version v1.5.0-beta
+ * @version v1.5.1-beta
  */
 import { load } from "js-yaml";
 
@@ -46,6 +46,8 @@ export interface KindProblem {
   value?: string;
   /** The label of the kind that has it. */
   kind?: string;
+  /** The id of the kind that has it, when that is a standard kind, so it can be named in the interface language. */
+  standardKind?: string;
 }
 
 export type SiteKindProblems = Partial<Record<keyof SiteKind, KindProblem>>;
@@ -194,12 +196,22 @@ function fieldProblems(entry: unknown): SiteKindProblems {
 }
 
 /** The kind's id, else the first of its values, that an earlier kind owns; the framework stops at the first. */
-function takenProblems(kind: SiteKind, taken: Map<string, string>): SiteKindProblems {
+interface Owner {
+  label: string;
+  standardKind?: string;
+}
+
+function takenProblems(kind: SiteKind, taken: Map<string, Owner>): SiteKindProblems {
   const owner = (value: string) => taken.get(foldKindValue(value));
   const idOwner = kind.id ? owner(kind.id) : undefined;
-  if (idOwner !== undefined) return { id: { key: "kind_error_id_taken", value: kind.id, kind: idOwner } };
+  if (idOwner !== undefined) {
+    return { id: { key: "kind_error_id_taken", value: kind.id, kind: idOwner.label, standardKind: idOwner.standardKind } };
+  }
   const value = kind.values.find((v) => owner(v) !== undefined);
-  return value === undefined ? {} : { values: { key: "kind_error_value_taken", value, kind: owner(value) } };
+  const valueOwner = value === undefined ? undefined : owner(value);
+  return value === undefined || !valueOwner
+    ? {}
+    : { values: { key: "kind_error_value_taken", value, kind: valueOwner.label, standardKind: valueOwner.standardKind } };
 }
 
 export const isAcceptedKind = (problems: SiteKindProblems): boolean => Object.keys(problems).length === 0;
@@ -212,13 +224,13 @@ export const isAcceptedKind = (problems: SiteKindProblems): boolean => Object.ke
  * after it.
  */
 export function validateSiteKinds(core: GlossaryKindOption[], list: unknown[]): SiteKindProblems[] {
-  const taken = new Map<string, string>();
-  const claim = (aliases: string[], label: string) => aliases.forEach((a) => taken.set(a, label));
-  core.forEach((o) => claim(o.aliases, o.label));
+  const taken = new Map<string, Owner>();
+  const claim = (aliases: string[], owner: Owner) => aliases.forEach((a) => taken.set(a, owner));
+  core.forEach((o) => claim(o.aliases, { label: o.label, standardKind: o.id }));
   return list.map((entry) => {
     const kind = toSiteKind(entry);
     const problems = { ...takenProblems(kind, taken), ...fieldProblems(entry) };
-    if (isAcceptedKind(problems)) claim(aliasesOf(kind.id, kind.values), kind.label);
+    if (isAcceptedKind(problems)) claim(aliasesOf(kind.id, kind.values), { label: kind.label });
     return problems;
   });
 }

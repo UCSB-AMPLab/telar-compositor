@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.1-beta (2026-10-06)
+
+Fixes on the glossary page.
+
+### Fixes
+
+- **Glossary kinds in the interface language** — On a site whose language differs from the interface's, the glossary page named the standard kinds by the site's labels, so an English interface on a Spanish site listed "Palabra clave" among English controls. The kind picker, the term list and the "Kinds of glossary term" window now name the standard kinds in the interface language, and the preview still shows the label the site's visitors see. A site's own kinds keep the label its configuration gives them.
+- **New term button** — The button showed the + sign twice.
+- **Term filter** — With one term in the glossary, the filter now reads "Filter 1 term…".
+- **Editor and preview side by side** — The term editor and the reader preview now share the page evenly, and the preview fills its half, so a definition with headings, lists or images can be read in full as the site will show it.
+
 ## v1.5.0-beta (2026-10-04)
 
 The teaching release: course projects with join codes and shared object collections, a per-contributor record of group work, and publishing opened to every member of a group. The story editor is rebuilt around a stage that shows each step as a visitor will see it. Edits made on GitHub are now read back before a publish instead of being overwritten, and a large set of fixes stops authored content from being lost between the Compositor and the published site.
