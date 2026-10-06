@@ -21,7 +21,7 @@
  *     to the neutral cream / charcoal set. The active theme's web font is
  *     loaded on demand through `themeFontHref`.
  *
- * @version v1.5.0-beta
+ * @version v1.5.1-beta
  */
 
 import { useEffect, useMemo, useState, useId } from "react";
@@ -102,7 +102,6 @@ export function GlossaryPreviewPane({
   return (
     <aside
       className={`flex flex-col ${className}`}
-      style={{ width: 320 }}
       aria-label={t("preview")}
     >
       <h3 className="font-heading text-xs font-semibold text-fg-muted uppercase tracking-wider mb-2">
@@ -118,8 +117,8 @@ export function GlossaryPreviewPane({
         .${scopeClass} .glossary-inline-link { text-decoration: underline; cursor: default; }
       `}</style>
       <div
-        className="rounded-md border border-gray-200 overflow-y-auto p-4 text-sm leading-relaxed"
-        style={{ background: tokens.bg, minHeight: 200, maxHeight: 320 }}
+        className="flex-1 min-h-0 rounded-md border border-gray-200 overflow-y-auto p-4 text-sm leading-relaxed"
+        style={{ background: tokens.bg, minHeight: 200 }}
       >
         <div className={`${scopeClass} prose-sm`}>
           {kindLabel && <p className="text-xs uppercase tracking-wider opacity-70 mb-1">{kindLabel}</p>}

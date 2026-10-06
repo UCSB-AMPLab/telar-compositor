@@ -4,7 +4,7 @@
  * a stored value that names none kept and shown as written, nothing at all for
  * a site without kinds.
  *
- * @version v1.5.0-beta
+ * @version v1.5.1-beta
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
@@ -32,6 +32,33 @@ const kinds: GlossaryKinds = {
 };
 
 describe("GlossaryKindSelect", () => {
+  it("names the standard kinds in the interface language and a site kind as its config labels it", () => {
+    const spanishSite: GlossaryKinds = {
+      ...kinds,
+      core: [
+        { id: "term", label: "Palabra clave", aliases: ["term"] },
+        { id: "source", label: "Fuente primaria", aliases: ["source", "fuente"] },
+      ],
+      options: [
+        { id: "term", label: "Palabra clave", aliases: ["term"] },
+        { id: "source", label: "Fuente primaria", aliases: ["source", "fuente"] },
+        { id: "species", label: "Especie", aliases: ["species"] },
+      ],
+    };
+    render(<GlossaryKindSelect kinds={spanishSite} value="" onChange={() => {}} />);
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["kind_name_term", "kind_name_source", "Especie"]);
+  });
+
+  it("says how the site shows an unknown value in the site's own label", () => {
+    const spanishSite: GlossaryKinds = {
+      ...kinds,
+      core: [{ id: "term", label: "Palabra clave", aliases: ["term"] }],
+      options: [{ id: "term", label: "Palabra clave", aliases: ["term"] }],
+    };
+    render(<GlossaryKindSelect kinds={spanishSite} value="Fuente??" onChange={() => {}} />);
+    expect(screen.getAllByRole("option")[0].textContent).toBe("Fuente?? (not a known kind, so the site shows it as Palabra clave)");
+  });
+
   it("lists the kinds in order under their labels", () => {
     render(<GlossaryKindSelect kinds={kinds} value="" onChange={() => {}} />);
     const labels = screen.getAllByRole("option").map((o) => o.textContent);

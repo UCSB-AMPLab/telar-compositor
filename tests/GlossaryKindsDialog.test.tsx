@@ -5,7 +5,7 @@
  * entries, and the entries it moves to a kind's new id once a save reports
  * the change.
  *
- * @version v1.5.0-beta
+ * @version v1.5.1-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
@@ -33,9 +33,10 @@ vi.mock("~/hooks/use-toast", () => ({ useToast: () => ({ showToast }) }));
 import { EditKindsButton, GlossaryKindsDialog } from "~/components/features/glossary/GlossaryKindsDialog";
 import { NO_GLOSSARY_KINDS, type GlossaryKinds } from "~/lib/glossary-kinds";
 
+// A Spanish-language site: the standard kinds carry the labels its readers see.
 const core = [
-  { id: "term", label: "Key term", aliases: ["term"] },
-  { id: "source", label: "Primary source", aliases: ["source", "fuente"] },
+  { id: "term", label: "Palabra clave", aliases: ["term"] },
+  { id: "source", label: "Fuente primaria", aliases: ["source", "fuente"] },
 ];
 const creature = { id: "creature", label: "Creature", heading: "Creatures", values: ["Creatures", "bicho"], problems: {} };
 const kinds: GlossaryKinds = {
@@ -84,7 +85,8 @@ beforeEach(() => {
 describe("GlossaryKindsDialog", () => {
   it("shows the standard kinds without fields and the site's kinds with them", () => {
     open();
-    expect(screen.getByText(/Key term/).textContent).toBe("term · Key term");
+    expect(screen.getByText(/kind_name_term/).textContent).toBe("term · kind_name_term");
+    expect(screen.queryByText(/Palabra clave/)).toBeNull();
     expect(rows()).toHaveLength(1);
     expect(field(rows()[0], "kind_field_values").value).toBe("Creatures, bicho");
     expect(screen.getAllByLabelText("kind_field_id")).toHaveLength(1);
@@ -149,7 +151,8 @@ describe("GlossaryKindsDialog", () => {
     const confirm = screen.getByRole("alert").textContent ?? "";
     expect(confirm).toContain("kind_remove_confirm ");
     expect(confirm).toContain('"count":2');
-    expect(confirm).toContain('"default":"Key term"');
+    // What the site lists the entries as, so the site's label.
+    expect(confirm).toContain('"default":"Palabra clave"');
     fireEvent.click(within(screen.getByRole("alert")).getByText("common:cancel"));
     expect(rows()).toHaveLength(1);
   });
@@ -178,7 +181,8 @@ describe("GlossaryKindsDialog", () => {
     expect(within(added).getByText(/^kind_error_id_required/)).toBeTruthy();
     expect(within(added).queryByText(/^kind_error_label_required/)).toBeNull();
     fireEvent.change(field(added, "kind_field_id"), { target: { value: "Fuente" } });
-    expect(within(added).getByText(/kind_error_id_taken/).textContent).toContain('"kind":"Primary source"');
+    // Named as the standard kinds list above names it, in the interface language.
+    expect(within(added).getByText(/kind_error_id_taken/).textContent).toContain('"kind":"kind_name_source"');
     fireEvent.click(screen.getByText("kinds_save"));
     expect(within(added).getByText(/^kind_error_label_required/)).toBeTruthy();
     expect(within(added).getByText(/^kind_error_heading_required/)).toBeTruthy();

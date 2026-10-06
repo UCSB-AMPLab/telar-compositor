@@ -4,17 +4,39 @@
  * what it was written as, with a note that the site reads it as the default
  * kind, until the author picks one.
  *
- * @version v1.5.0-beta
+ * The Compositor names the four standard kinds in the interface language. The
+ * site's language file labels them for readers, and the preview shows that
+ * label, but an English interface on a Spanish site would otherwise list
+ * "Palabra clave" among English controls. A site's own kinds have only the
+ * label the config gives them, so they are shown as written.
+ *
+ * @version v1.5.1-beta
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   NO_GLOSSARY_KINDS,
-  kindLabelOf,
   kindOfValue,
   readKind,
+  type GlossaryKindOption,
   type GlossaryKinds,
 } from "~/lib/glossary-kinds";
+
+const STANDARD_KIND_NAMES: Record<string, string> = {
+  term: "kind_name_term",
+  source: "kind_name_source",
+  entity: "kind_name_entity",
+  place: "kind_name_place",
+};
+
+/** A kind's name for the interface: a standard kind in the interface language, a site kind as its config labels it. */
+export function useKindName(kinds: GlossaryKinds): (kind: GlossaryKindOption) => string {
+  const { t } = useTranslation("glossary");
+  return (kind) => {
+    const key = STANDARD_KIND_NAMES[kind.id];
+    return key && kinds.core.some((c) => c.id === kind.id) ? t(key) : kind.label;
+  };
+}
 
 /** The site's kinds once the loader's promise settles; none until then, and none if it fails. */
 export function useGlossaryKinds(source: GlossaryKinds | Promise<GlossaryKinds>): GlossaryKinds {
@@ -33,8 +55,10 @@ export function useGlossaryKinds(source: GlossaryKinds | Promise<GlossaryKinds>)
 
 /** The entry's kind under its title in the term list; nothing where the site offers none. */
 export function KindCaption({ kinds, value }: { kinds: GlossaryKinds; value: string }) {
-  const label = kindLabelOf(kinds, value);
-  if (!label) return null;
+  const name = useKindName(kinds);
+  const kind = kinds.available ? readKind(kinds, value) : undefined;
+  if (!kind) return null;
+  const label = name(kind);
   return <span className="block font-body text-xs font-normal text-fg-muted truncate">{label}</span>;
 }
 
@@ -49,6 +73,7 @@ interface GlossaryKindSelectProps {
 }
 
 export function GlossaryKindSelect({ kinds, value, onChange, disabled, labelAction }: GlossaryKindSelectProps) {
+  const name = useKindName(kinds);
   const { t } = useTranslation("glossary");
   if (!kinds.available) return null;
   const known = kindOfValue(kinds, value);
@@ -76,7 +101,7 @@ export function GlossaryKindSelect({ kinds, value, onChange, disabled, labelActi
         )}
         {kinds.options.map((o) => (
           <option key={o.id} value={o.id}>
-            {o.label}
+            {name(o)}
           </option>
         ))}
       </select>
