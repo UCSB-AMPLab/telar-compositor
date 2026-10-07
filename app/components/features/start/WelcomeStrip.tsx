@@ -15,7 +15,7 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { BookOpen, Map, Users, Github } from "lucide-react";
@@ -32,7 +32,6 @@ export interface WelcomeStripProps {
   /** Open the DocsDrawer at a DOC key (orientation chips). */
   onOpenDoc?: (docKey: string) => void;
   /** Open the collaboration sidebar (convenor-only "Add collaborators" pill). */
-  onAddCollaborators?: () => void;
   /**
    * Whether the Course tab is shown to this person. The instructor's steps
    * send them there, so an instructor without it gets the collaborator's.
@@ -88,7 +87,6 @@ export function WelcomeStrip({
   createdYear,
   state,
   onOpenDoc,
-  onAddCollaborators,
   courseTab = false,
   className = "",
 }: WelcomeStripProps) {
@@ -207,16 +205,6 @@ export function WelcomeStrip({
           <Map className="w-3.5 h-3.5" aria-hidden="true" />
           {t("orientation.plan_narrative")}
         </button>
-        {isConvenor && onAddCollaborators && (
-          <button
-            type="button"
-            onClick={onAddCollaborators}
-            className="inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 font-heading font-semibold text-xs bg-caracol-pale text-caracol hover:text-caracol-deep transition-colors"
-          >
-            <Users className="w-3.5 h-3.5" aria-hidden="true" />
-            {t("orientation.add_collaborators")}
-          </button>
-        )}
       </div>
     </section>
   );

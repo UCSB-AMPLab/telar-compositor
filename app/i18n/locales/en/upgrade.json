@@ -50,7 +50,7 @@
   "backToDashboard": "Back to Start",
   "continueToPublish": "Continue to publish",
   "continueToObjects": "Continue to Objects",
-  "continueToSettings": "Continue to Site settings",
+  "continueToStart": "Continue to Start",
   "buildTracking": "Build progress",
   "staleHead": "Your repository has changed since this page loaded. Please re-sync before upgrading.",
   "resync": "Re-sync now",

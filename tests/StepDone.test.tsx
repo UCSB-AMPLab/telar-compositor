@@ -36,6 +36,11 @@ describe("StepDone", () => {
     expect(screen.getByText("https://me.github.io/my-archive")).toBeDefined();
   });
 
+  it("sends a new site to Start", () => {
+    render(<StepDone onDone={() => {}} created />);
+    expect(screen.getByText("step_done.go_to_start").closest("a")?.getAttribute("href")).toBe("/start");
+  });
+
   it("created site without a URL still shows created copy but hides the URL block", () => {
     render(<StepDone onDone={() => {}} created />);
     expect(screen.getByText("step_done.created_description")).toBeDefined();

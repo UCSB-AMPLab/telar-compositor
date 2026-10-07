@@ -15,8 +15,7 @@
   },
   "orientation": {
     "what_is_compositor": "What is the Compositor?",
-    "plan_narrative": "Plan your narrative",
-    "add_collaborators": "Add collaborators"
+    "plan_narrative": "Plan your narrative"
   },
   "section": {
     "workflow_map": "How the Compositor works",
@@ -145,5 +144,16 @@
     "next": "Next: {{title}}",
     "close": "Close",
     "breadcrumb": "telar.org · Docs · {{chapter}}"
+  },
+  "collab_card": {
+    "heading": "Work together",
+    "body_solo": "Invite people to edit this site with you. Everyone you add can write stories, add objects and publish.",
+    "body_one": "{{count}} person works on this site with you.",
+    "body_other": "{{count}} people work on this site with you.",
+    "invite": "Invite collaborators"
+  },
+  "record_card": {
+    "body": "See what each person has added and written on this site, and how long they have spent in the Compositor.",
+    "link": "Open the contribution record"
   }
 }

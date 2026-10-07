@@ -1,17 +1,15 @@
 /**
  * StepDone — success confirmation step.
  *
- * Large green checkmark, success heading, and a link to Site settings
- * (`/config`). Onboarding owns workflow education and deposits the
- * user on Site settings, where the "next: add your first object →" hint
- * lives.
+ * Large green checkmark, success heading, and a link to Start (`/start`),
+ * the page that walks a new site through its first steps.
  *
  * For sites created in the wizard (`created`), the copy reflects that the
  * compositor set the site up (not "imported") and that the first public
  * build is still running, with the site's own URL surfaced. Imported sites
  * keep the original "imported successfully" wording.
  *
- * @version v1.4.0-beta
+ * @version v1.5.2-beta
  */
 
 import { CheckCircle } from "lucide-react";
@@ -51,9 +49,9 @@ export function StepDone({ onDone: _onDone, created = false, siteUrl, className 
         </div>
       )}
 
-      <Link to="/config">
+      <Link to="/start">
         <Button variant="primary">
-          {t("step_done.go_to_settings")}
+          {t("step_done.go_to_start")}
         </Button>
       </Link>
     </div>

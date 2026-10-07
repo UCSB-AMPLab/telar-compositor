@@ -27,7 +27,7 @@
  * course outright when it has not — the loader flag is what the browser is
  * shown, never what the decision rests on.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { redirect } from "react-router";
@@ -235,9 +235,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env as Env;
   const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
 
-  // Check if user already has projects — if so, redirect to the daily home
-  // (/objects) unless ?force=1 is in the query string. Dashboard is
-  // retired as a destination.
+  // Someone whose sites are all set up is sent to Start, the dashboard,
+  // unless ?force=1 asks for the wizard to add another site.
   const url = new URL(request.url);
   const force = url.searchParams.get("force") === "1";
 
@@ -249,7 +248,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const hasIncompleteOnboarding = existingProjects.some((p) => !p.onboarding_completed);
   if (!force && !hasIncompleteOnboarding && existingProjects.length > 0) {
-    throw redirect("/objects");
+    throw redirect("/start");
   }
 
   // Fetch all GitHub App installations and their repos.
@@ -710,7 +709,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     // followed first on the old session. Read from the recorded config, not
     // the import's response, so a wizard resumed after a reload is covered.
     if (await siteNeedsUpgrade(db, env, { projectId, userToken: token })) {
-      return redirect("/upgrade?from=/config", { headers: { "Set-Cookie": cookie } });
+      return redirect("/upgrade?from=/start", { headers: { "Set-Cookie": cookie } });
     }
 
     return new Response(

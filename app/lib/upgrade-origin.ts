@@ -2,22 +2,22 @@
  * Where a person was going when they were sent to /upgrade.
  *
  * `/upgrade?from=` is written by the Publish gate, by the Upload tab's
- * upgrade link and by onboarding after an import, and it is read twice: to
+ * upgrade link and by onboarding after an import, which sends a new site on to Start, and it is read twice: to
  * say what the upgrade stands between the person and, and to send them on
  * when there turns out to be nothing to upgrade. Both readings go through
  * this one parser, and both answer with a fixed path from the table below,
  * never the query value itself — which is user-controlled, and which
  * `redirect()` would otherwise forward to any origin it names.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
-export type UpgradeOrigin = "publish" | "objects" | "config";
+export type UpgradeOrigin = "publish" | "objects" | "start";
 
 const ORIGIN_PATHS: Record<UpgradeOrigin, string> = {
   publish: "/publish",
   objects: "/objects",
-  config: "/config",
+  start: "/start",
 };
 
 /**
@@ -47,7 +47,7 @@ export function upgradeReturnPath(from: string | null): string {
 const GATE_REASON_KEYS: Record<UpgradeOrigin, string> = {
   publish: "gateReason_publish",
   objects: "gateReason_upload",
-  config: "gateReason_import",
+  start: "gateReason_import",
 };
 
 /**

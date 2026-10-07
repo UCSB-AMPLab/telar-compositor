@@ -20,7 +20,8 @@ describe("readUpgradeOrigin", () => {
     ["/publish", "publish"],
     ["/objects", "objects"],
     ["/objects/mission-bell", "objects"],
-    ["/config", "config"],
+    ["/start", "start"],
+    ["/config", null],
   ] as const)("reads %s as %s", (from, origin) => {
     expect(readUpgradeOrigin(from)).toBe(origin);
   });
@@ -46,6 +47,6 @@ describe("upgradeOriginPath", () => {
   it("returns a fixed path for each origin, never a caller's value", () => {
     expect(upgradeOriginPath("publish")).toBe("/publish");
     expect(upgradeOriginPath("objects")).toBe("/objects");
-    expect(upgradeOriginPath("config")).toBe("/config");
+    expect(upgradeOriginPath("start")).toBe("/start");
   });
 });

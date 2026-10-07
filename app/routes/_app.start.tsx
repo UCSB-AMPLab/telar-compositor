@@ -34,7 +34,7 @@ async function countUntouchedTemplatePages(
  * slot) is composed in the default export; the rail (activity / recovery)
  * and docs drawer mount into this shell.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 
@@ -64,6 +64,7 @@ import { configFrameworkVersion, stepUseCounts } from "~/lib/object-id";
 import { WelcomeStrip } from "~/components/features/start/WelcomeStrip";
 import { WorkflowMap } from "~/components/features/start/WorkflowMap";
 import { ActivityFeed } from "~/components/features/start/ActivityFeed";
+import { ContributionRecordCard, WorkTogetherCard } from "~/components/features/start/CollaborationCards";
 import {
   ORPHAN_RECOVERY_FETCHER_KEY,
   OrphanRecoveryCard,
@@ -373,7 +374,6 @@ export default function StartPage({ loaderData }: Route.ComponentProps) {
         createdYear={createdYear}
         state={state}
         onOpenDoc={onOpenDoc}
-        onAddCollaborators={openCollaborationSidebar}
         courseTab={shellOffersCourseTab(shell)}
       />
 
@@ -397,6 +397,10 @@ export default function StartPage({ loaderData }: Route.ComponentProps) {
           className="flex flex-col gap-[14px]"
           aria-label={t("common:a11y.activity_rail")}
         >
+          {isConvenor && openCollaborationSidebar && (
+            <WorkTogetherCard collaboratorCount={collaboratorCount} onInvite={openCollaborationSidebar} />
+          )}
+          {collaboratorCount > 0 && <ContributionRecordCard />}
           <ActivityFeed rows={activity} />
           <OrphanRecoveryOutcome answer={recoveryAnswer} />
           {isConvenor && orphanStoryCount > 0 && (

@@ -15,8 +15,7 @@
   },
   "orientation": {
     "what_is_compositor": "¿Qué es el Compositor?",
-    "plan_narrative": "Planea tu narrativa",
-    "add_collaborators": "Invitar colaboradores"
+    "plan_narrative": "Planea tu narrativa"
   },
   "section": {
     "workflow_map": "Cómo funciona el Compositor",
@@ -145,5 +144,16 @@
     "next": "Siguiente: {{title}}",
     "close": "Cerrar",
     "breadcrumb": "telar.org · Docs · {{chapter}}"
+  },
+  "collab_card": {
+    "heading": "Trabajar en equipo",
+    "body_solo": "Invita a otras personas a editar este sitio contigo. Cada integrante del equipo puede escribir historias, agregar objetos y publicar.",
+    "body_one": "{{count}} persona trabaja contigo en este sitio.",
+    "body_other": "{{count}} personas trabajan contigo en este sitio.",
+    "invite": "Invitar colaboradores"
+  },
+  "record_card": {
+    "body": "Mira lo que cada persona ha agregado y escrito en este sitio, y cuánto tiempo ha trabajado en el Compositor.",
+    "link": "Abrir el registro de participación"
   }
 }

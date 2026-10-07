@@ -158,7 +158,7 @@ describe("finishing the setup of a site behind the latest release", () => {
     expect(response).toBeInstanceOf(Response);
     const res = response as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/upgrade?from=/config");
+    expect(res.headers.get("Location")).toBe("/upgrade?from=/start");
 
     const cookie = (res.headers.get("Set-Cookie") ?? "").split(";")[0];
     expect(await resolvedWith(cookie, convenor)).toBe(siteB);
