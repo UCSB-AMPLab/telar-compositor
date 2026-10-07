@@ -407,6 +407,18 @@ function counterUnderCeiling(counter: Box, ceiling: Box | null): boolean {
   return !!ceiling && Math.abs(counter.y - (ceiling.y + ceiling.h)) < 1e-6;
 }
 
+/**
+ * The open guide sentence, which belongs to the step it was opened on:
+ * selecting another step closes it, and returning to that step does not
+ * reopen it.
+ */
+function useStepGuide(selectionKey: string): [GuideTag | null, (tag: GuideTag | null) => void] {
+  const [guideOpen, setGuideOpen] = useState<{ key: string; tag: GuideTag | null }>({ key: selectionKey, tag: null });
+  if (guideOpen.key !== selectionKey) setGuideOpen({ key: selectionKey, tag: null });
+  const openTag = guideOpen.key === selectionKey ? guideOpen.tag : null;
+  return [openTag, (tag) => setGuideOpen({ key: selectionKey, tag })];
+}
+
 function FramedStep({
   step,
   stepIndex,
@@ -449,10 +461,7 @@ function FramedStep({
   const [question, setQuestion] = useState<string | null>(null);
   const [buttonLabel, setButtonLabel] = useState<string | null>(null);
   const [guidesShown, setGuidesShown] = useState(true);
-  // The open guide sentence belongs to the step it was opened on: another step starts with none.
-  const [guideOpen, setGuideOpen] = useState<{ key: string; tag: GuideTag | null }>({ key: viewer.selectionKey, tag: null });
-  const openTag = guideOpen.key === viewer.selectionKey ? guideOpen.tag : null;
-  const showGuide = (tag: GuideTag | null) => setGuideOpen({ key: viewer.selectionKey, tag });
+  const [openTag, showGuide] = useStepGuide(viewer.selectionKey);
   // Closing the frame's sentence, or opening another over it, dismisses the first visit's.
   const leaveGuide = (next: GuideTag | null) => {
     if (openTag === "frame" && next !== "frame") rememberFrameGuideDismissed();

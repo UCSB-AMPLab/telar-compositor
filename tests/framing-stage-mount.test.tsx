@@ -294,6 +294,7 @@ async function mountSelectable(first: StageProps, next: StageProps) {
     return (
       <>
         <button type="button" onClick={() => setP(next)}>select next step</button>
+        <button type="button" onClick={() => setP(first)}>select first step</button>
         <StoryStage {...p} />
       </>
     );
@@ -1882,6 +1883,20 @@ describe("the guide tags' sentences", () => {
     await screen.findByText("Consider the necklace");
     expect(openSentences()).toEqual([]);
     expect(tag("ceiling").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps the sentence closed on returning to the step it was opened on", async () => {
+    setSizes(win, content);
+    const first = props("image");
+    const other = { ...stageStep("image"), id: 12, question: "Consider the necklace" };
+    await mountSelectable(first, { ...first, step: other, viewer: { ...first.viewer, step: other, selectionKey: "id:12" } });
+    fireEvent.click(await screen.findByTestId("guide-tag-ceiling"));
+    expect(openSentences()).toEqual(["guide-text-ceiling"]);
+    fireEvent.click(screen.getByRole("button", { name: "select next step" }));
+    await screen.findByText("Consider the necklace");
+    fireEvent.click(screen.getByRole("button", { name: "select first step" }));
+    await waitFor(() => expect(screen.queryByText("Consider the necklace")).toBeNull());
+    expect(openSentences()).toEqual([]);
   });
 });
 
