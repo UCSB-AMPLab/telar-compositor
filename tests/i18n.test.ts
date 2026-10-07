@@ -4,7 +4,7 @@
  * Tests: config values, locale file key parity (ES mirrors EN),
  * locale cookie configuration (sameSite lax, httpOnly false).
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -229,7 +229,7 @@ describe("editor.json story-editor keys", () => {
   type Editor = {
     capture_toast?: Record<string, string>;
     layer?: Record<string, string>;
-    stage?: Record<string, string>;
+    stage?: Record<string, unknown>;
   };
   const en = enEditor as Editor;
   const es = esEditor as Editor;

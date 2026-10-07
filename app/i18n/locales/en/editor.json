@@ -252,6 +252,18 @@
     "answer_field_label": "Answer (Markdown)",
     "answer_field_hint": "Click outside the field to see the answer as visitors will.",
     "card_ceiling": "The published card cuts any text that runs past this line.",
+    "guides": {
+      "toggle": "Show guides",
+      "ceiling": "Text limit",
+      "ceiling_text": "The published card cuts any text that runs past this line.",
+      "frame": "Frame",
+      "frame_text": "Every visitor sees what's inside the frame. Capture position saves this view for the step.",
+      "target": "Center",
+      "target_text": "Capture position saves this point, along with the zoom.",
+      "stage": "Whole area",
+      "stage_text": "A visitor with a window shaped like yours sees this whole area.",
+      "more_aria": "What this means: {{name}}"
+    },
     "save_failed": "Your change wasn't saved. Try again.",
     "sections_heading": "Sections",
     "scroll_hint": "Press ↓ or scroll to begin",

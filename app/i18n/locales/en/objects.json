@@ -213,8 +213,6 @@
   "viewer_reset_aria": "Reset view",
   "viewer_prev_page_aria": "Previous page",
   "viewer_next_page_aria": "Next page",
-  "viewer_viewfinder_toggle": "Viewfinder",
-  "viewer_viewfinder_hint": "The step captures what is inside the frame",
   "used_in_step": "{{title}} — step {{step}}",
   "untitled_story": "Untitled story",
   "sync_field": {

@@ -4,7 +4,7 @@
  * The framing stage as the story editor mounts it: the stage letterboxed at
  * the author's window proportions, the visitor layer scaled onto it, the step
  * card placed by `framing-stage.ts`, and the controls, the ceiling, the word
- * count and the alt-text chip where the rulings put them.
+ * count, the guide tags and the alt-text chip where the rulings put them.
  *
  * Every expected rectangle is computed here from the framing-stage functions
  * and the window and content sizes the test sets, and compared with what the
@@ -15,7 +15,7 @@
  * pointer-event contract is checked as the classes and rules that carry it.
  * Dragging the image and the card taking clicks are for the browser pass.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -61,7 +61,9 @@ vi.mock("~/components/features/editor/AudioPlayer", () => ({
 
 import { StoryStage, stageChromeFor } from "~/components/features/editor/StoryStage";
 import { stageGeometryOf } from "~/hooks/use-stage-geometry";
-import { CHROME_DEFAULTS } from "~/lib/stage-chrome";
+import { CHROME_DEFAULTS, frameTagOnStroke, type GuideTag } from "~/lib/stage-chrome";
+import { StageGuideTags } from "~/components/features/editor/StageGuideTags";
+import { FRAME_GUIDE_DISMISSED_KEY, __resetFirstVisitGuideForTests } from "~/hooks/use-first-visit-guide";
 import { stageBox } from "~/components/features/editor/FramingStage";
 import {
   audioControlsBelowBox,
@@ -158,9 +160,13 @@ beforeEach(() => {
     }),
   );
   withCanvas();
+  // The first visit's frame sentence is its own tests' subject; elsewhere it has been dismissed.
+  __resetFirstVisitGuideForTests();
+  window.localStorage.setItem(FRAME_GUIDE_DISMISSED_KEY, "1");
 });
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   resetTargetSaves();
   cardContentH = CARD_CONTENT_H;
   addPanelRowH = 56;
@@ -325,13 +331,18 @@ function regionOnStage(win: Size, content: Size) {
  * on, at the default sizes: jsdom measures nothing, so those are the sizes the
  * stage lays out with here.
  */
-function chromeAt(win: Size, content: Size, opts: { media?: boolean; below?: ReturnType<typeof mediaCardBelow>; publishedHeight?: number } = {}) {
+function chromeAt(
+  win: Size,
+  content: Size,
+  opts: { media?: boolean; below?: ReturnType<typeof mediaCardBelow>; publishedHeight?: number; openTag?: GuideTag | null } = {},
+) {
   return stageChromeFor(stageGeometryOf(content, win)!, {
     media: opts.media ?? false,
     below: opts.below ?? null,
     publishedHeight: opts.publishedHeight ?? CARD_CONTENT_H,
     image: !opts.media,
     guidesShown: true,
+    openTag: opts.openTag ?? null,
     sizes: CHROME_DEFAULTS,
   }).layout;
 }
@@ -405,7 +416,7 @@ describe("the stage and the visitor layer", () => {
 });
 
 describe("the step card, placed by framing-stage", () => {
-  it("horizontal: a side card as tall as its content, centred, the dashed ceiling and the count under it", async () => {
+  it("horizontal: a side card as tall as its content, centred, the dashed ceiling and the count hanging from its right end", async () => {
     const win = { w: 1440, h: 900 };
     const content = { w: 1240, h: 768 };
     setSizes(win, content);
@@ -425,8 +436,10 @@ describe("the step card, placed by framing-stage", () => {
 
     const counter = screen.getByTestId("stage-line-counter");
     const onStage = stageBox(ceiling, s);
-    expect(px(counter, "left")).toBeCloseTo(onStage.x, 6);
-    expect(px(counter, "top")).toBeCloseTo(onStage.y + onStage.h + 8, 6);
+    expect(px(counter, "left")).toBeCloseTo(onStage.x + onStage.w - 220, 6);
+    expect(px(counter, "top")).toBeCloseTo(onStage.y + onStage.h, 6);
+    expect(px(counter, "width")).toBe(220);
+    expect(counter.className).toContain("rounded-[0_0_6px_6px]");
     expect(counter.textContent).toContain("answer_budget_count");
   });
 
@@ -449,6 +462,7 @@ describe("the step card, placed by framing-stage", () => {
     const at = chromeAt(win, content).counter!;
     expectBox(counter, at, "counter");
     expect(at.y + at.h).toBeCloseTo(onStage.y - 6, 6);
+    expect(counter.className).toContain("rounded-lg");
   });
 
   it("a phone held sideways: a side card in vertical layout, its ceiling the fit model's band under the top controls", async () => {
@@ -467,7 +481,7 @@ describe("the step card, placed by framing-stage", () => {
   });
 });
 
-describe("the region's controls and labels", () => {
+describe("the region's controls and the guide tags", () => {
   const win = { w: 1440, h: 900 };
   const content = { w: 1240, h: 768 };
 
@@ -490,32 +504,46 @@ describe("the region's controls and labels", () => {
     const viewfinder = screen.getByTestId("viewfinder");
     expect(parseFloat(viewfinder.style.right)).toBeCloseTo(stageOf(win, content).w - (at.viewfinder!.x + at.viewfinder!.w), 6);
     expect(px(viewfinder, "top")).toBeCloseTo(at.viewfinder!.y, 6);
-    // The hint shows where the chrome gives it room.
-    expect(at.hint).toBeDefined();
-    expect(screen.getByText("viewer_viewfinder_hint")).toBeTruthy();
+    // The toggle names the guides, in either state, and no hint stands under it.
+    const toggle = screen.getByRole("button", { name: "stage.guides.toggle" });
+    expect(viewfinder.contains(toggle)).toBe(true);
+    expect(toggle.className).toContain("font-semibold");
+    expect(viewfinder.children).toHaveLength(1);
   });
 
-  it("puts the stage label in the stage's bottom-left and the frame label inside the frame, under the top bar", async () => {
+  it("puts the stage's tag in the stage's bottom-left, the frame's at the frame's left stroke under the top bar, and the centre's beside the target", async () => {
     setSizes(win, content);
     await mount(props("image"));
     const at = chromeAt(win, content);
-    const stageLabel = await screen.findByTestId("stage-label");
-    expect(screen.getByTestId("framing-stage").contains(stageLabel)).toBe(true);
-    expect(px(stageLabel, "left")).toBeCloseTo(at.stageLabel!.x, 6);
-    expect(px(stageLabel, "top")).toBeCloseTo(at.stageLabel!.y, 6);
-    expect(px(stageLabel, "maxWidth")).toBeCloseTo(at.stageLabel!.w, 6);
-    expect(at.stageLabel!.y + at.stageLabel!.h).toBeCloseTo(stageOf(win, content).h - 12, 6);
-    expect(at.stageLabel!.x).toBeGreaterThanOrEqual(at.counter!.x + at.counter!.w);
-    const frameLabel = screen.getByTestId("frame-label");
-    expect(px(frameLabel, "left")).toBeCloseTo(at.frameLabel!.x, 6);
-    expect(px(frameLabel, "top")).toBeCloseTo(at.frameLabel!.y, 6);
-    expect(at.frameLabel!.y).toBeGreaterThanOrEqual(at.topBar.y + at.topBar.h);
-    // Both are neutral: the viewfinder's dark chip, not the accessibility blue.
-    expect(stageLabel.className).toContain("bg-black/60");
-    expect(frameLabel.className).toContain("bg-black/60");
+    const stageTag = await screen.findByTestId("guide-tag-stage");
+    expect(screen.getByTestId("framing-stage").contains(stageTag)).toBe(true);
+    expect(px(stageTag, "left")).toBe(0);
+    expect(px(stageTag, "top")).toBeCloseTo(at.tagStage!.y, 6);
+    expect(at.tagStage!.y + at.tagStage!.h).toBeCloseTo(stageOf(win, content).h, 6);
+    expect(stageTag.className).toContain("bg-charcoal-deep");
+    expect(stageTag.className).toContain("rounded-[0_4px_0_0]");
+    const frameTag = screen.getByTestId("guide-tag-frame");
+    expect(px(frameTag, "left")).toBeCloseTo(at.tagFrame!.x, 6);
+    expect(px(frameTag, "top")).toBeCloseTo(at.tagFrame!.y, 6);
+    expect(at.tagFrame!.y).toBeGreaterThanOrEqual(at.topBar.y + at.topBar.h);
+    expect(frameTag.className).toContain("bg-white/96");
+    // Under the top bar it stands off the frame's stroke, so no corner is the stroke's.
+    expect(frameTag.className).toContain("rounded-[4px]");
+    expect(frameTag.className).not.toContain("rounded-[0_0_4px_0]");
+    const region = regionOnStage(win, content);
+    const targetTag = screen.getByTestId("guide-tag-target");
+    expect(px(targetTag, "left")).toBeCloseTo(region.x + region.w / 2 + 25, 6);
+    expect(px(targetTag, "top")).toBeCloseTo(region.y + region.h / 2 - 15, 6);
+    // Each is a button that discloses its sentence, named for what it explains.
+    for (const tag of [stageTag, frameTag, targetTag]) {
+      expect(tag.tagName).toBe("BUTTON");
+      expect(tag.getAttribute("aria-expanded")).toBe("false");
+      expect(tag.getAttribute("aria-label")).toBe("stage.guides.more_aria");
+    }
+    expect(frameTag.textContent).toBe("stage.guides.frame");
   });
 
-  it("in portrait, puts the stage label under the frame label, where the bottom card leaves it visible", async () => {
+  it("in portrait, puts the stage's tag beside the frame's, where the bottom card covers the stage's corner", async () => {
     const win = { w: 390, h: 844 };
     const content = { w: 390, h: 712 };
     setSizes(win, content);
@@ -523,39 +551,71 @@ describe("the region's controls and labels", () => {
     const { layout } = expected(win, content);
     expect(layout.cardPlacement).toBe("bottom");
     const at = chromeAt(win, content);
-    const stageLabel = await screen.findByTestId("stage-label");
-    const frameLabel = screen.getByTestId("frame-label");
-    expect(px(frameLabel, "top")).toBeCloseTo(at.frameLabel!.y, 6);
-    expect(px(stageLabel, "top")).toBeCloseTo(at.stageLabel!.y, 6);
-    expect(px(stageLabel, "left")).toBeCloseTo(px(frameLabel, "left"), 6);
-    expect(at.stageLabel!.y).toBeGreaterThan(at.frameLabel!.y + at.frameLabel!.h);
+    const stageTag = await screen.findByTestId("guide-tag-stage");
+    const frameTag = screen.getByTestId("guide-tag-frame");
+    expect(px(frameTag, "top")).toBeCloseTo(at.tagFrame!.y, 6);
+    expect(px(stageTag, "top")).toBeCloseTo(px(frameTag, "top"), 6);
+    expect(px(stageTag, "left")).toBeCloseTo(at.tagFrame!.x + at.tagFrame!.w + 8, 6);
+    expect(stageTag.className).toContain("rounded-[4px]");
+    // The frame's hangs from the stroke here, its one rounded corner away from it.
+    expect(frameTag.className).toContain("rounded-[0_0_4px_0]");
   });
 
-  it("shows what the dashed ceiling means beside it, with the guides, and hides it with them", async () => {
+  it("sits the ceiling's tag on the dashed ceiling, its sentence under the line, and opens it from the tag", async () => {
     setSizes(win, content);
     await mount(props("image"));
     const { layout, s } = expected(win, content);
-    const label = await screen.findByTestId("ceiling-label");
-    expect(label.textContent).toBe("stage.card_ceiling");
-    expect(label.className).toContain("bg-black/60");
+    const tag = await screen.findByTestId("guide-tag-ceiling");
+    expect(tag.textContent).toBe("stage.guides.ceiling");
+    expect(tag.className).toContain("bg-charcoal");
+    expect(tag.className).toContain("rounded-[4px_4px_0_0]");
     const ceiling = stageBox(ceilingBox(layout, win.w, win.h)!, s);
-    const at = chromeAt(win, content).ceilingLabel!;
-    expect(px(label, "left")).toBeCloseTo(ceiling.x, 6);
-    expect(px(label, "top")).toBeCloseTo(at.y, 6);
-    expect(at.y + at.h).toBeCloseTo(ceiling.y - 4, 6);
-    // The ceiling keeps the text as its accessible name.
+    const at = chromeAt(win, content).tagCeiling!;
+    expect(px(tag, "left")).toBeCloseTo(ceiling.x, 6);
+    expect(px(tag, "top")).toBeCloseTo(at.y, 6);
+    expect(at.y + at.h).toBeCloseTo(ceiling.y, 6);
+    // The ceiling keeps its own accessible name.
     expect(screen.getByTestId("card-ceiling").getAttribute("aria-label")).toBe("stage.card_ceiling");
 
-    fireEvent.click(await screen.findByRole("button", { name: "viewer_viewfinder_toggle" }));
-    await waitFor(() => expect(screen.queryByTestId("ceiling-label")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "viewer_viewfinder_toggle" }));
-    await screen.findByTestId("ceiling-label");
+    fireEvent.click(tag);
+    const text = await screen.findByTestId("guide-text-ceiling");
+    expect(text.textContent).toBe("stage.guides.ceiling_text");
+    const open = chromeAt(win, content, { openTag: "ceiling" }).ceilingText!;
+    expect(px(text, "top")).toBeCloseTo(ceiling.y + 1, 6);
+    expect(px(text, "width")).toBeCloseTo(open.w, 6);
+    expect(tag.getAttribute("aria-expanded")).toBe("true");
+    expect(tag.getAttribute("aria-controls")).toBe(text.id);
+    fireEvent.click(tag);
+    expect(screen.queryByTestId("guide-text-ceiling")).toBeNull();
+    expect(tag.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("hides the tags with the guides, and keeps the dashed ceiling and the word count", async () => {
+    setSizes(win, content);
+    await mount(props("image"));
+    fireEvent.click(await screen.findByTestId("guide-tag-frame"));
+    await screen.findByTestId("guide-text-frame");
+    const toggle = await screen.findByRole("button", { name: "stage.guides.toggle" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.queryByTestId("guide-tag-ceiling")).toBeNull());
+    for (const kind of ["frame", "target", "stage"]) expect(screen.queryByTestId(`guide-tag-${kind}`)).toBeNull();
+    expect(screen.queryByTestId("guide-text-frame")).toBeNull();
+    expect(screen.getByTestId("card-ceiling")).toBeTruthy();
+    expect(screen.getByTestId("stage-line-counter")).toBeTruthy();
+    // The same name in both states; the toggle says which by being pressed or not.
+    expect(screen.getByRole("button", { name: "stage.guides.toggle" }).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "stage.guides.toggle" }));
+    await screen.findByTestId("guide-tag-ceiling");
+    // A sentence open when the guides went is open again when they come back.
+    expect(screen.getByTestId("guide-text-frame")).toBeTruthy();
   });
 
   it("labels no ceiling in portrait, where the bottom card has none", async () => {
     setSizes({ w: 390, h: 844 }, { w: 390, h: 712 });
     await mount(props("image"));
-    expect(screen.queryByTestId("ceiling-label")).toBeNull();
+    await screen.findByTestId("guide-tag-frame");
+    expect(screen.queryByTestId("guide-tag-ceiling")).toBeNull();
   });
 
   it("the alt-text chip opens its field in a popover outside the stage", async () => {
@@ -620,9 +680,9 @@ describe("media steps, through the media functions", () => {
     expect(below).not.toBeNull();
     // The waveform and controls row are placed by the real player: stage-audio-waveform.test.tsx.
     expectBox(screen.getByTestId("step-card"), cardBox(layout, win.w, win.h, { media: true, contentHeight: CARD_CONTENT_H, below }), "card");
-    // Below its player the card has no ceiling drawn, nor a label for one.
+    // Below its player the card has no ceiling drawn, nor a tag for one.
     expect(screen.queryByTestId("card-ceiling")).toBeNull();
-    expect(screen.queryByTestId("ceiling-label")).toBeNull();
+    expect(screen.queryByTestId("guide-tag-ceiling")).toBeNull();
     const at = chromeAt(win, content, { media: true, below, publishedHeight: CARD_CONTENT_H });
     const counter = screen.getByTestId("stage-line-counter");
     expect(px(counter, "top")).toBeCloseTo(at.counter!.y, 6);
@@ -1718,13 +1778,23 @@ describe("a scene's card below the player, with the editor's own rows on it", ()
 });
 
 describe("a phone's region takes the compact chrome", () => {
-  it("drops the Viewfinder hint, shows the chip's icon only and lays the zoom buttons in a row", async () => {
+  it("shows the guide tags' and the chip's icons only and lays the zoom buttons in a row", async () => {
     const win = { w: 390, h: 844 };
     const content = { w: 390, h: 712 };
     setSizes(win, content);
     await mount(props("image"));
     const at = chromeAt(win, content);
-    expect(screen.queryByText("viewer_viewfinder_hint")).toBeNull();
+    for (const kind of ["frame", "target", "stage"]) {
+      const tag = await screen.findByTestId(`guide-tag-${kind}`);
+      expect(tag.textContent, kind).toBe("");
+      expect(tag.getAttribute("aria-label"), kind).toBe(`stage.guides.${kind}`);
+      expect(tag.getAttribute("title"), kind).toBe(`stage.guides.${kind}`);
+      expect(tag.className, kind).toContain("h-8 w-8");
+      expect(tag.querySelector("svg"), kind).not.toBeNull();
+    }
+    // Its sentence opens as at full size.
+    fireEvent.click(screen.getByTestId("guide-tag-frame"));
+    expect((await screen.findByTestId("guide-text-frame")).textContent).toBe("stage.guides.frame_text");
     const chip = screen.getByTestId("alt-text-chip");
     expect(chip.textContent).toBe("");
     expect(chip.getAttribute("aria-label")).toBe("stage.alt_text_add");
@@ -1736,12 +1806,269 @@ describe("a phone's region takes the compact chrome", () => {
     expect(at.zoom!.y + at.zoom!.h <= at.chip!.y || at.zoom!.x >= at.chip!.x + at.chip!.w).toBe(true);
   });
 
-  it("keeps the hint and the full chip at a desktop window", async () => {
+  it("keeps the tags' names and the full chip at a desktop window", async () => {
     setSizes({ w: 1440, h: 900 }, { w: 1240, h: 768 });
     await mount(props("image"));
-    expect(screen.getByText("viewer_viewfinder_hint")).toBeTruthy();
+    const tag = await screen.findByTestId("guide-tag-target");
+    expect(tag.textContent).toBe("stage.guides.target");
+    expect(tag.getAttribute("title")).toBeNull();
     expect(screen.getByTestId("alt-text-chip").textContent).toBe("stage.alt_text_add");
     expect(screen.getByTestId("zoom-cluster").className).toContain("flex-col");
+  });
+});
+
+describe("the guide tags' sentences", () => {
+  const win = { w: 1440, h: 900 };
+  const content = { w: 1240, h: 768 };
+  const tag = (kind: GuideTag) => screen.getByTestId(`guide-tag-${kind}`);
+  const openSentences = () => screen.queryAllByTestId(/^guide-text-/).map((el) => el.dataset.testid);
+
+  it("opens one sentence at a time: opening another closes the first", async () => {
+    setSizes(win, content);
+    await mount(props("image"));
+    await screen.findByTestId("guide-tag-frame");
+    expect(openSentences()).toEqual([]);
+    fireEvent.click(tag("frame"));
+    expect(openSentences()).toEqual(["guide-text-frame"]);
+    fireEvent.click(tag("target"));
+    expect(openSentences()).toEqual(["guide-text-target"]);
+    expect(tag("frame").getAttribute("aria-expanded")).toBe("false");
+    expect(tag("target").getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(tag("stage"));
+    expect(openSentences()).toEqual(["guide-text-stage"]);
+    const at = chromeAt(win, content, { openTag: "stage" }).stageText!;
+    const text = screen.getByTestId("guide-text-stage");
+    expect(px(text, "top")).toBeCloseTo(at.y, 6);
+    expect(at.y + at.h).toBeCloseTo(chromeAt(win, content).tagStage!.y, 6);
+  });
+
+  it("closes the open sentence on Escape and puts focus back on its tag", async () => {
+    setSizes(win, content);
+    await mount(props("image"));
+    fireEvent.click(await screen.findByTestId("guide-tag-target"));
+    expect(openSentences()).toEqual(["guide-text-target"]);
+    // A click leaves focus where it was in some browsers; Escape still closes it.
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(openSentences()).toEqual([]);
+    expect(document.activeElement).toBe(tag("target"));
+    fireEvent.click(tag("target"));
+    tag("target").focus();
+    fireEvent.keyDown(tag("target"), { key: "Escape" });
+    expect(openSentences()).toEqual([]);
+    expect(document.activeElement).toBe(tag("target"));
+  });
+
+  it("leaves Escape to a field that holds focus", async () => {
+    setSizes(win, content);
+    await mount(props("image"));
+    fireEvent.click(await screen.findByTestId("guide-tag-frame"));
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    field.focus();
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(openSentences()).toEqual(["guide-text-frame"]);
+    field.remove();
+  });
+
+  it("closes the open sentence when another step is selected", async () => {
+    setSizes(win, content);
+    const first = props("image");
+    const other = { ...stageStep("image"), id: 12, question: "Consider the necklace" };
+    await mountSelectable(first, { ...first, step: other, viewer: { ...first.viewer, step: other, selectionKey: "id:12" } });
+    fireEvent.click(await screen.findByTestId("guide-tag-ceiling"));
+    expect(openSentences()).toEqual(["guide-text-ceiling"]);
+    fireEvent.click(screen.getByRole("button", { name: "select next step" }));
+    await screen.findByText("Consider the necklace");
+    expect(openSentences()).toEqual([]);
+    expect(tag("ceiling").getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("a tag whose sentence the chrome had no room to draw", () => {
+  const win = { w: 360, h: 740 };
+  const content = { w: 360, h: 608 };
+const tag = () => screen.getByTestId("guide-tag-frame");
+  /** Escape from nowhere: it reaches the tag (focusing it) only while a sentence is open. */
+  const escapeFocusesTag = () => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document, { key: "Escape" });
+    return document.activeElement === tag();
+  };
+
+  beforeEach(() => {
+    window.localStorage.removeItem(FRAME_GUIDE_DISMISSED_KEY);
+    __resetFirstVisitGuideForTests();
+  });
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetWidth;
+  });
+
+  /** Each sentence measures taller than the stage, so the chrome leaves it out and keeps its tag. */
+  function makeSentencesTooTall() {
+    const was = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.dataset?.testid?.startsWith("guide-text-") ? 5000 : was.get!.call(this);
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.dataset?.testid?.startsWith("guide-text-") ? 300 : 0;
+      },
+    });
+  }
+
+  it("closes on a second press, hears Escape while open, and records the frame's dismissal", async () => {
+    setSizes(win, content);
+    makeSentencesTooTall();
+    await mount(props("image"));
+    await screen.findByTestId("guide-tag-frame");
+    // The first visit opens the frame's sentence; here there is no room to draw it.
+    expect(screen.queryByTestId("guide-text-frame")).toBeNull();
+    expect(tag().getAttribute("aria-expanded")).toBe("false");
+    expect(tag().getAttribute("aria-controls")).toBeNull();
+    // Pressing the open tag closes it, though nothing was drawn.
+    fireEvent.click(tag());
+    expect(window.localStorage.getItem(FRAME_GUIDE_DISMISSED_KEY)).toBe("1");
+    expect(escapeFocusesTag()).toBe(false);
+    // Pressed again it opens, and Escape closes it (and is then heard no more).
+    fireEvent.click(tag());
+    expect(tag().getAttribute("aria-expanded")).toBe("false");
+    expect(escapeFocusesTag()).toBe(true);
+    expect(escapeFocusesTag()).toBe(false);
+    // Opened once more, a second press closes it.
+    fireEvent.click(tag());
+    fireEvent.click(tag());
+    expect(escapeFocusesTag()).toBe(false);
+  });
+});
+
+describe("a sentence in its fallback place", () => {
+  const frame = { x: 40, y: 60, w: 500, h: 300 };
+  const tagFrame = { x: 41, y: 61, w: 100, h: 30 };
+  /** The frame's tag and its open sentence where a layout put them. */
+  function drawFrameSentence(frameText: Box) {
+    render(
+      <StageGuideTags
+        layout={{ topBar: { x: 12, y: 12, w: 576, h: 36 }, tagFrame, frameText }}
+        ceiling={null}
+        stage={{ w: 600, h: 400 }}
+        frameTagOnStroke={frameTagOnStroke(tagFrame, frame)}
+        compact={false}
+        measure={() => () => {}}
+        openTag="frame"
+        onPress={vi.fn()}
+        onEscape={vi.fn()}
+        onFirstVisit={vi.fn()}
+      />,
+    );
+    return screen.getByTestId("guide-text-frame");
+  }
+
+  it("rounds all four of the sentence's corners where it stands free of its tag, under the top bar", () => {
+    const text = drawFrameSentence({ x: 12, y: 100, w: 576, h: 64 });
+    expect(text.className).toContain("rounded-[4px]");
+    expect(text.className).not.toContain("rounded-[0_4px_4px_4px]");
+  });
+
+  it("keeps the frame's sentence's square corner on its tag where it opens from the tag", () => {
+    const text = drawFrameSentence({ x: tagFrame.x, y: tagFrame.y + tagFrame.h, w: 320, h: 86 });
+    expect(text.className).toContain("rounded-[0_4px_4px_4px]");
+  });
+});
+
+describe("the frame's sentence on a first visit", () => {
+  const win = { w: 1440, h: 900 };
+  const content = { w: 1240, h: 768 };
+  const frameText = () => screen.queryByTestId("guide-text-frame");
+
+  beforeEach(() => {
+    window.localStorage.removeItem(FRAME_GUIDE_DISMISSED_KEY);
+  });
+
+  it("opens by itself on the first visit, and not again in the same page load", async () => {
+    setSizes(win, content);
+    await mount(props("image"));
+    expect(await screen.findByTestId("guide-text-frame")).toBeTruthy();
+    cleanup();
+    await mount(props("image"));
+    await screen.findByTestId("guide-tag-frame");
+    expect(frameText()).toBeNull();
+  });
+
+  for (const [how, dismiss] of [
+    ["closed from its tag", () => fireEvent.click(screen.getByTestId("guide-tag-frame"))],
+    ["closed with Escape", () => fireEvent.keyDown(document, { key: "Escape" })],
+    ["replaced by another tag's", () => fireEvent.click(screen.getByTestId("guide-tag-stage"))],
+  ] as const) {
+    it(`is remembered as dismissed once ${how}, and does not open by itself on the next visit`, async () => {
+      setSizes(win, content);
+      await mount(props("image"));
+      await screen.findByTestId("guide-text-frame");
+      expect(window.localStorage.getItem(FRAME_GUIDE_DISMISSED_KEY)).toBeNull();
+      dismiss();
+      expect(frameText()).toBeNull();
+      expect(window.localStorage.getItem(FRAME_GUIDE_DISMISSED_KEY)).toBe("1");
+      // The next page load.
+      cleanup();
+      __resetFirstVisitGuideForTests();
+      await mount(props("image"));
+      await screen.findByTestId("guide-tag-frame");
+      expect(frameText()).toBeNull();
+    });
+  }
+
+  it("opens again on the next visit while it has not been dismissed", async () => {
+    setSizes(win, content);
+    await mount(props("image"));
+    await screen.findByTestId("guide-text-frame");
+    cleanup();
+    __resetFirstVisitGuideForTests();
+    await mount(props("image"));
+    expect(await screen.findByTestId("guide-text-frame")).toBeTruthy();
+  });
+
+  it("does not open by itself on a step without an image, and opens on the first image step", async () => {
+    setSizes(win, content);
+    const first = props("video");
+    const image = props("image");
+    await mountSelectable(first, { ...image, viewer: { ...image.viewer, selectionKey: "id:12" } });
+    await screen.findByTestId("video-embed");
+    expect(screen.queryByTestId("guide-tag-frame")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "select next step" }));
+    expect(await screen.findByTestId("guide-text-frame")).toBeTruthy();
+  });
+
+  it("opens once per page load where storage throws, and the dismissal does not throw", async () => {
+    const refuse = () => {
+      throw new DOMException("denied", "SecurityError");
+    };
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(refuse);
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(refuse);
+    try {
+      setSizes(win, content);
+      await mount(props("image"));
+      await screen.findByTestId("guide-text-frame");
+      expect(() => fireEvent.click(screen.getByTestId("guide-tag-frame"))).not.toThrow();
+      expect(frameText()).toBeNull();
+      expect(set).toHaveBeenCalled();
+      cleanup();
+      await mount(props("image"));
+      await screen.findByTestId("guide-tag-frame");
+      expect(frameText()).toBeNull();
+      // A new page load opens it again: nothing could be remembered.
+      cleanup();
+      __resetFirstVisitGuideForTests();
+      await mount(props("image"));
+      expect(await screen.findByTestId("guide-text-frame")).toBeTruthy();
+      expect(get).toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
   });
 });
 

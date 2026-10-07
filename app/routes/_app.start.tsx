@@ -74,6 +74,7 @@ import type { OrphanRecoveryAnswer } from "~/components/features/start/OrphanRec
 import { OtherProjectsRibbon } from "~/components/features/start/OtherProjectsRibbon";
 import { FromTheDocs } from "~/components/features/start/FromTheDocs";
 
+import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 import { useIsConvenor } from "~/hooks/use-role";
 import { useSharedGithubStatus } from "~/components/features/site-status/SiteStatusProvider";
@@ -315,8 +316,38 @@ function shellOffersCourseTab(shell: AppShellData): boolean {
   return shell?.showCourseTab === true;
 }
 
-export default function StartPage({ loaderData }: Route.ComponentProps) {
+/** The right rail: the collaboration cards, the activity feed and the orphan recovery card and its outcome. */
+function StartRail({
+  isConvenor,
+  collaboratorCount,
+  onInvite,
+  activity,
+  recoveryAnswer,
+  orphanStoryCount,
+}: {
+  isConvenor: boolean;
+  collaboratorCount: number;
+  onInvite: (() => void) | undefined;
+  activity: ComponentProps<typeof ActivityFeed>["rows"];
+  recoveryAnswer: OrphanRecoveryAnswer | undefined;
+  orphanStoryCount: number;
+}) {
   const { t } = useTranslation("common");
+  return (
+    // Right: rail — ActivityFeed always, then (convenor + populated +
+    // orphans-exist) the OrphanRecoveryCard. The rail stack uses the
+    // 14px gap exception.
+    <aside data-rail-slot="true" className="flex flex-col gap-[14px]" aria-label={t("common:a11y.activity_rail")}>
+      {isConvenor && onInvite && <WorkTogetherCard collaboratorCount={collaboratorCount} onInvite={onInvite} />}
+      {collaboratorCount > 0 && <ContributionRecordCard />}
+      <ActivityFeed rows={activity} />
+      <OrphanRecoveryOutcome answer={recoveryAnswer} />
+      {isConvenor && orphanStoryCount > 0 && <OrphanRecoveryCard orphanStoryCount={orphanStoryCount} />}
+    </aside>
+  );
+}
+
+export default function StartPage({ loaderData }: Route.ComponentProps) {
   const {
     project,
     userRole,
@@ -389,24 +420,14 @@ export default function StartPage({ loaderData }: Route.ComponentProps) {
           onOpenDoc={onOpenDoc}
         />
 
-        {/* Right: rail — ActivityFeed always, then (convenor + populated +
-            orphans-exist) the OrphanRecoveryCard. The rail stack uses the
-            14px gap exception. */}
-        <aside
-          data-rail-slot="true"
-          className="flex flex-col gap-[14px]"
-          aria-label={t("common:a11y.activity_rail")}
-        >
-          {isConvenor && openCollaborationSidebar && (
-            <WorkTogetherCard collaboratorCount={collaboratorCount} onInvite={openCollaborationSidebar} />
-          )}
-          {collaboratorCount > 0 && <ContributionRecordCard />}
-          <ActivityFeed rows={activity} />
-          <OrphanRecoveryOutcome answer={recoveryAnswer} />
-          {isConvenor && orphanStoryCount > 0 && (
-            <OrphanRecoveryCard orphanStoryCount={orphanStoryCount} />
-          )}
-        </aside>
+        <StartRail
+          isConvenor={isConvenor}
+          collaboratorCount={collaboratorCount}
+          onInvite={openCollaborationSidebar}
+          activity={activity}
+          recoveryAnswer={recoveryAnswer}
+          orphanStoryCount={orphanStoryCount}
+        />
       </div>
 
       {/* 3. "From the docs" strip — role/state-aware 4-up reading list.

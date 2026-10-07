@@ -43,7 +43,7 @@
  * between a destruction and the replacement's readiness, and a viewport applied
  * in that gap reaches nothing.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -215,10 +215,10 @@ interface IiifViewerProps {
    */
   stageLabelUnderFrame?: boolean;
   /**
-   * On the framing stage, whose chrome lays out every control and label
-   * together: the Viewfinder column is placed at `viewfinderAt` and measured
-   * through `viewfinderRef`, its hint shows only with `showHint`, and the frame
-   * and stage labels are left to the stage.
+   * On the framing stage, whose chrome lays out every control and tag
+   * together: the Viewfinder toggle is placed at `viewfinderAt` and measured
+   * through `viewfinderRef`, and the frame and stage labels are left to the
+   * stage's guide tags.
    */
   chrome?: ViewerChrome;
 }
@@ -814,7 +814,7 @@ function placeUnderFrameLabel(label: HTMLElement | null, frameLabel: HTMLElement
  * guides show. The frame label is placed by the guide drawing, at the frame's
  * top edge, and stays hidden until it has been. The stage label sits in the
  * pane's bottom-left corner, or, `underFrame`, under the frame label, placed
- * by the same drawing. Neutral dark, as the viewfinder hint is.
+ * by the same drawing. Neutral dark.
  */
 function StageLabels({
   inRegion,
