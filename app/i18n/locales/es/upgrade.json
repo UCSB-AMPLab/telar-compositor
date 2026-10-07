@@ -50,7 +50,7 @@
   "backToDashboard": "Volver al inicio",
   "continueToPublish": "Continuar a publicar",
   "continueToObjects": "Ir a Objetos",
-  "continueToSettings": "Ir a Configuración del sitio",
+  "continueToStart": "Ir a Inicio",
   "buildTracking": "Progreso de la construcción",
   "staleHead": "Tu repositorio ha cambiado desde que se cargó esta página. Sincroniza antes de actualizar.",
   "resync": "Sincronizar ahora",

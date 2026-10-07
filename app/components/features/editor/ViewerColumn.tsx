@@ -42,7 +42,7 @@
  * with its page cluster in `ViewerBottomBar`; what stays here is the media
  * branching, the instance the column holds, and the framing it asks for.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { useRef, useState, useEffect, useCallback } from "react";
@@ -207,7 +207,7 @@ interface ViewerColumnProps {
    * image and the distance from the region's bottom that clears its bar.
    */
   stageOverlay?: (placement: { isImage: boolean; aboveBar: number }) => ReactNode;
-  /** Told whether the capture guides show, which the stage's other guide labels follow. */
+  /** Told whether the capture guides show, which the stage's guide tags follow. */
   onGuidesChange?: (shown: boolean) => void;
   /** Callback to open the in-product docs drawer — threaded from the _app shell via outlet context. */
   onOpenDoc?: (id: string) => void;
@@ -304,14 +304,12 @@ export function zoomConstrained(viewer: OpenSeadragon.Viewer | null, factor: num
   settleCentre(viewer as unknown as MeasuredViewer, false);
 }
 
-/** What the stage's chrome says to the viewer about its Viewfinder column. */
+/** What the stage's chrome says to the viewer about its Viewfinder toggle. */
 function viewerChromeOf(chrome: StageChrome) {
   const vf = chrome.layout.viewfinder;
   return {
     viewfinderAt: vf && { right: chrome.stage.w - (vf.x + vf.w), top: vf.y },
     viewfinderRef: chrome.measure("viewfinder"),
-    hintRef: chrome.measure("hint"),
-    showHint: !!chrome.layout.hint,
   };
 }
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5.2-beta (2026-10-07)
+
+Fixes on Start, after setting up a site, and in the story editor.
+
+### Fixes
+
+- **A new site opens on Start** — After creating or importing a site, the setup's last screen now leads to Start, which walks a new site through its first steps, instead of Site settings. A site that needs an upgrade first also leads to Start once the upgrade is done, and someone whose sites are all set up and who opens the setup again is taken to Start rather than Objects.
+- **Work together on Start** — A site's convenor now finds a Work together card on Start with a large button for inviting collaborators, in place of the small button at the top of the page. On a shared site, a second card links to the contribution record, where everyone on the project can see what each person has added and written.
+- **Guides in the story editor** — The labels that explained the frame, the text limit and the area a visitor sees are now small tags on the step's image, each opening a short explanation when pressed. The Show guides button hides them along with the frame. The frame's explanation opens by itself the first time someone opens the editor, and on a phone an explanation with no room beside its tag opens under the top bar.
+
 ## v1.5.1-beta (2026-10-06)
 
 Fixes on the glossary page.

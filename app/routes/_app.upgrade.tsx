@@ -19,7 +19,7 @@
  * Renders a state machine — review | upgrading | choices | confirm |
  * building | done.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { redirect } from "react-router";
@@ -2372,10 +2372,10 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
         </Link>
       );
     }
-    if (origin === "config") {
+    if (origin === "start") {
       return (
-        <Link to="/config">
-          <Button variant="primary" type="button">{t("continueToSettings")}</Button>
+        <Link to="/start">
+          <Button variant="primary" type="button">{t("continueToStart")}</Button>
         </Link>
       );
     }

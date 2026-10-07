@@ -19,7 +19,7 @@
  * Driven through the real loader and the real page on React Router's routes
  * stub, on the harness `upgrade-revalidation.test.tsx` established.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import React from "react";
@@ -258,14 +258,14 @@ describe("why the person is on /upgrade", () => {
   });
 
   it("names the site it acts on, whatever sent the person here", async () => {
-    await renderAt("/upgrade?from=%2Fconfig");
+    await renderAt("/upgrade?from=%2Fstart");
     expect(await screen.findByText('siteLine {"repo":"student/my-site"}', {}, SETTLE)).toBeTruthy();
   });
 
   it("names the setup for someone onboarding sent", async () => {
     // Completion redirects here in the same response that makes the new site
     // active, so the page is showing the site just set up.
-    await renderAt("/upgrade?from=%2Fconfig");
+    await renderAt("/upgrade?from=%2Fstart");
     expect(await screen.findByText("gateReason_import", {}, SETTLE)).toBeTruthy();
   });
 

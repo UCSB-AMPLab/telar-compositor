@@ -5,9 +5,10 @@
  * shaped like the author's, scaled to fit (`FramingStage`). The viewer is the
  * stage's image, confined to the region the page frames into; the step card
  * floats on it at the visitor's size, in the site's theme (`StepCard`); the
- * answer's line count sits beside the card, what the dashed ceiling means is written
- * above it while the guides show, and the alt-text chip sits on the image
- * (`AltTextChip`). The step's open layer panels stand on the stage in a
+ * answer's line count sits beside the card, the guide tags say what each
+ * guide is while the guides show (`StageGuideTags`), one sentence open at a
+ * time and none once another step is selected, and the alt-text chip sits on
+ * the image (`AltTextChip`). The step's open layer panels stand on the stage in a
  * panel layer of their own, above the chrome (`StagePanels`). The title card
  * and section cards frame nothing: each is drawn on the stage as the
  * published page draws it, edited in place (`CardStage`, `TitleCardView`,
@@ -25,7 +26,7 @@
  * its colours and fonts over the shipped theme's, and the shipped theme's web
  * fonts where it names one.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
@@ -48,7 +49,9 @@ import { useLayerContentDrafts, type LayerContentDrafts } from "~/hooks/use-laye
 import type { StageGeometry } from "~/hooks/use-stage-geometry";
 import { cardBox, ceilingBox, regionOf, type Box, type MediaBelow, type MediaKind } from "~/lib/framing-stage";
 import { frameInRegion } from "~/lib/authoring-frame";
-import { chromeIsCompact, layoutStageChrome, type ChromeInput, type ChromeSizes } from "~/lib/stage-chrome";
+import { chromeIsCompact, frameTagOnStroke, layoutStageChrome, type ChromeInput, type ChromeSizes, type GuideTag } from "~/lib/stage-chrome";
+import { StageGuideTags } from "~/components/features/editor/StageGuideTags";
+import { rememberFrameGuideDismissed } from "~/hooks/use-first-visit-guide";
 import { useChromeSizes } from "~/hooks/use-chrome-sizes";
 import { SceneMeasures, sceneBelow, useSceneHeights, type SceneStepText } from "~/components/features/editor/SceneCards";
 import { glossaryEntryKindsFromDoc, glossaryTermsFromDoc } from "~/lib/glossary-links";
@@ -244,75 +247,33 @@ function baseUrlOf(siteBaseUrl: string | null): string {
   }
 }
 
-/** The answer's lines against the budget, where the stage's chrome puts it. */
-function StageLineCounter({ box, answer, glossary, measureRef }: { box: Box; answer: string; glossary: GlossaryContext; measureRef: (el: HTMLElement | null) => void }) {
-  return (
-    <div
-      ref={measureRef}
-      data-testid="stage-line-counter"
-      className="stage-line-counter absolute rounded-lg bg-black/60 px-3 py-1.5"
-      style={{ left: box.x, top: box.y, width: box.w, zIndex: STAGE_Z.controls }}
-    >
-      <AnswerBudgetCounter text={answer} glossary={glossary} />
-    </div>
-  );
-}
-
 /**
- * One of the stage's labels (the frame's, the stage's, the ceiling's), where
- * the stage's chrome puts it: neutral, shown with the guides, its text wrapped
- * to the width it is given.
+ * The answer's lines against the budget, where the stage's chrome puts it:
+ * hanging from the ceiling's bottom edge beside a side card, so its top
+ * corners are square there.
  */
-function StageChromeLabel({
+function StageLineCounter({
   box,
-  testId,
-  text,
+  underCeiling,
+  answer,
+  glossary,
   measureRef,
 }: {
   box: Box;
-  testId: string;
-  text: string;
+  underCeiling: boolean;
+  answer: string;
+  glossary: GlossaryContext;
   measureRef: (el: HTMLElement | null) => void;
 }) {
   return (
     <div
       ref={measureRef}
-      data-testid={testId}
-      aria-hidden={testId === "ceiling-label" || undefined}
-      className="pointer-events-none absolute w-max rounded-md bg-black/60 px-2 py-1 font-body text-[11px] leading-tight text-white/90"
-      style={{ left: box.x, top: box.y, maxWidth: box.w, zIndex: STAGE_Z.controls }}
+      data-testid="stage-line-counter"
+      className={`stage-line-counter absolute ${underCeiling ? "rounded-[0_0_6px_6px]" : "rounded-lg"} bg-black/60 px-3 py-1.5`}
+      style={{ left: box.x, top: box.y, width: box.w, zIndex: STAGE_Z.controls }}
     >
-      {text}
+      <AnswerBudgetCounter text={answer} glossary={glossary} />
     </div>
-  );
-}
-
-/** The answer's lines and the stage's labels, each where the chrome's layout puts it, if it shows. */
-function StageCounterAndLabels({
-  at,
-  answer,
-  glossary,
-  measure,
-}: {
-  at: ReturnType<typeof stageChromeFor>["layout"];
-  answer: string;
-  glossary: GlossaryContext;
-  measure: ReturnType<typeof useChromeSizes>["measure"];
-}) {
-  const { t } = useTranslation("editor");
-  return (
-    <>
-      {at.counter && <StageLineCounter box={at.counter} answer={answer} glossary={glossary} measureRef={measure("counter")} />}
-      {at.frameLabel && (
-        <StageChromeLabel box={at.frameLabel} testId="frame-label" text={t("stage.frame_label")} measureRef={measure("frameLabel")} />
-      )}
-      {at.stageLabel && (
-        <StageChromeLabel box={at.stageLabel} testId="stage-label" text={t("stage.stage_label")} measureRef={measure("stageLabel")} />
-      )}
-      {at.ceilingLabel && (
-        <StageChromeLabel box={at.ceilingLabel} testId="ceiling-label" text={t("stage.card_ceiling")} measureRef={measure("ceilingLabel")} />
-      )}
-    </>
   );
 }
 
@@ -330,6 +291,8 @@ export function stageChromeFor(
     publishedHeight: number | undefined;
     image: boolean;
     guidesShown: boolean;
+    /** The guide tag whose sentence is open, if any. */
+    openTag?: GuideTag | null;
     sizes: ChromeSizes;
   },
 ) {
@@ -349,8 +312,9 @@ export function stageChromeFor(
     ceiling: ceiling && stageBox(ceiling, s),
     show: {
       viewfinder: opts.image,
-      labels: opts.image && opts.guidesShown,
-      ceilingLabel: opts.guidesShown && ceiling !== null,
+      tags: opts.image && opts.guidesShown,
+      ceilingTag: opts.guidesShown && ceiling !== null,
+      open: opts.openTag ?? null,
       zoom: !media,
       bar: true,
       chip: !media,
@@ -358,7 +322,14 @@ export function stageChromeFor(
     },
     sizes: opts.sizes,
   };
-  return { layout: layoutStageChrome(input), compact: chromeIsCompact(region.w), stage: input.stage };
+  const chrome = layoutStageChrome(input);
+  return {
+    layout: chrome,
+    compact: chromeIsCompact(region.w),
+    stage: input.stage,
+    ceiling: input.ceiling,
+    frameTagOnStroke: frameTagOnStroke(chrome.tagFrame, input.frame),
+  };
 }
 
 /** What the step's object is, and whether the step shows a video or audio plate. */
@@ -411,6 +382,43 @@ function withShownStep(sceneSteps: readonly SceneStepText[], shownText: (current
   return sceneSteps.map((s) => (s.current ? shownText(s) : s));
 }
 
+/** The step with its three text fields as the stage's saves last left them. */
+function freshStep(step: StageStep, text: ReturnType<typeof useFreshStepText>, target: (field: string) => string) {
+  return {
+    ...step,
+    question: text.fresh(target("question"), step.question ?? ""),
+    answer: text.fresh(target("answer"), step.answer ?? ""),
+    alt_text: text.fresh(target("alt_text"), step.alt_text ?? ""),
+  };
+}
+
+/** The step's first layer with its button label as the stage's saves last left it. */
+function freshLayer1(layer1: StoryStageProps["layer1"], text: ReturnType<typeof useFreshStepText>, target: (field: string) => string) {
+  return layer1 && { ...layer1, button_label: text.fresh(target("layer1-button"), layer1.button_label ?? "") };
+}
+
+/** The delimiters the published cards read their text with, where the preview config is available. */
+function delimitersOf(config: PanelPreviewConfig | undefined) {
+  return config?.available ? config.delimiters : undefined;
+}
+
+/** Whether the word count sits flush under the ceiling, rather than somewhere else on the stage. */
+function counterUnderCeiling(counter: Box, ceiling: Box | null): boolean {
+  return !!ceiling && Math.abs(counter.y - (ceiling.y + ceiling.h)) < 1e-6;
+}
+
+/**
+ * The open guide sentence, which belongs to the step it was opened on:
+ * selecting another step closes it, and returning to that step does not
+ * reopen it.
+ */
+function useStepGuide(selectionKey: string): [GuideTag | null, (tag: GuideTag | null) => void] {
+  const [guideOpen, setGuideOpen] = useState<{ key: string; tag: GuideTag | null }>({ key: selectionKey, tag: null });
+  if (guideOpen.key !== selectionKey) setGuideOpen({ key: selectionKey, tag: null });
+  const openTag = guideOpen.key === selectionKey ? guideOpen.tag : null;
+  return [openTag, (tag) => setGuideOpen({ key: selectionKey, tag })];
+}
+
 function FramedStep({
   step,
   stepIndex,
@@ -453,6 +461,12 @@ function FramedStep({
   const [question, setQuestion] = useState<string | null>(null);
   const [buttonLabel, setButtonLabel] = useState<string | null>(null);
   const [guidesShown, setGuidesShown] = useState(true);
+  const [openTag, showGuide] = useStepGuide(viewer.selectionKey);
+  // Closing the frame's sentence, or opening another over it, dismisses the first visit's.
+  const leaveGuide = (next: GuideTag | null) => {
+    if (openTag === "frame" && next !== "frame") rememberFrameGuideDismissed();
+    showGuide(next);
+  };
 
   const { mediaType, media, kind, provider, videoId } = stepMedia(viewer.objects, step.object_id, viewer.frameworkVersion);
   const videoAspect = useVideoAspect(provider, videoId);
@@ -487,13 +501,8 @@ function FramedStep({
         })
       : Promise.reject(new Error("unsaved layer"));
 
-  const shownStep = {
-    ...step,
-    question: text.fresh(target("question"), step.question ?? ""),
-    answer: text.fresh(target("answer"), step.answer ?? ""),
-    alt_text: text.fresh(target("alt_text"), step.alt_text ?? ""),
-  };
-  const shownLayer1 = layer1 && { ...layer1, button_label: text.fresh(target("layer1-button"), layer1.button_label ?? "") };
+  const shownStep = freshStep(step, text, target);
+  const shownLayer1 = freshLayer1(layer1, text, target);
 
   // The panels' fields save through the stage's own save, as the card's do,
   // so a field finished as its panel closes is still sent and settled.
@@ -521,6 +530,7 @@ function FramedStep({
             publishedHeight: sceneHeights.byKey[shownKey],
             image: mediaType === "iiif",
             guidesShown,
+            openTag,
             sizes: chromeSizes.sizes,
           }),
           measure: chromeSizes.measure,
@@ -544,7 +554,7 @@ function FramedStep({
                     scene={scene}
                     heights={sceneHeights}
                     glossary={glossary}
-                    delimiters={config?.available ? config.delimiters : undefined}
+                    delimiters={delimitersOf(config)}
                     defaultLabel={t("layer.default_label_1")}
                   />
                 )}
@@ -566,7 +576,7 @@ function FramedStep({
                   onCreateLayer={onCreateLayer1}
                   onOpenLayer={onOpenLayer1}
                   glossary={glossary}
-                  delimiters={config?.available ? config.delimiters : undefined}
+                  delimiters={delimitersOf(config)}
                   saveErrorMessage={saveErrorMessage}
                   onAnswerChange={setAnswer}
                   onQuestionChange={setQuestion}
@@ -632,7 +642,27 @@ function FramedStep({
               )}
             />
           )}
-          <StageCounterAndLabels at={at} answer={answer} glossary={glossary} measure={chromeSizes.measure} />
+          {at.counter && (
+            <StageLineCounter
+              box={at.counter}
+              underCeiling={counterUnderCeiling(at.counter, chrome.ceiling)}
+              answer={answer}
+              glossary={glossary}
+              measureRef={chromeSizes.measure("counter")}
+            />
+          )}
+          <StageGuideTags
+            layout={at}
+            ceiling={chrome.ceiling}
+            stage={chrome.stage}
+            frameTagOnStroke={chrome.frameTagOnStroke}
+            compact={chrome.compact}
+            measure={chromeSizes.measure}
+            openTag={openTag}
+            onPress={(tag, wasOpen) => leaveGuide(wasOpen ? null : tag)}
+            onEscape={() => leaveGuide(null)}
+            onFirstVisit={() => showGuide("frame")}
+          />
         </>
         );
       }}

@@ -16,7 +16,7 @@
  * drawer: "canvas" renders deterministically; if the option is dropped, that
  * case fails.
  *
- * @version v1.5.0-beta
+ * @version v1.5.2-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -889,10 +889,21 @@ describe("IiifViewer — the guides and labels in the region", () => {
     expect(parseFloat(frameLabel.style.top)).toBeCloseTo(REGION.y + frame.y + 8, 9);
   });
 
+  it("shows the open eye while the guides are on and the crossed eye while they are off", async () => {
+    render(guided(regionBeside));
+    await screen.findByTestId("frame-label");
+    const toggle = screen.getByRole("button", { name: "stage.guides.toggle" });
+    expect(toggle.querySelector(".lucide-eye")).not.toBeNull();
+    expect(toggle.querySelector(".lucide-eye-off")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.querySelector(".lucide-eye-off")).not.toBeNull();
+    expect(toggle.querySelector(".lucide-eye")).toBeNull();
+  });
+
   it("hides both labels when the guides are turned off", async () => {
     render(guided(regionBeside));
     await screen.findByTestId("frame-label");
-    fireEvent.click(screen.getByRole("button", { name: "viewer_viewfinder_toggle" }));
+    fireEvent.click(screen.getByRole("button", { name: "stage.guides.toggle" }));
     expect(screen.queryByTestId("frame-label")).toBeNull();
     expect(screen.queryByTestId("stage-label")).toBeNull();
   });

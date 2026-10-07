@@ -92,7 +92,7 @@
     "description": "Tu sitio Telar se importó correctamente.",
     "created_description": "Tu nuevo sitio Telar está listo. Nos encargamos de toda la configuración por ti.",
     "first_build_note": "La primera construcción está en curso. Tu sitio estará disponible en unos minutos en:",
-    "go_to_settings": "Ir a Configuración del sitio"
+    "go_to_start": "Ir a Inicio"
   },
   "inline_config": {
     "heading": "Configuración esencial",

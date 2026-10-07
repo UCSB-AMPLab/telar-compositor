@@ -239,6 +239,18 @@
     "answer_field_label": "Respuesta (Markdown)",
     "answer_field_hint": "Haz clic fuera del campo para ver la respuesta tal como la leerán los visitantes.",
     "card_ceiling": "En el sitio publicado se corta el texto que pase de esta línea.",
+    "guides": {
+      "toggle": "Mostrar guías",
+      "ceiling": "Límite del texto",
+      "ceiling_text": "En el sitio publicado se corta el texto que pase de esta línea.",
+      "frame": "Marco",
+      "frame_text": "Todos los visitantes ven lo que queda dentro del marco. El botón Capturar posición guarda esta vista en el paso.",
+      "target": "Centro",
+      "target_text": "El botón Capturar posición guarda este punto, junto con el zoom.",
+      "stage": "Toda la zona",
+      "stage_text": "Quien abra el sitio en una ventana de las mismas proporciones que la tuya ve toda esta zona.",
+      "more_aria": "Qué significa: {{name}}"
+    },
     "save_failed": "El cambio no se guardó. Intenta de nuevo.",
     "sections_heading": "Secciones",
     "scroll_hint": "Presiona ↓ o desplázate para empezar",

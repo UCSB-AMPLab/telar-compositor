@@ -213,8 +213,6 @@
   "viewer_reset_aria": "Restablecer vista",
   "viewer_prev_page_aria": "Página anterior",
   "viewer_next_page_aria": "Página siguiente",
-  "viewer_viewfinder_toggle": "Guía de encuadre",
-  "viewer_viewfinder_hint": "El paso captura lo que queda dentro del marco",
   "used_in_step": "{{title}} — paso {{step}}",
   "untitled_story": "Historia sin título",
   "sync_field": {

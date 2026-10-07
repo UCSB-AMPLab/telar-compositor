@@ -92,7 +92,7 @@
     "description": "Your Telar site has been imported successfully.",
     "created_description": "Your new Telar site is ready. We set everything up for you — no manual configuration needed.",
     "first_build_note": "The first build is in progress. Your site will be live in a few minutes at:",
-    "go_to_settings": "Go to Site settings"
+    "go_to_start": "Go to Start"
   },
   "inline_config": {
     "heading": "Essential Settings",

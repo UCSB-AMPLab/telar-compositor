@@ -87,7 +87,6 @@ const I18N_MAP: Record<string, string> = {
   "role_chip.collaborator": "You · Collaborator",
   "orientation.what_is_compositor": "What is the compositor?",
   "orientation.plan_narrative": "Plan your narrative",
-  "orientation.add_collaborators": "Add collaborators",
   "section.workflow_map": "How the compositor works",
   "section.from_the_docs": "From the docs",
   "section.activity": "Activity · latest",
