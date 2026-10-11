@@ -34,7 +34,7 @@ async function countUntouchedTemplatePages(
  * slot) is composed in the default export; the rail (activity / recovery)
  * and docs drawer mount into this shell.
  *
- * @version v1.5.2-beta
+ * @version v1.5.3-beta
  */
 
 
@@ -71,7 +71,7 @@ import {
   OrphanRecoveryOutcome,
 } from "~/components/features/start/OrphanRecoveryCard";
 import type { OrphanRecoveryAnswer } from "~/components/features/start/OrphanRecoveryCard";
-import { OtherProjectsRibbon } from "~/components/features/start/OtherProjectsRibbon";
+import { OtherProjectsRibbon, otherProjectStat } from "~/components/features/start/OtherProjectsRibbon";
 import { FromTheDocs } from "~/components/features/start/FromTheDocs";
 
 import type { ComponentProps } from "react";
@@ -276,7 +276,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Children an instructor holds only an instructor row on are left out
   // (ruling 18). The active project above is resolved separately and is not
   // filtered, so a suppressed child reached by direct URL still opens here.
-  const otherProjects = listableProjects(await getUserProjectsWithStats(db, user.id));
+  const otherProjects = listableProjects(await getUserProjectsWithStats(db, user.id)).map(otherProjectStat);
 
   return {
     project: {

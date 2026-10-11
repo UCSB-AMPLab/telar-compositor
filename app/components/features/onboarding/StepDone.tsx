@@ -9,11 +9,11 @@
  * build is still running, with the site's own URL surfaced. Imported sites
  * keep the original "imported successfully" wording.
  *
- * @version v1.5.2-beta
+ * @version v1.5.3-beta
  */
 
 import { CheckCircle } from "lucide-react";
-import { Link } from "react-router";
+import { useNavigate, useNavigation } from "react-router";
 import { useTranslation } from "react-i18next";
 import { Button } from "~/components/ui/Button";
 
@@ -28,6 +28,11 @@ interface StepDoneProps {
 
 export function StepDone({ onDone: _onDone, created = false, siteUrl, className = "" }: StepDoneProps) {
   const { t } = useTranslation("onboarding");
+  const navigate = useNavigate();
+  // Onboarding sits outside the app layout and its loading overlay, and Start
+  // can take seconds to load: the button shows that it is working, and a second
+  // press cannot restart the load.
+  const opening = useNavigation().location?.pathname === "/start";
 
   return (
     <div className={`flex flex-col items-center text-center py-8 ${className}`}>
@@ -49,11 +54,9 @@ export function StepDone({ onDone: _onDone, created = false, siteUrl, className 
         </div>
       )}
 
-      <Link to="/start">
-        <Button variant="primary">
-          {t("step_done.go_to_start")}
-        </Button>
-      </Link>
+      <Button variant="primary" loading={opening} onClick={() => navigate("/start")}>
+        {t("step_done.go_to_start")}
+      </Button>
     </div>
   );
 }

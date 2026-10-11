@@ -18,7 +18,7 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { Form } from "react-router";
@@ -34,6 +34,23 @@ export interface OtherProjectStat {
   published_sha: string | null;
   last_published_at: string | null;
   last_edited_at: string | null;
+}
+
+/**
+ * The ribbon's fields of a project row, and nothing else. A row from
+ * getUserProjectsWithStats carries every column, `yjs_state` among them, and
+ * the single-fetch encoder writes a binary column out one byte at a time: a
+ * few megabytes of document state cost the Start loader seconds of CPU.
+ */
+export function otherProjectStat(project: OtherProjectStat): OtherProjectStat {
+  return {
+    id: project.id,
+    github_repo_full_name: project.github_repo_full_name,
+    head_sha: project.head_sha,
+    published_sha: project.published_sha,
+    last_published_at: project.last_published_at,
+    last_edited_at: project.last_edited_at,
+  };
 }
 
 export interface OtherProjectsRibbonProps {

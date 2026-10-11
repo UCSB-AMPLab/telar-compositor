@@ -16,7 +16,7 @@
  *     /dashboard — no redirect loop).
  *   - The populated/empty state flag (empty = no objects, stories, pages).
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -525,6 +525,44 @@ describe("/start loader — activity + orphan gating + other projects", () => {
     const [, userIdArg] = mocks.getUserProjectsWithStatsMock.mock.calls[0];
     expect(userIdArg).toBe(7);
     expect(data.otherProjects).toEqual(projectsList);
+  });
+
+  it("returns only the ribbon's fields of each project row, never its document state", async () => {
+    mocks.resolveActiveProjectMock.mockResolvedValue({
+      project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
+      userRole: "convenor",
+    });
+    queueCounts({ objects: 5, objectsUnused: 1, stories: 3, storyDrafts: 0, terms: 2, pages: 1, config: { title: "Site", theme: "default" } });
+    const ribbonFields = {
+      id: 2,
+      github_repo_full_name: "alice/other",
+      head_sha: "b",
+      published_sha: "c",
+      last_published_at: "2024-05-01T00:00:00Z",
+      last_edited_at: "2024-06-01T00:00:00Z",
+    };
+    mocks.getUserProjectsWithStatsMock.mockResolvedValue([
+      {
+        ...ribbonFields,
+        userRole: "convenor",
+        parent_project_id: null,
+        collaborator_count: 0,
+        yjs_state: Buffer.alloc(4096, 7),
+        publish_snapshot: JSON.stringify({ stories: {} }),
+        page_files_json: null,
+      },
+    ]);
+
+    const data = await callPlan04Loader(makeContext({ userId: 7 }));
+
+    expect(data.otherProjects).toEqual([ribbonFields]);
+    const binaryValues = (value: unknown): number =>
+      value instanceof Uint8Array
+        ? 1
+        : value && typeof value === "object"
+          ? Object.values(value).reduce((n: number, v) => n + binaryValues(v), 0)
+          : 0;
+    expect(binaryValues(data)).toBe(0);
   });
 
   it("scans for orphans only for a convenor on a populated, non-Sheets project", async () => {
