@@ -16,7 +16,7 @@
  * The workflow commit's single retry on a GitHub server error is exercised here
  * too, and so is the `rebuild` intent the failed-build screen submits.
  *
- * @version v1.5.3-beta
+ * @version v1.5.4-beta
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
@@ -290,6 +290,7 @@ import {
 import { getInstallationToken } from "~/lib/github-app.server";
 import { bumpProjectHeadFrom } from "~/lib/github-status.server";
 import { controlFreezeLease, controlFreezeLeaseNamingHolder } from "~/lib/freeze-lease.server";
+import { verifyInternalMarker } from "../workers/auth";
 import { requirePublishingRole, resolveActiveProject } from "~/lib/membership.server";
 import { project_config as projectConfigTable, projects as projectsTable } from "~/db/schema";
 project_config = projectConfigTable;
@@ -1989,6 +1990,23 @@ describe("upgrade action: the freeze lease", () => {
   it("ends as failed when prepare fails", async () => {
     vi.mocked(loadManifestChain).mockRejectedValueOnce(new Error("Missing migration manifest for upgrade path"));
     expect((await prepare()).ok).toBe(false);
+    expect(leaseCalls()).toEqual([
+      { op: "take", kind: "upgrade", operationId: "op-test" },
+      { op: "end", operationId: "op-test", outcome: "failed" },
+    ]);
+  });
+
+  it("ends as failed once when prepare throws, and lets the error through", async () => {
+    // A signature check that throws, rather than fails, escapes the reading of
+    // the posted challenge, which prepare does not handle.
+    vi.mocked(verifyInternalMarker).mockRejectedValueOnce(new Error("crypto unavailable"));
+    await expect(
+      action({
+        request: buildRequest("upgrade-prepare", { challenge: JSON.stringify({ content: {}, signature: "abc" }) }),
+        context: buildContext(),
+        params: {},
+      } as never),
+    ).rejects.toThrow();
     expect(leaseCalls()).toEqual([
       { op: "take", kind: "upgrade", operationId: "op-test" },
       { op: "end", operationId: "op-test", outcome: "failed" },

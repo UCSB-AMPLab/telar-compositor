@@ -23,7 +23,7 @@
  * fails open: it returns the stored timestamps without the commit message
  * rather than erroring (mirrors the `_app` loader's fail-open posture).
  *
- * @version v1.5.0-beta
+ * @version v1.5.4-beta
  */
 
 import type { Route } from "./+types/api.site-status";
@@ -32,6 +32,7 @@ import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
 import { decrypt } from "~/lib/crypto.server";
 import { getUserRole } from "~/lib/membership.server";
+import type { ActiveProjectRow } from "~/lib/membership.server";
 import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { githubHeaders } from "~/lib/github.server";
 import {
@@ -70,7 +71,7 @@ const GITHUB_API = "https://api.github.com";
  *  Shared by the `unpublished` popover payload and the `gh-status` count. */
 async function loadChangeSummary(
   db: ReturnType<typeof getDb>,
-  activeProject: typeof projects.$inferSelect,
+  activeProject: ActiveProjectRow,
 ) {
   const [storyRows, objectRows, pageRows, glossaryRows, configRow, entityHashes] =
     await Promise.all([

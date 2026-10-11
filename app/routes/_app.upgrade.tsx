@@ -18,7 +18,7 @@
  * Renders a state machine — review | upgrading | choices | sheets |
  * building | done.
  *
- * @version v1.5.3-beta
+ * @version v1.5.4-beta
  */
 
 import { data, redirect } from "react-router";
@@ -161,7 +161,7 @@ import { marked, Renderer } from "marked";
 import { sanitiseHtml } from "~/lib/sanitise-html";
 import { Button } from "~/components/ui/Button";
 import { controlFreezeLease } from "~/lib/freeze-lease.server";
-import { beginUpgradeLease } from "~/lib/upgrade-lease.server";
+import { beginUpgradeLease, withPrepareLease } from "~/lib/upgrade-lease.server";
 import { useOperationLock } from "~/hooks/use-operation-lock";
 import { OperationLockNotice } from "~/components/features/collaboration/OperationLockNotice";
 import { wait } from "~/lib/wait";
@@ -287,7 +287,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const versionMatch = configContent.match(/^\s*version:\s*["']?([^\s"'#]+)/m);
       if (versionMatch) {
         const repoVersion = normalizeVersionTag(versionMatch[1]);
-        if (siteTag && repoVersionToFollow(repoVersion, siteTag)) {
+        if (repoVersionToFollow(repoVersion, siteTag)) {
           // The repository decides the version, so D1 follows it up or down.
           effectiveVersion = repoVersion;
           isBelowMinimum = compareVersions(repoVersion, MIN_SUPPORTED_VERSION) < 0;
@@ -1401,16 +1401,20 @@ export async function action({ request, context }: Route.ActionArgs) {
       const lease = await beginUpgradeLease(env, activeProject.id, userId);
       if (!("operationId" in lease)) return { ok: false, intent: "upgrade-prepare", ...lease };
       const { operationId } = lease;
-      const res = await runUpgradePrepare(operationId, {
-        challenge: formData.get("challenge") as string | null,
-        choices: formData.get("choices") as string | null,
-        sheets: formData.get("sheets") as string | null,
-        deletions: formData.get("deletions") as string | null,
-      });
       // Only a prepared upgrade holds the lease, until its commit; a question
-      // for the author ends it, as a failure does, and the prepare that
-      // answers the question takes a new one.
-      if (!holdsPreparedLease(res)) await endUpgradeLease(env, activeProject.id, userId, operationId, "failed");
+      // for the author ends it, as a failure or a throw does, and the prepare
+      // that answers the question takes a new one.
+      const res = await withPrepareLease(
+        () =>
+          runUpgradePrepare(operationId, {
+            challenge: formData.get("challenge") as string | null,
+            choices: formData.get("choices") as string | null,
+            sheets: formData.get("sheets") as string | null,
+            deletions: formData.get("deletions") as string | null,
+          }),
+        holdsPreparedLease,
+        () => endUpgradeLease(env, activeProject.id, userId, operationId, "failed"),
+      );
       if (!res.ok) {
         return { ok: false, intent: "upgrade-prepare", error: res.error, message: res.message, detail: res.detail };
       }

@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.5.4-beta (2026-10-11)
+
+Faster page loads, and two fixes to upgrading Telar on a site.
+
+### Fixes
+
+- **Pages load faster with several sites** — Every page read the full content of each of your sites from the database, though none of it was shown. Pages now read only what they display, which matters most for people with several sites or large ones.
+- **An upgrade that stops with an error** — If preparing an upgrade stopped with an unexpected error, publishing, uploading objects and upgrading stayed blocked on the site for up to five minutes. They are now available again at once.
+- **A site with no recorded Telar version** — The upgrade page treated a site whose Telar version the Compositor had no record of as up to date. It now reads the version from the site's files and offers the upgrade when one is due.
+
 ## v1.5.3-beta (2026-10-10)
 
 Fixes to upgrading Telar on a site, and to opening Start after importing one.

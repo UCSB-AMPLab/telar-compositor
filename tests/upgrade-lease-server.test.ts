@@ -7,7 +7,7 @@
  * is pinned here is the refusal: only the author's own upgrade is told as
  * theirs, with minutes rounded up so the retry it names is never early.
  *
- * @version v1.5.3-beta
+ * @version v1.5.4-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -18,7 +18,7 @@ vi.mock("~/lib/freeze-lease.server", () => ({
 }));
 
 import { controlFreezeLeaseNamingHolder } from "~/lib/freeze-lease.server";
-import { beginUpgradeLease, upgradeLeaseRefusal } from "~/lib/upgrade-lease.server";
+import { beginUpgradeLease, upgradeLeaseRefusal, withPrepareLease } from "~/lib/upgrade-lease.server";
 
 const env = {} as Parameters<typeof beginUpgradeLease>[0];
 
@@ -66,5 +66,32 @@ describe("upgradeLeaseRefusal", () => {
       error: "own_upgrade_in_progress",
       detail: { minutes },
     });
+  });
+});
+
+describe("withPrepareLease", () => {
+  it("keeps the lease for an answer that holds it", async () => {
+    const release = vi.fn(async () => {});
+    expect(await withPrepareLease(async () => "ready", (a) => a === "ready", release)).toBe("ready");
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("releases the lease once for an answer that does not hold it", async () => {
+    const release = vi.fn(async () => {});
+    expect(await withPrepareLease(async () => "question", (a) => a === "ready", release)).toBe("question");
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the lease once when the run throws, and rethrows that error", async () => {
+    const release = vi.fn(async () => {});
+    const boom = new Error("boom");
+    await expect(withPrepareLease(async () => { throw boom; }, () => true, release)).rejects.toBe(boom);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("rethrows the run's error when the release also fails", async () => {
+    const boom = new Error("boom");
+    const release = vi.fn(async () => { throw new Error("release"); });
+    await expect(withPrepareLease(async () => { throw boom; }, () => true, release)).rejects.toBe(boom);
   });
 });
