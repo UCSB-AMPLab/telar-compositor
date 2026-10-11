@@ -463,6 +463,22 @@ describe("Upgrade page — the failed-build screen says what landed and what fai
     });
     expect(screen.getByText("pagesEnableFailed")).toBeTruthy();
     expect(screen.queryByText("rebuild_failed")).toBeNull();
+    expect(screen.getByRole("button", { name: "upgradeTurnOnPages" })).toBeTruthy();
+  });
+
+  it("keeps offering to turn Pages on, and takes no second press, while the request runs", async () => {
+    await driveToFailedBuild({ ...FAILED_RUN, pagesOff: true });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "upgradeTurnOnPages" }));
+    });
+    push(() => {
+      fetchers.rebuild.state = "submitting";
+    });
+    const button = screen.getByRole("button", { name: "upgradeTurnOnPages" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    push(() => {
+      fetchers.rebuild.state = "idle";
+    });
   });
 });
 

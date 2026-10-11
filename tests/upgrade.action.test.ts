@@ -1900,6 +1900,13 @@ describe("upgrade action: a build that failed at its deploy step", () => {
     expect((await poll(DEPLOY_FAILED)).pagesOff).toBe(false);
   });
 
+  it("reports the failed build, without saying Pages is off, when the Pages read rejects", async () => {
+    vi.mocked(verifySiteUrl).mockRejectedValueOnce(new TypeError("fetch failed"));
+    const res = await poll(DEPLOY_FAILED);
+    expect(res.ok).toBe(true);
+    expect(res.pagesOff).toBe(false);
+  });
+
   it("does not read Pages when another step failed, or the build succeeded", async () => {
     await poll([{ id: "build-site", label: "Build site", status: "completed", conclusion: "failure" }]);
     await poll(DEPLOY_FAILED.map((p) => ({ ...p, conclusion: "success" })), "success");

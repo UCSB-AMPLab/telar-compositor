@@ -55,7 +55,11 @@ vi.mock("~/lib/upgrade.server", async () => {
   return {
     ...actual,
     fetchLatestRelease: async () => ({ tagName: "v1.8.1", body: "Notes", publishedAt: "2026-10-01T00:00:00Z" }),
-    fetchAllReleases: async () => [],
+    fetchAllReleases: async () => [
+      { tagName: "v1.8.1", body: "Notes 1.8.1", publishedAt: "2026-10-10T00:00:00Z" },
+      { tagName: "v1.8.0", body: "Notes 1.8.0", publishedAt: "2026-10-05T00:00:00Z" },
+      { tagName: "v1.7.0", body: "Notes 1.7.0", publishedAt: "2026-09-10T00:00:00Z" },
+    ],
     computeUpgradeDiff: async () => ({
       additions: [],
       deletions: [],
@@ -89,6 +93,11 @@ describe("Upgrade loader — the repository decides the version", () => {
     expect(data.needsUpgrade).toBe(true);
     expect(d1Writes).toHaveLength(1);
     expect(d1Writes[0].telar_version).toBe("1.7.0");
+  });
+
+  it("lists the release notes from the repository's version, not D1's", async () => {
+    const data = await runLoader();
+    expect(data.releaseCount).toBe(2);
   });
 
   it("shows the repository's version, not the one D1 held", async () => {

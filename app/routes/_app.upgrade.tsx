@@ -277,38 +277,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ]);
     const { tree: userTree, truncated: userTreeTruncated } = treeResult;
 
-    // Fetch release notes for all versions newer than current site version.
-    // Runs in parallel with computeUpgradeDiff because they share no state.
-    //
-    // computeUpgradeDiff is called with fetchContent:false — the review page
-    // only needs paths and categories. Content for the commit is fetched
-    // later inside runUpgradePrepare when the user clicks Upgrade. Skipping
-    // content here avoids N sequential GitHub API calls (50-100+ on a full
-    // framework upgrade) that previously dominated page load time.
-    const [allReleasesData, treeDiff] = await Promise.all([
-      siteTag && compareVersions(siteTag, latestRelease.tagName) < 0
-        ? fetchAllReleases(token)
-        : Promise.resolve(null),
-      computeUpgradeDiff(token, userTree, latestRelease.tagName, {
-        fetchContent: false,
-        userTreeTruncated,
-      }),
-    ]);
-
-    let releaseNotes: string = latestRelease.body;
-    let releaseCount = 1;
-    if (allReleasesData) {
-      const newerReleases = allReleasesData.filter(
-        (r) => siteTag ? compareVersions(r.tagName, siteTag) > 0 : true,
-      );
-      releaseCount = newerReleases.length;
-      if (newerReleases.length > 1) {
-        releaseNotes = newerReleases
-          .map((r) => `## ${r.tagName}\n\n${r.body}`)
-          .join("\n\n---\n\n");
-      }
-    }
-
     // Check the actual repo version — D1 is stale if a previous upgrade
     // committed but the D1 update failed, or if the repository was reverted.
     let effectiveVersion = siteTag;
@@ -334,6 +302,38 @@ export async function loader({ request, context }: Route.LoaderArgs) {
             // Best-effort D1 heal
           }
         }
+      }
+    }
+
+    // Fetch release notes for all versions newer than the repository's version.
+    // Runs in parallel with computeUpgradeDiff because they share no state.
+    //
+    // computeUpgradeDiff is called with fetchContent:false — the review page
+    // only needs paths and categories. Content for the commit is fetched
+    // later inside runUpgradePrepare when the user clicks Upgrade. Skipping
+    // content here avoids N sequential GitHub API calls (50-100+ on a full
+    // framework upgrade) that previously dominated page load time.
+    const [allReleasesData, treeDiff] = await Promise.all([
+      effectiveVersion && compareVersions(effectiveVersion, latestRelease.tagName) < 0
+        ? fetchAllReleases(token)
+        : Promise.resolve(null),
+      computeUpgradeDiff(token, userTree, latestRelease.tagName, {
+        fetchContent: false,
+        userTreeTruncated,
+      }),
+    ]);
+
+    let releaseNotes: string = latestRelease.body;
+    let releaseCount = 1;
+    if (allReleasesData) {
+      const newerReleases = allReleasesData.filter(
+        (r) => effectiveVersion ? compareVersions(r.tagName, effectiveVersion) > 0 : true,
+      );
+      releaseCount = newerReleases.length;
+      if (newerReleases.length > 1) {
+        releaseNotes = newerReleases
+          .map((r) => `## ${r.tagName}\n\n${r.body}`)
+          .join("\n\n---\n\n");
       }
     }
 
@@ -570,8 +570,9 @@ async function pagesOffAfterDeployFailure(
 ): Promise<boolean> {
   if (run.status !== "completed" || run.conclusion !== "failure") return false;
   if (!phases?.some((phase) => phase.id === "deploy" && phase.conclusion === "failure")) return false;
-  const check = await verifySiteUrl(token, owner, repo, "");
-  return !check.pagesEnabled && !check.readFailed && !("readRefused" in check);
+  // A probe that rejects is as inconclusive as one that failed to read.
+  const check = await verifySiteUrl(token, owner, repo, "").catch(() => null);
+  return check !== null && !check.pagesEnabled && !check.readFailed && !("readRefused" in check);
 }
 
 // ---------------------------------------------------------------------------
@@ -1964,14 +1965,17 @@ function FailedBuildSummary({
 /** Runs the build again, turning GitHub Pages on first when Pages is why it failed. */
 function RetryBuildButton({
   pagesOff,
+  busy,
   onRetry,
 }: {
   pagesOff: boolean;
+  /** A retry is in flight: a second press would replace it. */
+  busy: boolean;
   onRetry: (intent: "rebuild" | "enable-pages") => void;
 }) {
   const { t } = useTranslation("upgrade");
   return (
-    <Button variant="primary" type="button" onClick={() => onRetry(pagesOff ? "enable-pages" : "rebuild")}>
+    <Button variant="primary" type="button" loading={busy} onClick={() => onRetry(pagesOff ? "enable-pages" : "rebuild")}>
       {t(pagesOff ? "upgradeTurnOnPages" : "retry")}
     </Button>
   );
@@ -2225,6 +2229,8 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     }
 
     setRebuildNotice(null);
+    // Pages is known to be on only once a build it publishes has started.
+    setPagesOff(false);
     setRunId(rebuildData.runId);
     setUpgradeSha(rebuildData.headSha);
     setStage("building");
@@ -2387,7 +2393,6 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     setBuildUrl(null);
     setRunId(null);
     setPhases(null);
-    setPagesOff(false);
     setRebuildNotice(null);
     rebuildFetcher.submit({ intent }, { method: "post" });
   }
@@ -2827,7 +2832,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 )}
-                <RetryBuildButton pagesOff={pagesOff} onRetry={handleRetry} />
+                <RetryBuildButton pagesOff={pagesOff} busy={rebuildFetcher.state !== "idle"} onRetry={handleRetry} />
               </div>
             </>
           )}
