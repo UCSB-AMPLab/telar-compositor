@@ -22,7 +22,7 @@
  * dedicated versionChange detector, never the managed-field diff) — plus
  * the semantic (key-order-insensitive) comparison of extra_columns.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -565,6 +565,27 @@ describe("registry sync probes — L-bug pins (action side)", () => {
 
     expect(residue.telarVersionHeal).toBe("9.9.9");
     expect(payload.telarVersion).toBe("9.9.9");
+  });
+
+  it("L3b: the version heal fires on \"behind\": the repository was reverted", async () => {
+    vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
+      if (path === "telar-content/spreadsheets/objects.csv") return "";
+      if (path === "_config.yml") return `telar:\n  version: "1.7.0"`;
+      return null;
+    });
+
+    const { payload, residue } = await resolveFullSyncPayload(
+      PROJECT_ID,
+      emptyChanges(),
+      TOKEN,
+      OWNER,
+      REPO,
+      probeSequentialMockDb([[], [{ id: 1, project_id: PROJECT_ID, telar_version: "1.8.1" }]]),
+      PROBE_ACTOR_ID,
+    );
+
+    expect(residue.telarVersionHeal).toBe("1.7.0");
+    expect(payload.telarVersion).toBe("1.7.0");
   });
 
   it("L4: an emptied story subtitle is applied (empty string, not skipped)", async () => {

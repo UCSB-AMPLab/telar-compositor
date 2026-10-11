@@ -16,7 +16,7 @@
  *   - data=undefined -> no toast
  *   - stable data reference across renders -> exactly one toast
  *
- * @version v1.0.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -83,7 +83,7 @@ describe("useVersionChangeToast", () => {
     expect(showToastMock).toHaveBeenCalledOnce();
     const call = showToastMock.mock.calls[0][0];
     expect(call.type).toBe("warning");
-    expect(call.message).toContain("externalDowngradeToast");
+    expect(call.message).toContain("repoRevertedToast");
     expect(call.message).toContain("1.0.0");
     expect(call.message).toContain("1.2.0");
   });

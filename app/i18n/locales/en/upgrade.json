@@ -88,7 +88,7 @@
   "phase_label_iiif_tiles": "IIIF tiles",
   "phase_label_deploy": "Deploy",
   "externalUpgradeToast": "Your site was upgraded to v{{version}} externally.",
-  "externalDowngradeToast": "The repository is on v{{repo}} but the Compositor has v{{d1}}. Please verify.",
+  "repoRevertedToast": "Your site's files are on Telar v{{repo}}, an earlier version than the Compositor had recorded (v{{d1}}). The Upgrade page will offer the latest version.",
   "view_on_github": "View on GitHub",
   "waiting_build": "Waiting for build to start...",
   "operationInProgress": "A publish, another upgrade or an upload is already running on this site, so the upgrade wasn't started. Try again once it has finished.",

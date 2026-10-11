@@ -154,6 +154,7 @@ import {
 import { getInstallationToken, resolveProjectToken } from "~/lib/github-app.server";
 import type { BuildPhaseStatus, CommitFile, WorkflowRun } from "~/lib/commit.server";
 import { bumpProjectHeadFrom, readLatestTag } from "~/lib/github-status.server";
+import { repoVersionToFollow } from "~/lib/repo-version-follow";
 import { normalizeVersionTag } from "~/lib/version";
 import { marked, Renderer } from "marked";
 import { sanitiseHtml } from "~/lib/sanitise-html";
@@ -243,7 +244,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   // Check minimum version support
   const siteTag = siteVersion ? normalizeVersionTag(siteVersion) : null;
-  const isBelowMinimum = siteTag
+  let isBelowMinimum = siteTag
     ? compareVersions(siteTag, MIN_SUPPORTED_VERSION) < 0
     : false;
 
@@ -306,8 +307,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
     }
 
-    // Check the actual repo version — D1 may be stale if a previous upgrade
-    // committed successfully but the D1 update failed.
+    // Check the actual repo version — D1 is stale if a previous upgrade
+    // committed but the D1 update failed, or if the repository was reverted.
     let effectiveVersion = siteTag;
     // The version prepare reads from D1 and starts its chain from; it moves to
     // the repo's only once D1 holds that version.
@@ -316,9 +317,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const versionMatch = configContent.match(/^\s*version:\s*["']?([^\s"'#]+)/m);
       if (versionMatch) {
         const repoVersion = normalizeVersionTag(versionMatch[1]);
-        if (effectiveVersion && compareVersions(repoVersion, effectiveVersion) > 0) {
-          // Repo is ahead of D1 — heal D1 silently
+        if (siteTag && repoVersionToFollow(repoVersion, siteTag)) {
+          // The repository decides the version, so D1 follows it up or down.
           effectiveVersion = repoVersion;
+          isBelowMinimum = compareVersions(repoVersion, MIN_SUPPORTED_VERSION) < 0;
           try {
             const now = new Date().toISOString();
             await db
@@ -399,7 +401,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     if (devFiles.length > 0) filesByCategory.devFiles = devFiles;
 
     return {
-      siteVersion,
+      // The repository's version, which the page shows: D1's may be stale.
+      siteVersion: effectiveVersion ?? siteVersion,
       latestRelease,
       releaseTagOverride,
       releaseNotes: releaseNotesHtml as string,
