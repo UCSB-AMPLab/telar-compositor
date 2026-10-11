@@ -35,7 +35,7 @@
  * storage base at the document's sequence and retired below it,
  * so the tail a load replays stays bounded whatever D1 is doing.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import * as Y from "yjs";
@@ -51,7 +51,10 @@ import {
   applyLeaseControl,
   leaseControlText,
   leaseFrame,
+  leaseHolder,
   parseLeaseControl,
+  refusalText,
+  type LeaseHolder,
   type LeaseState,
 } from "./freeze-lease";
 import type { EditsByPath } from "./collaboration-helpers";
@@ -4281,7 +4284,8 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
    * action that signed them is the only party that can name either. 409 for
    * a control the table refuses: a begin while another lease is live, which
    * the caller answers by not starting its operation, or a renewal or end of a
-   * lease that has run out or that another user holds. 503 when storage cannot
+   * lease that has run out or that another user holds. Its body names the
+   * lease that stands, when one does (`refusalText`). 503 when storage cannot
    * answer, which the caller treats as no answer and carries on, since a lease
    * that is never ended expires.
    *
@@ -4304,10 +4308,14 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     if (markerError) return markerError;
 
     let next: LeaseState | null = null;
+    let holder: LeaseHolder | null = null;
     let failure: unknown;
     await this.ctx.blockConcurrencyWhile(async () => {
       try {
-        next = applyLeaseControl(await this.readLeaseState(), control, userId, Date.now());
+        const state = await this.readLeaseState();
+        const now = Date.now();
+        next = applyLeaseControl(state, control, userId, now);
+        if (next === null) holder = leaseHolder(state, userId, now);
         if (next !== null) await this.storage().put(FREEZE_LEASE_KEY, next);
       } catch (err) {
         failure = err;
@@ -4317,7 +4325,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       console.error(`[freeze] project ${this.projectId}: ${leaseControlText(control)} was not applied`, failure);
       return new Response("freeze_unavailable", { status: 503 });
     }
-    if (next === null) return new Response("freeze_refused", { status: 409 });
+    if (next === null) return new Response(refusalText(holder), { status: 409 });
 
     const frame = this.freezeFrameBytes(next);
     for (const ws of this.ctx.getWebSockets()) {

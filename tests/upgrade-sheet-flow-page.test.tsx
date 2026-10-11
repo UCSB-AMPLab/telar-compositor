@@ -352,6 +352,15 @@ describe("Upgrade page — sheet screens", () => {
     expect(screen.getByText(text)).toBeTruthy();
   });
 
+  it("tells the author their own upgrade is still finishing, with the minutes until they can try again", async () => {
+    await renderSheetFlowPage();
+    pushSheetFlow(() => {
+      fetchers.upgrade.data = { ok: false, intent: "upgrade-prepare", error: "own_upgrade_in_progress", detail: { minutes: 3 } };
+    });
+    expect(screen.getByText(/^ownUpgradeInProgress 3$/)).toBeTruthy();
+    expect(screen.queryByText(/^operationInProgress/)).toBeNull();
+  });
+
   it.each([
     ["upgrade-prepare", "prepare_unreachable", "prepareUnreachable"],
     ["upgrade-commit", "commit_unreachable", "commitUnreachable"],

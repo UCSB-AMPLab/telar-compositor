@@ -159,7 +159,8 @@ import { normalizeVersionTag } from "~/lib/version";
 import { marked, Renderer } from "marked";
 import { sanitiseHtml } from "~/lib/sanitise-html";
 import { Button } from "~/components/ui/Button";
-import { controlFreezeLease, newFreezeOperationId } from "~/lib/freeze-lease.server";
+import { controlFreezeLease } from "~/lib/freeze-lease.server";
+import { beginUpgradeLease } from "~/lib/upgrade-lease.server";
 import { useOperationLock } from "~/hooks/use-operation-lock";
 import { OperationLockNotice } from "~/components/features/collaboration/OperationLockNotice";
 import { wait } from "~/lib/wait";
@@ -595,17 +596,9 @@ async function pagesOffAfterDeployFailure(
 // polls it closed, until the lease expired. A lease the object cannot be
 // asked about lets the upgrade through (see `~/lib/freeze-lease.server`), and
 // an id the page could have altered is safe to act on because the Durable
-// Object ends or renews only a lease the same user holds.
-
-/**
- * Start a lease for an upgrade and answer its id, or null when the object
- * refused it because another publish or upgrade is running.
- */
-async function beginUpgradeLease(env: Env, projectId: number, userId: number): Promise<string | null> {
-  const operationId = newFreezeOperationId();
-  const lease = await controlFreezeLease(env, projectId, userId, { op: "begin", kind: "upgrade", operationId });
-  return lease === "refused" ? null : operationId;
-}
+// Object ends or renews only a lease the same user holds. A prepare takes the
+// lease (`~/lib/upgrade-lease.server`), so the author's own upgrade that was
+// left before its commit does not hold them out of trying again.
 
 /**
  * Keep the lease an upgrade's commit is about to act under, and say whether it
@@ -1412,8 +1405,9 @@ export async function action({ request, context }: Route.ActionArgs) {
   // Publishing-role gate — enforced above via requirePublishingRole(). No spoofable path.
   switch (intent) {
     case "upgrade-prepare": {
-      const operationId = await beginUpgradeLease(env, activeProject.id, userId);
-      if (operationId === null) return { ok: false, intent: "upgrade-prepare", error: "operation_in_progress" };
+      const lease = await beginUpgradeLease(env, activeProject.id, userId);
+      if (!("operationId" in lease)) return { ok: false, intent: "upgrade-prepare", ...lease };
+      const { operationId } = lease;
       const res = await runUpgradePrepare(operationId, {
         challenge: formData.get("challenge") as string | null,
         choices: formData.get("choices") as string | null,
@@ -1422,7 +1416,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       });
       // Only a prepared upgrade holds the lease, until its commit; a question
       // for the author ends it, as a failure does, and the prepare that
-      // answers the question begins a new one.
+      // answers the question takes a new one.
       if (!holdsPreparedLease(res)) await endUpgradeLease(env, activeProject.id, userId, operationId, "failed");
       if (!res.ok) {
         return { ok: false, intent: "upgrade-prepare", error: res.error, message: res.message, detail: res.detail };
@@ -1671,6 +1665,7 @@ const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
   "insufficient_permissions",
   "insufficient_permissions_convenor_required",
   "operation_in_progress",
+  "own_upgrade_in_progress",
   "config_exclude_unreadable",
   "upgrade_file_unreadable",
   "upgrade_file_not_text",
@@ -1692,8 +1687,10 @@ const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
  * The refusals the review screen explains in one sentence, by failure code.
  * A missing App permission when the acting user is not the convenor has no
  * link, because /settings/installations/<id> can only be worked by the
- * account that installed the App. The operation lock is another member's
- * publish, upgrade or upload. A prepared target a newer release overtook, and
+ * account that installed the App. The operation lock is a publish, upgrade or
+ * upload already running, except the author's own upgrade whose commit is
+ * still running, which is named as theirs with the minutes until it lifts.
+ * A prepared target a newer release overtook, and
  * a release that could not be read, stop the commit before anything changes.
  * A list the manifest could not add to names its file, key and values, from
  * the failure's detail. A site file prepare could not read, or whose bytes
@@ -1715,6 +1712,7 @@ const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
 const UPGRADE_NOTICES: Readonly<Record<string, string>> = {
   insufficient_permissions_convenor_required: "insufficientPermissionsConvenorRequired",
   operation_in_progress: "operationInProgress",
+  own_upgrade_in_progress: "ownUpgradeInProgress",
   prepared_outdated: "preparedOutdated",
   deletions_changed: "deletionsChanged",
   release_unknown: "releaseUnknown",
@@ -1777,6 +1775,7 @@ type UpgradeFailureDetail =
   | { version: string }
   | { sheet: string; column?: string; columns?: string; reason?: string; tab?: true }
   | { name: string }
+  | { minutes: number }
   | TabsRefused;
 
 /**
@@ -1837,6 +1836,7 @@ function noticeValues(detail: UpgradeFailureDetail | null): Record<string, strin
     return { sheet, ...(column !== undefined ? { column } : {}), ...(columns !== undefined ? { columns } : {}) };
   }
   if ("name" in detail) return { name: detail.name };
+  if ("minutes" in detail) return { count: detail.minutes };
   return {
     ...("path" in detail ? { path: detail.path } : {}),
     ...(detail.version !== undefined ? { version: detail.version } : {}),

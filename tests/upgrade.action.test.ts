@@ -205,6 +205,7 @@ vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
 // makes to it are observed, and every one of them is answered as applied.
 vi.mock("~/lib/freeze-lease.server", () => ({
   controlFreezeLease: vi.fn(async () => "applied"),
+  controlFreezeLeaseNamingHolder: vi.fn(async () => ({ result: "applied", holder: null })),
   newFreezeOperationId: vi.fn(() => "op-test"),
 }));
 
@@ -288,7 +289,7 @@ import {
 } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
 import { bumpProjectHeadFrom } from "~/lib/github-status.server";
-import { controlFreezeLease } from "~/lib/freeze-lease.server";
+import { controlFreezeLease, controlFreezeLeaseNamingHolder } from "~/lib/freeze-lease.server";
 import { requirePublishingRole, resolveActiveProject } from "~/lib/membership.server";
 import { project_config as projectConfigTable, projects as projectsTable } from "~/db/schema";
 project_config = projectConfigTable;
@@ -1946,7 +1947,12 @@ describe("upgrade action: enable-pages", () => {
 
 /** The lease controls the action sent, in order, as the Durable Object would read them. */
 function leaseCalls(): unknown[] {
-  return vi.mocked(controlFreezeLease).mock.calls.map((call) => call[3]);
+  return [
+    ...vi.mocked(controlFreezeLease).mock.calls.map((call, i) => ({ order: vi.mocked(controlFreezeLease).mock.invocationCallOrder[i], control: call[3] })),
+    ...vi.mocked(controlFreezeLeaseNamingHolder).mock.calls.map((call, i) => ({ order: vi.mocked(controlFreezeLeaseNamingHolder).mock.invocationCallOrder[i], control: call[3] })),
+  ]
+    .sort((a, b) => a.order - b.order)
+    .map((c) => c.control);
 }
 
 describe("upgrade action: the freeze lease", () => {
@@ -1965,19 +1971,19 @@ describe("upgrade action: the freeze lease", () => {
     } as never)) as { ok: boolean; prepared?: { operationId?: string } };
   }
 
-  it("begins on prepare, and signs the lease's id into the prepared state", async () => {
+  it("takes the lease on prepare, and signs the lease's id into the prepared state", async () => {
     const res = await prepare();
     expect(res.ok).toBe(true);
     expect(res.prepared?.operationId).toBe("op-test");
-    expect(leaseCalls()).toEqual([{ op: "begin", kind: "upgrade", operationId: "op-test" }]);
-    expect(vi.mocked(controlFreezeLease).mock.calls[0][2]).toBe(7);
+    expect(leaseCalls()).toEqual([{ op: "take", kind: "upgrade", operationId: "op-test" }]);
+    expect(vi.mocked(controlFreezeLeaseNamingHolder).mock.calls[0][2]).toBe(7);
   });
 
   it("ends as failed when prepare fails", async () => {
     vi.mocked(loadManifestChain).mockRejectedValueOnce(new Error("Missing migration manifest for upgrade path"));
     expect((await prepare()).ok).toBe(false);
     expect(leaseCalls()).toEqual([
-      { op: "begin", kind: "upgrade", operationId: "op-test" },
+      { op: "take", kind: "upgrade", operationId: "op-test" },
       { op: "end", operationId: "op-test", outcome: "failed" },
     ]);
   });
@@ -1985,6 +1991,7 @@ describe("upgrade action: the freeze lease", () => {
   it("renews on commit, and ends as failed when the commit fails", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     vi.mocked(commitFilesToRepo).mockRejectedValueOnce(new StaleHeadError("moved"));
 
     const res = (await action({
@@ -2012,6 +2019,7 @@ describe("upgrade action: the freeze lease", () => {
   it("ends as succeeded once the commit lands, without waiting on the build", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     const res = (await action({
       request: buildRequest("upgrade-commit", { preparedState: JSON.stringify(prepared) }),
       context: buildContext(),
@@ -2025,20 +2033,35 @@ describe("upgrade action: the freeze lease", () => {
   });
 
   it("refuses to prepare while another publish or upgrade holds the lock", async () => {
-    vi.mocked(controlFreezeLease).mockResolvedValueOnce("refused");
+    vi.mocked(controlFreezeLeaseNamingHolder).mockResolvedValueOnce({
+      result: "refused",
+      holder: { kind: "publish", own: false, remainingMs: 120_000 },
+    });
     const res = (await prepare()) as { ok: boolean; error?: string };
     expect(res).toMatchObject({ ok: false, error: "operation_in_progress" });
+    expect(res).not.toHaveProperty("detail");
+    expect(computeUpgradeDiff).not.toHaveBeenCalled();
+  });
+
+  it("refuses to prepare while the author's own upgrade is committing, and says when they can try again", async () => {
+    vi.mocked(controlFreezeLeaseNamingHolder).mockResolvedValueOnce({
+      result: "refused",
+      holder: { kind: "upgrade", own: true, remainingMs: 150_000 },
+    });
+    const res = (await prepare()) as { ok: boolean; error?: string };
+    expect(res).toEqual({ ok: false, intent: "upgrade-prepare", error: "own_upgrade_in_progress", detail: { minutes: 3 } });
     expect(computeUpgradeDiff).not.toHaveBeenCalled();
   });
 
   it("prepares when the lock cannot be asked about", async () => {
-    vi.mocked(controlFreezeLease).mockResolvedValueOnce("unavailable");
+    vi.mocked(controlFreezeLeaseNamingHolder).mockResolvedValueOnce({ result: "unavailable", holder: null });
     expect((await prepare()).ok).toBe(true);
   });
 
   it("begins its operation again at commit when the lease ran out, and commits", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     vi.mocked(controlFreezeLease).mockResolvedValueOnce("refused");
     const res = (await action({
       request: buildRequest("upgrade-commit", { preparedState: JSON.stringify(prepared) }),
@@ -2055,6 +2078,7 @@ describe("upgrade action: the freeze lease", () => {
   it("does not commit when another operation began after its lease ran out", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     vi.mocked(controlFreezeLease).mockResolvedValueOnce("refused").mockResolvedValueOnce("refused");
     const res = (await action({
       request: buildRequest("upgrade-commit", { preparedState: JSON.stringify(prepared) }),
@@ -2075,6 +2099,7 @@ describe("upgrade action: the freeze lease", () => {
   it("has no cancel: a prepared upgrade's lease ends at its commit, and upgrade-cancel is an unknown intent", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     const res = await action({
       request: buildRequest("upgrade-cancel", { preparedState: JSON.stringify(prepared) }),
       context: buildContext(),

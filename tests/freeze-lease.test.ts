@@ -8,7 +8,7 @@
  * a page acts on — the last being what keeps a replayed success from
  * reloading a page twice.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -21,7 +21,10 @@ import {
   applyLeaseControl,
   leaseControlText,
   leaseFrame,
+  leaseHolder,
   parseLeaseControl,
+  parseRefusalText,
+  refusalText,
   type LeaseControl,
   type LeaseState,
 } from "../workers/freeze-lease";
@@ -101,13 +104,14 @@ describe("the lease table", () => {
 describe("the control text", () => {
   it.each<LeaseControl>([
     { op: "begin", kind: "publish", operationId: "a-1" },
+    { op: "take", kind: "upgrade", operationId: "a-1" },
     { op: "renew", operationId: "a-1" },
     { op: "end", operationId: "a-1", outcome: "failed" },
   ])("round-trips %o", (control) => {
     expect(parseLeaseControl(leaseControlText(control))).toEqual(control);
   });
 
-  it.each(["begin:deploy:a", "end:a:maybe", "renew:a:b", "begin:publish:a:b", "renew:", "", "renew:a b"])(
+  it.each(["begin:deploy:a", "take:publish:a", "take:objects:a", "take:upgrade:a:b", "end:a:maybe", "renew:a:b", "begin:publish:a:b", "renew:", "", "renew:a b"])(
     "rejects %s",
     (text) => {
       expect(parseLeaseControl(text)).toBeNull();
@@ -226,5 +230,69 @@ describe("an objects commit's lease", () => {
   it("is kept in a frame beside a publish lease", () => {
     const parsed = parseFreezeFrame(JSON.stringify(frame([lease(1, OTHER, "objects"), lease(2, OTHER, "publish")])));
     expect(parsed?.leases.map((l) => l.kind)).toEqual(["objects", "publish"]);
+  });
+});
+
+describe("an upgrade prepare taking the lease", () => {
+  const take = (operationId: string): LeaseControl => ({ op: "take", kind: "upgrade", operationId });
+  const prepared = apply(EMPTY_LEASE_STATE, take("first"), HOLDER, 0);
+
+  it("begins like a begin when nothing stands", () => {
+    expect(prepared.leases.first).toEqual({ rev: 1, kind: "upgrade", userId: HOLDER, startedAt: 0, expiresAt: LEASE_PHASE_MS });
+  });
+
+  it("takes over the same user's upgrade that no commit renewed, and records no end for it", () => {
+    const retried = apply(prepared, take("second"), HOLDER, 60_000);
+    expect(Object.keys(retried.leases)).toEqual(["second"]);
+    expect(retried.leases.second).toMatchObject({ rev: 2, kind: "upgrade", userId: HOLDER, startedAt: 60_000 });
+    expect(retried.ended).toEqual([]);
+  });
+
+  it("leaves the lease standing once a commit has renewed it", () => {
+    const committing = apply(prepared, { op: "renew", operationId: "first" }, HOLDER, 10_000);
+    expect(committing.leases.first.committing).toBe(true);
+    expect(applyLeaseControl(committing, take("second"), HOLDER, 20_000)).toBeNull();
+  });
+
+  it.each([
+    ["another user's upgrade", OTHER, "upgrade"],
+    ["another user's publish", OTHER, "publish"],
+    ["the same user's publish", HOLDER, "publish"],
+    ["the same user's objects commit", HOLDER, "objects"],
+  ] as const)("refuses to take over %s", (_label, userId, kind) => {
+    const standing = apply(EMPTY_LEASE_STATE, { op: "begin", kind, operationId: "first" }, userId, 0);
+    expect(applyLeaseControl(standing, take("second"), HOLDER, 1)).toBeNull();
+  });
+
+  it("leaves a plain begin refused by the same user's own upgrade", () => {
+    expect(applyLeaseControl(prepared, { op: "begin", kind: "upgrade", operationId: "second" }, HOLDER, 1)).toBeNull();
+  });
+
+  it("refuses the old operation's renewal once it has been taken over, so its commit cannot act under the new lease", () => {
+    const retried = apply(prepared, take("second"), HOLDER, 1);
+    expect(applyLeaseControl(retried, { op: "renew", operationId: "first" }, HOLDER, 2)).toBeNull();
+    expect(applyLeaseControl(retried, { op: "end", operationId: "first", outcome: "failed" }, HOLDER, 2)).toBeNull();
+  });
+});
+
+describe("a refusal's holder", () => {
+  const standing = apply(EMPTY_LEASE_STATE, { op: "begin", kind: "upgrade", operationId: "op" }, HOLDER, 0);
+
+  it("names the standing lease's kind, whether the refused user holds it, and the time it has left", () => {
+    expect(leaseHolder(standing, HOLDER, 1000)).toEqual({ kind: "upgrade", own: true, remainingMs: LEASE_PHASE_MS - 1000 });
+    expect(leaseHolder(standing, OTHER, 1000)).toEqual({ kind: "upgrade", own: false, remainingMs: LEASE_PHASE_MS - 1000 });
+  });
+
+  it("names none once the lease has run out", () => {
+    expect(leaseHolder(standing, HOLDER, LEASE_PHASE_MS)).toBeNull();
+  });
+
+  it("travels in the 409's body, and a body that names none reads as none", () => {
+    const holder = { kind: "publish", own: false, remainingMs: 1234 } as const;
+    expect(parseRefusalText(refusalText(holder))).toEqual(holder);
+    expect(refusalText(null)).toBe("freeze_refused");
+    expect(parseRefusalText("freeze_refused")).toBeNull();
+    expect(parseRefusalText(JSON.stringify({ error: "freeze_refused", holder: { kind: "deploy", own: true, remainingMs: 1 } }))).toBeNull();
+    expect(parseRefusalText(JSON.stringify({ error: "freeze_refused", holder: { kind: "upgrade", own: "yes", remainingMs: 1 } }))).toBeNull();
   });
 });

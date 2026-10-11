@@ -9,7 +9,7 @@
  * upgrade-prepared-state-signing.test.ts: the challenge's verification is
  * under test.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -118,6 +118,7 @@ vi.mock("~/lib/upgrade.server", async () => {
 });
 vi.mock("~/lib/freeze-lease.server", () => ({
   controlFreezeLease: vi.fn(async () => "applied"),
+  controlFreezeLeaseNamingHolder: vi.fn(async () => ({ result: "applied", holder: null })),
   newFreezeOperationId: vi.fn(() => "op-test"),
 }));
 vi.mock("~/lib/github-status.server", async (orig) => {
@@ -133,7 +134,7 @@ import { action } from "~/routes/_app.upgrade";
 import { computeUpgradeDiff, fetchLatestRelease, loadManifestChain } from "~/lib/upgrade.server";
 import { commitFilesToRepo } from "~/lib/commit.server";
 import { bumpProjectHeadFrom } from "~/lib/github-status.server";
-import { controlFreezeLease } from "~/lib/freeze-lease.server";
+import { controlFreezeLease, controlFreezeLeaseNamingHolder } from "~/lib/freeze-lease.server";
 import { listDirectoryEntries } from "~/lib/github.server";
 
 const CHAIN: Manifest[] = [
@@ -189,7 +190,12 @@ const answerQuestion = (asked: Answer, choices: unknown, userId = 7) =>
 const commitSheets = (ready: Answer) => postSheetAction("upgrade-commit", { preparedState: JSON.stringify(ready.prepared) });
 
 function sheetLeaseCalls(): unknown[] {
-  return vi.mocked(controlFreezeLease).mock.calls.map((c) => c[3]);
+  return [
+    ...vi.mocked(controlFreezeLease).mock.calls.map((call, i) => ({ order: vi.mocked(controlFreezeLease).mock.invocationCallOrder[i], control: call[3] })),
+    ...vi.mocked(controlFreezeLeaseNamingHolder).mock.calls.map((call, i) => ({ order: vi.mocked(controlFreezeLeaseNamingHolder).mock.invocationCallOrder[i], control: call[3] })),
+  ]
+    .sort((a, b) => a.order - b.order)
+    .map((c) => c.control);
 }
 
 const BOTH_HOLD = "step,answer,note,Note\n1,Here.,a,b\n";
@@ -253,7 +259,7 @@ describe("prepare's question", () => {
     expect(asked.groups).toMatchObject([{ file: `${DIR}/my-story.csv`, positions: [2, 3], needsChoice: false }]);
     expect(asked.challenge?.content.pending).toHaveLength(1);
     expect(sheetLeaseCalls()).toEqual([
-      { op: "begin", kind: "upgrade", operationId: "op-test" },
+      { op: "take", kind: "upgrade", operationId: "op-test" },
       { op: "end", operationId: "op-test", outcome: "failed" },
     ]);
     expect(commitFilesToRepo).not.toHaveBeenCalled();
@@ -269,10 +275,11 @@ describe("prepare's question", () => {
   it("answers the choice with a prepared upgrade that holds a new lease", async () => {
     const asked = await prepareSheets();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     const ready = await answerQuestion(asked, KEEP_NOTE);
     expect(ready).toMatchObject({ ok: true, answer: "ready" });
     expect(ready.prepared).toMatchObject({ advancesHead: false, sheetsClean: false });
-    expect(sheetLeaseCalls()).toEqual([{ op: "begin", kind: "upgrade", operationId: "op-test" }]);
+    expect(sheetLeaseCalls()).toEqual([{ op: "take", kind: "upgrade", operationId: "op-test" }]);
   });
 
   it("refuses a challenge that was altered, and one signed for another user", async () => {

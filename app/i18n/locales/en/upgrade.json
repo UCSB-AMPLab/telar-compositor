@@ -92,6 +92,8 @@
   "view_on_github": "View on GitHub",
   "waiting_build": "Waiting for build to start...",
   "operationInProgress": "A publish, another upgrade or an upload is already running on this site, so the upgrade wasn't started. Try again once it has finished.",
+  "ownUpgradeInProgress_one": "An upgrade you started a moment ago is still finishing on this site, so this one wasn't started. You can try again in {{count}} minute.",
+  "ownUpgradeInProgress_other": "An upgrade you started a moment ago is still finishing on this site, so this one wasn't started. You can try again in {{count}} minutes.",
   "preparedOutdated": "A newer Telar release came out while we were preparing this upgrade, so we didn't change anything on your site. The page now shows that release. Upgrade again to install it.",
   "prepareUnreachable": "The connection was lost while we were preparing the upgrade, so we didn't change anything on your site. Try again in a few minutes.",
   "commitUnreachable": "The connection was lost while we were upgrading your site, so we don't know whether the upgrade finished. Reload this page to see which version it has now.",

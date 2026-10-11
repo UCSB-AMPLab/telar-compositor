@@ -41,7 +41,7 @@
  * credential (upgrade's rebuild) is pinned again, against a fuller
  * harness, in tests/upgrade.action.test.ts.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -134,6 +134,7 @@ const { getRepoTree, getRepoHead, getFileContent, getFileAtRef } = vi.hoisted(()
 // action does once it holds it.
 vi.mock("~/lib/freeze-lease.server", () => ({
   controlFreezeLease: vi.fn(async () => "applied"),
+  controlFreezeLeaseNamingHolder: vi.fn(async () => ({ result: "applied", holder: null })),
   newFreezeOperationId: vi.fn(() => "op-1"),
 }));
 vi.mock("~/lib/github.server", () => ({

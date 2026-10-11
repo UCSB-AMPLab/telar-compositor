@@ -92,6 +92,8 @@
   "view_on_github": "Ver en GitHub",
   "waiting_build": "Esperando a que comience la compilación...",
   "operationInProgress": "En este sitio ya hay una publicación, otra actualización de Telar o una subida de objetos en curso, así que no pudimos empezar a actualizar. Vuelve a intentarlo cuando termine.",
+  "ownUpgradeInProgress_one": "La actualización que empezaste en este sitio hace un momento todavía está terminando, así que no pudimos empezar otra. Vuelve a intentarlo en {{count}} minuto.",
+  "ownUpgradeInProgress_other": "La actualización que empezaste en este sitio hace un momento todavía está terminando, así que no pudimos empezar otra. Vuelve a intentarlo en {{count}} minutos.",
   "preparedOutdated": "Mientras preparábamos esta actualización salió una versión más reciente de Telar, así que no hicimos ningún cambio en tu sitio. La página ya muestra esa versión. Vuelve a actualizar para instalarla.",
   "prepareUnreachable": "Se perdió la conexión mientras preparábamos la actualización, así que no hicimos ningún cambio en tu sitio. Vuelve a intentarlo en unos minutos.",
   "commitUnreachable": "Se perdió la conexión mientras actualizábamos tu sitio, así que no sabemos si la actualización alcanzó a completarse. Recarga esta página para ver qué versión tiene ahora.",

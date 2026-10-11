@@ -14,7 +14,7 @@
  *. An entry that says its page is hidden is kept for longer, on the
  * same rule as the clients.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -43,7 +43,12 @@ import {
 } from "./helpers/collaboration-client";
 
 /** Send one lease control to the project's object, signed as the actions sign it. */
-async function control(fixture: Fixture, text: string, userId = fixture.userId, sign = true): Promise<Response> {
+async function control(
+  fixture: Fixture,
+  text: string,
+  userId = fixture.userId,
+  sign = true,
+): Promise<{ status: number; body: string }> {
   const headers: Record<string, string> = {};
   if (sign) {
     const { sigHex, timestamp } = await signInternalMarker(
@@ -63,8 +68,7 @@ async function control(fixture: Fixture, text: string, userId = fixture.userId, 
   );
   // Read whole: a body left unread holds the object open, and it could then
   // never be evicted.
-  await res.text();
-  return res;
+  return { status: res.status, body: await res.text() };
 }
 
 /** Open a socket and read past its acceptance frames. */
@@ -196,6 +200,43 @@ describe("the freeze lease", () => {
     expect(frame.ended).toEqual([
       { rev: 1, kind: "upgrade", userId: fixture.userId, outcome: "succeeded" },
     ]);
+  });
+
+  it("lets an upgrade prepare take over the same user's prepare that no commit renewed", async () => {
+    const fixture = await seedProject("lease-take");
+    await control(fixture, "take:upgrade:op-1");
+    const watcher = await admit(fixture);
+
+    expect((await control(fixture, "take:upgrade:op-2")).status).toBe(200);
+
+    const told = readFreezeFrame(await watcher.next());
+    expect(told.leases).toEqual([{ rev: 2, kind: "upgrade", userId: fixture.userId, remainingMs: expect.any(Number) }]);
+    expect(told.ended).toEqual([]);
+    expect((await control(fixture, "end:op-1:failed")).status).toBe(409);
+    watcher.ws.close();
+  });
+
+  it("refuses a take once a commit has renewed the lease, and names the user's own upgrade with its time left", async () => {
+    const fixture = await seedProject("lease-take-committing");
+    await control(fixture, "take:upgrade:op-1");
+    await control(fixture, "renew:op-1");
+
+    const refused = await control(fixture, "take:upgrade:op-2");
+    expect(refused.status).toBe(409);
+    const named = JSON.parse(refused.body) as { error: string; holder: { kind: string; own: boolean; remainingMs: number } };
+    expect(named).toMatchObject({ error: "freeze_refused", holder: { kind: "upgrade", own: true } });
+    expect(named.holder.remainingMs).toBeGreaterThan(0);
+    expect(named.holder.remainingMs).toBeLessThanOrEqual(5 * 60 * 1000);
+  });
+
+  it("refuses another user's take, naming the lease as not theirs", async () => {
+    const fixture = await seedProject("lease-take-other");
+    const other = await addMember(fixture, "lease-take-other-member");
+    await control(fixture, "take:upgrade:op-1");
+
+    const refused = await control(other, "take:upgrade:op-2", other.userId);
+    expect(refused.status).toBe(409);
+    expect(JSON.parse(refused.body)).toMatchObject({ holder: { kind: "upgrade", own: false } });
   });
 
   it("survives the object being evicted", async () => {
