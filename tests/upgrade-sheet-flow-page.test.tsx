@@ -10,7 +10,7 @@
  *
  * The harness is upgrade-rebuild.test.tsx's.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import React from "react";
@@ -239,70 +239,55 @@ beforeEach(() => {
 });
 
 describe("Upgrade page — sheet screens", () => {
-  it("commits a prepared upgrade with nothing to show straight away", async () => {
+  it.each([
+    ["nothing to report", preparedWith([])],
+    ["a repair report", preparedWith([REPORT_LINE])],
+    ["answers", preparedWith([], [ANSWER])],
+    ["Google Sheets tabs checked as they stood", preparedWith([], [], { tabsChecked: true })],
+    ["a switch away from Google Sheets", preparedWith([], [], { sheetsOff: { written: ["a.csv"], deleted: [] }, readsGoogleSheetsAfter: false })],
+  ])("commits a prepared upgrade with %s straight away, with no screen between", async (_label, prepared) => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {
-      fetchers.upgrade.data = preparedWith([]);
+      fetchers.upgrade.data = prepared;
     });
-    expect(upgradeSubmissions().map((s) => s.intent)).toEqual(["upgrade-commit"]);
+    expect(upgradeSubmissions()).toEqual([{ intent: "upgrade-commit", preparedState: JSON.stringify(prepared.prepared) }]);
+    expect(screen.queryByRole("button", { name: /^confirm/ })).toBeNull();
+    expect(screen.queryByText("answersHeading")).toBeNull();
+    expect(screen.queryByText("sheetsCheckedAsTheyStood")).toBeNull();
   });
 
-  it("waits on the confirmation for a prepared upgrade with a repair report, and commits on confirm", async () => {
+  it("links each step on the done screen by its position, and lists a step of a story the project lacks without a link", async () => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {
-      fetchers.upgrade.data = preparedWith([REPORT_LINE]);
+      fetchers.upgrade.data = {
+        ...committedWithReport(true),
+        answers: [{ ...ANSWER, step: "3", position: 1 }, { ...ANSWER, story: "elsewhere", position: null, storyHeld: false, cellsDropped: true, checks: [] }],
+      };
     });
-    expect(upgradeSubmissions()).toEqual([]);
-    expect(screen.getByText("confirmTitle")).toBeTruthy();
-    expect(screen.getByText(/^repairDroppedChosen /)).toBeTruthy();
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: /^confirmButton/ }));
-    });
-    expect(upgradeSubmissions()).toEqual([
-      { intent: "upgrade-commit", preparedState: JSON.stringify(preparedWith([REPORT_LINE]).prepared) },
-    ]);
-  });
-
-  it("waits on the confirmation for a prepared upgrade with answers and no repair report, linking each step", async () => {
-    await renderSheetFlowPage();
     pushSheetFlow(() => {
-      fetchers.upgrade.data = preparedWith([], [ANSWER]);
+      fetchers.poll.data = RUN("success");
     });
-    expect(upgradeSubmissions()).toEqual([]);
     expect(screen.getByText("answersHeading")).toBeTruthy();
-    expect(screen.getByText(/^checks\.step_answer_has_table 2 my-story 1$/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "answerEditStep" }).getAttribute("href")).toBe("/stories/my-story?step=2");
-  });
-
-  it("waits on the confirmation for a Sheets site whose tabs were checked, saying they were checked as they stood", async () => {
-    await renderSheetFlowPage();
-    pushSheetFlow(() => {
-      fetchers.upgrade.data = preparedWith([], [], { tabsChecked: true });
-    });
-    expect(upgradeSubmissions()).toEqual([]);
-    expect(screen.getByText("confirmTitle")).toBeTruthy();
-    expect(screen.getByText("sheetsCheckedAsTheyStood")).toBeTruthy();
-  });
-
-  it("links a step by its position and lists a step of a story the project lacks without a link", async () => {
-    await renderSheetFlowPage();
-    pushSheetFlow(() => {
-      fetchers.upgrade.data = preparedWith([], [{ ...ANSWER, step: "3", position: 1 }, { ...ANSWER, story: "elsewhere", position: null, storyHeld: false, cellsDropped: true, checks: [] }]);
-    });
     expect(screen.getAllByRole("link", { name: "answerEditStep" }).map((a) => a.getAttribute("href"))).toEqual(["/stories/my-story?step=1"]);
     expect(screen.getByText(/^answerCellsDropped 2 elsewhere$/)).toBeTruthy();
   });
 
-  it("lets go of the prepared upgrade when the author cancels the confirmation", async () => {
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])("says on the done screen that the Google Sheets tabs were checked as they stood (tabsChecked %s)", async (tabsChecked, count) => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {
-      fetchers.upgrade.data = preparedWith([REPORT_LINE]);
+      fetchers.upgrade.data = preparedWith([], [], { tabsChecked });
     });
-    act(() => {
-      fireEvent.click(screen.getByRole("button", { name: "confirmCancel" }));
+    pushSheetFlow(() => {
+      fetchers.upgrade.data = committedWithReport(true);
     });
-    expect(upgradeSubmissions().map((s) => s.intent)).toEqual(["upgrade-cancel"]);
-    expect(screen.queryByText("confirmTitle")).toBeNull();
+    pushSheetFlow(() => {
+      fetchers.poll.data = RUN("success");
+    });
+    expect(screen.getByText("upgradeSuccess")).toBeTruthy();
+    expect(screen.queryAllByText("sheetsCheckedAsTheyStood")).toHaveLength(count);
   });
 
   it("shows a question in the picker and sends the answer back through prepare with its challenge", async () => {
@@ -367,6 +352,18 @@ describe("Upgrade page — sheet screens", () => {
     expect(screen.getByText(text)).toBeTruthy();
   });
 
+  it.each([
+    ["upgrade-prepare", "prepare_unreachable", "prepareUnreachable"],
+    ["upgrade-commit", "commit_unreachable", "commitUnreachable"],
+  ])("returns to the review screen with a message when %s's answer is lost in transit", async (intent, error, key) => {
+    await renderSheetFlowPage();
+    pushSheetFlow(() => {
+      fetchers.upgrade.data = { ok: false, intent, error };
+    });
+    expect(screen.getByText(key)).toBeTruthy();
+    expect(screen.queryByText("upgradeFailedDetail")).toBeNull();
+  });
+
   it("lists each tab's colliding columns under the message that names the tabs", async () => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {
@@ -427,12 +424,14 @@ describe("Upgrade page — sheet screens", () => {
     ]);
   });
 
-  it("waits on the confirmation for a site that stops reading Google Sheets, listing the files written and deleted", async () => {
+  it("lists the files a switch away from Google Sheets wrote and deleted on the done screen", async () => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {
-      fetchers.upgrade.data = preparedWith([], [], { sheetsOff: SWITCH, readsGoogleSheetsAfter: false });
+      fetchers.upgrade.data = { ...committedWithReport(true), sheetsOff: SWITCH, readsGoogleSheetsAfter: false };
     });
-    expect(upgradeSubmissions()).toEqual([]);
+    pushSheetFlow(() => {
+      fetchers.poll.data = RUN("success");
+    });
     expect(screen.getByText("sheetsSwitchHeading")).toBeTruthy();
     expect(screen.getByText("my-story.csv").tagName).toBe("LI");
     expect(screen.getByText("proyecto.csv").tagName).toBe("LI");

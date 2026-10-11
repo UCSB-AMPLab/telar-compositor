@@ -16,7 +16,7 @@
  * The workflow commit's single retry on a GitHub server error is exercised here
  * too, and so is the `rebuild` intent the failed-build screen submits.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
@@ -1989,7 +1989,7 @@ describe("upgrade action: the freeze lease", () => {
     expect(leaseCalls()).toEqual([]);
   });
 
-  it("lets go of a prepared upgrade the author cancels", async () => {
+  it("has no cancel: a prepared upgrade's lease ends at its commit, and upgrade-cancel is an unknown intent", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
     const res = await action({
@@ -1997,8 +1997,8 @@ describe("upgrade action: the freeze lease", () => {
       context: buildContext(),
       params: {},
     } as never);
-    expect(res).toMatchObject({ ok: true, intent: "upgrade-cancel" });
-    expect(leaseCalls()).toEqual([{ op: "end", operationId: "op-test", outcome: "failed" }]);
+    expect(res).toMatchObject({ ok: false, error: "unknown_intent" });
+    expect(leaseCalls()).toEqual([]);
     expect(commitFilesToRepo).not.toHaveBeenCalled();
   });
 

@@ -11,18 +11,17 @@
  *   - `upgrade-prepare` — reads and repairs everything the commit needs, and
  *     answers a signed prepared upgrade or a question for the column picker
  *   - `upgrade-commit` — commits a prepared upgrade, updates D1
- *   - `upgrade-cancel` — lets go of a prepared upgrade the author declined
  *   - `poll-build` — polls GitHub Actions for build progress
  *   - `compute-diff` — recomputes the diff (refresh / retry)
  *   - `rebuild` — dispatches the site build again after a failed build
  *
- * Renders a state machine — review | upgrading | choices | confirm |
+ * Renders a state machine — review | upgrading | choices | sheets |
  * building | done.
  *
- * @version v1.5.2-beta
+ * @version v1.5.3-beta
  */
 
-import { redirect } from "react-router";
+import { data, redirect } from "react-router";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
@@ -130,7 +129,6 @@ import type { V130IngestResult } from "~/lib/v130-ingest.server";
 import type { Language, Manifest, ManualStep } from "~/lib/manifest-schema.server";
 import { PostUpgradeSteps } from "~/components/features/upgrade/PostUpgradeSteps";
 import {
-  needsConfirmation,
   UpgradeSheetOutcome,
   UpgradeSheetQuestion,
   type ChoiceQuestion,
@@ -159,7 +157,7 @@ import { controlFreezeLease, newFreezeOperationId } from "~/lib/freeze-lease.ser
 import { useOperationLock } from "~/hooks/use-operation-lock";
 import { OperationLockNotice } from "~/components/features/collaboration/OperationLockNotice";
 import { wait } from "~/lib/wait";
-import { answerReadsWhenUnreachable } from "~/lib/unreachable-write";
+import { answerOrUnreachable, answerReadsWhenUnreachable, isUnreachableAnswer, UNREACHABLE_STATUS } from "~/lib/unreachable-write";
 import { readOrKept, useReloadableLoaderData } from "~/lib/kept-loader-data";
 
 export const handle = { i18n: ["common", "upgrade", "team", "publish"] };
@@ -1360,21 +1358,14 @@ export async function action({ request, context }: Route.ActionArgs) {
         sheets: formData.get("sheets") as string | null,
         deletions: formData.get("deletions") as string | null,
       });
-      // Only a prepared upgrade holds the lease, until its commit or its
-      // cancel; a question for the author ends it, as a failure does, and the
-      // prepare that answers the question begins a new one.
+      // Only a prepared upgrade holds the lease, until its commit; a question
+      // for the author ends it, as a failure does, and the prepare that
+      // answers the question begins a new one.
       if (!holdsPreparedLease(res)) await endUpgradeLease(env, activeProject.id, userId, operationId, "failed");
       if (!res.ok) {
         return { ok: false, intent: "upgrade-prepare", error: res.error, message: res.message, detail: res.detail };
       }
       return { ...res, intent: "upgrade-prepare" };
-    }
-
-    // The author declined a prepared upgrade on the confirmation screen.
-    case "upgrade-cancel": {
-      const operation = postedLeaseOperation(formData.get("preparedState") as string | null);
-      await endUpgradeLease(env, activeProject.id, userId, operation, "failed");
-      return { ok: true, intent: "upgrade-cancel" };
     }
 
     case "upgrade-commit": {
@@ -1559,15 +1550,6 @@ function holdsPreparedLease(answer: PrepareAnswer): boolean {
   return answer.ok && answer.answer === "ready";
 }
 
-/** The lease a posted prepared state names, read defensively: the payload is the page's. */
-function postedLeaseOperation(raw: string | null): unknown {
-  try {
-    return (JSON.parse(raw ?? "null") as Partial<PreparedUpgrade> | null)?.operationId;
-  } catch {
-    return null;
-  }
-}
-
 type PrepareAnswer =
   | { ok: true; answer: "ready"; prepared: PreparedUpgrade }
   | { ok: true; answer: "needs_choices"; challenge: SignedUpgradeChallenge; groups: OfferedGroup[]; notice: ChoiceNotice | null }
@@ -1589,7 +1571,6 @@ type UpgradeActionData =
   | { ok: false; intent: "upgrade-prepare"; error: string; message?: string; detail?: UpgradeFailureDetail }
   | CommittedUpgrade
   | { ok: false; intent: "upgrade-commit"; error: string; message?: string; reauthUrl?: string }
-  | { ok: true; intent: "upgrade-cancel" }
   | { ok: true; intent: "poll-build"; buildStatus: string; buildConclusion: string | null; buildUrl: string | null; runId: number | null; phases: BuildPhaseStatus[] | null }
   | { ok: false; intent: "poll-build"; error: string; message?: string }
   | { ok: true; intent: "compute-diff"; diff: UpgradeDiff; latestRelease: TelarRelease }
@@ -1603,6 +1584,8 @@ type UpgradeStage = UpgradeFlowStage;
 
 /** The failures the review stage names; anything else reads as a generic failure. */
 const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
+  "prepare_unreachable",
+  "commit_unreachable",
   "stale_head",
   "prepared_outdated",
   "deletions_changed",
@@ -1672,6 +1655,8 @@ const UPGRADE_NOTICES: Readonly<Record<string, string>> = {
   published_tab_unreadable: "publishedTabUnreadable",
   sheets_columns_refused: "sheetsColumnsRefused",
   sheets_switch_unreadable: "sheetsSwitchUnreadable",
+  prepare_unreachable: "prepareUnreachable",
+  commit_unreachable: "commitUnreachable",
 };
 
 /** A column removal that would change the rows: one message for each reason. */
@@ -1824,10 +1809,24 @@ export async function clientLoader({ serverLoader }: Route.ClientLoaderArgs) {
 /**
  * A `poll-build` that fails in transit is answered unreachable, with its
  * intent and status 503, so the page keeps the progress it last showed and
- * polls again on its beat (`answerReadsWhenUnreachable`). Every other intent
- * reaches the server action unchanged.
+ * polls again on its beat (`answerReadsWhenUnreachable`).
+ *
+ * A prepare or commit whose answer never arrives (the connection dropped, an
+ * upstream answered for the worker, the answer could not be decoded) is
+ * answered as that intent's failure, so the page returns to the review screen
+ * with a message instead of the route's error card. A prepare changes nothing
+ * on the site. A commit may have landed before its answer was lost, so its
+ * message says the result is unknown rather than that it failed. Every other
+ * intent reaches the server action unchanged.
  */
 export async function clientAction({ request, serverAction }: Route.ClientActionArgs) {
+  const intent = (await request.clone().formData()).get("intent");
+  if (intent === "upgrade-prepare" || intent === "upgrade-commit") {
+    const answer = await answerOrUnreachable(request, serverAction);
+    if (!isUnreachableAnswer(answer)) return answer;
+    const error = intent === "upgrade-commit" ? "commit_unreachable" : "prepare_unreachable";
+    return data({ ok: false, intent, error }, { status: UNREACHABLE_STATUS });
+  }
   return answerReadsWhenUnreachable(request, serverAction, ["poll-build"]);
 }
 
@@ -2054,16 +2053,16 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   const [upgradeErrorDetail, setUpgradeErrorDetail] = useState<UpgradeFailureDetail | null>(null);
   const [manualSteps, setManualSteps] = useState<Record<Language, ManualStep[]>>({ en: [], es: [] });
   const [rebuildNotice, setRebuildNotice] = useState<RebuildNotice | null>(null);
-  // The question prepare asked, while the picker shows it; the prepared
-  // upgrade the confirmation shows; and what the landed upgrade did to the
-  // sheets.
+  // The question prepare asked, while the picker shows it; and what the
+  // landed upgrade did to the sheets, with whether its Google Sheets tabs were
+  // checked only as they stood at prepare.
   const [question, setQuestion] = useState<ChoiceQuestion | null>(null);
   const [sheetsQuestion, setSheetsQuestion] = useState<SheetsQuestion | null>(null);
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState<PreparedUpgrade | null>(null);
   const [sheetReport, setSheetReport] = useState<SheetReportLine[]>([]);
   const [syncNeeded, setSyncNeeded] = useState(false);
   const [answers, setAnswers] = useState<UpgradeAnswer[]>([]);
   const [sheetsOff, setSheetsOff] = useState<PreparedUpgradeContent["sheetsOff"]>(null);
+  const [tabsChecked, setTabsChecked] = useState(false);
   // Whether the site reads Google Sheets after the upgrade, as the landed
   // upgrade says; null until one lands, when the loaded settings stand.
   const [readsSheetsAfter, setReadsSheetsAfter] = useState<boolean | null>(null);
@@ -2073,9 +2072,8 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   const rebuildData = rebuildFetcher.data as UpgradeActionData;
 
   // Handle upgrade response. Prepare answers with a prepared upgrade, which
-  // commits straight away unless there is something to confirm, or with a
-  // question for the column picker; the commit's answer advances to the
-  // building stage.
+  // commits straight away, or with a question for the column picker or the
+  // Google Sheets offer; the commit's answer advances to the building stage.
   useEffect(() => {
     if (!upgradeData) return;
 
@@ -2249,7 +2247,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   }
 
   function submitCommit(prepared: PreparedUpgrade) {
-    setAwaitingConfirmation(null);
+    setTabsChecked(prepared.tabsChecked === true);
     setStage("upgrading");
     setUpgradeSubStage("committing");
     upgradeFetcher.submit({ intent: "upgrade-commit", preparedState: JSON.stringify(prepared) }, { method: "post" });
@@ -2265,11 +2263,6 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     if (data.answer === "needs_sheets_decision") {
       setSheetsQuestion({ challenge: data.challenge, detail: data.detail, notice: data.notice });
       setStage("sheets");
-      return;
-    }
-    if (needsConfirmation(data.prepared)) {
-      setAwaitingConfirmation(data.prepared);
-      setStage("confirm");
       return;
     }
     submitCommit(data.prepared);
@@ -2303,18 +2296,6 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
 
   function handleCancelChoices() {
     setQuestion(null);
-    setStage("review");
-  }
-
-  // A prepared upgrade holds its lease until it commits or is cancelled.
-  function handleCancelConfirmation() {
-    if (awaitingConfirmation) {
-      upgradeFetcher.submit(
-        { intent: "upgrade-cancel", preparedState: JSON.stringify(awaitingConfirmation) },
-        { method: "post" },
-      );
-    }
-    setAwaitingConfirmation(null);
     setStage("review");
   }
 
@@ -2648,12 +2629,9 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
         stage={stage}
         question={question}
         sheetsQuestion={sheetsQuestion}
-        awaitingConfirmation={awaitingConfirmation}
         onChoose={handleChoices}
         onCancelChoices={handleCancelChoices}
         onSheetsAnswer={handleSheetsAnswer}
-        onConfirm={submitCommit}
-        onCancelConfirmation={handleCancelConfirmation}
       />
 
       {/* ------------------------------------------------------------------ */}
@@ -2734,7 +2712,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
               </div>
 
               {/* Post-upgrade manual steps (from manifest chain) */}
-              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} />
+              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} tabsChecked={tabsChecked} />
               <PostUpgradeSteps steps={manualSteps[i18n.language?.toLowerCase().startsWith("es") ? "es" : "en"]} googleSheetsEnabled={readsSheetsAfter ?? googleSheetsEnabled} />
 
               <div className="flex flex-wrap gap-3 justify-end">
@@ -2769,7 +2747,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                 )}
               </div>
 
-              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} />
+              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} tabsChecked={tabsChecked} />
 
               <div className="flex flex-wrap gap-3 justify-end">
                 {buildUrl && (
