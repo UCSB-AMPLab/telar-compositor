@@ -163,6 +163,8 @@ vi.mock("~/lib/commit.server", async () => ({
   getJobSteps: vi.fn(),
   getWorkflowRun: vi.fn(),
   mapStepsToBuildPhases: vi.fn(),
+  verifySiteUrl: vi.fn(async () => ({ pagesEnabled: true, match: true, pagesUrl: "", configUrl: "" })),
+  enableGitHubPages: vi.fn(async () => ({ pagesUrl: "https://student.github.io/my-site" })),
 }));
 
 vi.mock("~/lib/upgrade.server", async () => {
@@ -281,6 +283,8 @@ import {
   getJobSteps,
   mapStepsToBuildPhases,
   StaleHeadError,
+  enableGitHubPages,
+  verifySiteUrl,
 } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
 import { bumpProjectHeadFrom } from "~/lib/github-status.server";
@@ -1854,6 +1858,83 @@ describe("upgrade action: poll-build follows the run it was given", () => {
     expect(res.phases).toBeNull();
     expect(getWorkflowRun).not.toHaveBeenCalled();
     expect(getJobSteps).not.toHaveBeenCalled();
+  });
+});
+
+describe("upgrade action: a build that failed at its deploy step", () => {
+  const DEPLOY_FAILED = [
+    { id: "build-site", label: "Build site", status: "completed", conclusion: "success" },
+    { id: "deploy", label: "Deploy", status: "completed", conclusion: "failure" },
+  ];
+
+  async function poll(phases: unknown, conclusion = "failure") {
+    vi.mocked(getJobSteps).mockResolvedValue([]);
+    vi.mocked(mapStepsToBuildPhases).mockReturnValue(phases as never);
+    vi.mocked(listWorkflowRunsBySha).mockResolvedValue([
+      run({ id: 900, status: "completed", conclusion, html_url: "https://selected" }),
+    ]);
+    return (await action({
+      request: buildRequest("poll-build", { sha: "tip-sha", runId: "900" }),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; pagesOff?: boolean };
+  }
+
+  it("says Pages is off when GitHub answers that the repository has none", async () => {
+    vi.mocked(verifySiteUrl).mockResolvedValueOnce({ pagesEnabled: false, match: false, pagesUrl: "", configUrl: "" });
+    const res = await poll(DEPLOY_FAILED);
+    expect(res.ok).toBe(true);
+    expect(res.pagesOff).toBe(true);
+    expect(verifySiteUrl).toHaveBeenCalledWith("install-token", "student", "my-site", "");
+  });
+
+  it.each([
+    ["Pages is on", { pagesEnabled: true, match: true, pagesUrl: "", configUrl: "" }],
+    ["the read failed", { pagesEnabled: false, match: false, pagesUrl: "", configUrl: "", readFailed: true as const }],
+    ["the read was refused", { pagesEnabled: false, match: false, pagesUrl: "", configUrl: "", readRefused: true as const }],
+  ])("does not say Pages is off when %s", async (_name, check) => {
+    vi.mocked(verifySiteUrl).mockResolvedValueOnce(check);
+    expect((await poll(DEPLOY_FAILED)).pagesOff).toBe(false);
+  });
+
+  it("does not read Pages when another step failed, or the build succeeded", async () => {
+    await poll([{ id: "build-site", label: "Build site", status: "completed", conclusion: "failure" }]);
+    await poll(DEPLOY_FAILED.map((p) => ({ ...p, conclusion: "success" })), "success");
+    expect(verifySiteUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("upgrade action: enable-pages", () => {
+  it("turns Pages on and dispatches the build", async () => {
+    vi.mocked(dispatchWorkflow).mockResolvedValue({
+      runId: 900,
+      runUrl: "",
+      htmlUrl: "https://github.com/student/my-site/actions/runs/900",
+    });
+    vi.mocked(getWorkflowRun).mockResolvedValue(run());
+
+    const res = (await action({
+      request: buildRequest("enable-pages"),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; intent: string; runId?: number | null };
+
+    expect(enableGitHubPages).toHaveBeenCalledWith("install-token", "student", "my-site");
+    expect(dispatchWorkflow).toHaveBeenCalledWith("install-token", "student", "my-site", "build.yml");
+    expect(res).toMatchObject({ ok: true, intent: "rebuild", runId: 900 });
+  });
+
+  it("answers pages_enable_failed and dispatches nothing when GitHub refuses", async () => {
+    vi.mocked(enableGitHubPages).mockRejectedValueOnce(new Error("pages_permission_denied"));
+
+    const res = await action({
+      request: buildRequest("enable-pages"),
+      context: buildContext(),
+      params: {},
+    } as never);
+
+    expect(res).toEqual({ ok: false, intent: "rebuild", error: "pages_enable_failed" });
+    expect(dispatchWorkflow).not.toHaveBeenCalled();
   });
 });
 

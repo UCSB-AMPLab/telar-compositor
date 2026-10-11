@@ -14,7 +14,7 @@
  * without the hold and shows the redirect firing, so the assertion above is a
  * claim about the hold rather than about the fixtures.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import React from "react";
@@ -257,7 +257,7 @@ describe("Upgrade page — the flow survives revalidation", () => {
     stillOnUpgrade();
 
     // The build fails; the failed screen carries the retry.
-    await waitFor(() => expect(screen.getByText("upgradeFailed")).toBeTruthy(), SETTLE);
+    await waitFor(() => expect(screen.getByText("upgradeLandedBuildFailed")).toBeTruthy(), SETTLE);
     stillOnUpgrade();
 
     fireEvent.click(screen.getByRole("button", { name: "retry" }));

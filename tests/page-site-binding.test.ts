@@ -223,6 +223,7 @@ const TABLE: Record<string, Record<string, Binding>> = {
     "upgrade-commit": "site",
     "poll-build": "site",
     rebuild: "site",
+    "enable-pages": "site",
     "compute-diff": "site",
   },
   // The form names the site the modal showed; the stamp touches only the

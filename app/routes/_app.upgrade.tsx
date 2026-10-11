@@ -140,11 +140,13 @@ import { SheetLineList } from "~/components/features/upgrade/UpgradeSheetReport"
 import {
   commitFilesToRepo,
   dispatchWorkflow,
+  enableGitHubPages,
   listWorkflowRunsBySha,
   getJobSteps,
   getWorkflowRun,
   mapStepsToBuildPhases,
   StaleHeadError,
+  verifySiteUrl,
 } from "~/lib/commit.server";
 import { getInstallationToken, resolveProjectToken } from "~/lib/github-app.server";
 import type { BuildPhaseStatus, CommitFile, WorkflowRun } from "~/lib/commit.server";
@@ -518,6 +520,47 @@ type RebuildResult =
       buildUrl: string;
     }
   | { ok: false; intent: "rebuild"; error: string };
+
+/**
+ * Turns GitHub Pages on, with GitHub Actions as its source, and runs the
+ * build. Pages that cannot be turned on leave the build unstarted, since it
+ * could not publish.
+ */
+async function enablePagesAndBuild(
+  env: Env,
+  installationId: number | null,
+  userToken: string,
+  isConvenorActor: boolean,
+  owner: string,
+  repo: string,
+): Promise<RebuildResult> {
+  try {
+    const pagesToken = await resolveDispatchToken(env, installationId, userToken, isConvenorActor);
+    await enableGitHubPages(pagesToken, owner, repo);
+  } catch (err) {
+    console.error("enableGitHubPages error:", err instanceof Error ? err.message : String(err));
+    return { ok: false, intent: "rebuild", error: "pages_enable_failed" };
+  }
+  return runSiteBuild(env, installationId, userToken, isConvenorActor, owner, repo);
+}
+
+/**
+ * Whether a build that failed at its deploy step failed because GitHub Pages is
+ * off. Only a definite answer counts: a read that failed or was refused says
+ * nothing about Pages, and leaves the generic failure standing.
+ */
+async function pagesOffAfterDeployFailure(
+  token: string,
+  owner: string,
+  repo: string,
+  run: Pick<WorkflowRun, "status" | "conclusion">,
+  phases: BuildPhaseStatus[] | null,
+): Promise<boolean> {
+  if (run.status !== "completed" || run.conclusion !== "failure") return false;
+  if (!phases?.some((phase) => phase.id === "deploy" && phase.conclusion === "failure")) return false;
+  const check = await verifySiteUrl(token, owner, repo, "");
+  return !check.pagesEnabled && !check.readFailed && !("readRefused" in check);
+}
 
 // ---------------------------------------------------------------------------
 // The upgrade's freeze lease
@@ -1438,12 +1481,14 @@ export async function action({ request, context }: Route.ActionArgs) {
             buildUrl: null,
             runId: null,
             phases: null,
+            pagesOff: false,
           };
         }
 
         const phases = runIdParam
           ? mapStepsToBuildPhases(await getJobSteps(projectToken, owner, repo, run.id))
           : null;
+        const pagesOff = await pagesOffAfterDeployFailure(projectToken, owner, repo, run, phases);
 
         return {
           ok: true,
@@ -1453,6 +1498,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           buildUrl: run.html_url,
           runId: run.id,
           phases,
+          pagesOff,
         };
       } catch (err) {
         return {
@@ -1466,6 +1512,19 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     case "rebuild": {
       return runSiteBuild(
+        env,
+        activeProject.installation_id,
+        token,
+        isConvenorActor,
+        owner,
+        repo,
+      );
+    }
+
+    // Turns GitHub Pages on, with GitHub Actions as its source, and runs the
+    // build again; it answers as a rebuild does, so the page follows the run.
+    case "enable-pages": {
+      return enablePagesAndBuild(
         env,
         activeProject.installation_id,
         token,
@@ -1571,7 +1630,7 @@ type UpgradeActionData =
   | { ok: false; intent: "upgrade-prepare"; error: string; message?: string; detail?: UpgradeFailureDetail }
   | CommittedUpgrade
   | { ok: false; intent: "upgrade-commit"; error: string; message?: string; reauthUrl?: string }
-  | { ok: true; intent: "poll-build"; buildStatus: string; buildConclusion: string | null; buildUrl: string | null; runId: number | null; phases: BuildPhaseStatus[] | null }
+  | { ok: true; intent: "poll-build"; buildStatus: string; buildConclusion: string | null; buildUrl: string | null; runId: number | null; phases: BuildPhaseStatus[] | null; pagesOff: boolean }
   | { ok: false; intent: "poll-build"; error: string; message?: string }
   | { ok: true; intent: "compute-diff"; diff: UpgradeDiff; latestRelease: TelarRelease }
   | { ok: false; intent: "compute-diff"; error: string; message?: string }
@@ -1772,7 +1831,12 @@ function failureDetail(data: object): UpgradeFailureDetail | null {
 type UpgradeSubStage = "preparing" | "committing";
 
 /** The two ways a rebuild can end without a run to follow. */
-type RebuildNotice = "rebuild_failed" | "rebuild_unconfirmed";
+type RebuildNotice = "rebuild_failed" | "rebuild_unconfirmed" | "pagesEnableFailed";
+
+/** The line a refused rebuild shows: Pages that would not turn on, or the dispatch. */
+function rebuildNoticeFor(error: string): RebuildNotice {
+  return error === "pages_enable_failed" ? "pagesEnableFailed" : "rebuild_failed";
+}
 
 // ---------------------------------------------------------------------------
 // Revalidation hold
@@ -1852,6 +1916,59 @@ function VersionBadge({ label, version, variant }: { label: string; version: str
         {version}
       </span>
     </div>
+  );
+}
+
+/**
+ * The failed-build screen's account of what happened. The upgrade's commits
+ * have landed by the time a build runs, so with a version to name it says the
+ * files are on it and which step stopped the build; without one it keeps the
+ * generic failure.
+ */
+function FailedBuildSummary({
+  newVersion,
+  phases,
+  phaseLabels,
+  pagesOff,
+}: {
+  newVersion: string | null;
+  phases: BuildPhaseStatus[] | null;
+  phaseLabels: Record<BuildPhaseId, string>;
+  pagesOff: boolean;
+}) {
+  const { t } = useTranslation("upgrade");
+  const failedPhase = phases?.find((phase) => phase.conclusion === "failure");
+  const step = failedPhase ? phaseLabels[failedPhase.id as BuildPhaseId] : undefined;
+  let detail = t("upgradeFailedDetail");
+  if (newVersion) {
+    detail = step
+      ? t("upgradeLandedBuildFailedDetail", { version: newVersion, step })
+      : t("upgradeLandedBuildFailedNoStep", { version: newVersion });
+  }
+  return (
+    <>
+      <h2 className="font-heading font-semibold text-xl text-charcoal">
+        {t(newVersion ? "upgradeLandedBuildFailed" : "upgradeFailed")}
+      </h2>
+      <p className="font-body text-sm text-gray-600">{detail}</p>
+      {pagesOff && <p className="font-body text-sm text-amber-900">{t("upgradePagesOff")}</p>}
+    </>
+  );
+}
+
+/** Runs the build again, turning GitHub Pages on first when Pages is why it failed. */
+function RetryBuildButton({
+  pagesOff,
+  onRetry,
+}: {
+  pagesOff: boolean;
+  onRetry: (intent: "rebuild" | "enable-pages") => void;
+}) {
+  const { t } = useTranslation("upgrade");
+  return (
+    <Button variant="primary" type="button" onClick={() => onRetry(pagesOff ? "enable-pages" : "rebuild")}>
+      {t(pagesOff ? "upgradeTurnOnPages" : "retry")}
+    </Button>
   );
 }
 
@@ -2053,6 +2170,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   const [upgradeErrorDetail, setUpgradeErrorDetail] = useState<UpgradeFailureDetail | null>(null);
   const [manualSteps, setManualSteps] = useState<Record<Language, ManualStep[]>>({ en: [], es: [] });
   const [rebuildNotice, setRebuildNotice] = useState<RebuildNotice | null>(null);
+  const [pagesOff, setPagesOff] = useState(false);
   // The question prepare asked, while the picker shows it; and what the
   // landed upgrade did to the sheets, with whether its Google Sheets tabs were
   // checked only as they stood at prepare.
@@ -2125,6 +2243,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     if (pollData.phases) setPhases(pollData.phases);
     if (pollData.buildStatus === "completed") {
       setBuildConclusion(pollData.buildConclusion);
+      setPagesOff(pollData.pagesOff);
       setStage("done");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2139,7 +2258,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
 
     if (isSiteChanged(rebuildData)) return;
     if (!rebuildData.ok) {
-      setRebuildNotice("rebuild_failed");
+      setRebuildNotice(rebuildNoticeFor(rebuildData.error));
       return;
     }
 
@@ -2304,7 +2423,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   // so there is no upgrade left to re-attempt; what failed is the build, and
   // "again" means the site as it stands now. `newVersion` and `manualSteps`
   // describe that landed upgrade and are kept.
-  function handleRetry() {
+  function handleRetry(intent: "rebuild" | "enable-pages") {
     setUpgradeError(null);
     setReauthUrl(null);
     setUpgradeSha(null);
@@ -2312,8 +2431,9 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     setBuildUrl(null);
     setRunId(null);
     setPhases(null);
+    setPagesOff(false);
     setRebuildNotice(null);
-    rebuildFetcher.submit({ intent: "rebuild" }, { method: "post" });
+    rebuildFetcher.submit({ intent }, { method: "post" });
   }
 
   // Build phase labels (i18n)
@@ -2738,10 +2858,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
             <>
               <div className="flex flex-col items-center gap-3 py-4 mb-6">
                 <XCircle className="w-12 h-12 text-red-500" />
-                <h2 className="font-heading font-semibold text-xl text-charcoal">
-                  {t("upgradeFailed")}
-                </h2>
-                <p className="font-body text-sm text-gray-600">{t("upgradeFailedDetail")}</p>
+                <FailedBuildSummary newVersion={newVersion} phases={phases} phaseLabels={phaseLabels} pagesOff={pagesOff} />
                 {rebuildNotice && (
                   <p className="font-body text-sm text-amber-900">{t(rebuildNotice)}</p>
                 )}
@@ -2761,9 +2878,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 )}
-                <Button variant="primary" type="button" onClick={handleRetry}>
-                  {t("retry")}
-                </Button>
+                <RetryBuildButton pagesOff={pagesOff} onRetry={handleRetry} />
               </div>
             </>
           )}

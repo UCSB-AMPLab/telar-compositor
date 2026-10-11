@@ -39,7 +39,7 @@ function upgradeFormSubmission(fields: Record<string, string>) {
 const TRANSIT_FAILURES = () => [new TypeError("Failed to fetch"), new UNSAFE_ErrorResponseImpl(503, "Service Unavailable", "")];
 
 describe.each([
-  ["Upgrade", upgradeClientAction, "poll-build", ["rebuild"]],
+  ["Upgrade", upgradeClientAction, "poll-build", ["rebuild", "enable-pages"]],
   ["Pages", pagesClientAction, "scan-repo-pages", ["import-pages", "autosave-page-body"]],
 ] as const)("the %s route's clientAction", (_name, clientAction, readIntent, writeIntents) => {
   it("answers its read failing in transit as unreachable, with its intent and status 503", async () => {

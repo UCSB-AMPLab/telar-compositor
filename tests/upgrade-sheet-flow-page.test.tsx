@@ -314,7 +314,7 @@ describe("Upgrade page — sheet screens", () => {
 
   it.each([
     ["success", "upgradeSuccess"],
-    ["failure", "upgradeFailed"],
+    ["failure", "upgradeLandedBuildFailed"],
   ])("shows the report and the sync line on the done screen after a %s build", async (conclusion, heading) => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {

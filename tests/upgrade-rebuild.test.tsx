@@ -19,7 +19,7 @@
  * the newest for the sha, and it skips a tick while a request is still in
  * flight, because a fetcher that submits again aborts its own pending request.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import React from "react";
@@ -187,18 +187,19 @@ const FAILED_RUN = {
   buildUrl: "https://github.com/student/my-site/actions/runs/111",
   runId: 111,
   phases: [{ id: "setup", label: "Setup", status: "completed", conclusion: "failure" }],
+  pagesOff: false,
 };
 
 /** Commit lands, the build is followed, the build fails. */
-async function driveToFailedBuild() {
+async function driveToFailedBuild(failedRun: Record<string, unknown> = FAILED_RUN) {
   const view = await renderUpgrade();
   push(() => {
     fetchers.upgrade.data = COMMITTED;
   });
   push(() => {
-    fetchers.poll.data = FAILED_RUN;
+    fetchers.poll.data = failedRun;
   });
-  expect(screen.getByText("upgradeFailed")).toBeTruthy();
+  expect(screen.getByText("upgradeLandedBuildFailed")).toBeTruthy();
   return view;
 }
 
@@ -394,7 +395,7 @@ describe("Upgrade page — the retry runs the build again", () => {
       };
     });
 
-    expect(screen.getByText("upgradeFailed")).toBeTruthy();
+    expect(screen.getByText("upgradeLandedBuildFailed")).toBeTruthy();
     expect(screen.getByText("rebuild_unconfirmed")).toBeTruthy();
     // The link is the one the response supplied, not the failed run's.
     const link = screen.getByRole("link", { name: /viewActions/ });
@@ -411,9 +412,57 @@ describe("Upgrade page — the retry runs the build again", () => {
       fetchers.rebuild.data = { ok: false, intent: "rebuild", error: "rebuild_failed" };
     });
 
-    expect(screen.getByText("upgradeFailed")).toBeTruthy();
+    expect(screen.getByText("upgradeLandedBuildFailed")).toBeTruthy();
     expect(screen.getByText("rebuild_failed")).toBeTruthy();
     expect(screen.queryByText("buildTracking")).toBeNull();
+  });
+});
+
+describe("Upgrade page — the failed-build screen says what landed and what failed", () => {
+  it("names the landed version and the step the build stopped at", async () => {
+    await driveToFailedBuild();
+    expect(screen.getByText("upgradeLandedBuildFailedDetail v1.6.2 phase_label_setup")).toBeTruthy();
+    expect(screen.queryByText("upgradeFailed")).toBeNull();
+    expect(screen.queryByText("upgradeFailedDetail")).toBeNull();
+  });
+
+  it("names the landed version alone when no step reported a failure", async () => {
+    await driveToFailedBuild({ ...FAILED_RUN, phases: null });
+    expect(screen.getByText("upgradeLandedBuildFailedNoStep v1.6.2")).toBeTruthy();
+  });
+
+  it("offers to turn Pages on when the deploy failed because Pages is off", async () => {
+    await driveToFailedBuild({
+      ...FAILED_RUN,
+      phases: [{ id: "deploy", label: "Deploy", status: "completed", conclusion: "failure" }],
+      pagesOff: true,
+    });
+    expect(screen.getByText("upgradeLandedBuildFailedDetail v1.6.2 phase_label_deploy")).toBeTruthy();
+    expect(screen.getByText("upgradePagesOff")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "retry" })).toBeNull();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "upgradeTurnOnPages" }));
+    });
+    expect(fetchers.rebuild.submit).toHaveBeenCalledWith({ intent: "enable-pages" }, { method: "post" });
+  });
+
+  it("does not mention Pages when Pages was not the cause", async () => {
+    await driveToFailedBuild();
+    expect(screen.queryByText("upgradePagesOff")).toBeNull();
+    expect(screen.queryByRole("button", { name: "upgradeTurnOnPages" })).toBeNull();
+  });
+
+  it("says so when Pages could not be turned on", async () => {
+    await driveToFailedBuild({ ...FAILED_RUN, pagesOff: true });
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "upgradeTurnOnPages" }));
+    });
+    push(() => {
+      fetchers.rebuild.data = { ok: false, intent: "rebuild", error: "pages_enable_failed" };
+    });
+    expect(screen.getByText("pagesEnableFailed")).toBeTruthy();
+    expect(screen.queryByText("rebuild_failed")).toBeNull();
   });
 });
 
