@@ -20,11 +20,26 @@
  * `LEASE_PHASE_MS` from its start or last renewal, and never past
  * `LEASE_MAX_MS`, the lease lifts without anyone ending it.
  *
+ * An upgrade's prepare may also take over the same person's own upgrade lease
+ * that no commit has renewed (`take`): a prepare whose page was closed or
+ * reloaded, or whose commit never arrived, would otherwise hold that author
+ * out of their own retry until it expired. The prepare taking over holds the
+ * lease from the moment the old one ends, so collaborators stay frozen, and a
+ * commit still acting under the old lease cannot be taken over, because its
+ * renewal marks the lease as committing. Whatever slips past that, such as a
+ * commit that began its operation again after its lease ran out, is caught by
+ * the expected-head check on every commit.
+ *
+ * A refusal names the lease that stands in the way, its kind, whether the
+ * refused user holds it, and the time it has left (`LeaseHolder`), so the
+ * action can tell an author whose own earlier attempt is still finishing when
+ * they can try again.
+ *
  * Clients are sent the time a lease has left, never when it ends: they do not
  * share the server's clock, and a deadline read against a clock an hour out
  * would lift the freeze at once or never.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 /**
@@ -59,6 +74,12 @@ export interface Lease {
   userId: number;
   startedAt: number;
   expiresAt: number;
+  /**
+   * Set when the lease is renewed. Only an upgrade's commit renews a lease,
+   * so a renewed lease is one a commit is acting under, and `take` leaves it
+   * standing.
+   */
+  committing?: true;
 }
 
 export interface EndedLease {
@@ -91,6 +112,7 @@ export const EMPTY_LEASE_STATE: LeaseState = { leases: {}, ended: [], nextRev: 1
 /** One request to change the state, as the signed control text names it. */
 export type LeaseControl =
   | { op: "begin"; kind: LeaseKind; operationId: string }
+  | { op: "take"; kind: "upgrade"; operationId: string }
   | { op: "renew"; operationId: string }
   | { op: "end"; operationId: string; outcome: LeaseOutcome };
 
@@ -103,23 +125,52 @@ const OPERATION_ID = /^[A-Za-z0-9-]{1,64}$/;
  */
 export function parseLeaseControl(text: string | null): LeaseControl | null {
   if (text === null) return null;
-  const parts = text.split(":");
-  const [op, a, b] = parts;
-  if (op === "begin" && parts.length === 3 && (a === "publish" || a === "upgrade" || a === "objects") && OPERATION_ID.test(b)) {
-    return { op, kind: a, operationId: b };
-  }
-  if (op === "renew" && parts.length === 2 && OPERATION_ID.test(a)) {
-    return { op, operationId: a };
-  }
-  if (op === "end" && parts.length === 3 && OPERATION_ID.test(a) && (b === "succeeded" || b === "failed")) {
-    return { op, operationId: a, outcome: b };
-  }
-  return null;
+  const [op, ...args] = text.split(":");
+  const parse = CONTROL_PARSERS.get(op);
+  return parse ? parse(args) : null;
 }
+
+const LEASE_KINDS: readonly string[] = ["publish", "upgrade", "objects"];
+
+function isLeaseKind(value: string): value is LeaseKind {
+  return LEASE_KINDS.includes(value);
+}
+
+function parseBegin(args: string[]): LeaseControl | null {
+  const [kind, operationId] = args;
+  if (args.length !== 2 || !isLeaseKind(kind) || !OPERATION_ID.test(operationId)) return null;
+  return { op: "begin", kind, operationId };
+}
+
+function parseTake(args: string[]): LeaseControl | null {
+  const [kind, operationId] = args;
+  if (args.length !== 2 || kind !== "upgrade" || !OPERATION_ID.test(operationId)) return null;
+  return { op: "take", kind, operationId };
+}
+
+function parseRenew(args: string[]): LeaseControl | null {
+  const [operationId] = args;
+  if (args.length !== 1 || !OPERATION_ID.test(operationId)) return null;
+  return { op: "renew", operationId };
+}
+
+function parseEnd(args: string[]): LeaseControl | null {
+  const [operationId, outcome] = args;
+  if (args.length !== 2 || !OPERATION_ID.test(operationId)) return null;
+  if (outcome !== "succeeded" && outcome !== "failed") return null;
+  return { op: "end", operationId, outcome };
+}
+
+const CONTROL_PARSERS = new Map<string, (args: string[]) => LeaseControl | null>([
+  ["begin", parseBegin],
+  ["take", parseTake],
+  ["renew", parseRenew],
+  ["end", parseEnd],
+]);
 
 /** The control text for `control`, which the action signs and sends. */
 export function leaseControlText(control: LeaseControl): string {
-  if (control.op === "begin") return `begin:${control.kind}:${control.operationId}`;
+  if (control.op === "begin" || control.op === "take") return `${control.op}:${control.kind}:${control.operationId}`;
   if (control.op === "renew") return `renew:${control.operationId}`;
   return `end:${control.operationId}:${control.outcome}`;
 }
@@ -138,8 +189,12 @@ export function pruneLeaseState(state: LeaseState, now: number): LeaseState {
  * Apply `control`, made by `userId`, at `now`; null when it is refused.
  *
  * Beginning requires that no other lease is live, of either kind and whoever
- * holds it: that is the lock. Renewing or ending a lease requires it to be
- * live and to belong to the same user. An operation id is never broadcast,
+ * holds it: that is the lock. Taking is a begin that first removes the same
+ * user's upgrade leases no commit has renewed; the removed lease records no
+ * end, since its operation did not finish and the lease that replaces it
+ * keeps collaborators frozen. Renewing or ending a lease requires it to be
+ * live and to belong to the same user, and a renewal marks the lease as
+ * committing. An operation id is never broadcast,
  * but it does travel through the
  * holder's page, and the user check is what keeps it useless to anyone else.
  */
@@ -150,34 +205,108 @@ export function applyLeaseControl(
   now: number,
 ): LeaseState | null {
   const next = pruneLeaseState(state, now);
-  if (control.op === "begin") {
-    if (Object.keys(next.leases).length > 0) return null;
-    next.leases[control.operationId] = {
-      rev: next.nextRev,
-      kind: control.kind,
-      userId,
-      startedAt: now,
-      expiresAt: now + LEASE_PHASE_MS,
-    };
-    next.nextRev += 1;
-    return next;
-  }
+  if (control.op === "begin" || control.op === "take") return beginLease(next, control, userId, now);
   const lease = next.leases[control.operationId];
   if (!lease || lease.userId !== userId) return null;
-  if (control.op === "renew") {
-    next.leases[control.operationId] = {
-      ...lease,
-      expiresAt: Math.min(now + LEASE_PHASE_MS, lease.startedAt + LEASE_MAX_MS),
-    };
-    return next;
+  if (control.op === "renew") return renewLease(next, control.operationId, lease, now);
+  return endLease(next, control.operationId, lease, control.outcome, now);
+}
+
+function beginLease(
+  next: LeaseState,
+  control: Extract<LeaseControl, { op: "begin" | "take" }>,
+  userId: number,
+  now: number,
+): LeaseState | null {
+  if (control.op === "take") {
+    for (const [id, lease] of Object.entries(next.leases)) {
+      if (isOwnUncommittedUpgrade(lease, userId)) delete next.leases[id];
+    }
   }
-  delete next.leases[control.operationId];
+  if (Object.keys(next.leases).length > 0) return null;
+  next.leases[control.operationId] = {
+    rev: next.nextRev,
+    kind: control.kind,
+    userId,
+    startedAt: now,
+    expiresAt: now + LEASE_PHASE_MS,
+  };
+  next.nextRev += 1;
+  return next;
+}
+
+function renewLease(next: LeaseState, operationId: string, lease: Lease, now: number): LeaseState {
+  next.leases[operationId] = {
+    ...lease,
+    expiresAt: Math.min(now + LEASE_PHASE_MS, lease.startedAt + LEASE_MAX_MS),
+    committing: true,
+  };
+  return next;
+}
+
+function endLease(
+  next: LeaseState,
+  operationId: string,
+  lease: Lease,
+  outcome: LeaseOutcome,
+  now: number,
+): LeaseState {
+  delete next.leases[operationId];
   if (lease.kind === "objects") return next;
   next.ended = [
     ...next.ended,
-    { rev: lease.rev, kind: lease.kind, userId: lease.userId, outcome: control.outcome, endedAt: now },
+    { rev: lease.rev, kind: lease.kind, userId: lease.userId, outcome, endedAt: now },
   ].slice(-ENDED_KEEP_COUNT);
   return next;
+}
+
+function isOwnUncommittedUpgrade(lease: Lease, userId: number): boolean {
+  return lease.kind === "upgrade" && lease.userId === userId && lease.committing !== true;
+}
+
+/** The lease a refused begin or take met, as the refusal names it to the action. */
+export interface LeaseHolder {
+  kind: LeaseKind;
+  /** Whether the refused user holds it. */
+  own: boolean;
+  remainingMs: number;
+}
+
+/**
+ * The live lease that refused `userId` at `now`, or null when none stands. A
+ * begin is refused only while one lease stands, so the first is the one.
+ */
+export function leaseHolder(state: LeaseState, userId: number, now: number): LeaseHolder | null {
+  const [lease] = Object.values(pruneLeaseState(state, now).leases);
+  if (!lease) return null;
+  return { kind: lease.kind, own: lease.userId === userId, remainingMs: lease.expiresAt - now };
+}
+
+const REFUSED = "freeze_refused";
+
+/** The body of the object's 409: the refusal, and the lease it met when there is one. */
+export function refusalText(holder: LeaseHolder | null): string {
+  return holder === null ? REFUSED : JSON.stringify({ error: REFUSED, holder });
+}
+
+/** The holder a 409's body names, or null for a body that names none. */
+export function parseRefusalText(text: string): LeaseHolder | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof raw !== "object" || raw === null || !("holder" in raw)) return null;
+  return validHolder((raw as { holder: unknown }).holder as Partial<LeaseHolder> | null);
+}
+
+function validHolder(holder: Partial<LeaseHolder> | null): LeaseHolder | null {
+  if (typeof holder !== "object" || holder === null) return null;
+  const { kind, own, remainingMs } = holder;
+  if (typeof kind !== "string" || !isLeaseKind(kind)) return null;
+  if (typeof own !== "boolean" || typeof remainingMs !== "number" || !Number.isFinite(remainingMs)) return null;
+  return { kind, own, remainingMs };
 }
 
 /** What a client is told: the live leases with the time each has left, and what ended recently. */

@@ -1,19 +1,25 @@
 // @vitest-environment jsdom
 /**
  * StepDone.test.tsx — covers the created-vs-imported copy switch and the
- * created-only site-URL block (the props WizardShell now passes).
+ * created-only site-URL block (the props WizardShell passes), and the Start
+ * button's pending state.
+ *
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
+const navigate = vi.fn();
+let pendingPath: string | undefined;
 vi.mock("react-router", () => ({
-  Link: ({ to, children }: { to: string; children: React.ReactNode }) => <a href={to}>{children}</a>,
+  useNavigate: () => navigate,
+  useNavigation: () => (pendingPath ? { state: "loading", location: { pathname: pendingPath } } : { state: "idle" }),
 }));
 
 import { StepDone } from "~/components/features/onboarding/StepDone";
@@ -37,8 +43,20 @@ describe("StepDone", () => {
   });
 
   it("sends a new site to Start", () => {
+    pendingPath = undefined;
+    navigate.mockClear();
     render(<StepDone onDone={() => {}} created />);
-    expect(screen.getByText("step_done.go_to_start").closest("a")?.getAttribute("href")).toBe("/start");
+    fireEvent.click(screen.getByText("step_done.go_to_start"));
+    expect(navigate).toHaveBeenCalledWith("/start");
+  });
+
+  it("shows it is working, and takes no second press, while Start loads", () => {
+    pendingPath = "/start";
+    render(<StepDone onDone={() => {}} />);
+    const button = screen.getByText("step_done.go_to_start").closest("button");
+    expect(button?.disabled).toBe(true);
+    expect(button?.querySelector(".animate-spin")).not.toBeNull();
+    pendingPath = undefined;
   });
 
   it("created site without a URL still shows created copy but hides the URL block", () => {

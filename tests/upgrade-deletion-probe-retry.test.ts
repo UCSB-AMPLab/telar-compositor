@@ -159,6 +159,7 @@ function diffWorkflowDeletion() {
       layouts: 0,
       includes: 0,
       stylesheets: 0,
+      siteScripts: 0,
       scripts: 0,
       workflows: 1,
       dataFiles: 0,

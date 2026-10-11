@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.5.3-beta (2026-10-10)
+
+Fixes to upgrading Telar on a site, and to opening Start after importing one.
+
+### Fixes
+
+- **Upgrading goes straight through** — Once an upgrade is prepared, the Compositor sends it to GitHub at once, instead of stopping at a confirmation screen that could appear empty. If the connection is lost while the upgrade is being prepared or sent, the page says whether your site was changed and what to do, where before it could fail with an error.
+- **When the build after an upgrade fails** — The page now says that your site's files are on the new Telar version and which step of the build stopped, and that running the build again doesn't repeat the upgrade. If GitHub Pages is turned off for the repository, the page says so and offers a button that turns it on and runs the build again.
+- **Telar's development files on their own card** — Sites made from the template carry Telar's automated tests and copies of its upgrade tools. An upgrade that removes them now lists them on a separate card that explains what they are, instead of among the files to remove. JavaScript files are counted as site scripts rather than stylesheets.
+- **Trying an upgrade again right away** — Leaving the upgrade page while an upgrade was being prepared blocked a new attempt for up to five minutes, with a message that blamed another operation. A new attempt now replaces your own unfinished one. If your earlier upgrade is still being saved to GitHub, the page says so and when to try again.
+- **A site reverted on GitHub** — When a site's files are put back to an earlier Telar version on GitHub, the Compositor now records that version and the upgrade page offers the latest one, instead of treating the site as up to date.
+- **Start after importing a site** — Start could take up to 16 seconds to open after importing a site, because the page was loading data it never shows. It now opens promptly, and the button that leads to it after an import shows that it's working.
+
 ## v1.5.2-beta (2026-10-07)
 
 Fixes on Start, after setting up a site, and in the story editor.

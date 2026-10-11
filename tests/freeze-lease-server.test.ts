@@ -7,12 +7,13 @@
  * tells a refusal from no answer, because only a refusal stops the publish or
  * upgrade that asked, and nothing it meets may reach them as an exception.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { controlFreezeLease } from "~/lib/freeze-lease.server";
+import { controlFreezeLease, controlFreezeLeaseNamingHolder } from "~/lib/freeze-lease.server";
+import { refusalText } from "../workers/freeze-lease";
 import { verifyInternalMarker } from "../workers/auth";
 
 const SECRET = "lease-secret";
@@ -77,5 +78,16 @@ describe("controlFreezeLease", () => {
       throw new Error("unreachable");
     });
     await expect(controlFreezeLease(env, 1, 2, { op: "begin", kind: "publish", operationId: "op" })).resolves.toBe("unavailable");
+  });
+
+  it("answers the lease a refusal names, and none for a refusal that names none or for any other answer", async () => {
+    const holder = { kind: "upgrade", own: true, remainingMs: 90_000 } as const;
+    const take = { op: "take", kind: "upgrade", operationId: "op" } as const;
+    const named = envAnswering(async () => new Response(refusalText(holder), { status: 409 }));
+    expect(await controlFreezeLeaseNamingHolder(named.env, 1, 2, take)).toEqual({ result: "refused", holder });
+    const bare = envAnswering(async () => new Response("freeze_refused", { status: 409 }));
+    expect(await controlFreezeLeaseNamingHolder(bare.env, 1, 2, take)).toEqual({ result: "refused", holder: null });
+    const down = envAnswering(async () => new Response(refusalText(holder), { status: 503 }));
+    expect(await controlFreezeLeaseNamingHolder(down.env, 1, 2, take)).toEqual({ result: "unavailable", holder: null });
   });
 });

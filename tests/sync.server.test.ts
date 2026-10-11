@@ -4,7 +4,7 @@
  * Tests computeFullSyncDiff and applyFullSyncChanges for stories,
  * steps, and config — beyond the existing objects-only sync.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -1624,16 +1624,16 @@ describe("applyFullSyncChanges — versionChange D1 healing", () => {
     expect(versionUpdates.length).toBeGreaterThan(0);
   });
 
-  it("does NOT heal D1 telar_version when the repo is behind", async () => {
+  it("heals D1 telar_version to the repo's when the repo is behind", async () => {
     mockConfig("0.8.0");
     const { mockDb, updates } = versionDb("0.9.0");
 
     await applyFullSyncChanges(projectId, checkedAtNoBase(baseChanges(), projectId), token, owner, repo, mockDb, SYNC_ACTOR_ID, fakeIngestEnv());
 
-    const wrongUpdates = updates.filter(
-      (u) => u.set !== null && typeof u.set === "object" && "telar_version" in (u.set as Record<string, unknown>),
+    const versionUpdates = updates.filter(
+      (u) => u.set !== null && typeof u.set === "object" && (u.set as Record<string, unknown>).telar_version === "0.8.0",
     );
-    expect(wrongUpdates).toHaveLength(0);
+    expect(versionUpdates.length).toBeGreaterThan(0);
   });
 
   it("does NOT heal D1 telar_version when the versions are equal", async () => {

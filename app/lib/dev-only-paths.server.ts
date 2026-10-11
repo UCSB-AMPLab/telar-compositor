@@ -9,7 +9,7 @@
  * publish-time heal never restores one. A release before framework 1.8.0
  * carries no list, and has no developer-only paths.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { getRepoTree } from "~/lib/github.server";
@@ -50,6 +50,34 @@ export function parseDevOnlyFiles(text: string): string[] {
 export function isDevOnlyPath(path: string, entries: readonly string[]): boolean {
   if (path === DEV_ONLY_FILES_PATH) return false;
   return entries.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+}
+
+/**
+ * Whether the review page groups `path` with Telar's development files: a path
+ * the release's list names, one under scripts/migrations/, or a
+ * scripts/telar_upgrade*.py copy of the upgrade engine. A release without a
+ * list passes no entries, and the last two rules still apply.
+ */
+export function isTelarDevelopmentFile(path: string, entries: readonly string[]): boolean {
+  return (
+    isDevOnlyPath(path, entries) ||
+    path.startsWith("scripts/migrations/") ||
+    (/^scripts\/telar_upgrade[^/]*\.py$/).test(path)
+  );
+}
+
+/**
+ * The deletions split for display into Telar's development files and the rest.
+ * Both lists together are `deletions`; the reviewed set is never narrowed.
+ */
+export function splitDevFileDeletions(
+  deletions: readonly string[],
+  entries: readonly string[],
+): { devFiles: string[]; other: string[] } {
+  const devFiles: string[] = [];
+  const other: string[] = [];
+  for (const path of deletions) (isTelarDevelopmentFile(path, entries) ? devFiles : other).push(path);
+  return { devFiles, other };
 }
 
 /**
@@ -140,4 +168,25 @@ export async function releaseDevOnlyEntries(
   if (file.kind === "absent") return [];
   if (file.kind === "failed") throw new ReleaseFileUnreadableError(DEV_ONLY_FILES_PATH, version);
   return parseDevOnlyFiles(file.content);
+}
+
+/**
+ * The deletions grouped for the review page. Display only: the commit still
+ * deletes every path in `deletions`. A release's list that cannot be read
+ * leaves the two path rules in force and is logged.
+ */
+export async function groupDeletionsForReview(
+  deletions: readonly string[],
+  read: (path: string) => Promise<ReleaseFileRead>,
+  version: string,
+): Promise<{ devFiles: string[]; other: string[] }> {
+  let entries: string[] = [];
+  if (deletions.length > 0) {
+    try {
+      entries = await releaseDevOnlyEntries(read, version);
+    } catch (err) {
+      console.error("Upgrade loader: developer-only list unavailable, grouping by path rules only:", err);
+    }
+  }
+  return splitDevFileDeletions(deletions, entries);
 }

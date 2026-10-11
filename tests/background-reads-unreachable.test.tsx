@@ -8,7 +8,7 @@
  * directly, and then in a memory router next to a route without one, where the
  * same failure reaches the error card.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -39,7 +39,7 @@ function upgradeFormSubmission(fields: Record<string, string>) {
 const TRANSIT_FAILURES = () => [new TypeError("Failed to fetch"), new UNSAFE_ErrorResponseImpl(503, "Service Unavailable", "")];
 
 describe.each([
-  ["Upgrade", upgradeClientAction, "poll-build", ["upgrade-prepare", "rebuild", "upgrade-commit"]],
+  ["Upgrade", upgradeClientAction, "poll-build", ["rebuild", "enable-pages"]],
   ["Pages", pagesClientAction, "scan-repo-pages", ["import-pages", "autosave-page-body"]],
 ] as const)("the %s route's clientAction", (_name, clientAction, readIntent, writeIntents) => {
   it("answers its read failing in transit as unreachable, with its intent and status 503", async () => {
@@ -70,6 +70,30 @@ describe.each([
         clientAction({ request: upgradeFormSubmission({ intent }), serverAction: () => Promise.reject(failure) } as never),
       ).rejects.toBe(failure);
     }
+  });
+});
+
+describe("Upgrade's clientAction for a prepare or commit", () => {
+  it.each([
+    ["upgrade-prepare", "prepare_unreachable"],
+    ["upgrade-commit", "commit_unreachable"],
+  ])("answers %s failing in transit as its own failure, %s, with status 503", async (intent, error) => {
+    for (const failure of TRANSIT_FAILURES()) {
+      const answer = await upgradeClientAction({
+        request: upgradeFormSubmission({ intent }),
+        serverAction: () => Promise.reject(failure),
+      } as never);
+      expect(answer).toMatchObject({ data: { ok: false, intent, error }, init: { status: 503 } });
+    }
+  });
+
+  it.each(["upgrade-prepare", "upgrade-commit"])("returns %s's own answer and throws its redirect on", async (intent) => {
+    const found = { ok: true, intent };
+    await expect(upgradeClientAction({ request: upgradeFormSubmission({ intent }), serverAction: async () => found } as never)).resolves.toBe(found);
+    const signIn = redirect("/signin");
+    await expect(
+      upgradeClientAction({ request: upgradeFormSubmission({ intent }), serverAction: () => Promise.reject(signIn) } as never),
+    ).rejects.toBe(signIn);
   });
 });
 

@@ -30,7 +30,7 @@
  * actions (currently in `_app.dashboard.tsx`) do the I/O
  * orchestration; this module does the comparison.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -56,6 +56,7 @@ import {
   comparableExtraColumns,
   extrasOnWire,
 } from "~/lib/extra-columns.server";
+import { repoVersionToFollow } from "~/lib/repo-version-follow";
 import { normalizeVersionTag } from "~/lib/version";
 import {
   configFrameworkVersion,
@@ -3509,8 +3510,8 @@ export async function computeFullSyncDiff(
 
   // Detect external version change. Compare repo _config.yml
   // telar.version with D1 project_config.telar_version. Healed in
-  // applyFullSyncChanges when direction === "ahead". "behind" is
-  // surfaced to the dashboard but not auto-applied.
+  // applyFullSyncChanges in either direction; the dashboard toast tells the
+  // author which way the repository moved.
   const repoTelarVersion = siteVersionFrom(configYmlContent, null);
   const d1TelarVersion =
     (d1Config.telar_version as string | null | undefined) ?? null;
@@ -4648,18 +4649,9 @@ export async function resolveFullSyncPayload(
   const d1Config = (d1ConfigRows[0] as unknown as Record<string, unknown> | undefined) ?? {};
   const repoTelarVersion = siteVersionFrom(configYmlContent, null);
   const d1TelarVersion = (d1Config.telar_version as string | null | undefined) ?? null;
-  // Heal only when the repo is AHEAD (an external upgrade via upgrade.py or a
-  // GitHub Action). "behind" is the user's call, surfaced on the dashboard. This
-  // is the L3 fix: computed server-side here, never from a caller-passed diff.
-  if (repoTelarVersion && repoTelarVersion !== d1TelarVersion) {
-    if (!d1TelarVersion) {
-      residue.telarVersionHeal = repoTelarVersion;
-    } else if (
-      compareVersions(normalizeVersionTag(repoTelarVersion), normalizeVersionTag(d1TelarVersion)) > 0
-    ) {
-      residue.telarVersionHeal = repoTelarVersion;
-    }
-  }
+  // The repository decides the version, so D1 follows it up or down. Computed
+  // server-side here, never from a caller-passed diff.
+  residue.telarVersionHeal = repoVersionToFollow(repoTelarVersion, d1TelarVersion);
   if (residue.telarVersionHeal) payload.telarVersion = residue.telarVersionHeal;
   // Recomputed against the tree read above, whatever the author selected.
   // The site's address is the one this accept leaves: an accepted url or baseurl over D1's.

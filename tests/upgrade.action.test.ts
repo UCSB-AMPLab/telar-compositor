@@ -16,7 +16,7 @@
  * The workflow commit's single retry on a GitHub server error is exercised here
  * too, and so is the `rebuild` intent the failed-build screen submits.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
@@ -163,6 +163,8 @@ vi.mock("~/lib/commit.server", async () => ({
   getJobSteps: vi.fn(),
   getWorkflowRun: vi.fn(),
   mapStepsToBuildPhases: vi.fn(),
+  verifySiteUrl: vi.fn(async () => ({ pagesEnabled: true, match: true, pagesUrl: "", configUrl: "" })),
+  enableGitHubPages: vi.fn(async () => ({ pagesUrl: "https://student.github.io/my-site" })),
 }));
 
 vi.mock("~/lib/upgrade.server", async () => {
@@ -203,6 +205,7 @@ vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
 // makes to it are observed, and every one of them is answered as applied.
 vi.mock("~/lib/freeze-lease.server", () => ({
   controlFreezeLease: vi.fn(async () => "applied"),
+  controlFreezeLeaseNamingHolder: vi.fn(async () => ({ result: "applied", holder: null })),
   newFreezeOperationId: vi.fn(() => "op-test"),
 }));
 
@@ -281,10 +284,12 @@ import {
   getJobSteps,
   mapStepsToBuildPhases,
   StaleHeadError,
+  enableGitHubPages,
+  verifySiteUrl,
 } from "~/lib/commit.server";
 import { getInstallationToken } from "~/lib/github-app.server";
 import { bumpProjectHeadFrom } from "~/lib/github-status.server";
-import { controlFreezeLease } from "~/lib/freeze-lease.server";
+import { controlFreezeLease, controlFreezeLeaseNamingHolder } from "~/lib/freeze-lease.server";
 import { requirePublishingRole, resolveActiveProject } from "~/lib/membership.server";
 import { project_config as projectConfigTable, projects as projectsTable } from "~/db/schema";
 project_config = projectConfigTable;
@@ -438,6 +443,7 @@ function emptyDiff() {
       layouts: 0,
       includes: 0,
       stylesheets: 0,
+      siteScripts: 0,
       scripts: 0,
       workflows: 0,
       dataFiles: 0,
@@ -461,6 +467,7 @@ function diffWithWorkflow() {
       layouts: 1,
       includes: 0,
       stylesheets: 0,
+      siteScripts: 0,
       scripts: 0,
       workflows: 1,
       dataFiles: 0,
@@ -1857,13 +1864,102 @@ describe("upgrade action: poll-build follows the run it was given", () => {
   });
 });
 
+describe("upgrade action: a build that failed at its deploy step", () => {
+  const DEPLOY_FAILED = [
+    { id: "build-site", label: "Build site", status: "completed", conclusion: "success" },
+    { id: "deploy", label: "Deploy", status: "completed", conclusion: "failure" },
+  ];
+
+  async function poll(phases: unknown, conclusion = "failure") {
+    vi.mocked(getJobSteps).mockResolvedValue([]);
+    vi.mocked(mapStepsToBuildPhases).mockReturnValue(phases as never);
+    vi.mocked(listWorkflowRunsBySha).mockResolvedValue([
+      run({ id: 900, status: "completed", conclusion, html_url: "https://selected" }),
+    ]);
+    return (await action({
+      request: buildRequest("poll-build", { sha: "tip-sha", runId: "900" }),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; pagesOff?: boolean };
+  }
+
+  it("says Pages is off when GitHub answers that the repository has none", async () => {
+    vi.mocked(verifySiteUrl).mockResolvedValueOnce({ pagesEnabled: false, match: false, pagesUrl: "", configUrl: "" });
+    const res = await poll(DEPLOY_FAILED);
+    expect(res.ok).toBe(true);
+    expect(res.pagesOff).toBe(true);
+    expect(verifySiteUrl).toHaveBeenCalledWith("install-token", "student", "my-site", "");
+  });
+
+  it.each([
+    ["Pages is on", { pagesEnabled: true, match: true, pagesUrl: "", configUrl: "" }],
+    ["the read failed", { pagesEnabled: false, match: false, pagesUrl: "", configUrl: "", readFailed: true as const }],
+    ["the read was refused", { pagesEnabled: false, match: false, pagesUrl: "", configUrl: "", readRefused: true as const }],
+  ])("does not say Pages is off when %s", async (_name, check) => {
+    vi.mocked(verifySiteUrl).mockResolvedValueOnce(check);
+    expect((await poll(DEPLOY_FAILED)).pagesOff).toBe(false);
+  });
+
+  it("reports the failed build, without saying Pages is off, when the Pages read rejects", async () => {
+    vi.mocked(verifySiteUrl).mockRejectedValueOnce(new TypeError("fetch failed"));
+    const res = await poll(DEPLOY_FAILED);
+    expect(res.ok).toBe(true);
+    expect(res.pagesOff).toBe(false);
+  });
+
+  it("does not read Pages when another step failed, or the build succeeded", async () => {
+    await poll([{ id: "build-site", label: "Build site", status: "completed", conclusion: "failure" }]);
+    await poll(DEPLOY_FAILED.map((p) => ({ ...p, conclusion: "success" })), "success");
+    expect(verifySiteUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("upgrade action: enable-pages", () => {
+  it("turns Pages on and dispatches the build", async () => {
+    vi.mocked(dispatchWorkflow).mockResolvedValue({
+      runId: 900,
+      runUrl: "",
+      htmlUrl: "https://github.com/student/my-site/actions/runs/900",
+    });
+    vi.mocked(getWorkflowRun).mockResolvedValue(run());
+
+    const res = (await action({
+      request: buildRequest("enable-pages"),
+      context: buildContext(),
+      params: {},
+    } as never)) as { ok: boolean; intent: string; runId?: number | null };
+
+    expect(enableGitHubPages).toHaveBeenCalledWith("install-token", "student", "my-site");
+    expect(dispatchWorkflow).toHaveBeenCalledWith("install-token", "student", "my-site", "build.yml");
+    expect(res).toMatchObject({ ok: true, intent: "rebuild", runId: 900 });
+  });
+
+  it("answers pages_enable_failed and dispatches nothing when GitHub refuses", async () => {
+    vi.mocked(enableGitHubPages).mockRejectedValueOnce(new Error("pages_permission_denied"));
+
+    const res = await action({
+      request: buildRequest("enable-pages"),
+      context: buildContext(),
+      params: {},
+    } as never);
+
+    expect(res).toEqual({ ok: false, intent: "rebuild", error: "pages_enable_failed" });
+    expect(dispatchWorkflow).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The freeze lease an upgrade holds
 // ---------------------------------------------------------------------------
 
 /** The lease controls the action sent, in order, as the Durable Object would read them. */
 function leaseCalls(): unknown[] {
-  return vi.mocked(controlFreezeLease).mock.calls.map((call) => call[3]);
+  return [
+    ...vi.mocked(controlFreezeLease).mock.calls.map((call, i) => ({ order: vi.mocked(controlFreezeLease).mock.invocationCallOrder[i], control: call[3] })),
+    ...vi.mocked(controlFreezeLeaseNamingHolder).mock.calls.map((call, i) => ({ order: vi.mocked(controlFreezeLeaseNamingHolder).mock.invocationCallOrder[i], control: call[3] })),
+  ]
+    .sort((a, b) => a.order - b.order)
+    .map((c) => c.control);
 }
 
 describe("upgrade action: the freeze lease", () => {
@@ -1882,19 +1978,19 @@ describe("upgrade action: the freeze lease", () => {
     } as never)) as { ok: boolean; prepared?: { operationId?: string } };
   }
 
-  it("begins on prepare, and signs the lease's id into the prepared state", async () => {
+  it("takes the lease on prepare, and signs the lease's id into the prepared state", async () => {
     const res = await prepare();
     expect(res.ok).toBe(true);
     expect(res.prepared?.operationId).toBe("op-test");
-    expect(leaseCalls()).toEqual([{ op: "begin", kind: "upgrade", operationId: "op-test" }]);
-    expect(vi.mocked(controlFreezeLease).mock.calls[0][2]).toBe(7);
+    expect(leaseCalls()).toEqual([{ op: "take", kind: "upgrade", operationId: "op-test" }]);
+    expect(vi.mocked(controlFreezeLeaseNamingHolder).mock.calls[0][2]).toBe(7);
   });
 
   it("ends as failed when prepare fails", async () => {
     vi.mocked(loadManifestChain).mockRejectedValueOnce(new Error("Missing migration manifest for upgrade path"));
     expect((await prepare()).ok).toBe(false);
     expect(leaseCalls()).toEqual([
-      { op: "begin", kind: "upgrade", operationId: "op-test" },
+      { op: "take", kind: "upgrade", operationId: "op-test" },
       { op: "end", operationId: "op-test", outcome: "failed" },
     ]);
   });
@@ -1902,6 +1998,7 @@ describe("upgrade action: the freeze lease", () => {
   it("renews on commit, and ends as failed when the commit fails", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     vi.mocked(commitFilesToRepo).mockRejectedValueOnce(new StaleHeadError("moved"));
 
     const res = (await action({
@@ -1929,6 +2026,7 @@ describe("upgrade action: the freeze lease", () => {
   it("ends as succeeded once the commit lands, without waiting on the build", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     const res = (await action({
       request: buildRequest("upgrade-commit", { preparedState: JSON.stringify(prepared) }),
       context: buildContext(),
@@ -1942,20 +2040,35 @@ describe("upgrade action: the freeze lease", () => {
   });
 
   it("refuses to prepare while another publish or upgrade holds the lock", async () => {
-    vi.mocked(controlFreezeLease).mockResolvedValueOnce("refused");
+    vi.mocked(controlFreezeLeaseNamingHolder).mockResolvedValueOnce({
+      result: "refused",
+      holder: { kind: "publish", own: false, remainingMs: 120_000 },
+    });
     const res = (await prepare()) as { ok: boolean; error?: string };
     expect(res).toMatchObject({ ok: false, error: "operation_in_progress" });
+    expect(res).not.toHaveProperty("detail");
+    expect(computeUpgradeDiff).not.toHaveBeenCalled();
+  });
+
+  it("refuses to prepare while the author's own upgrade is committing, and says when they can try again", async () => {
+    vi.mocked(controlFreezeLeaseNamingHolder).mockResolvedValueOnce({
+      result: "refused",
+      holder: { kind: "upgrade", own: true, remainingMs: 150_000 },
+    });
+    const res = (await prepare()) as { ok: boolean; error?: string };
+    expect(res).toEqual({ ok: false, intent: "upgrade-prepare", error: "own_upgrade_in_progress", detail: { minutes: 3 } });
     expect(computeUpgradeDiff).not.toHaveBeenCalled();
   });
 
   it("prepares when the lock cannot be asked about", async () => {
-    vi.mocked(controlFreezeLease).mockResolvedValueOnce("unavailable");
+    vi.mocked(controlFreezeLeaseNamingHolder).mockResolvedValueOnce({ result: "unavailable", holder: null });
     expect((await prepare()).ok).toBe(true);
   });
 
   it("begins its operation again at commit when the lease ran out, and commits", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     vi.mocked(controlFreezeLease).mockResolvedValueOnce("refused");
     const res = (await action({
       request: buildRequest("upgrade-commit", { preparedState: JSON.stringify(prepared) }),
@@ -1972,6 +2085,7 @@ describe("upgrade action: the freeze lease", () => {
   it("does not commit when another operation began after its lease ran out", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     vi.mocked(controlFreezeLease).mockResolvedValueOnce("refused").mockResolvedValueOnce("refused");
     const res = (await action({
       request: buildRequest("upgrade-commit", { preparedState: JSON.stringify(prepared) }),
@@ -1989,16 +2103,17 @@ describe("upgrade action: the freeze lease", () => {
     expect(leaseCalls()).toEqual([]);
   });
 
-  it("lets go of a prepared upgrade the author cancels", async () => {
+  it("has no cancel: a prepared upgrade's lease ends at its commit, and upgrade-cancel is an unknown intent", async () => {
     const { prepared } = await prepare();
     vi.mocked(controlFreezeLease).mockClear();
+    vi.mocked(controlFreezeLeaseNamingHolder).mockClear();
     const res = await action({
       request: buildRequest("upgrade-cancel", { preparedState: JSON.stringify(prepared) }),
       context: buildContext(),
       params: {},
     } as never);
-    expect(res).toMatchObject({ ok: true, intent: "upgrade-cancel" });
-    expect(leaseCalls()).toEqual([{ op: "end", operationId: "op-test", outcome: "failed" }]);
+    expect(res).toMatchObject({ ok: false, error: "unknown_intent" });
+    expect(leaseCalls()).toEqual([]);
     expect(commitFilesToRepo).not.toHaveBeenCalled();
   });
 

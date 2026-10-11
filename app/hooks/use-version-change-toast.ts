@@ -9,9 +9,10 @@
  *                         upgrade via scripts/upgrade.py or GitHub Actions;
  *                         D1 will be silently healed by applyFullSyncChanges).
  *                         The toast simply informs the user.
- *   direction="behind" -> warning toast — compositor has a newer version
- *                         than the repo. Auto-apply is deliberately blocked;
- *                         the toast asks the user to verify.
+ *   direction="behind" -> warning toast — the repo was reverted to an earlier
+ *                         version than D1 held. D1 is healed to the repo's
+ *                         version too; the toast says the Upgrade page will
+ *                         offer the latest version.
  *
  * The effect is keyed on the `syncFetcherData` reference, so passing the
  * same fetcher `.data` across renders fires the toast exactly once.
@@ -67,7 +68,7 @@ export function useVersionChangeToast(
     } else if (vc.direction === "behind") {
       showToast({
         type: "warning",
-        message: t("externalDowngradeToast", {
+        message: t("repoRevertedToast", {
           repo: vc.repoVersion,
           d1: vc.d1Version ?? "?",
         }),

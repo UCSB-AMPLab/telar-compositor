@@ -20,7 +20,7 @@
  * missing `siteId`, and every `row` intent from a tab whose session names
  * another site.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { readFileSync } from "node:fs";
@@ -221,9 +221,9 @@ const TABLE: Record<string, Record<string, Binding>> = {
   "_app.upgrade.tsx": {
     "upgrade-prepare": "site",
     "upgrade-commit": "site",
-    "upgrade-cancel": "site",
     "poll-build": "site",
     rebuild: "site",
+    "enable-pages": "site",
     "compute-diff": "site",
   },
   // The form names the site the modal showed; the stamp touches only the

@@ -11,18 +11,17 @@
  *   - `upgrade-prepare` — reads and repairs everything the commit needs, and
  *     answers a signed prepared upgrade or a question for the column picker
  *   - `upgrade-commit` — commits a prepared upgrade, updates D1
- *   - `upgrade-cancel` — lets go of a prepared upgrade the author declined
  *   - `poll-build` — polls GitHub Actions for build progress
  *   - `compute-diff` — recomputes the diff (refresh / retry)
  *   - `rebuild` — dispatches the site build again after a failed build
  *
- * Renders a state machine — review | upgrading | choices | confirm |
+ * Renders a state machine — review | upgrading | choices | sheets |
  * building | done.
  *
- * @version v1.5.2-beta
+ * @version v1.5.3-beta
  */
 
-import { redirect } from "react-router";
+import { data, redirect } from "react-router";
 import { and, eq, gt, sql } from "drizzle-orm";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
@@ -32,6 +31,7 @@ import { useIsPublisher } from "~/hooks/use-role";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
+  Braces,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -121,6 +121,8 @@ import {
   partitionWorkflowFiles,
 } from "~/lib/upgrade.server";
 import type { UpgradeDiff, TelarRelease, UpgradeSummary } from "~/lib/upgrade.server";
+import { readNoticeValues, sheetNoticeValues } from "~/lib/upgrade-notice-values";
+import { groupDeletionsForReview } from "~/lib/dev-only-paths.server";
 import { compareVersions, frameworkVersionForTag, MIN_SUPPORTED_VERSION } from "~/lib/telar-version";
 import { applyManifestChain, manifestChainDeletions } from "~/lib/manifest-runner.server";
 import { YamlListAddError } from "~/lib/yaml-list-add.server";
@@ -128,9 +130,9 @@ import type { ManifestApplyResult } from "~/lib/manifest-runner.server";
 import { applyV130Transforms } from "~/lib/v130-ingest.server";
 import type { V130IngestResult } from "~/lib/v130-ingest.server";
 import type { Language, Manifest, ManualStep } from "~/lib/manifest-schema.server";
+import { CategoryCard, DeletionCards, DevFilesHint } from "~/components/features/upgrade/DeletionCards";
 import { PostUpgradeSteps } from "~/components/features/upgrade/PostUpgradeSteps";
 import {
-  needsConfirmation,
   UpgradeSheetOutcome,
   UpgradeSheetQuestion,
   type ChoiceQuestion,
@@ -142,24 +144,28 @@ import { SheetLineList } from "~/components/features/upgrade/UpgradeSheetReport"
 import {
   commitFilesToRepo,
   dispatchWorkflow,
+  enableGitHubPages,
   listWorkflowRunsBySha,
   getJobSteps,
   getWorkflowRun,
   mapStepsToBuildPhases,
   StaleHeadError,
+  verifySiteUrl,
 } from "~/lib/commit.server";
 import { getInstallationToken, resolveProjectToken } from "~/lib/github-app.server";
 import type { BuildPhaseStatus, CommitFile, WorkflowRun } from "~/lib/commit.server";
 import { bumpProjectHeadFrom, readLatestTag } from "~/lib/github-status.server";
+import { repoVersionToFollow } from "~/lib/repo-version-follow";
 import { normalizeVersionTag } from "~/lib/version";
 import { marked, Renderer } from "marked";
 import { sanitiseHtml } from "~/lib/sanitise-html";
 import { Button } from "~/components/ui/Button";
-import { controlFreezeLease, newFreezeOperationId } from "~/lib/freeze-lease.server";
+import { controlFreezeLease } from "~/lib/freeze-lease.server";
+import { beginUpgradeLease } from "~/lib/upgrade-lease.server";
 import { useOperationLock } from "~/hooks/use-operation-lock";
 import { OperationLockNotice } from "~/components/features/collaboration/OperationLockNotice";
 import { wait } from "~/lib/wait";
-import { answerReadsWhenUnreachable } from "~/lib/unreachable-write";
+import { answerOrUnreachable, answerReadsWhenUnreachable, isUnreachableAnswer, UNREACHABLE_STATUS } from "~/lib/unreachable-write";
 import { readOrKept, useReloadableLoaderData } from "~/lib/kept-loader-data";
 
 export const handle = { i18n: ["common", "upgrade", "team", "publish"] };
@@ -240,7 +246,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   // Check minimum version support
   const siteTag = siteVersion ? normalizeVersionTag(siteVersion) : null;
-  const isBelowMinimum = siteTag
+  let isBelowMinimum = siteTag
     ? compareVersions(siteTag, MIN_SUPPORTED_VERSION) < 0
     : false;
 
@@ -271,7 +277,35 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ]);
     const { tree: userTree, truncated: userTreeTruncated } = treeResult;
 
-    // Fetch release notes for all versions newer than current site version.
+    // Check the actual repo version — D1 is stale if a previous upgrade
+    // committed but the D1 update failed, or if the repository was reverted.
+    let effectiveVersion = siteTag;
+    // The version prepare reads from D1 and starts its chain from; it moves to
+    // the repo's only once D1 holds that version.
+    let chainFromVersion = siteTag;
+    if (configContent) {
+      const versionMatch = configContent.match(/^\s*version:\s*["']?([^\s"'#]+)/m);
+      if (versionMatch) {
+        const repoVersion = normalizeVersionTag(versionMatch[1]);
+        if (siteTag && repoVersionToFollow(repoVersion, siteTag)) {
+          // The repository decides the version, so D1 follows it up or down.
+          effectiveVersion = repoVersion;
+          isBelowMinimum = compareVersions(repoVersion, MIN_SUPPORTED_VERSION) < 0;
+          try {
+            const now = new Date().toISOString();
+            await db
+              .update(project_config)
+              .set({ telar_version: repoVersion.replace(/^v/, ""), updated_at: now })
+              .where(eq(project_config.project_id, activeProject.id));
+            chainFromVersion = repoVersion;
+          } catch {
+            // Best-effort D1 heal
+          }
+        }
+      }
+    }
+
+    // Fetch release notes for all versions newer than the repository's version.
     // Runs in parallel with computeUpgradeDiff because they share no state.
     //
     // computeUpgradeDiff is called with fetchContent:false — the review page
@@ -280,7 +314,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     // content here avoids N sequential GitHub API calls (50-100+ on a full
     // framework upgrade) that previously dominated page load time.
     const [allReleasesData, treeDiff] = await Promise.all([
-      siteTag && compareVersions(siteTag, latestRelease.tagName) < 0
+      effectiveVersion && compareVersions(effectiveVersion, latestRelease.tagName) < 0
         ? fetchAllReleases(token)
         : Promise.resolve(null),
       computeUpgradeDiff(token, userTree, latestRelease.tagName, {
@@ -293,40 +327,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     let releaseCount = 1;
     if (allReleasesData) {
       const newerReleases = allReleasesData.filter(
-        (r) => siteTag ? compareVersions(r.tagName, siteTag) > 0 : true,
+        (r) => effectiveVersion ? compareVersions(r.tagName, effectiveVersion) > 0 : true,
       );
       releaseCount = newerReleases.length;
       if (newerReleases.length > 1) {
         releaseNotes = newerReleases
           .map((r) => `## ${r.tagName}\n\n${r.body}`)
           .join("\n\n---\n\n");
-      }
-    }
-
-    // Check the actual repo version — D1 may be stale if a previous upgrade
-    // committed successfully but the D1 update failed.
-    let effectiveVersion = siteTag;
-    // The version prepare reads from D1 and starts its chain from; it moves to
-    // the repo's only once D1 holds that version.
-    let chainFromVersion = siteTag;
-    if (configContent) {
-      const versionMatch = configContent.match(/^\s*version:\s*["']?([^\s"'#]+)/m);
-      if (versionMatch) {
-        const repoVersion = normalizeVersionTag(versionMatch[1]);
-        if (effectiveVersion && compareVersions(repoVersion, effectiveVersion) > 0) {
-          // Repo is ahead of D1 — heal D1 silently
-          effectiveVersion = repoVersion;
-          try {
-            const now = new Date().toISOString();
-            await db
-              .update(project_config)
-              .set({ telar_version: repoVersion.replace(/^v/, ""), updated_at: now })
-              .where(eq(project_config.project_id, activeProject.id));
-            chainFromVersion = repoVersion;
-          } catch {
-            // Best-effort D1 heal
-          }
-        }
       }
     }
 
@@ -378,12 +385,17 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const cat = categorizeFrameworkPath(file.path);
       (filesByCategory[cat] ??= []).push(file.path);
     }
-    if (diff.deletions.length > 0) {
-      filesByCategory.deletions = diff.deletions;
-    }
+    const { devFiles, other: otherDeletions } = await groupDeletionsForReview(
+      diff.deletions,
+      (path) => fetchFrameworkFile(token, path, latestRelease.tagName),
+      frameworkVersionForTag(latestRelease.tagName),
+    );
+    if (otherDeletions.length > 0) filesByCategory.deletions = otherDeletions;
+    if (devFiles.length > 0) filesByCategory.devFiles = devFiles;
 
     return {
-      siteVersion,
+      // The repository's version, which the page shows: D1's may be stale.
+      siteVersion: effectiveVersion ?? siteVersion,
       latestRelease,
       releaseTagOverride,
       releaseNotes: releaseNotesHtml as string,
@@ -521,6 +533,48 @@ type RebuildResult =
     }
   | { ok: false; intent: "rebuild"; error: string };
 
+/**
+ * Turns GitHub Pages on, with GitHub Actions as its source, and runs the
+ * build. Pages that cannot be turned on leave the build unstarted, since it
+ * could not publish.
+ */
+async function enablePagesAndBuild(
+  env: Env,
+  installationId: number | null,
+  userToken: string,
+  isConvenorActor: boolean,
+  owner: string,
+  repo: string,
+): Promise<RebuildResult> {
+  try {
+    const pagesToken = await resolveDispatchToken(env, installationId, userToken, isConvenorActor);
+    await enableGitHubPages(pagesToken, owner, repo);
+  } catch (err) {
+    console.error("enableGitHubPages error:", err instanceof Error ? err.message : String(err));
+    return { ok: false, intent: "rebuild", error: "pages_enable_failed" };
+  }
+  return runSiteBuild(env, installationId, userToken, isConvenorActor, owner, repo);
+}
+
+/**
+ * Whether a build that failed at its deploy step failed because GitHub Pages is
+ * off. Only a definite answer counts: a read that failed or was refused says
+ * nothing about Pages, and leaves the generic failure standing.
+ */
+async function pagesOffAfterDeployFailure(
+  token: string,
+  owner: string,
+  repo: string,
+  run: Pick<WorkflowRun, "status" | "conclusion">,
+  phases: BuildPhaseStatus[] | null,
+): Promise<boolean> {
+  if (run.status !== "completed" || run.conclusion !== "failure") return false;
+  if (!phases?.some((phase) => phase.id === "deploy" && phase.conclusion === "failure")) return false;
+  // A probe that rejects is as inconclusive as one that failed to read.
+  const check = await verifySiteUrl(token, owner, repo, "").catch(() => null);
+  return check !== null && !check.pagesEnabled && !check.readFailed && !("readRefused" in check);
+}
+
 // ---------------------------------------------------------------------------
 // The upgrade's freeze lease
 // ---------------------------------------------------------------------------
@@ -535,17 +589,9 @@ type RebuildResult =
 // polls it closed, until the lease expired. A lease the object cannot be
 // asked about lets the upgrade through (see `~/lib/freeze-lease.server`), and
 // an id the page could have altered is safe to act on because the Durable
-// Object ends or renews only a lease the same user holds.
-
-/**
- * Start a lease for an upgrade and answer its id, or null when the object
- * refused it because another publish or upgrade is running.
- */
-async function beginUpgradeLease(env: Env, projectId: number, userId: number): Promise<string | null> {
-  const operationId = newFreezeOperationId();
-  const lease = await controlFreezeLease(env, projectId, userId, { op: "begin", kind: "upgrade", operationId });
-  return lease === "refused" ? null : operationId;
-}
+// Object ends or renews only a lease the same user holds. A prepare takes the
+// lease (`~/lib/upgrade-lease.server`), so the author's own upgrade that was
+// left before its commit does not hold them out of trying again.
 
 /**
  * Keep the lease an upgrade's commit is about to act under, and say whether it
@@ -1352,29 +1398,23 @@ export async function action({ request, context }: Route.ActionArgs) {
   // Publishing-role gate — enforced above via requirePublishingRole(). No spoofable path.
   switch (intent) {
     case "upgrade-prepare": {
-      const operationId = await beginUpgradeLease(env, activeProject.id, userId);
-      if (operationId === null) return { ok: false, intent: "upgrade-prepare", error: "operation_in_progress" };
+      const lease = await beginUpgradeLease(env, activeProject.id, userId);
+      if (!("operationId" in lease)) return { ok: false, intent: "upgrade-prepare", ...lease };
+      const { operationId } = lease;
       const res = await runUpgradePrepare(operationId, {
         challenge: formData.get("challenge") as string | null,
         choices: formData.get("choices") as string | null,
         sheets: formData.get("sheets") as string | null,
         deletions: formData.get("deletions") as string | null,
       });
-      // Only a prepared upgrade holds the lease, until its commit or its
-      // cancel; a question for the author ends it, as a failure does, and the
-      // prepare that answers the question begins a new one.
+      // Only a prepared upgrade holds the lease, until its commit; a question
+      // for the author ends it, as a failure does, and the prepare that
+      // answers the question takes a new one.
       if (!holdsPreparedLease(res)) await endUpgradeLease(env, activeProject.id, userId, operationId, "failed");
       if (!res.ok) {
         return { ok: false, intent: "upgrade-prepare", error: res.error, message: res.message, detail: res.detail };
       }
       return { ...res, intent: "upgrade-prepare" };
-    }
-
-    // The author declined a prepared upgrade on the confirmation screen.
-    case "upgrade-cancel": {
-      const operation = postedLeaseOperation(formData.get("preparedState") as string | null);
-      await endUpgradeLease(env, activeProject.id, userId, operation, "failed");
-      return { ok: true, intent: "upgrade-cancel" };
     }
 
     case "upgrade-commit": {
@@ -1447,12 +1487,14 @@ export async function action({ request, context }: Route.ActionArgs) {
             buildUrl: null,
             runId: null,
             phases: null,
+            pagesOff: false,
           };
         }
 
         const phases = runIdParam
           ? mapStepsToBuildPhases(await getJobSteps(projectToken, owner, repo, run.id))
           : null;
+        const pagesOff = await pagesOffAfterDeployFailure(projectToken, owner, repo, run, phases);
 
         return {
           ok: true,
@@ -1462,6 +1504,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           buildUrl: run.html_url,
           runId: run.id,
           phases,
+          pagesOff,
         };
       } catch (err) {
         return {
@@ -1475,6 +1518,19 @@ export async function action({ request, context }: Route.ActionArgs) {
 
     case "rebuild": {
       return runSiteBuild(
+        env,
+        activeProject.installation_id,
+        token,
+        isConvenorActor,
+        owner,
+        repo,
+      );
+    }
+
+    // Turns GitHub Pages on, with GitHub Actions as its source, and runs the
+    // build again; it answers as a rebuild does, so the page follows the run.
+    case "enable-pages": {
+      return enablePagesAndBuild(
         env,
         activeProject.installation_id,
         token,
@@ -1559,15 +1615,6 @@ function holdsPreparedLease(answer: PrepareAnswer): boolean {
   return answer.ok && answer.answer === "ready";
 }
 
-/** The lease a posted prepared state names, read defensively: the payload is the page's. */
-function postedLeaseOperation(raw: string | null): unknown {
-  try {
-    return (JSON.parse(raw ?? "null") as Partial<PreparedUpgrade> | null)?.operationId;
-  } catch {
-    return null;
-  }
-}
-
 type PrepareAnswer =
   | { ok: true; answer: "ready"; prepared: PreparedUpgrade }
   | { ok: true; answer: "needs_choices"; challenge: SignedUpgradeChallenge; groups: OfferedGroup[]; notice: ChoiceNotice | null }
@@ -1589,8 +1636,7 @@ type UpgradeActionData =
   | { ok: false; intent: "upgrade-prepare"; error: string; message?: string; detail?: UpgradeFailureDetail }
   | CommittedUpgrade
   | { ok: false; intent: "upgrade-commit"; error: string; message?: string; reauthUrl?: string }
-  | { ok: true; intent: "upgrade-cancel" }
-  | { ok: true; intent: "poll-build"; buildStatus: string; buildConclusion: string | null; buildUrl: string | null; runId: number | null; phases: BuildPhaseStatus[] | null }
+  | { ok: true; intent: "poll-build"; buildStatus: string; buildConclusion: string | null; buildUrl: string | null; runId: number | null; phases: BuildPhaseStatus[] | null; pagesOff: boolean }
   | { ok: false; intent: "poll-build"; error: string; message?: string }
   | { ok: true; intent: "compute-diff"; diff: UpgradeDiff; latestRelease: TelarRelease }
   | { ok: false; intent: "compute-diff"; error: string; message?: string }
@@ -1603,6 +1649,8 @@ type UpgradeStage = UpgradeFlowStage;
 
 /** The failures the review stage names; anything else reads as a generic failure. */
 const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
+  "prepare_unreachable",
+  "commit_unreachable",
   "stale_head",
   "prepared_outdated",
   "deletions_changed",
@@ -1610,6 +1658,7 @@ const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
   "insufficient_permissions",
   "insufficient_permissions_convenor_required",
   "operation_in_progress",
+  "own_upgrade_in_progress",
   "config_exclude_unreadable",
   "upgrade_file_unreadable",
   "upgrade_file_not_text",
@@ -1631,8 +1680,10 @@ const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
  * The refusals the review screen explains in one sentence, by failure code.
  * A missing App permission when the acting user is not the convenor has no
  * link, because /settings/installations/<id> can only be worked by the
- * account that installed the App. The operation lock is another member's
- * publish, upgrade or upload. A prepared target a newer release overtook, and
+ * account that installed the App. The operation lock is a publish, upgrade or
+ * upload already running, except the author's own upgrade whose commit is
+ * still running, which is named as theirs with the minutes until it lifts.
+ * A prepared target a newer release overtook, and
  * a release that could not be read, stop the commit before anything changes.
  * A list the manifest could not add to names its file, key and values, from
  * the failure's detail. A site file prepare could not read, or whose bytes
@@ -1654,6 +1705,7 @@ const NAMED_UPGRADE_FAILURES: ReadonlySet<string> = new Set([
 const UPGRADE_NOTICES: Readonly<Record<string, string>> = {
   insufficient_permissions_convenor_required: "insufficientPermissionsConvenorRequired",
   operation_in_progress: "operationInProgress",
+  own_upgrade_in_progress: "ownUpgradeInProgress",
   prepared_outdated: "preparedOutdated",
   deletions_changed: "deletionsChanged",
   release_unknown: "releaseUnknown",
@@ -1672,6 +1724,8 @@ const UPGRADE_NOTICES: Readonly<Record<string, string>> = {
   published_tab_unreadable: "publishedTabUnreadable",
   sheets_columns_refused: "sheetsColumnsRefused",
   sheets_switch_unreadable: "sheetsSwitchUnreadable",
+  prepare_unreachable: "prepareUnreachable",
+  commit_unreachable: "commitUnreachable",
 };
 
 /** A column removal that would change the rows: one message for each reason. */
@@ -1714,6 +1768,7 @@ type UpgradeFailureDetail =
   | { version: string }
   | { sheet: string; column?: string; columns?: string; reason?: string; tab?: true }
   | { name: string }
+  | { minutes: number }
   | TabsRefused;
 
 /**
@@ -1769,15 +1824,10 @@ function noticeValues(detail: UpgradeFailureDetail | null): Record<string, strin
   if (!detail) return undefined;
   if ("file" in detail) return { file: detail.file, key: detail.key, values: detail.values.join(", ") };
   if ("tabs" in detail) return { tabs: detail.tabs, count: detail.count };
-  if ("sheet" in detail) {
-    const { sheet, column, columns } = detail;
-    return { sheet, ...(column !== undefined ? { column } : {}), ...(columns !== undefined ? { columns } : {}) };
-  }
+  if ("sheet" in detail) return sheetNoticeValues(detail);
   if ("name" in detail) return { name: detail.name };
-  return {
-    ...("path" in detail ? { path: detail.path } : {}),
-    ...(detail.version !== undefined ? { version: detail.version } : {}),
-  };
+  if ("minutes" in detail) return { count: detail.minutes };
+  return readNoticeValues(detail);
 }
 
 /** The detail an upgrade action's failure carries, when it has one. */
@@ -1787,7 +1837,12 @@ function failureDetail(data: object): UpgradeFailureDetail | null {
 type UpgradeSubStage = "preparing" | "committing";
 
 /** The two ways a rebuild can end without a run to follow. */
-type RebuildNotice = "rebuild_failed" | "rebuild_unconfirmed";
+type RebuildNotice = "rebuild_failed" | "rebuild_unconfirmed" | "pagesEnableFailed";
+
+/** The line a refused rebuild shows: Pages that would not turn on, or the dispatch. */
+function rebuildNoticeFor(error: string): RebuildNotice {
+  return error === "pages_enable_failed" ? "pagesEnableFailed" : "rebuild_failed";
+}
 
 // ---------------------------------------------------------------------------
 // Revalidation hold
@@ -1824,10 +1879,24 @@ export async function clientLoader({ serverLoader }: Route.ClientLoaderArgs) {
 /**
  * A `poll-build` that fails in transit is answered unreachable, with its
  * intent and status 503, so the page keeps the progress it last showed and
- * polls again on its beat (`answerReadsWhenUnreachable`). Every other intent
- * reaches the server action unchanged.
+ * polls again on its beat (`answerReadsWhenUnreachable`).
+ *
+ * A prepare or commit whose answer never arrives (the connection dropped, an
+ * upstream answered for the worker, the answer could not be decoded) is
+ * answered as that intent's failure, so the page returns to the review screen
+ * with a message instead of the route's error card. A prepare changes nothing
+ * on the site. A commit may have landed before its answer was lost, so its
+ * message says the result is unknown rather than that it failed. Every other
+ * intent reaches the server action unchanged.
  */
 export async function clientAction({ request, serverAction }: Route.ClientActionArgs) {
+  const intent = (await request.clone().formData()).get("intent");
+  if (intent === "upgrade-prepare" || intent === "upgrade-commit") {
+    const answer = await answerOrUnreachable(request, serverAction);
+    if (!isUnreachableAnswer(answer)) return answer;
+    const error = intent === "upgrade-commit" ? "commit_unreachable" : "prepare_unreachable";
+    return data({ ok: false, intent, error }, { status: UNREACHABLE_STATUS });
+  }
   return answerReadsWhenUnreachable(request, serverAction, ["poll-build"]);
 }
 
@@ -1853,6 +1922,62 @@ function VersionBadge({ label, version, variant }: { label: string; version: str
         {version}
       </span>
     </div>
+  );
+}
+
+/**
+ * The failed-build screen's account of what happened. The upgrade's commits
+ * have landed by the time a build runs, so with a version to name it says the
+ * files are on it and which step stopped the build; without one it keeps the
+ * generic failure.
+ */
+function FailedBuildSummary({
+  newVersion,
+  phases,
+  phaseLabels,
+  pagesOff,
+}: {
+  newVersion: string | null;
+  phases: BuildPhaseStatus[] | null;
+  phaseLabels: Record<BuildPhaseId, string>;
+  pagesOff: boolean;
+}) {
+  const { t } = useTranslation("upgrade");
+  const failedPhase = phases?.find((phase) => phase.conclusion === "failure");
+  const step = failedPhase ? phaseLabels[failedPhase.id as BuildPhaseId] : undefined;
+  let detail = t("upgradeFailedDetail");
+  if (newVersion) {
+    detail = step
+      ? t("upgradeLandedBuildFailedDetail", { version: newVersion, step })
+      : t("upgradeLandedBuildFailedNoStep", { version: newVersion });
+  }
+  return (
+    <>
+      <h2 className="font-heading font-semibold text-xl text-charcoal">
+        {t(newVersion ? "upgradeLandedBuildFailed" : "upgradeFailed")}
+      </h2>
+      <p className="font-body text-sm text-gray-600">{detail}</p>
+      {pagesOff && <p className="font-body text-sm text-amber-900">{t("upgradePagesOff")}</p>}
+    </>
+  );
+}
+
+/** Runs the build again, turning GitHub Pages on first when Pages is why it failed. */
+function RetryBuildButton({
+  pagesOff,
+  busy,
+  onRetry,
+}: {
+  pagesOff: boolean;
+  /** A retry is in flight: a second press would replace it. */
+  busy: boolean;
+  onRetry: (intent: "rebuild" | "enable-pages") => void;
+}) {
+  const { t } = useTranslation("upgrade");
+  return (
+    <Button variant="primary" type="button" loading={busy} onClick={() => onRetry(pagesOff ? "enable-pages" : "rebuild")}>
+      {t(pagesOff ? "upgradeTurnOnPages" : "retry")}
+    </Button>
   );
 }
 
@@ -1905,61 +2030,12 @@ const CATEGORY_ICONS = {
   layouts: FileCode,
   includes: FileText,
   stylesheets: Palette,
+  siteScripts: Braces,
   scripts: Terminal,
   workflows: GitBranch,
   dataFiles: Database,
   other: FileText,
 } as const;
-
-function CategoryCard({
-  icon: Icon,
-  label,
-  count,
-  countLabel,
-  files,
-  variant = "default",
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  count: number;
-  countLabel: string;
-  files: string[];
-  variant?: "default" | "danger";
-}) {
-  const [open, setOpen] = useState(false);
-  const bg = variant === "danger" ? "bg-red-50" : "bg-cream-dark";
-  const iconColor = variant === "danger" ? "text-red-400" : "text-terracotta";
-
-  return (
-    <div className={`${bg} rounded-lg overflow-hidden`}>
-      <button
-        type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80 transition-opacity"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Icon className={`w-4 h-4 ${iconColor} shrink-0`} />
-        <div className="min-w-0 flex-1">
-          <p className="font-heading font-semibold text-xs text-charcoal leading-tight">
-            {label}
-          </p>
-          <p className="font-body text-xs text-gray-500">{countLabel}</p>
-        </div>
-        <ChevronDown className={`w-3 h-3 text-gray-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && files.length > 0 && (
-        <div className="px-3 pb-2">
-          <ul className="font-body text-xs text-gray-600 space-y-0.5">
-            {files.map((f) => (
-              <li key={f} className="truncate" title={f}>
-                {f}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function HintBox({ title, body }: { title: string; body: string }) {
   const [open, setOpen] = useState(false);
@@ -2054,16 +2130,17 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   const [upgradeErrorDetail, setUpgradeErrorDetail] = useState<UpgradeFailureDetail | null>(null);
   const [manualSteps, setManualSteps] = useState<Record<Language, ManualStep[]>>({ en: [], es: [] });
   const [rebuildNotice, setRebuildNotice] = useState<RebuildNotice | null>(null);
-  // The question prepare asked, while the picker shows it; the prepared
-  // upgrade the confirmation shows; and what the landed upgrade did to the
-  // sheets.
+  const [pagesOff, setPagesOff] = useState(false);
+  // The question prepare asked, while the picker shows it; and what the
+  // landed upgrade did to the sheets, with whether its Google Sheets tabs were
+  // checked only as they stood at prepare.
   const [question, setQuestion] = useState<ChoiceQuestion | null>(null);
   const [sheetsQuestion, setSheetsQuestion] = useState<SheetsQuestion | null>(null);
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState<PreparedUpgrade | null>(null);
   const [sheetReport, setSheetReport] = useState<SheetReportLine[]>([]);
   const [syncNeeded, setSyncNeeded] = useState(false);
   const [answers, setAnswers] = useState<UpgradeAnswer[]>([]);
   const [sheetsOff, setSheetsOff] = useState<PreparedUpgradeContent["sheetsOff"]>(null);
+  const [tabsChecked, setTabsChecked] = useState(false);
   // Whether the site reads Google Sheets after the upgrade, as the landed
   // upgrade says; null until one lands, when the loaded settings stand.
   const [readsSheetsAfter, setReadsSheetsAfter] = useState<boolean | null>(null);
@@ -2073,9 +2150,8 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   const rebuildData = rebuildFetcher.data as UpgradeActionData;
 
   // Handle upgrade response. Prepare answers with a prepared upgrade, which
-  // commits straight away unless there is something to confirm, or with a
-  // question for the column picker; the commit's answer advances to the
-  // building stage.
+  // commits straight away, or with a question for the column picker or the
+  // Google Sheets offer; the commit's answer advances to the building stage.
   useEffect(() => {
     if (!upgradeData) return;
 
@@ -2127,6 +2203,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     if (pollData.phases) setPhases(pollData.phases);
     if (pollData.buildStatus === "completed") {
       setBuildConclusion(pollData.buildConclusion);
+      setPagesOff(pollData.pagesOff);
       setStage("done");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2141,7 +2218,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
 
     if (isSiteChanged(rebuildData)) return;
     if (!rebuildData.ok) {
-      setRebuildNotice("rebuild_failed");
+      setRebuildNotice(rebuildNoticeFor(rebuildData.error));
       return;
     }
 
@@ -2152,6 +2229,8 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     }
 
     setRebuildNotice(null);
+    // Pages is known to be on only once a build it publishes has started.
+    setPagesOff(false);
     setRunId(rebuildData.runId);
     setUpgradeSha(rebuildData.headSha);
     setStage("building");
@@ -2249,7 +2328,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   }
 
   function submitCommit(prepared: PreparedUpgrade) {
-    setAwaitingConfirmation(null);
+    setTabsChecked(prepared.tabsChecked === true);
     setStage("upgrading");
     setUpgradeSubStage("committing");
     upgradeFetcher.submit({ intent: "upgrade-commit", preparedState: JSON.stringify(prepared) }, { method: "post" });
@@ -2265,11 +2344,6 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     if (data.answer === "needs_sheets_decision") {
       setSheetsQuestion({ challenge: data.challenge, detail: data.detail, notice: data.notice });
       setStage("sheets");
-      return;
-    }
-    if (needsConfirmation(data.prepared)) {
-      setAwaitingConfirmation(data.prepared);
-      setStage("confirm");
       return;
     }
     submitCommit(data.prepared);
@@ -2306,24 +2380,12 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     setStage("review");
   }
 
-  // A prepared upgrade holds its lease until it commits or is cancelled.
-  function handleCancelConfirmation() {
-    if (awaitingConfirmation) {
-      upgradeFetcher.submit(
-        { intent: "upgrade-cancel", preparedState: JSON.stringify(awaitingConfirmation) },
-        { method: "post" },
-      );
-    }
-    setAwaitingConfirmation(null);
-    setStage("review");
-  }
-
   // The retry on the failed-build screen runs the site's build again. The
   // upgrade itself has already landed and D1 already records the new version,
   // so there is no upgrade left to re-attempt; what failed is the build, and
   // "again" means the site as it stands now. `newVersion` and `manualSteps`
   // describe that landed upgrade and are kept.
-  function handleRetry() {
+  function handleRetry(intent: "rebuild" | "enable-pages") {
     setUpgradeError(null);
     setReauthUrl(null);
     setUpgradeSha(null);
@@ -2332,7 +2394,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
     setRunId(null);
     setPhases(null);
     setRebuildNotice(null);
-    rebuildFetcher.submit({ intent: "rebuild" }, { method: "post" });
+    rebuildFetcher.submit({ intent }, { method: "post" });
   }
 
   // Build phase labels (i18n)
@@ -2528,6 +2590,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                             "layouts",
                             "includes",
                             "stylesheets",
+                            "siteScripts",
                             "scripts",
                             "workflows",
                             "dataFiles",
@@ -2545,17 +2608,9 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                               files={filesByCategory?.[key] ?? []}
                             />
                           ))}
-                        {diff.summary.deletions > 0 && (
-                          <CategoryCard
-                            icon={XCircle}
-                            label={t("deletions")}
-                            count={diff.summary.deletions}
-                            countLabel={t("fileCount", { count: diff.summary.deletions })}
-                            files={filesByCategory?.deletions ?? []}
-                            variant="danger"
-                          />
-                        )}
+                        <DeletionCards filesByCategory={filesByCategory} />
                       </div>
+                      <DevFilesHint devFiles={filesByCategory?.devFiles} />
                     </>
                   )}
                 </div>
@@ -2648,12 +2703,9 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
         stage={stage}
         question={question}
         sheetsQuestion={sheetsQuestion}
-        awaitingConfirmation={awaitingConfirmation}
         onChoose={handleChoices}
         onCancelChoices={handleCancelChoices}
         onSheetsAnswer={handleSheetsAnswer}
-        onConfirm={submitCommit}
-        onCancelConfirmation={handleCancelConfirmation}
       />
 
       {/* ------------------------------------------------------------------ */}
@@ -2734,7 +2786,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
               </div>
 
               {/* Post-upgrade manual steps (from manifest chain) */}
-              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} />
+              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} tabsChecked={tabsChecked} />
               <PostUpgradeSteps steps={manualSteps[i18n.language?.toLowerCase().startsWith("es") ? "es" : "en"]} googleSheetsEnabled={readsSheetsAfter ?? googleSheetsEnabled} />
 
               <div className="flex flex-wrap gap-3 justify-end">
@@ -2760,16 +2812,13 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
             <>
               <div className="flex flex-col items-center gap-3 py-4 mb-6">
                 <XCircle className="w-12 h-12 text-red-500" />
-                <h2 className="font-heading font-semibold text-xl text-charcoal">
-                  {t("upgradeFailed")}
-                </h2>
-                <p className="font-body text-sm text-gray-600">{t("upgradeFailedDetail")}</p>
+                <FailedBuildSummary newVersion={newVersion} phases={phases} phaseLabels={phaseLabels} pagesOff={pagesOff} />
                 {rebuildNotice && (
                   <p className="font-body text-sm text-amber-900">{t(rebuildNotice)}</p>
                 )}
               </div>
 
-              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} />
+              <UpgradeSheetOutcome lines={sheetReport} syncNeeded={syncNeeded} answers={answers} sheetsOff={sheetsOff} tabsChecked={tabsChecked} />
 
               <div className="flex flex-wrap gap-3 justify-end">
                 {buildUrl && (
@@ -2783,9 +2832,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 )}
-                <Button variant="primary" type="button" onClick={handleRetry}>
-                  {t("retry")}
-                </Button>
+                <RetryBuildButton pagesOff={pagesOff} busy={rebuildFetcher.state !== "idle"} onRetry={handleRetry} />
               </div>
             </>
           )}
