@@ -18,7 +18,7 @@
  *
  * Design tokens only — no hardcoded hex.
  *
- * @version v1.5.3-beta
+ * @version v1.5.4-beta
  */
 
 import { Form } from "react-router";
@@ -37,10 +37,10 @@ export interface OtherProjectStat {
 }
 
 /**
- * The ribbon's fields of a project row, and nothing else. A row from
- * getUserProjectsWithStats carries every column, `yjs_state` among them, and
- * the single-fetch encoder writes a binary column out one byte at a time: a
- * few megabytes of document state cost the Start loader seconds of CPU.
+ * The ribbon's fields of a project row, and nothing else. Whatever the Start
+ * loader returns is encoded into the page's data, and the single-fetch encoder
+ * writes a binary column out one byte at a time, so a row passed on whole
+ * costs as much as every column it carries.
  */
 export function otherProjectStat(project: OtherProjectStat): OtherProjectStat {
   return {

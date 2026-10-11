@@ -7,7 +7,7 @@
  *
  * Existing `getUserProjects` regression tests also live here.
  *
- * @version v1.2.0-beta
+ * @version v1.5.4-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -190,11 +190,12 @@ describe("getUserProjectsWithStats", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Two-project user. getUserProjects issues two selects internally: first the
- * membership rows (project_id + role), then the project rows by id. Mirror
- * that order so the real function runs unmodified.
+ * Two-project user. getUserProjects issues two selects: first the membership
+ * rows (project_id + role), then the project rows by id; the resolver then
+ * reads the active site's own row. Mirror that order so the real function
+ * runs unmodified.
  */
-function buildTwoProjectDb(): any {
+function buildTwoProjectDb(activeId: number): any {
   let callCount = 0;
   return {
     select: vi.fn(() => {
@@ -209,12 +210,21 @@ function buildTwoProjectDb(): any {
           })),
         };
       }
+      const rows = [
+        { id: 1, github_repo_full_name: "u/r1" },
+        { id: 2, github_repo_full_name: "u/r2" },
+      ];
+      if (callCount === 2) {
+        return {
+          from: vi.fn(() => ({ where: vi.fn().mockResolvedValue(rows) })),
+        };
+      }
+      // The active site's own row: where(id).limit(1).
       return {
         from: vi.fn(() => ({
-          where: vi.fn().mockResolvedValue([
-            { id: 1, github_repo_full_name: "u/r1" },
-            { id: 2, github_repo_full_name: "u/r2" },
-          ]),
+          where: vi.fn(() => ({
+            limit: vi.fn().mockResolvedValue([rows[activeId - 1]]),
+          })),
         })),
       };
     }),
@@ -223,19 +233,19 @@ function buildTwoProjectDb(): any {
 
 describe("resolveActiveProject", () => {
   it("returns the session's project + role when the id belongs to the user", async () => {
-    const result = await resolveActiveProject(buildTwoProjectDb(), 7, 2);
+    const result = await resolveActiveProject(buildTwoProjectDb(2), 7, 2);
     expect(result?.project.id).toBe(2);
     expect(result?.userRole).toBe("collaborator");
   });
 
   it("falls back to the first project when the session id is stale (not a project the user belongs to)", async () => {
-    const result = await resolveActiveProject(buildTwoProjectDb(), 7, 999);
+    const result = await resolveActiveProject(buildTwoProjectDb(1), 7, 999);
     expect(result?.project.id).toBe(1);
     expect(result?.userRole).toBe("convenor");
   });
 
   it("falls back to the first project when the session id is absent", async () => {
-    const result = await resolveActiveProject(buildTwoProjectDb(), 7, undefined);
+    const result = await resolveActiveProject(buildTwoProjectDb(1), 7, undefined);
     expect(result?.project.id).toBe(1);
     expect(result?.userRole).toBe("convenor");
   });
@@ -244,7 +254,7 @@ describe("resolveActiveProject", () => {
     // 42 is a real project id elsewhere in the system but NOT one this user
     // belongs to. The membership-scoped candidate set means the only possible
     // outcomes are project 1 or 2; 42 can never be returned.
-    const result = await resolveActiveProject(buildTwoProjectDb(), 7, 42);
+    const result = await resolveActiveProject(buildTwoProjectDb(1), 7, 42);
     expect([1, 2]).toContain(result?.project.id);
     expect(result?.project.id).not.toBe(42);
   });
@@ -259,5 +269,58 @@ describe("resolveActiveProject", () => {
     };
     const result = await resolveActiveProject(db, 999, 5);
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Column selection — the listing never asks D1 for the collaborative document
+// ---------------------------------------------------------------------------
+
+/** Records the column map each `select(...)` is given. */
+function buildRecordingDb(): { db: any; selects: any[] } {
+  const selects: any[] = [];
+  const db: any = {
+    select: vi.fn((fields?: any) => {
+      selects.push(fields);
+      const result =
+        selects.length === 1 ? [{ project_id: 1, role: "convenor" }] : [{ id: 1 }];
+      const chainable: any = {
+        from: vi.fn(() => chainable),
+        where: vi.fn(() => chainable),
+        limit: vi.fn().mockResolvedValue(result),
+        groupBy: vi.fn().mockResolvedValue([]),
+      };
+      chainable.then = (resolve: (v: any) => void) => resolve(result);
+      return chainable;
+    }),
+    all: vi.fn().mockResolvedValue([]),
+  };
+  return { db, selects };
+}
+
+describe("project listing column selection", () => {
+  it("getUserProjects names its columns and omits yjs_state and publish_snapshot", async () => {
+    const { db, selects } = buildRecordingDb();
+    await getUserProjects(db, 1);
+    const projectSelect = selects[1];
+    expect(projectSelect).toBeDefined();
+    expect(Object.keys(projectSelect)).toContain("id");
+    expect(Object.keys(projectSelect)).not.toContain("yjs_state");
+    expect(Object.keys(projectSelect)).not.toContain("publish_snapshot");
+  });
+
+  it("getUserProjectsWithStats reads the project rows through the same narrow select", async () => {
+    const { db, selects } = buildRecordingDb();
+    await getUserProjectsWithStats(db, 1);
+    expect(Object.keys(selects[1])).not.toContain("yjs_state");
+    expect(Object.keys(selects[1])).not.toContain("publish_snapshot");
+  });
+
+  it("resolveActiveProject reads the active row without yjs_state and with publish_snapshot", async () => {
+    const { db, selects } = buildRecordingDb();
+    await resolveActiveProject(db, 1, 1);
+    const activeSelect = selects[2];
+    expect(Object.keys(activeSelect)).not.toContain("yjs_state");
+    expect(Object.keys(activeSelect)).toContain("publish_snapshot");
   });
 });

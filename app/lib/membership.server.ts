@@ -19,10 +19,10 @@
  * six-entry palette, prefer a user's consistent choice across their
  * other memberships, and fall back to first-unused for the project.
  *
- * @version v1.5.0-beta
+ * @version v1.5.4-beta
  */
 
-import { eq, and, inArray, isNull, isNotNull, ne, sql } from "drizzle-orm";
+import { eq, and, getTableColumns, inArray, isNull, isNotNull, ne, sql } from "drizzle-orm";
 import { getDb } from "~/lib/db.server";
 import { projects, project_members } from "~/db/schema";
 import { isPublishingRole } from "~/lib/publishing-roles";
@@ -54,13 +54,34 @@ export async function getUserRole(
 }
 
 /**
+ * The columns a project listing reads. `yjs_state` (a site's collaborative
+ * document, up to ~1 MB) and `publish_snapshot` (the last publish's JSON) are
+ * left out: the layout loader runs this on every page, and D1 would otherwise
+ * move every site's document state for rows no caller reads from.
+ */
+const listColumns = {
+  id: projects.id,
+  user_id: projects.user_id,
+  github_repo_full_name: projects.github_repo_full_name,
+  parent_project_id: projects.parent_project_id,
+  head_sha: projects.head_sha,
+  published_sha: projects.published_sha,
+  last_published_at: projects.last_published_at,
+};
+
+export type UserProjectRow = Pick<
+  typeof projects.$inferSelect,
+  keyof typeof listColumns
+> & { userRole: Role };
+
+/**
  * Get all projects the user has access to (owned + collaborated).
- * Returns project rows with the user's role in each.
+ * Returns the listing columns of each project with the user's role in it.
  */
 export async function getUserProjects(
   db: DbInstance,
   userId: number,
-): Promise<Array<typeof projects.$inferSelect & { userRole: Role }>> {
+): Promise<UserProjectRow[]> {
   // Fetch all project memberships for this user
   const memberRows = await db
     .select({
@@ -74,7 +95,7 @@ export async function getUserProjects(
 
   const projectIds = memberRows.map((r) => r.project_id);
   const projectRows = await db
-    .select()
+    .select(listColumns)
     .from(projects)
     .where(inArray(projects.id, projectIds));
 
@@ -145,8 +166,7 @@ export async function getUserProjectsWithStats(
   userId: number,
 ): Promise<
   Array<
-    typeof projects.$inferSelect & {
-      userRole: Role;
+    UserProjectRow & {
       last_edited_at: string | null;
       collaborator_count: number;
     }
@@ -276,6 +296,8 @@ export async function getUserProjectsWithStats(
   return enriched;
 }
 
+export type ActiveProjectRow = Omit<typeof projects.$inferSelect, "yjs_state">;
+
 /**
  * Resolve the active project for a request using membership (not ownership).
  *
@@ -289,13 +311,22 @@ export async function resolveActiveProject(
   db: DbInstance,
   userId: number,
   sessionActiveId: number | undefined,
-): Promise<{ project: typeof projects.$inferSelect; userRole: Role } | null> {
+): Promise<{ project: ActiveProjectRow; userRole: Role } | null> {
   const allProjects = await getUserProjects(db, userId);
   if (allProjects.length === 0) return null;
 
   const active =
     allProjects.find((p) => p.id === Number(sessionActiveId)) ?? allProjects[0];
-  return { project: active, userRole: active.userRole };
+  // The active site's row in full, minus the collaborative document, which
+  // only the collaboration worker reads.
+  const { yjs_state: _document, ...activeColumns } = getTableColumns(projects);
+  const rows = await db
+    .select(activeColumns)
+    .from(projects)
+    .where(eq(projects.id, active.id))
+    .limit(1);
+  if (!rows[0]) return null;
+  return { project: rows[0], userRole: active.userRole };
 }
 
 /**
