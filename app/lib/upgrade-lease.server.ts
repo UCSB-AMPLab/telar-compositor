@@ -10,7 +10,7 @@
  * because the general message would send them looking for someone else's
  * publish.
  *
- * @version v1.5.3-beta
+ * @version v1.5.4-beta
  */
 
 import { controlFreezeLeaseNamingHolder, newFreezeOperationId } from "~/lib/freeze-lease.server";
@@ -47,4 +47,25 @@ export async function beginUpgradeLease(
 export function upgradeLeaseRefusal(holder: LeaseHolder | null): Exclude<UpgradeLeaseStart, { operationId: string }> {
   if (holder === null || !holder.own || holder.kind !== "upgrade") return { error: "operation_in_progress" };
   return { error: "own_upgrade_in_progress", detail: { minutes: Math.max(1, Math.ceil(holder.remainingMs / 60_000)) } };
+}
+
+/**
+ * Run an upgrade's prepare and keep its lease only if the answer holds a
+ * prepared upgrade; any other answer, and a throw, releases it first. A throw
+ * is rethrown as it was, and a release that fails does not replace it.
+ */
+export async function withPrepareLease<T>(
+  run: () => Promise<T>,
+  holdsLease: (answer: T) => boolean,
+  release: () => Promise<void>,
+): Promise<T> {
+  let answer: T;
+  try {
+    answer = await run();
+  } catch (err) {
+    await release().catch(() => {});
+    throw err;
+  }
+  if (!holdsLease(answer)) await release();
+  return answer;
 }
