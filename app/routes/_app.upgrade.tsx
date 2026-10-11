@@ -43,7 +43,6 @@ import {
   Loader2,
   Palette,
   Terminal,
-  Wrench,
   XCircle,
 } from "lucide-react";
 import type { Route } from "./+types/_app.upgrade";
@@ -122,7 +121,8 @@ import {
   partitionWorkflowFiles,
 } from "~/lib/upgrade.server";
 import type { UpgradeDiff, TelarRelease, UpgradeSummary } from "~/lib/upgrade.server";
-import { releaseDevOnlyEntries, splitDevFileDeletions } from "~/lib/dev-only-paths.server";
+import { readNoticeValues, sheetNoticeValues } from "~/lib/upgrade-notice-values";
+import { groupDeletionsForReview } from "~/lib/dev-only-paths.server";
 import { compareVersions, frameworkVersionForTag, MIN_SUPPORTED_VERSION } from "~/lib/telar-version";
 import { applyManifestChain, manifestChainDeletions } from "~/lib/manifest-runner.server";
 import { YamlListAddError } from "~/lib/yaml-list-add.server";
@@ -130,6 +130,7 @@ import type { ManifestApplyResult } from "~/lib/manifest-runner.server";
 import { applyV130Transforms } from "~/lib/v130-ingest.server";
 import type { V130IngestResult } from "~/lib/v130-ingest.server";
 import type { Language, Manifest, ManualStep } from "~/lib/manifest-schema.server";
+import { CategoryCard, DeletionCards, DevFilesHint } from "~/components/features/upgrade/DeletionCards";
 import { PostUpgradeSteps } from "~/components/features/upgrade/PostUpgradeSteps";
 import {
   UpgradeSheetOutcome,
@@ -384,20 +385,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const cat = categorizeFrameworkPath(file.path);
       (filesByCategory[cat] ??= []).push(file.path);
     }
-    // Display only: the commit still deletes every path in diff.deletions.
-    // A release's list that cannot be read leaves the two path rules in force.
-    let devOnlyEntries: string[] = [];
-    if (diff.deletions.length > 0) {
-      try {
-        devOnlyEntries = await releaseDevOnlyEntries(
-          (path) => fetchFrameworkFile(token, path, latestRelease.tagName),
-          frameworkVersionForTag(latestRelease.tagName),
-        );
-      } catch (err) {
-        console.error("Upgrade loader: developer-only list unavailable, grouping by path rules only:", err);
-      }
-    }
-    const { devFiles, other: otherDeletions } = splitDevFileDeletions(diff.deletions, devOnlyEntries);
+    const { devFiles, other: otherDeletions } = await groupDeletionsForReview(
+      diff.deletions,
+      (path) => fetchFrameworkFile(token, path, latestRelease.tagName),
+      frameworkVersionForTag(latestRelease.tagName),
+    );
     if (otherDeletions.length > 0) filesByCategory.deletions = otherDeletions;
     if (devFiles.length > 0) filesByCategory.devFiles = devFiles;
 
@@ -1831,16 +1823,10 @@ function noticeValues(detail: UpgradeFailureDetail | null): Record<string, strin
   if (!detail) return undefined;
   if ("file" in detail) return { file: detail.file, key: detail.key, values: detail.values.join(", ") };
   if ("tabs" in detail) return { tabs: detail.tabs, count: detail.count };
-  if ("sheet" in detail) {
-    const { sheet, column, columns } = detail;
-    return { sheet, ...(column !== undefined ? { column } : {}), ...(columns !== undefined ? { columns } : {}) };
-  }
+  if ("sheet" in detail) return sheetNoticeValues(detail);
   if ("name" in detail) return { name: detail.name };
   if ("minutes" in detail) return { count: detail.minutes };
-  return {
-    ...("path" in detail ? { path: detail.path } : {}),
-    ...(detail.version !== undefined ? { version: detail.version } : {}),
-  };
+  return readNoticeValues(detail);
 }
 
 /** The detail an upgrade action's failure carries, when it has one. */
@@ -2046,56 +2032,6 @@ const CATEGORY_ICONS = {
   dataFiles: Database,
   other: FileText,
 } as const;
-
-function CategoryCard({
-  icon: Icon,
-  label,
-  count,
-  countLabel,
-  files,
-  variant = "default",
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  count: number;
-  countLabel: string;
-  files: string[];
-  variant?: "default" | "danger";
-}) {
-  const [open, setOpen] = useState(false);
-  const bg = variant === "danger" ? "bg-red-50" : "bg-cream-dark";
-  const iconColor = variant === "danger" ? "text-red-400" : "text-terracotta";
-
-  return (
-    <div className={`${bg} rounded-lg overflow-hidden`}>
-      <button
-        type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:opacity-80 transition-opacity"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Icon className={`w-4 h-4 ${iconColor} shrink-0`} />
-        <div className="min-w-0 flex-1">
-          <p className="font-heading font-semibold text-xs text-charcoal leading-tight">
-            {label}
-          </p>
-          <p className="font-body text-xs text-gray-500">{countLabel}</p>
-        </div>
-        <ChevronDown className={`w-3 h-3 text-gray-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && files.length > 0 && (
-        <div className="px-3 pb-2">
-          <ul className="font-body text-xs text-gray-600 space-y-0.5">
-            {files.map((f) => (
-              <li key={f} className="truncate" title={f}>
-                {f}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function HintBox({ title, body }: { title: string; body: string }) {
   const [open, setOpen] = useState(false);
@@ -2667,29 +2603,9 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                               files={filesByCategory?.[key] ?? []}
                             />
                           ))}
-                        {(filesByCategory?.deletions?.length ?? 0) > 0 && (
-                          <CategoryCard
-                            icon={XCircle}
-                            label={t("deletions")}
-                            count={filesByCategory.deletions.length}
-                            countLabel={t("fileCount", { count: filesByCategory.deletions.length })}
-                            files={filesByCategory.deletions}
-                            variant="danger"
-                          />
-                        )}
-                        {(filesByCategory?.devFiles?.length ?? 0) > 0 && (
-                          <CategoryCard
-                            icon={Wrench}
-                            label={t("devFiles")}
-                            count={filesByCategory.devFiles.length}
-                            countLabel={t("devFilesCount", { count: filesByCategory.devFiles.length })}
-                            files={filesByCategory.devFiles}
-                          />
-                        )}
+                        <DeletionCards filesByCategory={filesByCategory} />
                       </div>
-                      {(filesByCategory?.devFiles?.length ?? 0) > 0 && (
-                        <p className="font-body text-xs text-gray-500 mt-2">{t("devFilesHint")}</p>
-                      )}
+                      <DevFilesHint devFiles={filesByCategory?.devFiles} />
                     </>
                   )}
                 </div>

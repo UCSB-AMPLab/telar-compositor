@@ -125,22 +125,48 @@ const OPERATION_ID = /^[A-Za-z0-9-]{1,64}$/;
  */
 export function parseLeaseControl(text: string | null): LeaseControl | null {
   if (text === null) return null;
-  const parts = text.split(":");
-  const [op, a, b] = parts;
-  if (op === "begin" && parts.length === 3 && (a === "publish" || a === "upgrade" || a === "objects") && OPERATION_ID.test(b)) {
-    return { op, kind: a, operationId: b };
-  }
-  if (op === "take" && parts.length === 3 && a === "upgrade" && OPERATION_ID.test(b)) {
-    return { op, kind: a, operationId: b };
-  }
-  if (op === "renew" && parts.length === 2 && OPERATION_ID.test(a)) {
-    return { op, operationId: a };
-  }
-  if (op === "end" && parts.length === 3 && OPERATION_ID.test(a) && (b === "succeeded" || b === "failed")) {
-    return { op, operationId: a, outcome: b };
-  }
-  return null;
+  const [op, ...args] = text.split(":");
+  const parse = CONTROL_PARSERS.get(op);
+  return parse ? parse(args) : null;
 }
+
+const LEASE_KINDS: readonly string[] = ["publish", "upgrade", "objects"];
+
+function isLeaseKind(value: string): value is LeaseKind {
+  return LEASE_KINDS.includes(value);
+}
+
+function parseBegin(args: string[]): LeaseControl | null {
+  const [kind, operationId] = args;
+  if (args.length !== 2 || !isLeaseKind(kind) || !OPERATION_ID.test(operationId)) return null;
+  return { op: "begin", kind, operationId };
+}
+
+function parseTake(args: string[]): LeaseControl | null {
+  const [kind, operationId] = args;
+  if (args.length !== 2 || kind !== "upgrade" || !OPERATION_ID.test(operationId)) return null;
+  return { op: "take", kind, operationId };
+}
+
+function parseRenew(args: string[]): LeaseControl | null {
+  const [operationId] = args;
+  if (args.length !== 1 || !OPERATION_ID.test(operationId)) return null;
+  return { op: "renew", operationId };
+}
+
+function parseEnd(args: string[]): LeaseControl | null {
+  const [operationId, outcome] = args;
+  if (args.length !== 2 || !OPERATION_ID.test(operationId)) return null;
+  if (outcome !== "succeeded" && outcome !== "failed") return null;
+  return { op: "end", operationId, outcome };
+}
+
+const CONTROL_PARSERS = new Map<string, (args: string[]) => LeaseControl | null>([
+  ["begin", parseBegin],
+  ["take", parseTake],
+  ["renew", parseRenew],
+  ["end", parseEnd],
+]);
 
 /** The control text for `control`, which the action signs and sends. */
 export function leaseControlText(control: LeaseControl): string {
@@ -179,38 +205,57 @@ export function applyLeaseControl(
   now: number,
 ): LeaseState | null {
   const next = pruneLeaseState(state, now);
-  if (control.op === "begin" || control.op === "take") {
-    if (control.op === "take") {
-      for (const [id, lease] of Object.entries(next.leases)) {
-        if (isOwnUncommittedUpgrade(lease, userId)) delete next.leases[id];
-      }
-    }
-    if (Object.keys(next.leases).length > 0) return null;
-    next.leases[control.operationId] = {
-      rev: next.nextRev,
-      kind: control.kind,
-      userId,
-      startedAt: now,
-      expiresAt: now + LEASE_PHASE_MS,
-    };
-    next.nextRev += 1;
-    return next;
-  }
+  if (control.op === "begin" || control.op === "take") return beginLease(next, control, userId, now);
   const lease = next.leases[control.operationId];
   if (!lease || lease.userId !== userId) return null;
-  if (control.op === "renew") {
-    next.leases[control.operationId] = {
-      ...lease,
-      expiresAt: Math.min(now + LEASE_PHASE_MS, lease.startedAt + LEASE_MAX_MS),
-      committing: true,
-    };
-    return next;
+  if (control.op === "renew") return renewLease(next, control.operationId, lease, now);
+  return endLease(next, control.operationId, lease, control.outcome, now);
+}
+
+function beginLease(
+  next: LeaseState,
+  control: Extract<LeaseControl, { op: "begin" | "take" }>,
+  userId: number,
+  now: number,
+): LeaseState | null {
+  if (control.op === "take") {
+    for (const [id, lease] of Object.entries(next.leases)) {
+      if (isOwnUncommittedUpgrade(lease, userId)) delete next.leases[id];
+    }
   }
-  delete next.leases[control.operationId];
+  if (Object.keys(next.leases).length > 0) return null;
+  next.leases[control.operationId] = {
+    rev: next.nextRev,
+    kind: control.kind,
+    userId,
+    startedAt: now,
+    expiresAt: now + LEASE_PHASE_MS,
+  };
+  next.nextRev += 1;
+  return next;
+}
+
+function renewLease(next: LeaseState, operationId: string, lease: Lease, now: number): LeaseState {
+  next.leases[operationId] = {
+    ...lease,
+    expiresAt: Math.min(now + LEASE_PHASE_MS, lease.startedAt + LEASE_MAX_MS),
+    committing: true,
+  };
+  return next;
+}
+
+function endLease(
+  next: LeaseState,
+  operationId: string,
+  lease: Lease,
+  outcome: LeaseOutcome,
+  now: number,
+): LeaseState {
+  delete next.leases[operationId];
   if (lease.kind === "objects") return next;
   next.ended = [
     ...next.ended,
-    { rev: lease.rev, kind: lease.kind, userId: lease.userId, outcome: control.outcome, endedAt: now },
+    { rev: lease.rev, kind: lease.kind, userId: lease.userId, outcome, endedAt: now },
   ].slice(-ENDED_KEEP_COUNT);
   return next;
 }
@@ -253,10 +298,13 @@ export function parseRefusalText(text: string): LeaseHolder | null {
     return null;
   }
   if (typeof raw !== "object" || raw === null || !("holder" in raw)) return null;
-  const holder = (raw as { holder: unknown }).holder as Partial<LeaseHolder> | null;
+  return validHolder((raw as { holder: unknown }).holder as Partial<LeaseHolder> | null);
+}
+
+function validHolder(holder: Partial<LeaseHolder> | null): LeaseHolder | null {
   if (typeof holder !== "object" || holder === null) return null;
   const { kind, own, remainingMs } = holder;
-  if (kind !== "publish" && kind !== "upgrade" && kind !== "objects") return null;
+  if (typeof kind !== "string" || !isLeaseKind(kind)) return null;
   if (typeof own !== "boolean" || typeof remainingMs !== "number" || !Number.isFinite(remainingMs)) return null;
   return { kind, own, remainingMs };
 }

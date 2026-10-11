@@ -30,7 +30,7 @@
  * alphabetically, so they will be present even in a truncated tree. Revisit
  * if truncation is ever detected in practice.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { githubHeaders, getRepoTree, getFileContent, getFileBytesAtRef } from "~/lib/github.server";
@@ -572,24 +572,26 @@ const DATA_FILE_PATHS: ReadonlySet<string> = new Set([
   "README.md",
 ]);
 
+/** Path prefixes in match order: "assets/js/" must precede "assets/". */
+const FRAMEWORK_PATH_RULES: ReadonlyArray<readonly [string, keyof UpgradeSummary]> = [
+  ["_layouts/", "layouts"],
+  ["_includes/", "includes"],
+  ["assets/js/", "siteScripts"],
+  ["_sass/", "stylesheets"],
+  ["assets/", "stylesheets"],
+  ["scripts/", "scripts"],
+  [".github/workflows/", "workflows"],
+  ["_data/languages/", "dataFiles"],
+  ["_data/themes/", "dataFiles"],
+];
+
 /**
  * Maps a framework file path to a summary category for display grouping.
  */
 export function categorizeFrameworkPath(path: string): keyof UpgradeSummary {
-  if (path.startsWith("_layouts/")) return "layouts";
-  if (path.startsWith("_includes/")) return "includes";
-  if (path.startsWith("assets/js/")) return "siteScripts";
-  if (path.startsWith("_sass/") || path.startsWith("assets/")) return "stylesheets";
-  if (path.startsWith("scripts/")) return "scripts";
-  if (path.startsWith(".github/workflows/")) return "workflows";
-  if (
-    path.startsWith("_data/languages/") ||
-    path.startsWith("_data/themes/") ||
-    DATA_FILE_PATHS.has(path)
-  ) {
-    return "dataFiles";
-  }
-  return "other";
+  const rule = FRAMEWORK_PATH_RULES.find(([prefix]) => path.startsWith(prefix));
+  if (rule) return rule[1];
+  return DATA_FILE_PATHS.has(path) ? "dataFiles" : "other";
 }
 
 /**

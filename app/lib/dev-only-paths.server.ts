@@ -9,7 +9,7 @@
  * publish-time heal never restores one. A release before framework 1.8.0
  * carries no list, and has no developer-only paths.
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { getRepoTree } from "~/lib/github.server";
@@ -168,4 +168,25 @@ export async function releaseDevOnlyEntries(
   if (file.kind === "absent") return [];
   if (file.kind === "failed") throw new ReleaseFileUnreadableError(DEV_ONLY_FILES_PATH, version);
   return parseDevOnlyFiles(file.content);
+}
+
+/**
+ * The deletions grouped for the review page. Display only: the commit still
+ * deletes every path in `deletions`. A release's list that cannot be read
+ * leaves the two path rules in force and is logged.
+ */
+export async function groupDeletionsForReview(
+  deletions: readonly string[],
+  read: (path: string) => Promise<ReleaseFileRead>,
+  version: string,
+): Promise<{ devFiles: string[]; other: string[] }> {
+  let entries: string[] = [];
+  if (deletions.length > 0) {
+    try {
+      entries = await releaseDevOnlyEntries(read, version);
+    } catch (err) {
+      console.error("Upgrade loader: developer-only list unavailable, grouping by path rules only:", err);
+    }
+  }
+  return splitDevFileDeletions(deletions, entries);
 }
