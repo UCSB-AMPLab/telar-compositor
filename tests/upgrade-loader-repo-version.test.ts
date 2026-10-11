@@ -4,13 +4,13 @@
  * the loader must offer the upgrade from the repository's version and write
  * that version to D1.
  *
- * @version v1.5.3-beta
+ * @version v1.5.4-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const d1Writes: Array<Record<string, unknown>> = [];
-let d1Version = "1.8.1";
+let d1Version: string | null = "1.8.1";
 let repoVersion = "1.7.0";
 
 vi.mock("~/middleware/auth.server", () => ({ userContext: Symbol("userContext") }));
@@ -116,5 +116,14 @@ describe("Upgrade loader — the repository decides the version", () => {
     const data = await runLoader();
     expect(data.needsUpgrade).toBe(true);
     expect(d1Writes).toHaveLength(0);
+  });
+
+  it("follows the repository when D1 holds no version", async () => {
+    d1Version = null;
+    const data = await runLoader();
+    expect(data.needsUpgrade).toBe(true);
+    expect(data.siteVersion).toBe("v1.7.0");
+    expect(d1Writes).toHaveLength(1);
+    expect(d1Writes[0].telar_version).toBe("1.7.0");
   });
 });

@@ -18,7 +18,7 @@
  * Renders a state machine — review | upgrading | choices | sheets |
  * building | done.
  *
- * @version v1.5.3-beta
+ * @version v1.5.4-beta
  */
 
 import { data, redirect } from "react-router";
@@ -287,7 +287,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const versionMatch = configContent.match(/^\s*version:\s*["']?([^\s"'#]+)/m);
       if (versionMatch) {
         const repoVersion = normalizeVersionTag(versionMatch[1]);
-        if (siteTag && repoVersionToFollow(repoVersion, siteTag)) {
+        if (repoVersionToFollow(repoVersion, siteTag)) {
           // The repository decides the version, so D1 follows it up or down.
           effectiveVersion = repoVersion;
           isBelowMinimum = compareVersions(repoVersion, MIN_SUPPORTED_VERSION) < 0;
