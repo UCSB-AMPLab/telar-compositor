@@ -53,6 +53,34 @@ export function isDevOnlyPath(path: string, entries: readonly string[]): boolean
 }
 
 /**
+ * Whether the review page groups `path` with Telar's development files: a path
+ * the release's list names, one under scripts/migrations/, or a
+ * scripts/telar_upgrade*.py copy of the upgrade engine. A release without a
+ * list passes no entries, and the last two rules still apply.
+ */
+export function isTelarDevelopmentFile(path: string, entries: readonly string[]): boolean {
+  return (
+    isDevOnlyPath(path, entries) ||
+    path.startsWith("scripts/migrations/") ||
+    (/^scripts\/telar_upgrade[^/]*\.py$/).test(path)
+  );
+}
+
+/**
+ * The deletions split for display into Telar's development files and the rest.
+ * Both lists together are `deletions`; the reviewed set is never narrowed.
+ */
+export function splitDevFileDeletions(
+  deletions: readonly string[],
+  entries: readonly string[],
+): { devFiles: string[]; other: string[] } {
+  const devFiles: string[] = [];
+  const other: string[] = [];
+  for (const path of deletions) (isTelarDevelopmentFile(path, entries) ? devFiles : other).push(path);
+  return { devFiles, other };
+}
+
+/**
  * The blobs the listed entries name in the generated repository: a file entry
  * that is in the tree, and every blob under a directory entry. Only paths in
  * the tree are returned, so an entry that is absolute or climbs out with ".."

@@ -90,6 +90,7 @@ export interface UpgradeSummary {
   layouts: number;
   includes: number;
   stylesheets: number;
+  siteScripts: number;
   scripts: number;
   workflows: number;
   dataFiles: number;
@@ -577,6 +578,7 @@ const DATA_FILE_PATHS: ReadonlySet<string> = new Set([
 export function categorizeFrameworkPath(path: string): keyof UpgradeSummary {
   if (path.startsWith("_layouts/")) return "layouts";
   if (path.startsWith("_includes/")) return "includes";
+  if (path.startsWith("assets/js/")) return "siteScripts";
   if (path.startsWith("_sass/") || path.startsWith("assets/")) return "stylesheets";
   if (path.startsWith("scripts/")) return "scripts";
   if (path.startsWith(".github/workflows/")) return "workflows";
@@ -602,6 +604,7 @@ export function buildUpgradeSummary(
     layouts: 0,
     includes: 0,
     stylesheets: 0,
+    siteScripts: 0,
     scripts: 0,
     workflows: 0,
     dataFiles: 0,

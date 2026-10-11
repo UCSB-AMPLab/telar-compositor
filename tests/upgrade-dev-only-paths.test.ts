@@ -5,7 +5,7 @@
  * The 1.7.0 to 1.8.0 case runs on recorded trees and the generated test
  * manifest in `fixtures/upgrade-1.8.0/` (see NOTES.md there).
  *
- * @version v1.5.0-beta
+ * @version v1.5.3-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -20,8 +20,11 @@ import {
 import {
   DEV_ONLY_FILES_PATH,
   KNOWN_DEV_ONLY_FRAMEWORK_FILES,
+  devOnlyDeletions,
   isDevOnlyPath,
   parseDevOnlyFiles,
+  isTelarDevelopmentFile,
+  splitDevFileDeletions,
   releaseDevOnlyEntries,
   type ReleaseFileRead,
 } from "~/lib/dev-only-paths.server";
@@ -76,6 +79,64 @@ describe("isDevOnlyPath", () => {
 
   it("never names the list itself, which stays with the site", () => {
     expect(isDevOnlyPath(DEV_ONLY_FILES_PATH, [DEV_ONLY_FILES_PATH, "scripts/"])).toBe(false);
+  });
+});
+
+describe("the list once it names the upgrade engine", () => {
+  // The four 1.8.0 entries, then the engine: its migrations directory and the
+  // four upgrade modules, as plain paths.
+  const ENGINE_LIST = [
+    ...DEV_ONLY,
+    "scripts/migrations/",
+    "scripts/telar_upgrade.py",
+    "scripts/telar_upgrade_common.py",
+    "scripts/telar_upgrade_regen.py",
+    "scripts/telar_upgrade_report.py",
+  ];
+
+  it("names every file under scripts/migrations/ and nothing beside it", () => {
+    expect(isDevOnlyPath("scripts/migrations/v180_sheets.py", ENGINE_LIST)).toBe(true);
+    expect(isDevOnlyPath("scripts/migrations/__init__.py", ENGINE_LIST)).toBe(true);
+    expect(isDevOnlyPath("scripts/migrations/legacy/v121_to_v130.py", ENGINE_LIST)).toBe(true);
+    expect(isDevOnlyPath("scripts/migrations", ENGINE_LIST)).toBe(false);
+    expect(isDevOnlyPath("scripts/migrations_notes.md", ENGINE_LIST)).toBe(false);
+    expect(isDevOnlyPath("scripts/csv_to_json.py", ENGINE_LIST)).toBe(false);
+    expect(isDevOnlyPath(DEV_ONLY_FILES_PATH, ENGINE_LIST)).toBe(false);
+  });
+
+  it("names an upgrade module by its exact path only", () => {
+    expect(isDevOnlyPath("scripts/telar_upgrade.py", ENGINE_LIST)).toBe(true);
+    expect(isDevOnlyPath("scripts/telar_upgrade_report.py", ENGINE_LIST)).toBe(true);
+    expect(isDevOnlyPath("scripts/telar_upgrade.pyc", ENGINE_LIST)).toBe(false);
+    expect(isDevOnlyPath("scripts/telar/telar_upgrade.py", ENGINE_LIST)).toBe(false);
+    expect(isDevOnlyPath("scripts/upgrade.py", ENGINE_LIST)).toBe(false);
+  });
+
+  it("deletes the engine from a generated repository, and keeps the launcher and the list", () => {
+    const blobs = [
+      "_config.yml",
+      DEV_ONLY_FILES_PATH,
+      "scripts/upgrade.py",
+      "scripts/csv_to_json.py",
+      "scripts/telar_upgrade.py",
+      "scripts/telar_upgrade_common.py",
+      "scripts/telar_upgrade_regen.py",
+      "scripts/telar_upgrade_report.py",
+      "scripts/migrations/__init__.py",
+      "scripts/migrations/v180_sheets.py",
+      "scripts/migrations/legacy/v121_to_v130.py",
+      "tests/unit/test_x.py",
+    ];
+    expect(devOnlyDeletions(ENGINE_LIST, blobs, new Set()).sort()).toEqual([
+      "scripts/migrations/__init__.py",
+      "scripts/migrations/legacy/v121_to_v130.py",
+      "scripts/migrations/v180_sheets.py",
+      "scripts/telar_upgrade.py",
+      "scripts/telar_upgrade_common.py",
+      "scripts/telar_upgrade_regen.py",
+      "scripts/telar_upgrade_report.py",
+      "tests/unit/test_x.py",
+    ]);
   });
 });
 
@@ -379,5 +440,41 @@ describe("an upgrade from the 1.7.0 template tree to the 1.8.0 release", () => {
     expect(merged.additions.map((a) => a.path)).not.toContain("scripts/telar_upgrade.py");
     const added = new Set(merged.additions.map((a) => a.path));
     expect(merged.deletions.filter((d) => added.has(d))).toEqual([]);
+  });
+});
+
+describe("isTelarDevelopmentFile", () => {
+  const list = ["tests/", "pytest.ini", "vitest.config.js", ".github/workflows/telar-tests.yml"];
+
+  it("groups the list's paths and the two script rules as development files", () => {
+    for (const path of [
+      "tests/a.py",
+      "pytest.ini",
+      "vitest.config.js",
+      ".github/workflows/telar-tests.yml",
+      "scripts/migrations/v1.py",
+      "scripts/telar_upgrade.py",
+      "scripts/telar_upgrade_engine.py",
+    ]) {
+      expect(isTelarDevelopmentFile(path, list), path).toBe(true);
+    }
+  });
+
+  it("leaves the framework's own files and the list itself out", () => {
+    for (const path of ["scripts/telar/core.py", "pages/about.md", DEV_ONLY_FILES_PATH]) {
+      expect(isTelarDevelopmentFile(path, list), path).toBe(false);
+    }
+  });
+
+  it("without a list, a tests/ path is not a development file", () => {
+    expect(isTelarDevelopmentFile("tests/a.py", [])).toBe(false);
+    expect(isTelarDevelopmentFile("scripts/migrations/v1.py", [])).toBe(true);
+  });
+
+  it("splitDevFileDeletions partitions without losing a path", () => {
+    const deletions = ["tests/a.py", "pages/about.md", "scripts/telar_upgrade.py"];
+    const { devFiles, other } = splitDevFileDeletions(deletions, list);
+    expect(devFiles).toEqual(["tests/a.py", "scripts/telar_upgrade.py"]);
+    expect(other).toEqual(["pages/about.md"]);
   });
 });

@@ -281,6 +281,12 @@ describe("categorizeFrameworkPath", () => {
     expect(categorizeFrameworkPath("_sass/_main.scss")).toBe("stylesheets");
   });
 
+  it("assets/js/ categorizes as 'siteScripts', the rest of assets/ as 'stylesheets'", () => {
+    expect(categorizeFrameworkPath("assets/js/x.js")).toBe("siteScripts");
+    expect(categorizeFrameworkPath("assets/css/x.css")).toBe("stylesheets");
+    expect(categorizeFrameworkPath("_sass/x.scss")).toBe("stylesheets");
+  });
+
   it("Test 38: scripts/csv_to_json.py categorizes as 'scripts'", () => {
     expect(categorizeFrameworkPath("scripts/csv_to_json.py")).toBe("scripts");
   });

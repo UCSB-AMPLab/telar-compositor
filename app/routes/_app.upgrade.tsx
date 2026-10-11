@@ -31,6 +31,7 @@ import { useIsPublisher } from "~/hooks/use-role";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
+  Braces,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -42,6 +43,7 @@ import {
   Loader2,
   Palette,
   Terminal,
+  Wrench,
   XCircle,
 } from "lucide-react";
 import type { Route } from "./+types/_app.upgrade";
@@ -120,6 +122,7 @@ import {
   partitionWorkflowFiles,
 } from "~/lib/upgrade.server";
 import type { UpgradeDiff, TelarRelease, UpgradeSummary } from "~/lib/upgrade.server";
+import { releaseDevOnlyEntries, splitDevFileDeletions } from "~/lib/dev-only-paths.server";
 import { compareVersions, frameworkVersionForTag, MIN_SUPPORTED_VERSION } from "~/lib/telar-version";
 import { applyManifestChain, manifestChainDeletions } from "~/lib/manifest-runner.server";
 import { YamlListAddError } from "~/lib/yaml-list-add.server";
@@ -378,9 +381,22 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       const cat = categorizeFrameworkPath(file.path);
       (filesByCategory[cat] ??= []).push(file.path);
     }
+    // Display only: the commit still deletes every path in diff.deletions.
+    // A release's list that cannot be read leaves the two path rules in force.
+    let devOnlyEntries: string[] = [];
     if (diff.deletions.length > 0) {
-      filesByCategory.deletions = diff.deletions;
+      try {
+        devOnlyEntries = await releaseDevOnlyEntries(
+          (path) => fetchFrameworkFile(token, path, latestRelease.tagName),
+          frameworkVersionForTag(latestRelease.tagName),
+        );
+      } catch (err) {
+        console.error("Upgrade loader: developer-only list unavailable, grouping by path rules only:", err);
+      }
     }
+    const { devFiles, other: otherDeletions } = splitDevFileDeletions(diff.deletions, devOnlyEntries);
+    if (otherDeletions.length > 0) filesByCategory.deletions = otherDeletions;
+    if (devFiles.length > 0) filesByCategory.devFiles = devFiles;
 
     return {
       siteVersion,
@@ -2021,6 +2037,7 @@ const CATEGORY_ICONS = {
   layouts: FileCode,
   includes: FileText,
   stylesheets: Palette,
+  siteScripts: Braces,
   scripts: Terminal,
   workflows: GitBranch,
   dataFiles: Database,
@@ -2629,6 +2646,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                             "layouts",
                             "includes",
                             "stylesheets",
+                            "siteScripts",
                             "scripts",
                             "workflows",
                             "dataFiles",
@@ -2646,17 +2664,29 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                               files={filesByCategory?.[key] ?? []}
                             />
                           ))}
-                        {diff.summary.deletions > 0 && (
+                        {(filesByCategory?.deletions?.length ?? 0) > 0 && (
                           <CategoryCard
                             icon={XCircle}
                             label={t("deletions")}
-                            count={diff.summary.deletions}
-                            countLabel={t("fileCount", { count: diff.summary.deletions })}
-                            files={filesByCategory?.deletions ?? []}
+                            count={filesByCategory.deletions.length}
+                            countLabel={t("fileCount", { count: filesByCategory.deletions.length })}
+                            files={filesByCategory.deletions}
                             variant="danger"
                           />
                         )}
+                        {(filesByCategory?.devFiles?.length ?? 0) > 0 && (
+                          <CategoryCard
+                            icon={Wrench}
+                            label={t("devFiles")}
+                            count={filesByCategory.devFiles.length}
+                            countLabel={t("devFilesCount", { count: filesByCategory.devFiles.length })}
+                            files={filesByCategory.devFiles}
+                          />
+                        )}
                       </div>
+                      {(filesByCategory?.devFiles?.length ?? 0) > 0 && (
+                        <p className="font-body text-xs text-gray-500 mt-2">{t("devFilesHint")}</p>
+                      )}
                     </>
                   )}
                 </div>

@@ -169,6 +169,7 @@ vi.mock("~/lib/upgrade.server", async () => {
         layouts: 0,
         includes: 0,
         stylesheets: 0,
+        siteScripts: 0,
         scripts: 0,
         workflows: 0,
         dataFiles: 0,

@@ -145,7 +145,7 @@ function upgradeDiffFor(withWorkflow = false) {
   return {
     additions,
     deletions: [],
-    summary: { layouts: 0, includes: 0, stylesheets: 0, scripts: 0, workflows: additions.length, dataFiles: 0, other: 0, deletions: 0, total: additions.length },
+    summary: { layouts: 0, includes: 0, stylesheets: 0, siteScripts: 0, scripts: 0, workflows: additions.length, dataFiles: 0, other: 0, deletions: 0, total: additions.length },
   };
 }
 
