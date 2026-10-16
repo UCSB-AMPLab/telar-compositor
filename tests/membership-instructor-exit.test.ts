@@ -4,7 +4,7 @@
  * verified is the actual SQL and its numbers, not just that a code path
  * was reached.
  *
- * Covers two things design §3 names:
+ * Covers two things:
  *
  *   - `isMembershipExitRefused`: the shared rule behind the membership-exit
  *     refusal that `remove-member` (_app.dashboard.tsx) and `leave-project`
@@ -20,7 +20,7 @@
  *     make a solo student's site look convened-with-collaborators and
  *     block their own account deletion.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";

@@ -304,8 +304,8 @@ export function parseProjectKind(value: unknown): ProjectKind {
 
 /**
  * The config a course is provisioned with: a shared collection, and no
- * stories section on the published site. Ruling 23 keeps these in D1 at
- * creation rather than committing them, so course creation does not depend
+ * stories section on the published site. They are kept in D1 at
+ * creation rather than committed, so course creation does not depend
  * on a GitHub round-trip and cannot fail on a repo error.
  */
 export function courseConfigDefaults(
@@ -4985,7 +4985,7 @@ export async function importRepo({
     }
   }
 
-  // The record of the page files read (R6): the commit read and each page
+  // The record of the page files read: the commit read and each page
   // file, mapped to the page inserted from it. head_sha stays null, so the
   // record's commit is the pages base until a head is recorded.
   await recordImportedPageFiles(db, projectId, head, pageRows, scannedPages.removed);

@@ -3,13 +3,13 @@
  * or TA turns a course's instructor-role code into standing on that course.
  *
  * It sits on the account page and nowhere else because staff admission
- * attaches a PERSON, not a site (design §89). The other two redemption
+ * attaches a PERSON, not a site. The other two redemption
  * surfaces — site creation and site settings — both act on a project, and a
  * code entered there attaches that project to a course; neither can express
  * "admit me", which is what this one is for.
  *
  * The field is visible to everyone who can see the page. Redeeming a code is
- * never behind the course-projects password gate (ruling 20): the gate is on
+ * never behind the course-projects password gate: the gate is on
  * running a course, and a person entering a code has been handed one by
  * somebody who already passed it.
  *
@@ -19,7 +19,7 @@
  * need three different next moves, and a shared "that didn't work" would
  * leave all three guessing.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useTranslation } from "react-i18next";

@@ -3340,7 +3340,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // transaction's change set, which still names every key the guard put
     // back, and credits nobody for a marked one.
     //
-    // F1 holds across the pair: nothing here awaits, and the guard's
+    // Nothing awaits across the pair: nothing here does, and the guard's
     // `noteRevert` only sets a flag the message handler reads in the same
     // continuation.
     this.ydoc.on("afterTransaction", makeCanDeleteHandler({
@@ -4930,7 +4930,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           // Checked against the live story inside the gate and before the
           // transaction: the hash is async, the transaction is not. A story
           // whose content is not applied keeps its row fields too, since the
-          // author's choice covered both (design §3).
+          // author's choice covered both.
           const replacements = await this.planContentReplacements(
             storiesArray, storyContent.accepted, content, contentCandidates,
           );
@@ -6716,7 +6716,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
   /**
    * Forward an inbound sync packet to every other socket, unchanged.
    *
-   * Synchronous by contract (F1): it runs in the same continuation as the apply
+   * Synchronous by contract: it runs in the same continuation as the apply
    * that precedes it, and a send that throws is a client that has gone.
    */
   private relaySync(from: WebSocket, data: Uint8Array): void {
@@ -7011,7 +7011,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
    *
    * Its own method because the section from the second fence to the flush is
    * one continuation with one rule over it: nothing in it awaits until the
-   * drain has decided what the message may release (F1).
+   * drain has decided what the message may release.
    */
   private async handleSyncMessage(
     ws: WebSocket,
@@ -7030,7 +7030,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // generation and rebuild the document while it does — closing a socket
     // does not cancel a handler already running on it. This is what
     // establishes the generation at the point of application. From here
-    // through the apply, enforcement and the relay nothing awaits (F1), so
+    // through the apply, enforcement and the relay nothing awaits, so
     // no generation can move under them.
     const generation = this.socketMayReachDocument(ws);
     if (generation === null) return;
@@ -7044,7 +7044,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       return;
     }
 
-    // From here to the drain nothing awaits (F1), and everything the guard
+    // From here to the drain nothing awaits, and everything the guard
     // asks for is held rather than sent. The revert flag is the object's, and
     // messages resumed together from one membership read can each clear it
     // before another applies, so it is cleared here as well, where only this
@@ -7097,7 +7097,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       // reply, and a step 2 keeps its relay even when it triggered a revert:
       // it carries a peer's whole state, not one refused write.
       //
-      // F1: nothing is awaited between the apply above and the relay here.
+      // Nothing is awaited between the apply above and the relay here.
       if (!(this.revertedThisMessage && applied.type === syncProtocol.messageYjsUpdate)) {
         this.relaySync(ws, data);
       }
@@ -12315,7 +12315,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       // exists to remove. So it takes the stale branch WITHOUT the id: the
       // adopt-by-human-key arm below settles it against the row D1 says owns
       // the key, which is the pipeline that already owns that question and the
-      // downstream behaviour the detect-only ruling recorded. Where there is
+      // downstream behaviour already decided for detect-only. Where there is
       // no key to adopt by, there is nothing left that does not involve
       // trusting the value, so the entity is left alone and the sweep with it.
       const flagPlant = cfg.flagFields

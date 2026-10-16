@@ -5,7 +5,7 @@
  *
  * Four refusals and one reachability claim carry this screen.
  *
- * The refusals are the password (ruling 20 — running a course takes it),
+ * The refusals are the password (running a course takes it),
  * an active project that is not a course, a caller with no standing on the
  * course, and a caller whose standing is only a collaborator row. All four
  * answer 403, and the password is asserted to be answered BEFORE standing
@@ -13,8 +13,8 @@
  * project is a course.
  *
  * The reachability claim is the screen's reason for existing. A
- * co-instructor's child sites are suppressed from every project list
- * (rulings 18 and 25), so the fixture puts the caller in exactly that
+ * co-instructor's child sites are suppressed from every project list,
+ * so the fixture puts the caller in exactly that
  * state — an `instructor` row on a child with a parent, which
  * `isSuppressedFromProjectLists` is asserted to suppress — and the loader
  * is then required to list that same child. A fixture that gave the
@@ -24,10 +24,9 @@
  *
  * What an instructor may see is asserted negatively as well as positively:
  * no staff list, and no instructor-role code token. The token IS the power
- * to admit staff, so withholding the revoke button would not be enough
- * (ruling 9).
+ * to admit staff, so withholding the revoke button would not be enough.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -481,7 +480,7 @@ describe("a convenor sees the roster, the children and the codes", () => {
 // What an instructor sees, and does not
 // ---------------------------------------------------------------------------
 
-describe("an instructor sees what ruling 9 allows and not more", () => {
+describe("an instructor sees what an instructor may see and not more", () => {
   async function seedCoInstructorCourse() {
     const convenor = await seedUser("prof");
     const course = await seedProject(convenor, { kind: "course" });
@@ -536,7 +535,7 @@ describe("a suppressed child is reachable from here", () => {
     session.activeProjectId = course;
 
     // The precondition, established rather than assumed: this is exactly
-    // the pair ruling 25 suppresses, and the course itself is not.
+    // the pair that is suppressed, and the course itself is not.
     expect(
       isSuppressedFromProjectLists({ userRole: "instructor", parent_project_id: course }),
     ).toBe(true);
@@ -573,7 +572,7 @@ describe("remove-site", () => {
     expect(rows.some((r) => r.project_id === child && r.role === "instructor")).toBe(false);
   });
 
-  it("is open to an instructor member, per ruling 9", async () => {
+  it("is open to an instructor member", async () => {
     const convenor = await seedUser();
     const course = await seedProject(convenor, { kind: "course" });
     const ta = await seedUser();

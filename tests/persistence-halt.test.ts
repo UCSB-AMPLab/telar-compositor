@@ -28,7 +28,7 @@
  * proves nothing about workerd's storage or D1: that is
  * `tests/workers/persistence-halt.test.ts`.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -2145,7 +2145,7 @@ describe("a message whose enforcement fails reaches no peer", () => {
     // The boundary itself, traced: the fence marks where it ran and queues a
     // microtask from inside the same synchronous stretch, and the drain marks
     // where it ran. An await anywhere between them lets the microtask run
-    // first, which is exactly what F1 forbids.
+    // first, which is exactly what the no-await rule forbids.
     const realFence = harness.internals.socketMayReachDocument.bind(harness.internals);
     let fences = 0;
     harness.internals.socketMayReachDocument = (ws: unknown) => {

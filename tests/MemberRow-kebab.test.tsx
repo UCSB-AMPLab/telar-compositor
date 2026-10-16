@@ -7,7 +7,7 @@
  * Tests: always-visible icon, dropdown open/close, Remove callback,
  * defence-in-depth isConvenor guard, outside-click dismissal.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -76,7 +76,7 @@ describe("MemberRow kebab menu", () => {
 
   // ---------------------------------------------------------------------
   // Instructor rows — the kebab shows only on the course project itself
-  // (design §5: course-management, including removing staff, belongs to
+  // (course-management, including removing staff, belongs to
   // the course project's own member list; instructor membership on a
   // child is tied to the course and can only end by leaving it).
   // ---------------------------------------------------------------------

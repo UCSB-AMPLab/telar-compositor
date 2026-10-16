@@ -24,7 +24,7 @@
  * instant its key is overwritten, so the content comes back only through the
  * snapshot. Every test below asserts the CONTENT, never merely the type.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -254,7 +254,7 @@ describe("an element that is not a Y.Map", () => {
   });
 
   it("leaves an inherited non-map standing", () => {
-    // Removing one would be the load-time repair the 28 August ruling took
+    // Removing one would be the load-time repair that was taken
     // out, in a new place: this guard refuses what a transaction WRITES, and
     // an inherited value was written by nobody it can refuse. It is the
     // detector's, and the reconciler already declines to sweep a table while

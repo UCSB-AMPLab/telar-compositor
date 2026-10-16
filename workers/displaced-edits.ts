@@ -44,9 +44,9 @@
  * edit depends on a re-render the correction may not trigger. A client that is
  * offline or reconnecting can hold the displaced container longer still and
  * submit edits addressed to it through a later sync, outside any window this
- * measure states. Both are accepted residuals of the ruling, not defects.
+ * measure states. Both are accepted residuals, not defects.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import * as Y from "yjs";

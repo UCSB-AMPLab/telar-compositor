@@ -764,7 +764,7 @@ function unreadableReason(...sides: Array<CanonicalStory | null>): UnreadableRea
 type Classified = StoryContentChange | "none" | "editor-only";
 
 /**
- * One D1 story, classified from its compare forms (design §3):
+ * One D1 story, classified from its compare forms:
  * - HEAD equal to D1: nothing, whoever changed what;
  * - with a base: GitHub only (listed, accepted by default), the Compositor
  *   only (not listed), both (a conflict, resolved for the whole story); a step
@@ -842,7 +842,7 @@ async function editedSinceBase(
 
 /**
  * The step and layer files of the stories a sync concerns, compared across
- * the recorded base, HEAD and D1 (design §1, §3), every read at the one HEAD
+ * the recorded base, HEAD and D1, every read at the one HEAD
  * commit (or the base) it is given and strict: an absent file is absent, and
  * any other failure makes the check inconclusive, never a value. A story
  * whose files were read and cannot be understood is listed as unreadable.

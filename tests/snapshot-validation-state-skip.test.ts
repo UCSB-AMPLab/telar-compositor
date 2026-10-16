@@ -1,5 +1,5 @@
 /**
- * R4: `_validation_state` must not let a client park a row outside
+ * `_validation_state` must not let a client park a row outside
  * reconciliation.
  *
  * The objects pipeline skips a row whose `_validation_state` is `"pending"`, so
@@ -20,7 +20,7 @@
  * `_validation_state`. The skip is NOT widened to `"error"` — those rows
  * already persist today, and this file pins that they continue to.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

@@ -160,7 +160,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // projects. Returned on BOTH loader paths.
   //
   // Not the caller's full membership set: a child site the caller holds only
-  // an instructor row on is left out (ruling 18). Nothing here decides
+  // an instructor row on is left out. Nothing here decides
   // access — the active project is resolved from the full set below, so the
   // project on screen may well be one this list does not name.
   let allProjects: Array<{
@@ -190,9 +190,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   let sidebarSeats = { used: 0, limit: 5 };
   // True when the active project IS a course project (kind === "course") —
   // as opposed to an ordinary site, whether or not it's enrolled in one.
-  // Drives MemberRow's kebab visibility for instructor rows (design §5:
-  // course-management, including staff removal, belongs to the course
-  // project's own member list, never a child's).
+  // Drives MemberRow's kebab visibility for instructor rows (course-management, including
+  // staff removal, belongs to the course project's own member list, never a
+  // child's).
   let sidebarIsCourseProject = false;
   // Whether to offer the Course tab. The screen is reachable only from here,
   // so without it a course could be created and then never run.
@@ -257,7 +257,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
       // Suppression is applied here and nowhere else in this loader: the
       // switcher is a list, and everything below still resolves the active
-      // project from the full membership set (ruling 22).
+      // project from the full membership set.
       allProjects = listableProjects(userProjects).map((p) => ({
         id: p.id,
         github_repo_full_name: p.github_repo_full_name,
@@ -345,9 +345,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         contributions: m.contributions ? JSON.parse(m.contributions) : null,
       }));
       // Seat figure: convenor + collaborators against the display-only
-      // limit of five, instructor rows excluded (design §3 — "the seat
-      // display keeps its current form ... with instructor rows excluded
-      // from the count").
+      // limit of five, instructor rows excluded from the count.
       sidebarSeats = {
         used: memberRows.filter((m) => m.role !== "instructor").length,
         limit: 5,

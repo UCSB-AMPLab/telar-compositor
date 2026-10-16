@@ -501,7 +501,7 @@ describe("parseTelarCsv", () => {
       });
 
       // Whether the import keeps one, refuses the sheet, or keeps both is
-      // awaiting a ruling. Until then it keeps the last column claiming the
+      // undecided. Until then it keeps the last column claiming the
       // name, drops the others, and warns naming every column.
       it("keeps the last by default when both hold values, and warns naming both", () => {
         const { rows, warnings } = parseObjects(

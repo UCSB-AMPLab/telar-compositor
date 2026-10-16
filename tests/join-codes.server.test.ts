@@ -15,7 +15,7 @@
  * `joined_via_invite_id` and the `used_at` consumed flag are exercised as
  * SQL rather than as assertions about SQL.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -1244,7 +1244,7 @@ describe("admission records", () => {
       childProjectId: child,
       userId: convenor,
     });
-    // The admission record goes missing — the partial failure R6 names.
+    // The admission record goes missing — a partial failure.
     await db
       .update(project_members)
       .set({ joined_via_invite_id: null })

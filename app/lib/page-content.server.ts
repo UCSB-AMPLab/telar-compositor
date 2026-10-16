@@ -183,7 +183,7 @@ export interface PageFileChange {
   inMenu?: boolean;
 }
 
-/** A page file GitHub added, taken by every accept (R2, R6, R7). */
+/** A page file GitHub added, taken by every accept. */
 export interface PageAddition {
   name: string;
   slug: string;
@@ -198,7 +198,7 @@ export interface PageAddition {
 /**
  * The page-file part of the change check: the pages whose file differs, the
  * page files on one side only, and the record the head would carry with
- * nothing applied (`record`: every addition with no page, R5); or why the
+ * nothing applied (`record`: every addition with no page); or why the
  * files could not be read to a conclusion, in which case the site stays
  * divergent and nothing of it is offered.
  *
@@ -238,7 +238,7 @@ export interface PageCheckInput extends RepoAccess {
   unreadable?: SheetWarning[];
   /** The page files record as stored (A); null or absent for none. */
   record?: PageFilesRecord | null;
-  /** The last publish's `page_slugs`, read only while there is no record (R9). */
+  /** The last publish's `page_slugs`, read only while there is no record. */
   publishedSlugs?: readonly string[];
 }
 
@@ -472,7 +472,7 @@ interface FileScope {
   headFiles: Map<string, string>;
   baseFiles: Map<string, string> | null;
   byId: Map<number, PageCheckD1Page>;
-  /** Over no record, the files the last publish's `page_slugs` names (R9). */
+  /** Over no record, the files the last publish's `page_slugs` names. */
   published: Set<string>;
 }
 
@@ -539,8 +539,8 @@ async function recordedPageReading(scope: FileScope, name: string, id: number): 
 
 /**
  * A file no page holds, read by B's rows after the held page: the record's
- * page, the record's file with no page (R5), the old file of a page renamed
- * or deleted here over no record (R9), or an addition (R6, R7), which a lossy
+ * page, the record's file with no page, the old file of a page renamed
+ * or deleted here over no record, or an addition, which a lossy
  * read leaves out of the record.
  */
 async function unheldReading(scope: FileScope, name: string): Promise<FileReading> {

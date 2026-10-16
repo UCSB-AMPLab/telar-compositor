@@ -158,7 +158,7 @@ export const ROW_ID_KEY = "_id";
  * Y.Map key holding the object's slug. DO-owned on marked objects: it gates
  * the reorder exemption and is the key the DO's dedupe collapses objects on,
  * so a client able to rewrite it can aim the replacement sweep at content it
- * has no right to delete. Per design §6 the slug belongs to the course; the
+ * has no right to delete. The slug belongs to the course; the
  * group catalogues title, creator and credit.
  */
 export const SLUG_KEY = "object_id";
@@ -175,7 +175,7 @@ export const SLUG_KEY = "object_id";
  * place, no delete involved, after which that child shows something the course
  * never published while still presenting it as the course's object. The group
  * still catalogues title, creator and credit; that drift is the editing freedom
- * design §6 grants, and this is the line it stops at.
+ * the group has, and this is the line it stops at.
  */
 export const SOURCE_URL_KEY = "source_url";
 
@@ -562,8 +562,8 @@ export interface CanDeleteDeps {
    * would add on top is redundant transmission of a packet that changes
    * nothing once applied after the correction, not a second application of
    * the refused state — so its loss costs nothing a peer that DID receive the
-   * broadcast needs. F1 governs it — the call sits between an apply and a
-   * relay with no await between them, so it may only set a flag.
+   * broadcast needs. The call sits between an apply and a relay with no await
+   * between them, so it may only set a flag.
    */
   noteRevert?: () => void;
   /**
@@ -1550,8 +1550,7 @@ export function readCourseMarker(
  * scan must stay a single key read per object and nothing more.
  *
  * The scan covers `objects` only, while the passes it gates walk every
- * protected array. That is sound while markers exist only on objects
- * (design §6): a marker on stories, glossary or pages would need this gate
+ * protected array. That is sound while markers exist only on objects: a marker on stories, glossary or pages would need this gate
  * widened to match, or a convenor could strip it unsnapshotted.
  *
  * Reads the root through `share` first: `getArray` CREATES an absent root,

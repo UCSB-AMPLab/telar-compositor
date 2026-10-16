@@ -3,7 +3,7 @@
  * compositor serves is registered here, grouped into API routes,
  * unauthenticated routes, and the authenticated `_app` shell.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { type RouteConfig, index, layout, route } from "@react-router/dev/routes";
@@ -90,7 +90,7 @@ export default [
     // /contributions, reached from the sidebar and not from the tab bar.
     route("/team", "routes/_app.team.tsx"),
     route("/account", "routes/_app.account.tsx"),
-    // Course management (ruling 16). One path, no project id: the course
+    // Course management. One path, no project id: the course
     // is the session's active project, so a caller cannot name someone
     // else's. Its own action handles remove-site; the join-code intents
     // stay on /dashboard, where they are already gated.

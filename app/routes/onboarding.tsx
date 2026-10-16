@@ -657,7 +657,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         ? pagesUrl.replace(/\/+$/, "")
         : null;
       // The record of the page files, derived from the folder at the new head
-      // and D1 (R4); left as it is when the folder cannot be read.
+      // and D1; left as it is when the folder cannot be read.
       const pageFilesJson = await onboardingRecordJson(env.DB, projectId, {
         access: { token, owner, repo },
         commit: result.newHeadSha,

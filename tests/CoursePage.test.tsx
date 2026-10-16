@@ -10,7 +10,7 @@
  * server test of /dashboard can see.
  *
  * Two of the assertions are about what is NOT rendered. An instructor gets
- * no instructor-role option in the create form (ruling 9: minting a staff
+ * no instructor-role option in the create form (minting a staff
  * code is staff-list management), and no revoke button on an
  * instructor-role code. The loader withholds such codes from an instructor
  * altogether, so the second is defence in depth — asserted here because a
@@ -21,7 +21,7 @@
  * rows, so it takes its child from the form and its course from the
  * session.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

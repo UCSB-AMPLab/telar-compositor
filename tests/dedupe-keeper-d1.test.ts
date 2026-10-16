@@ -14,7 +14,7 @@
  * a few statements later — so the query moves rather than multiplying. The
  * query-count test below is what holds that promise to account.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -236,7 +236,7 @@ describe("deduplicateYArray — keeper comes from D1", () => {
     // The keeper is the persisted copy however late it sits — keeping the
     // unsaved one would re-key the entity and orphan-delete its D1 row. The
     // loser is unsaved rather than unreal, so it keeps its content under a
-    // fresh key (R2-2).
+    // fresh key.
     expect(survivors).toHaveLength(2);
     expect(survivors.find((m) => m.get("object_id") === "unsaved")!.get("_id")).toBe(7);
     const pending = survivors.find((m) => m.get("_id") === null)!;

@@ -8,7 +8,7 @@
  * of `tests/unit/test_glossary_links.py` and every input whose output the
  * last change moved, input to output.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { describe, expect, it } from "vitest";
 import { linkTextRegions, resolveGlossaryLinks } from "~/lib/glossary-links";
@@ -53,7 +53,7 @@ const AFTER_TEXT_ONLY: ReadonlyArray<readonly [string, string]> = [
   ["<script>x</script>\n\n<p>[[iiif]]</p>", "<script>x</script>\n\n<p>{LINK}</p>"],
 ];
 
-const R7: ReadonlyArray<readonly [string, string]> = [
+const MIXED_MARKUP_CASES: ReadonlyArray<readonly [string, string]> = [
   ['<div><script><a>[[iiif]]</script> [[iiif]]</div>\n\n', '<div><script><a>[[iiif]]</script> {LINK}</div>\n\n'],
   ['<div><style><a>[[iiif]]</STYLE > [[iiif]]</div>', '<div><style><a>[[iiif]]</STYLE > {LINK}</div>'],
   ['<div><textarea><a>[[iiif]]</textarea> [[iiif]]</div>', '<div><textarea><a>[[iiif]]</textarea> {LINK}</div>'],
@@ -152,8 +152,8 @@ describe("a term in text-only content", () => {
   });
 });
 
-describe("every input whose output the last change moved", () => {
-  it.each(R7)("%j -> %j", (text, expected) => {
+describe("markup mixed with raw-text elements and IIIF links", () => {
+  it.each(MIXED_MARKUP_CASES)("%j -> %j", (text, expected) => {
     expect(glossaryPassOf(text)).toBe(expand(expected));
   });
 });

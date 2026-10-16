@@ -14,7 +14,7 @@
  * workstream, and the enforcement pass must hold regardless of how the marker
  * arrived in the document.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -265,7 +265,7 @@ describe("collaboration DO — reverting a course item leaves persisted neighbou
     // unsaved copy — its documented non-null-`_id` preference, which is what
     // keeps D1 row 300 out of the orphan sweep. The restored victim loses the
     // slug, not its content: an unsaved entity is work in progress, so it is
-    // re-keyed rather than dropped (R2-2).
+    // re-keyed rather than dropped.
     const survivors = ydoc.getArray<Y.Map<unknown>>("objects").toArray();
     expect(survivors.length).toBe(2);
     const persisted = survivors.find((m) => m.get("_id") === 300)!;

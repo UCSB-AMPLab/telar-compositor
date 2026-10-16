@@ -9,7 +9,7 @@
  * refused until the instance in front of the author is demonstrably the one the
  * source state describes.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -345,7 +345,7 @@ describe("ViewerColumn — position through the image, zoom in the authoring fra
   });
 });
 
-describe("ViewerColumn — the visitor's view either side of zoom 1 (ruling 17)", () => {
+describe("ViewerColumn — the visitor's view either side of zoom 1", () => {
   it("restores a framing above zoom 1 at the stored point, as the site puts it", async () => {
     await renderColumn(buildColumn, {
       step: step({ object_id: "codex", page: "1", x: 0.2, y: 0.8, zoom: 1.5 }),

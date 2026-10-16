@@ -15,7 +15,7 @@
  * the same index permutations are asserted here against `reorderByOrderKey`,
  * which changes the list's order without removing anything from the array.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -138,7 +138,7 @@ describe("reorderByOrderKey — the same index permutations, without a delete", 
 // The course-item clause is checked before the role clause: a marked object
 // is undeletable for everyone, convenor included, so the forbidden delete is
 // refused in the UI rather than applied, reverted by the DO and — on the
-// third attempt in a minute — punished with a closed socket (design §6).
+// third attempt in a minute — punished with a closed socket.
 // ---------------------------------------------------------------------------
 
 function objectMap(fields: Record<string, unknown>): Y.Map<unknown> {

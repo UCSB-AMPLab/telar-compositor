@@ -2,7 +2,7 @@
  * Authorization tests for the config route's action — the approved split.
  *
  * `_app.config` posts the whole site configuration in one form, but the fields
- * do not share one standing. Ruling 6 (2026-08-27) draws the line at anything
+ * do not share one standing. The line falls at anything
  * that changes where the site lives, how it is built, or where its data comes
  * from: `url`, `baseurl`, `story_key`, `google_sheets_enabled`,
  * `google_sheets_published_url` and `include_demo_content` are the convenor's;
@@ -23,7 +23,7 @@
  * hands back the role — so the role it returns is what the gate must read.
  * Instructors carry a collaborator's editorial rights and no more.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

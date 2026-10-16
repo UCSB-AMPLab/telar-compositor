@@ -15,7 +15,7 @@
  * Both derivations MUST NOT introduce a new DB query — the existing
  * projectRows call is the single source of truth.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -302,8 +302,8 @@ describe("/account loader — delete-account derivations", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Instructor rows in the caller's OWN project list (design §3 census:
-  // "the danger zone's collaborator-positive count filter"). The filter is
+  // Instructor rows in the caller's OWN project list (the danger zone's
+  // collaborator-positive count filter). The filter is
   // `userRole === "collaborator"`, so an instructor-role membership is
   // already excluded by construction — this pins that as intentional
   // behaviour rather than an accidental omission that could regress.

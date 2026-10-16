@@ -22,7 +22,7 @@
  * terminator and the record's own position in the file come from that parse,
  * so a delete the importer can account for goes through.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -566,7 +566,7 @@ describe("removeObjectRecord — identity comes from the importer", () => {
   });
 
   // Whether the import keeps one, refuses the sheet, or keeps both is
-  // awaiting a ruling; until then the last column keeps the name, and a
+  // undecided; until then the last column keeps the name, and a
   // delete reads the id where the importer does.
   it("reads the id from the last column when both hold values, as a deletion keeps the last", () => {
     const csv = "object_id,title,id_objeto\nobj-1,A,obj-2\nx,B,obj-1\n";

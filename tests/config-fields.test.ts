@@ -1,7 +1,7 @@
 /**
  * The approved convenor-only config split, as a table.
  *
- * Ruling 6 (2026-08-27) draws the line at anything that changes where the
+ * The line falls at anything that changes where the
  * site lives, how it is built, or where its data comes from. Six fields fall
  * on the convenor's side of it; everything else in `project_config` stays
  * collaborator-writable, matching what a member can already reach through the
@@ -12,7 +12,7 @@
  * writable by default, and moving it across the line is a decision, not a
  * refactor.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -44,7 +44,7 @@ const COLLABORATOR_WRITABLE = [
 ];
 
 describe("the convenor-only config field list", () => {
-  it("is exactly the six fields ruling 6 names", () => {
+  it("is exactly the six convenor-only fields", () => {
     expect([...CONVENOR_ONLY_CONFIG_FIELDS].sort()).toEqual([
       "baseurl",
       "google_sheets_enabled",
@@ -55,7 +55,7 @@ describe("the convenor-only config field list", () => {
     ]);
   });
 
-  it("does not claim any field ruling 6 leaves with collaborators", () => {
+  it("does not claim any field left with collaborators", () => {
     for (const field of COLLABORATOR_WRITABLE) {
       expect(isConvenorOnlyConfigField(field), `${field} is not convenor-only`).toBe(false);
     }

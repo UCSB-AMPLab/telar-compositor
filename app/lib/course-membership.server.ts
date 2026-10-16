@@ -10,7 +10,7 @@
  * websocket. This module is that second half. The boundary is: join-codes owns
  * the token and the parent link; this owns the consequences.
  *
- * The consequences are three (design §5). A newly attached child receives the
+ * The consequences are three. A newly attached child receives the
  * course's collection (`course-preload.server.ts` does the transfer). The
  * course's teaching staff — its convenor plus its instructor-role members —
  * become `instructor` members of the child, so every instructor is in a group
@@ -59,7 +59,7 @@
  * settled the outcome, and a Durable Object outage must not flip it. They are
  * reported rather than thrown so a caller can log what did not close.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -80,7 +80,7 @@ type DbInstance = ReturnType<typeof getDb>;
 export type CourseMembershipEnv = CoursePreloadEnv;
 
 /**
- * Roles on a course project that make a person teaching staff (design §5) —
+ * Roles on a course project that make a person teaching staff —
  * the convenor and the instructor members, and nothing else.
  *
  * Declared once and interpolated raw, because the two statements that read it
@@ -162,7 +162,7 @@ function assertUserId(value: number): number {
  * The course's teaching staff: its convenor plus its instructor members.
  *
  * A `collaborator` row on a course project is deliberately not staff. Course
- * membership is staff only (ruling 10), so such a row is an anomaly rather than
+ * membership is staff only, so such a row is an anomaly rather than
  * a standing, and copying it down would put a student in every group site.
  */
 export async function listCourseStaff(
@@ -556,11 +556,11 @@ export interface DetachResult {
 }
 
 /**
- * Take one child out of a course: the leave sequence of design §5, whole.
+ * Take one child out of a course: the whole leave sequence.
  *
  * The routes that reach it — a convenor leaving from settings, an instructor
- * removing a site, a course being deleted — belong to F2, which calls this
- * rather than restating a five-step order in three places.
+ * removing a site, a course being deleted — call this rather than restating a
+ * five-step order in three places.
  *
  * The order is not arrangeable. Markers first: clearing them is a Y.Doc
  * mutation with an immediate snapshot flush, and the route answers 200 only

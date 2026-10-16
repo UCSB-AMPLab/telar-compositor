@@ -16,7 +16,7 @@
  *     /dashboard — no redirect loop).
  *   - The populated/empty state flag (empty = no objects, stories, pages).
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -399,7 +399,7 @@ describe("/start loader — per-step counts + state", () => {
     expect(data.userRole).toBe("collaborator");
   });
 
-  it("excludes instructor rows from collaboratorCount (design §3 — staff, not group size)", async () => {
+  it("excludes instructor rows from collaboratorCount (staff, not group size)", async () => {
     mocks.resolveActiveProjectMock.mockResolvedValue({
       project: { id: 1, github_repo_full_name: "alice/site", created_at: "2024-06-01T00:00:00Z" },
       userRole: "convenor",

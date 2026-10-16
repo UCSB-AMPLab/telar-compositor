@@ -4,7 +4,7 @@
  * `join-codes.server.ts` decides whether a code admits a site and writes the
  * parent link; this module is everything that must follow — the collection
  * preloaded, the staff copied down, the fan-out when staff themselves come and
- * go, and the leave sequence F2's routes call rather than reimplement.
+ * go, and the leave sequence the routes call rather than reimplement.
  *
  * Idempotence is what this suite is for, and it is established by RUNNING the
  * repeat, not by asserting the shape of a statement. The database is real:
@@ -29,7 +29,7 @@
  * precondition would make such a test green whatever the code did, which is why
  * the fan-out cases put their TA on the course.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -522,7 +522,7 @@ describe("applyRedemptionSideEffects", () => {
 
   it("leaves the membership complete when the preload fails, and a re-run finishes the job", async () => {
     // There is no transaction across D1 and the Durable Object, so the repair
-    // for a partial failure is to run it again (design §5). What the failure
+    // for a partial failure is to run it again. What the failure
     // must not do is leave a half-written membership behind for the re-run to
     // trip over.
     const convenor = await seedUser();

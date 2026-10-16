@@ -270,7 +270,7 @@ export async function action({ request, context }: Route.ActionArgs) {
       let removedFiles: string[];
       let servedAt: Record<string, string>;
       // The commit scanned: the recorded head when there is one, so the pages
-      // brought in are those of the commit the Compositor has read (R10).
+      // brought in are those of the commit the Compositor has read.
       let scanCommit: string;
       try {
         const userToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);

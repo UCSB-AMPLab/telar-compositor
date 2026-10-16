@@ -284,8 +284,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       return cancelInvite(db, user.id, Number(formData.get("inviteId")));
 
     case "create-code": {
-      // Issuing a code is running a course, which takes the course password
-      // (ruling 20). Answered before the caller's standing is looked up, so
+      // Issuing a code is running a course, which takes the course password.
+      // Answered before the caller's standing is looked up, so
       // a gate-less caller learns nothing about the project it names.
       requireCourseAccess(user);
 
@@ -410,8 +410,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
 
       // Instructor membership on a child project is tied to the course in
-      // both directions (design §5) — a convenor removing it here would
-      // produce a state the design declares impossible. Only queried when
+      // both directions — a convenor removing it here would
+      // produce a state that cannot exist. Only queried when
       // the target actually is an instructor; the shared check also gates
       // self-service `leave-project` in _app.account.tsx.
       if (

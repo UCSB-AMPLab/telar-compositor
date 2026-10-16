@@ -533,7 +533,7 @@ describe("the accept of the pages GitHub added", () => {
     expect(JSON.parse(headWrite.page_files_json as string)).toEqual({ commit: HEAD, files: { "about.md": 21 } });
   });
 
-  it("records a file the last publish named over no record with no page, and does not take it (R9)", async () => {
+  it("records a file the last publish named over no record with no page, and does not take it", async () => {
     githubAddedTwo();
     const { db, sets } = recordingDb(BASE, [], { project: { snapshot: JSON.stringify({ page_slugs: ["credits"] }) } });
     const sent: SyncIngestPayload[] = [];
