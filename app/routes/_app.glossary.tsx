@@ -3,31 +3,32 @@
  * term editor for the active project's glossary.
  *
  * Left sidebar: a `?q=` filter input above "New term", then the
- * alphabetically sorted term list. Right editor: the term title, an
- * editable rename-aware `term_id`, a "Used in" trace section, the definition
+ * alphabetically sorted term list. Right editor: the term title, the
+ * `term_id` shown locked with a Change ID button, a "Used in" trace section, the definition
  * (a Markdown editor with `[[term]]` chips), and a live themed reader-preview
  * pane.
  *
  * The route stays a thin shell over a set of pure helper libs that carry
  * the real logic: the `?q=` substring filter, the on-demand "Used in"
- * reference index, the slug-lock state machine and uniqueness guard that
- * govern how a `term_id` is derived from (or detached from) the title,
- * and the rename impact panel that counts and rewrites `[[term]]` links
- * across all definitions in a single transaction.
+ * reference index, the uniqueness guard for a `term_id`, and the confirmed ID
+ * change that counts and rewrites `[[term]]` links across all definitions in a
+ * single transaction with the new ID. A term's ID follows its title only while
+ * it is the term this author just created with "New term"; no other title edit
+ * changes an ID.
  *
  * The canvas is cream / charcoal — identity is carried by the chrome and
- * the anil-ink chips rather than a coloured panel. All data reads from
+ * the anil-ink chips rather than a colored panel. All data reads from
  * the Yjs "glossary" Y.Array; structural mutations go through
  * useStructuralOps. Convenor-only affordances (new / rename / delete /
  * quick-create) are role-gated in the UI; the server-side gates remain
  * the real boundary.
  *
- * @version v1.5.1-beta
+ * @version v1.5.5-beta
  */
 
 import { eq } from "drizzle-orm";
 import { redirect, useSearchParams, useOutletContext } from "react-router";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import * as Y from "yjs";
 import { AlertTriangle, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -50,7 +51,7 @@ import { saveGlossaryKinds } from "~/lib/glossary-kinds-save.server";
 import { GlossaryKindSelect, KindCaption, useGlossaryKinds } from "~/components/features/glossary/GlossaryKindSelect";
 import { EditKindsButton, GlossaryKindsDialog } from "~/components/features/glossary/GlossaryKindsDialog";
 import { UsedInPanel } from "~/components/features/glossary/UsedInPanel";
-import { RenameImpactPanel } from "~/components/features/glossary/RenameImpactPanel";
+import { TermIdField } from "~/components/features/glossary/TermIdField";
 import { GlossaryPreviewPane } from "~/components/features/glossary/GlossaryPreviewPane";
 import { DocsLink } from "~/components/ui/DocsLink";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
@@ -59,11 +60,7 @@ import { useIsConvenor } from "~/hooks/use-role";
 import { useToast } from "~/hooks/use-toast";
 import { getYText } from "~/lib/yjs-helpers";
 import { listsTerm, matchesTermFilter } from "~/lib/glossary-filter";
-import {
-  isSlugLocked,
-  effectiveSlug,
-  makeUniqueTermId,
-} from "~/lib/glossary-slug";
+import { makeUniqueTermId } from "~/lib/glossary-slug";
 import {
   buildTermRefIndex,
   countGlossaryLinks,
@@ -215,12 +212,9 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
     [setSearchParams],
   );
 
-  // Rename impact panel state — open only when refs>0 AND the slug changes
-  const [renameImpact, setRenameImpact] = useState<{
-    oldId: string;
-    newId: string;
-    count: number;
-  } | null>(null);
+  // The term this author created with "New term", while it stays selected:
+  // its ID follows its title until the author moves to another term.
+  const newTermMap = useRef<Y.Map<unknown> | null>(null);
 
   // ------------------------------------------------------------------
   // Live Yjs observation — rebuild sorted term list on any change
@@ -343,7 +337,10 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
       if (arr.length > prevLength) {
         const newMap = arr.get(arr.length - 1);
         const newTempId = newMap.get("_temp_id") as string | null;
-        if (newTempId) setSelectedKey(`tmp:${newTempId}`);
+        if (newTempId) {
+          newTermMap.current = newMap;
+          setSelectedKey(`tmp:${newTempId}`);
+        }
       }
     });
   }, [ops, ydoc, t]);
@@ -390,65 +387,41 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
   }, []);
 
   // ------------------------------------------------------------------
-  // Slug write-back: title→term_id auto-derive GATED on the slug lock.
-  // When the term_id still tracks the title (unlocked), a title change
-  // re-derives the slug. When it would change AND existing links point to the
-  // old slug, open the rename impact panel; otherwise apply the slug silently.
-  // When the user has hand-edited term_id (locked), the title no longer
-  // clobbers it.
-  // ------------------------------------------------------------------
-  const applySlug = useCallback(
-    (yMap: Y.Map<unknown>, newSlug: string) => {
-      if (!ydoc) return;
-      ydoc.transact(() => {
-        yMap.set("term_id", newSlug);
-      });
-    },
-    [ydoc],
-  );
-
-  // Evaluate a candidate slug change for the selected term: fire the impact
-  // panel when refs>0 and the slug differs; else apply silently.
-  const evaluateSlugChange = useCallback(
-    (yMap: Y.Map<unknown>, oldId: string, candidate: string) => {
-      if (!ydoc || !isConvenor) return;
-      const unique = makeUniqueTermId(
-        candidate,
-        existingTermIds.filter((id) => id !== oldId),
-      );
-      if (unique === oldId) return; // no effective change
-      const count = countGlossaryLinks(ydoc, oldId);
-      if (count > 0) {
-        setRenameImpact({ oldId, newId: unique, count });
-      } else {
-        applySlug(yMap, unique);
-      }
-    },
-    [ydoc, isConvenor, existingTermIds, applySlug],
-  );
-
-  // Title→slug auto-derive, gated on the lock.
+  // A term's ID follows its title only while the term is new: the one this
+  // author created with "New term", until another term is selected. The
+  // derived ID is applied silently, numbered past the other terms' IDs. Any
+  // other term keeps its ID when its title changes; the ID field changes it.
+  // The map is compared, not the selection key, which changes from `tmp:` to
+  // `id:` when the term saves.
   //
-  // The Y.Text observer fires on every keystroke; evaluating the rename impact
-  // per-keystroke pops/churns the impact panel against a moving `newId` while
-  // the author is still typing. Debounce the evaluation so it runs on a
-  // settled slug — once typing pauses — rather than on every observed change.
-  // The actual slug derive + rewrite behaviour is unchanged.
+  // The Y.Text observer fires on every keystroke, so the write waits for a
+  // pause in typing.
+  // ------------------------------------------------------------------
+  const selectedMap = selectedTerm?.yMap ?? null;
+  const existingIdsRef = useRef(existingTermIds);
+  existingIdsRef.current = existingTermIds;
   useEffect(() => {
-    if (!selectedTerm || !ydoc || !isConvenor) return;
-    const titleYText = selectedTerm.yMap.get("title");
+    if (!selectedMap || !ydoc || !isConvenor) return;
+    const yMap = selectedMap;
+    if (newTermMap.current !== yMap) {
+      newTermMap.current = null;
+      return;
+    }
+    const titleYText = yMap.get("title");
     if (!(titleYText instanceof Y.Text)) return;
-    const yMap = selectedTerm.yMap;
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
     const evaluate = () => {
       const currentTermId = (yMap.get("term_id") as string | undefined) ?? "";
-      const title = titleYText.toString();
-      // Skip the clobber when the slug is locked (hand-edited away from title).
-      if (isSlugLocked(currentTermId, title)) return;
-      const candidate = effectiveSlug(currentTermId, title, false);
-      evaluateSlugChange(yMap, currentTermId, candidate);
+      const unique = makeUniqueTermId(
+        slugifyTermId(titleYText.toString()),
+        existingIdsRef.current.filter((id) => id !== currentTermId),
+      );
+      if (unique === currentTermId) return;
+      ydoc.transact(() => {
+        yMap.set("term_id", unique);
+      });
     };
 
     const onTitleChange = () => {
@@ -461,38 +434,31 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
       if (debounceTimer !== null) clearTimeout(debounceTimer);
       titleYText.unobserve(onTitleChange);
     };
-  }, [selectedTerm, ydoc, isConvenor, evaluateSlugChange]);
+  }, [selectedMap, ydoc, isConvenor]);
 
-  // Direct term_id edit (locks the slug). Evaluates the rename impact too.
-  const handleTermIdInput = useCallback(
-    (raw: string) => {
-      if (!selectedTerm) return;
-      const oldId = selectedTerm.term_id;
-      evaluateSlugChange(selectedTerm.yMap, oldId, raw);
-    },
-    [selectedTerm, evaluateSlugChange],
+  // How many links in the site point to the selected term's current ID. It
+  // reads every text in the site, so it runs only when the ID editor asks.
+  const countSelectedTermLinks = useCallback(
+    () => (ydoc && selectedTerm ? countGlossaryLinks(ydoc, selectedTerm.term_id) : 0),
+    [ydoc, selectedTerm],
   );
 
-  // Rename impact panel actions.
-  const handleRenameUpdate = useCallback(() => {
-    if (!ydoc || !selectedTerm || !renameImpact) return;
-    applySlug(selectedTerm.yMap, renameImpact.newId);
-    const n = rewriteGlossaryLinks(ydoc, renameImpact.oldId, renameImpact.newId);
-    showToast({ type: "info", message: t("rename_done", { count: n }) });
-    setRenameImpact(null);
-  }, [ydoc, selectedTerm, renameImpact, applySlug, showToast, t]);
-
-  const handleRenameKeep = useCallback(() => {
-    if (!selectedTerm || !renameImpact) return;
-    // Apply the slug to THIS term only; leave existing [[old]] links untouched.
-    applySlug(selectedTerm.yMap, renameImpact.newId);
-    setRenameImpact(null);
-  }, [selectedTerm, renameImpact, applySlug]);
-
-  // Clear a stale impact panel when the selection changes.
-  useEffect(() => {
-    setRenameImpact(null);
-  }, [selectedKey]);
+  // The convenor's confirmed ID change: the ID and the links to it move
+  // together in one transaction, so one undo restores both.
+  const handleTermIdChange = useCallback(
+    (newId: string) => {
+      if (!ydoc || !selectedTerm || !isConvenor) return;
+      const oldId = selectedTerm.term_id;
+      newTermMap.current = null;
+      let rewritten = 0;
+      ydoc.transact(() => {
+        selectedTerm.yMap.set("term_id", newId);
+        if (countGlossaryLinks(ydoc, oldId) > 0) rewritten = rewriteGlossaryLinks(ydoc, oldId, newId);
+      });
+      if (rewritten > 0) showToast({ type: "info", message: t("rename_done", { count: rewritten }) });
+    },
+    [ydoc, selectedTerm, isConvenor, showToast, t],
+  );
 
   // ------------------------------------------------------------------
   // Render
@@ -612,7 +578,8 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                   yText={getYText(selectedTerm.yMap, "title")}
                   fieldKey={`glossary-title-${selectedKey}`}
                   placeholder={t("untitled_term")}
-                  inputClassName="font-heading text-xl font-semibold text-charcoal rounded-md border border-gray-200 px-3 py-2 bg-surface hover:border-gray-300 focus:border-anil-deep"
+                  bordered
+                  inputClassName="font-heading text-xl font-semibold text-charcoal"
                 />
 
                 <GlossaryKindSelect
@@ -622,48 +589,22 @@ export default function GlossaryPage({ loaderData }: Route.ComponentProps) {
                   labelAction={<EditKindsButton kinds={kinds} onClick={() => setKindsOpen(true)} />}
                 />
 
-                {/* TERM ID — editable, rename-aware */}
+                {/* TERM ID — locked until the convenor asks to change it */}
                 <div className="mt-4">
-                  <label
-                    htmlFor="glossary-term-id"
-                    className="block font-heading text-xs font-semibold text-fg-muted uppercase tracking-wider mb-2"
-                  >
-                    {t("term_id_section_label")}
-                  </label>
-                  {isConvenor ? (
-                    <input
-                      id="glossary-term-id"
-                      type="text"
-                      defaultValue={selectedTerm.term_id}
-                      key={`term-id-${selectedKey}-${selectedTerm.term_id}`}
-                      onBlur={(e) => handleTermIdInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                      }}
-                      className="font-mono text-xs text-charcoal bg-surface rounded-md border border-gray-200 px-2.5 py-1.5 w-full max-w-xs"
-                    />
-                  ) : (
-                    <p className="font-body text-xs text-fg-muted">
-                      <span className="font-mono text-charcoal">{selectedTerm.term_id || "—"}</span>
-                    </p>
-                  )}
+                  <TermIdField
+                    key={selectedKey}
+                    termId={selectedTerm.term_id}
+                    otherTermIds={existingTermIds.filter((id) => id !== selectedTerm.term_id)}
+                    countLinks={countSelectedTermLinks}
+                    canChange={isConvenor}
+                    onChange={handleTermIdChange}
+                  />
 
                   <GlossaryAddressNotice
                     shared={sharedAddressOf(sharedAddresses, selectedTerm.term_id.trim())}
                     termId={selectedTerm.term_id.trim()}
                     className="mt-2 max-w-md"
                   />
-
-                  {/* Rename impact panel — refs>0 AND slug changes */}
-                  {renameImpact && (
-                    <RenameImpactPanel
-                      count={renameImpact.count}
-                      oldId={renameImpact.oldId}
-                      newId={renameImpact.newId}
-                      onUpdate={handleRenameUpdate}
-                      onKeep={handleRenameKeep}
-                    />
-                  )}
                 </div>
 
 

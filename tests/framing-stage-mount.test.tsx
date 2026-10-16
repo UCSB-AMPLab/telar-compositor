@@ -4,7 +4,7 @@
  * The framing stage as the story editor mounts it: the stage letterboxed at
  * the author's window proportions, the visitor layer scaled onto it, the step
  * card placed by `framing-stage.ts`, and the controls, the ceiling, the word
- * count, the guide tags and the alt-text chip where the rulings put them.
+ * count, the guide tags and the alt-text chip where the layout places them.
  *
  * Every expected rectangle is computed here from the framing-stage functions
  * and the window and content sizes the test sets, and compared with what the
@@ -15,13 +15,13 @@
  * pointer-event contract is checked as the classes and rules that carry it.
  * Dragging the image and the card taking clicks are for the browser pass.
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createRoutesStub, UNSAFE_ErrorResponseImpl } from "react-router";
 import { useState, type ComponentProps } from "react";
 import { createOsdFake, withPoint } from "./helpers/osd-fake";
@@ -907,7 +907,7 @@ describe("focus and keyboard entry into the card", () => {
 describe("the title card and section cards on the stage", () => {
   const sized = () => setSizes({ w: 1440, h: 900 }, { w: 1240, h: 768 });
 
-  it("draws the title card as the story intro in the visitor layer, framing nothing, with its settings above the stage", async () => {
+  it("draws the title card as the story intro in the visitor layer, framing nothing, with its settings in a panel beside the stage", async () => {
     sized();
     await mount(props("image", { stepIndex: 0, step: null }));
     const layer = screen.getByTestId("visitor-layer");
@@ -915,9 +915,12 @@ describe("the title card and section cards on the stage", () => {
     expect(layer.className).toContain("pointer-events-auto");
     expect(screen.queryByTestId("step-card")).toBeNull();
     expect(osd.instances).toHaveLength(0);
-    expect(screen.getByTestId("framing-stage").contains(screen.getByTestId("title-card-settings"))).toBe(false);
-    expect(screen.getByRole("switch", { name: "title_card.show_sections_label" })).toBeTruthy();
-    expect(screen.getByText("title_card.story_id_label")).toBeTruthy();
+    expect(screen.queryByTestId("story-settings")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "story_settings.button" }));
+    const panel = screen.getByTestId("story-settings");
+    expect(screen.getByTestId("framing-stage").contains(panel)).toBe(false);
+    expect(within(panel).getByRole("switch", { name: "story_settings.sections_label" })).toBeTruthy();
+    expect(within(panel).getByText("title_card.story_id_label")).toBeTruthy();
   });
 
   it("draws a section card as the framework's centred card in the visitor layer, framing nothing", async () => {
@@ -929,7 +932,7 @@ describe("the title card and section cards on the stage", () => {
     expect(card.querySelector("h2.title-card-heading")?.textContent).toBe("Notice the head");
     expect(screen.queryByTestId("step-card")).toBeNull();
     expect(osd.instances).toHaveLength(0);
-    expect(screen.queryByTestId("title-card-settings")).toBeNull();
+    expect(screen.queryByTestId("story-settings")).toBeNull();
   });
 
   it("saves a section card's question through the route's step-field save, with no Y.Text", async () => {

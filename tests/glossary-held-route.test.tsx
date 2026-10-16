@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 /**
- * The glossary page with a term in the document whose id publishes none: a term from before the import held such rows aside. The page
- * neither lists it nor opens it in the editor, so the author cannot edit a
- * term the site never shows. "Ghost" sorts before "Telar", so a page that
+ * The glossary page with a term in the document whose id publishes none. The
+ * page neither lists it nor opens it in the editor, so the author cannot edit
+ * a term the site never shows. "Ghost" sorts before "Telar", so a page that
  * listed it would select it first.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -67,7 +67,6 @@ vi.mock("~/components/ui/InlineTextField", () => ({
 }));
 vi.mock("~/components/features/glossary/GlossaryPreviewPane", () => ({ GlossaryPreviewPane: () => null }));
 vi.mock("~/components/features/glossary/UsedInPanel", () => ({ UsedInPanel: () => null }));
-vi.mock("~/components/features/glossary/RenameImpactPanel", () => ({ RenameImpactPanel: () => null }));
 
 vi.mock("~/middleware/auth.server", () => ({ userContext: Symbol("userContext") }));
 vi.mock("~/lib/db.server", () => ({ getDb: () => ({}) }));
