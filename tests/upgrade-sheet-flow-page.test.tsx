@@ -6,11 +6,12 @@
  * its answer back to prepare, the offer to stop reading Google Sheets sends
  * its answer back to prepare, and the done screen, built or failed, shows the
  * report, the switch from Google Sheets and the line that sends the author to
- * the sync, with the post-upgrade steps following the upgrade's own result.
+ * the sync, with the post-upgrade steps following the upgrade's own result;
+ * a refused workflow commit shows what the content commit before it landed.
  *
  * The harness is upgrade-rebuild.test.tsx's.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import React from "react";
@@ -273,6 +274,22 @@ describe("Upgrade page — sheet screens", () => {
   });
 
   it.each([
+    ["a sheet repair", { sheetReport: [REPORT_LINE], advancesHead: true }, 0],
+    ["values the editor does not hold", { sheetReport: [], advancesHead: false }, 0],
+    ["no change to the sheets", { sheetReport: [], advancesHead: true }, 0],
+  ])("never says the sheets keep the full text of an answer (%s)", async (_name, over, count) => {
+    await renderSheetFlowPage();
+    pushSheetFlow(() => {
+      fetchers.upgrade.data = { ...committedWithReport(true), ...over };
+    });
+    pushSheetFlow(() => {
+      fetchers.poll.data = RUN("success");
+    });
+    expect(screen.getByText("answersIntro")).toBeTruthy();
+    expect(screen.queryAllByText("answersSheetsUnchanged")).toHaveLength(count);
+  });
+
+  it.each([
     [true, 1],
     [false, 0],
   ])("says on the done screen that the Google Sheets tabs were checked as they stood (tabsChecked %s)", async (tabsChecked, count) => {
@@ -313,8 +330,8 @@ describe("Upgrade page — sheet screens", () => {
   });
 
   it.each([
-    ["success", "upgradeSuccess"],
-    ["failure", "upgradeLandedBuildFailed"],
+    ["success", /^upgradeSuccess$/],
+    ["failure", /^upgradeLandedBuildFailed /],
   ])("shows the report and the sync line on the done screen after a %s build", async (conclusion, heading) => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {
@@ -392,6 +409,23 @@ describe("Upgrade page — sheet screens", () => {
     });
     expect(screen.getByText("my-story: note, Note").tagName).toBe("LI");
     expect(screen.getByText("objects: title, Title, TITLE").tagName).toBe("LI");
+  });
+
+  it("shows what the content commit landed beside a refused workflow commit, with the sync line when it was not recorded as synced", async () => {
+    await renderSheetFlowPage();
+    pushSheetFlow(() => {
+      fetchers.upgrade.data = {
+        ok: false,
+        intent: "upgrade-commit",
+        error: "insufficient_permissions",
+        reauthUrl: "https://github.com/settings/installations/1",
+        sheetReport: [{ kind: "glossary_language_unconfirmed", sheet: "glossary.csv", term: "telar", file: "telar-content/spreadsheets/glossary.csv" }],
+        advancesHead: false,
+      };
+    });
+    expect(screen.getByText("insufficientPermissions")).toBeTruthy();
+    expect(screen.getByText(/^glossaryLanguageUnconfirmed/).tagName).toBe("LI");
+    expect(screen.getByText("syncNeeded")).toBeTruthy();
   });
 
   it("has no sync line when the upgrade recorded itself as synced", async () => {

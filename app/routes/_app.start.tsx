@@ -34,7 +34,7 @@ async function countUntouchedTemplatePages(
  * slot) is composed in the default export; the rail (activity / recovery)
  * and docs drawer mount into this shell.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 
@@ -193,7 +193,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Convenor identity + collaborator count from member data. The convenor
   // row (role='convenor') joined to users.github_name gives the display
   // name; collaborator_count = members minus the single convenor, minus
-  // any instructor rows (staff, not group size — design §3).
+  // any instructor rows (staff, not group size).
   const memberRows = await db
     .select({
       role: project_members.role,
@@ -206,7 +206,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const convenorRow = memberRows.find((m) => m.role === "convenor");
   const convenorName = convenorRow?.githubName || convenorRow?.githubLogin || "";
-  // Instructor rows are staff, not group size (design §3) — excluded from
+  // Instructor rows are staff, not group size — excluded from
   // the same count everywhere it appears.
   const collaboratorCount = Math.max(
     0,
@@ -273,8 +273,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Other-projects ribbon: already user-scoped + pre-sorted. The
   // page renders it only when populated; the loader always returns the list.
   //
-  // Children an instructor holds only an instructor row on are left out
-  // (ruling 18). The active project above is resolved separately and is not
+  // Children an instructor holds only an instructor row on are left out.
+  // The active project above is resolved separately and is not
   // filtered, so a suppressed child reached by direct URL still opens here.
   const otherProjects = listableProjects(await getUserProjectsWithStats(db, user.id)).map(otherProjectStat);
 

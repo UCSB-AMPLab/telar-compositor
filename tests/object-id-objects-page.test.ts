@@ -8,7 +8,7 @@
  *
  * D1 is the repository's migration chain in memory.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -64,19 +64,10 @@ vi.mock("~/lib/github-status.server", () => ({
   bumpObjectsReadFrom: vi.fn(async () => true),
   bumpProjectHeadFrom: vi.fn(async () => true),
 }));
-vi.mock("~/lib/sync.server", async (orig) => ({
-  ...((await orig()) as Record<string, unknown>),
-  computeSyncDiff: vi.fn(async () => ({
-    newObjects: [{ object_id: "x" }], changedObjects: [], missingObjects: [], unregisteredFiles: [], headSha: "h",
-  })),
-  applySyncChanges: vi.fn(async () => ({ appliedCount: 0, pendingObjects: [], updateSkipped: false, notAdded: [] })),
-  refuseMovedObjectsBase: vi.fn(async () => {}),
-}));
 
 import { action, loader } from "~/routes/_app.objects";
 import { resolveActiveProjectFromRequest } from "~/lib/active-project.server";
 import { gatePageSite } from "~/lib/page-site-gate.server";
-import { computeSyncDiff } from "~/lib/sync.server";
 
 function context() {
   return {
@@ -201,25 +192,6 @@ describe("the objects page", () => {
   it("gives the page the site's framework version", async () => {
     const data = await load();
     expect(data.frameworkVersion).toBe("1.7.0");
-  });
-});
-
-describe("the objects sync, from the objects page", () => {
-  async function post(fields: Record<string, string>) {
-    return action({
-      request: new Request("https://compositor.telar.org/objects", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams(fields).toString(),
-      }),
-      context: context(),
-      params: {},
-    } as never);
-  }
-
-  it("checks the repository on the site's framework version", async () => {
-    await post({ intent: "compute-sync-diff" });
-    expect(vi.mocked(computeSyncDiff).mock.calls[0][8]).toEqual({ d1: "1.7.0" });
   });
 });
 

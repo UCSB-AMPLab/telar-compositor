@@ -3,7 +3,15 @@
  * every table, column, type, and inferred TypeScript model the server
  * code reads or writes flows through here.
  *
- * @version v1.5.0-beta
+ * In `stories`, `steps`, `layers`, `objects`, `glossary_terms`,
+ * `project_config`, `project_pages` and `project_landing`, every column the
+ * collaboration document's snapshot writes (workers/collaboration.ts) has the
+ * document as its source: a direct write to such a column is overwritten by
+ * the next snapshot, so changes to it go through the document. Columns the
+ * snapshot does not write (a story's `source_path`, `extra_columns`, the
+ * config's `telar_version`) are written to D1 directly.
+ *
+ * @version v1.5.5-beta
  */
 
 import { sql } from "drizzle-orm";

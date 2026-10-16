@@ -1,22 +1,22 @@
 /**
  * This file is the /course route — a course's management screen, and the
- * only place a course is run from (ruling 16). Rights over a course are
+ * only place a course is run from. Rights over a course are
  * not folded into surfaces built for sites: they live here.
  *
- * It carries what ruling 16 names. The sites enrolled in the course, read
+ * It carries the sites enrolled in the course, read
  * from `parent_project_id` — the column that IS the enrolment record —
  * each with its members, since a class roster is the union of
  * `project_members` across the children and a query rather than a stored
- * list (design §2). Removal of a site. The course's join codes. And, for
+ * list. Removal of a site. The course's join codes. And, for
  * the convenor alone, the staff list.
  *
  * It is also a navigation surface, which is why it is not optional. A
  * child site is suppressed from the header switcher, the start page and
- * the account card for anyone holding only an `instructor` row on it
- * (rulings 18 and 25), so for a co-instructor this screen is where the
+ * the account card for anyone holding only an `instructor` row on it,
+ * so for a co-instructor this screen is where the
  * children are reachable at all. The site name is the click-through: it
  * posts `switch-project`, which admits a child by id and takes no course
- * password — ruling 22 makes the suppression a listing concern and nothing
+ * password — the suppression is a listing concern and nothing
  * more, and a password on that door would shut the convenience it calls a
  * convenience.
  *
@@ -31,7 +31,7 @@
  * implementation here would be a second gate to keep in step with the
  * first.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useState } from "react";
@@ -109,7 +109,7 @@ interface CourseCode {
  * whether a course exists to someone with no standing on it.
  *
  * `"collaborator"` names the code role being asked about, not the
- * caller's: it is class-code management, the right ruling 9 gives every
+ * caller's: it is class-code management, the right every
  * member of a course's staff. The convenor-only rights are decided from
  * the `role` this returns.
  */
@@ -240,7 +240,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     .from(project_invites)
     .where(eq(project_invites.project_id, course.id));
 
-  // An instructor-role code is the staff list by another door (ruling 9),
+  // An instructor-role code is the staff list by another door,
   // so an instructor is not sent one. Withholding the affordance would not
   // be enough: the token IS the power to admit staff, and a token in the
   // page source is a token a TA can hand on.
@@ -255,7 +255,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       revokedAt: r.revoked_at,
     }));
 
-  // The staff list is the convenor's alone (ruling 16). Read through the
+  // The staff list is the convenor's alone. Read through the
   // shared helper so this screen and the copy-down agree on who staff are;
   // the helper answers with ids, and the names are joined here.
   let staff: RosterMember[] | null = null;
@@ -382,7 +382,7 @@ function CodeRow({
 
   const expiry = formatExpiry(code.expiresAt);
   const revoked = code.revokedAt !== null;
-  // Ruling 9: class codes are every staff member's to revoke, staff codes
+  // Class codes are every staff member's to revoke, staff codes
   // the convenor's alone. Restated here rather than left to the loader's
   // filter, so the rule holds where the affordance is drawn.
   const mayRevoke = code.role === "collaborator" || isConvenor;
@@ -521,7 +521,7 @@ function CreateCodeForm({
           </select>
         </label>
       ) : (
-        // Ruling 9: minting an instructor-role code is staff-list
+        // Minting an instructor-role code is staff-list
         // management, the convenor's alone. The role is posted explicitly
         // rather than omitted, so the request says what it is asking for.
         <input type="hidden" name="role" value="collaborator" />
@@ -548,7 +548,7 @@ function ChildRow({ child }: { child: CourseChild }) {
   return (
     <li className="border-b border-gray-200 py-4 last:border-b-0">
       <div className="flex flex-wrap items-center gap-3">
-        {/* The site name is the click-through (ruling 22). It posts
+        {/* The site name is the click-through. It posts
             `switch-project`, which admits a child by id — the only door a
             suppressed child has, and deliberately not password-gated. */}
         <Form method="post" action="/dashboard">
@@ -615,7 +615,7 @@ export default function CoursePage({ loaderData }: Route.ComponentProps) {
       </h1>
       <p className="font-body text-sm text-charcoal/70">{course.title}</p>
 
-      {/* The staff list, for the convenor alone (ruling 16). It sits under
+      {/* The staff list, for the convenor alone. It sits under
           the course's own name because that is whose staff it is. */}
       {staff !== null && (
         <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">

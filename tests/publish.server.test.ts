@@ -1,20 +1,19 @@
 /**
- * This file pins unit tests for `app/lib/publish.server.ts` — the
- * Telar Compositor publish library that serialises D1 state into the
- * CSV + markdown bundle the Jekyll site consumes.
+ * Unit tests for `app/lib/publish.server.ts`, the library that serializes
+ * D1 state into the CSV and markdown files the Jekyll site reads.
  *
- * Tests cover:
- *   - serializeProjectCsv: CSV header, bilingual row, draft omission, private mapping, ordering
- *   - serializeStoryCsv: CSV header, bilingual row, empty step skipping, layer filename cells
- *   - layerFilename: slug-prefixed names with title-based and step/layer fallback
- *   - layerFileContent: frontmatter + body, no-frontmatter pass-through
- *   - updateConfigFields: line-based YAML mutation, comment preservation, append missing
- *   - computeChangeSummary: first-time publish, no-change, entity classification
- *   - runPrePublishValidation: stale head blocker, missing-title warning, no-position warning
- *   - storyPathsForPublish + computeStoryDeletions: draft round-trip + hard-delete cleanup
- *   - publish defensive gate: v1.2.1 frontmatter literals are stripped at publish time
+ * They pin the project and story CSV serializers (header and bilingual row,
+ * draft omission, the private mapping, ordering, empty steps, the layer
+ * filename cells), `layerFilename` and `layerFileContent`, the navigation
+ * file and the page and glossary files, the line-based YAML edit of
+ * `updateConfigFields` that keeps comments, the change summary and the entity
+ * hashes it compares, and the pre-publish validation: the blockers and
+ * warnings it raises, and the head state (current, stale, a first publish, or
+ * a head that could not be read). They also pin which story and page files a
+ * publish deletes, and that a publish strips frontmatter literals carried over
+ * from older sites.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -47,6 +46,7 @@ import {
   buildConfigManagedBlocks,
   buildConfigChangeFields,
   computeChangeSummary,
+  publishHeadState,
   runPrePublishValidation,
   buildNavigationYml,
   serializeGlossaryCsv,
@@ -2756,6 +2756,21 @@ describe("runPrePublishValidation", () => {
 
   it("returns no blockers when SHAs match", () => {
     const result = runPrePublishValidation(validParams);
+    expect(result.blockers).toHaveLength(0);
+  });
+
+  it("raises no head blocker for a first publish while GitHub is at the import's commit", () => {
+    const result = runPrePublishValidation({ ...validParams, headSha: null, importCommit: "abc123" });
+    expect(result.blockers).toHaveLength(0);
+  });
+
+  it("returns stale_head with no head recorded when GitHub moved since the import", () => {
+    const result = runPrePublishValidation({ ...validParams, headSha: null, importCommit: "imported-sha" });
+    expect(result.blockers.map((b) => b.code)).toContain("stale_head");
+  });
+
+  it("raises no head blocker when GitHub's head could not be read", () => {
+    const result = runPrePublishValidation({ ...validParams, currentRepoHead: null });
     expect(result.blockers).toHaveLength(0);
   });
 
@@ -6488,5 +6503,25 @@ describe("a title the parser has to resolve", () => {
     rows[0].layer1_content = `---\nseed: &x Hello\ntitle: *x\n${TAG}\n---\n\nBody.`;
     const { layers } = mapStoryCsv(rows, 1);
     expect(layers[0]?.title).toBe("Hello");
+  });
+});
+
+describe("publishHeadState", () => {
+  it("is current at the recorded head, and stale anywhere else", () => {
+    expect(publishHeadState("a", null, "a")).toBe("current");
+    expect(publishHeadState("a", null, "b")).toBe("stale");
+    // A recorded head is the base whatever import commit is passed.
+    expect(publishHeadState("a", "b", "b")).toBe("stale");
+  });
+
+  it("is a first publish with no head recorded, while GitHub is at the import's commit or none is recorded", () => {
+    expect(publishHeadState(null, "i", "i")).toBe("first_publish");
+    expect(publishHeadState(null, null, "x")).toBe("first_publish");
+    expect(publishHeadState(null, "i", "x")).toBe("stale");
+  });
+
+  it("is unchecked when GitHub's head could not be read, whatever is recorded", () => {
+    expect(publishHeadState("a", null, null)).toBe("unchecked");
+    expect(publishHeadState(null, "i", null)).toBe("unchecked");
   });
 });

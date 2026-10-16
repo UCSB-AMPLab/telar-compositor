@@ -3,7 +3,7 @@
  * `kind` choice reaches the `projects` row, and that a course's two config
  * defaults land in D1 at creation.
  *
- * Ruling 23 puts `collection_mode` and `skip_stories` in `project_config`
+ * `collection_mode` and `skip_stories` are set in `project_config`
  * only — they reach `_config.yml` at the next publish — so the assertions
  * are on the D1 insert and on the absence of any repo write. The defaults
  * are written over whatever the repo's `_config.yml` said, because the
@@ -15,7 +15,7 @@
  * depending on what the repo holds, and a sequential mock silently binds
  * the test to that count.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

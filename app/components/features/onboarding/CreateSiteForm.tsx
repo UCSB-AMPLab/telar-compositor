@@ -23,14 +23,14 @@
  * Only the first of those two is gated. A session that has not answered the
  * course password is offered no course choice and the prompt instead; the
  * class code is offered regardless, because entering one is joining a course
- * rather than running one (ruling 20). Hiding the choice is presentation —
+ * rather than running one. Hiding the choice is presentation —
  * the import action refuses a course on its own standing, so a form posting
  * one anyway gains nothing.
  *
  * Theme token: uses the `anil` accent (matches existing
  * `StepConnect` usage).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";

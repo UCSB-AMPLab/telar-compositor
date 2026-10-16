@@ -3,14 +3,14 @@
  * sentence each, in a collapsible amber list.
  *
  * Shared by every screen that reads a sheet: the import's review step, the
- * objects sync dialog, the full sync dialog and the Start page's orphan
- * restore, and the Pages tab's import. Each `SheetWarning` is written from
+ * full sync dialog and the Start page's orphan restore, and the Pages tab's
+ * import. Each `SheetWarning` is written from
  * `common:sheet_warnings.<code>` with its fields and its sheet, so the reader
  * sees the sentence in their own language and knows which sheet to open. A
  * file with unreadable characters gets two sentences: what the site does with
  * it, then what repairs it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useState } from "react";

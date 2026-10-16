@@ -20,14 +20,14 @@
  * reported as an outcome on the import result rather than thrown.
  *
  * Only one of those two is gated. Creating a course is running one, so it
- * takes the course password (ruling 20); redeeming a class code is joining
+ * takes the course password; redeeming a class code is joining
  * one, and a student who has never seen the app cannot be asked for a
  * password on top of their code. The loader reports whether this session has
  * answered it so the form knows what to offer, and the action refuses a
  * course outright when it has not — the loader flag is what the browser is
  * shown, never what the decision rests on.
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import { redirect } from "react-router";
@@ -513,20 +513,24 @@ export async function action({ request, context }: Route.ActionArgs) {
     const projectId = Number(formData.get("project_id"));
     const db = getDb(env.DB);
 
-    // The refusal is the payload an unknown project already produces, so a
-    // caller with no standing learns neither the repo's name nor whether the
-    // id is real.
+    // A check that did not run is never answered `ok`: the wizard completes
+    // onboarding on `ok`. Only the project's convenor reaches this step (the
+    // loader lists the caller's own projects, and the import makes its caller
+    // the convenor), so any other caller, and an id with no project, get the
+    // same refusal, which reports neither the repo's name nor whether the id
+    // is real.
     if (!(await callerConvenes(db, projectId, user.id))) {
-      return { ok: true, intent: "check-site-config", sheetsEnabled: false, urlMismatch: null };
+      return { ok: false as const, intent: "check-site-config" as const, error: "not_found" as const };
     }
 
     const project = await db.select().from(projects).where(eq(projects.id, projectId)).get();
-    if (!project) return { ok: true, intent: "check-site-config", sheetsEnabled: false, urlMismatch: null };
+    if (!project) return { ok: false as const, intent: "check-site-config" as const, error: "not_found" as const };
 
     const [owner, repo] = project.github_repo_full_name.split("/");
 
     const configContent = await getFileContent(token, owner, repo, "_config.yml");
-    if (!configContent) return { ok: true, intent: "check-site-config", sheetsEnabled: false, pagesNotEnabled: false, urlMismatch: null };
+    // A file that could not be read says nothing about the site's settings.
+    if (!configContent) return { ok: false as const, reason: "unreachable" as const, intent: "check-site-config" as const };
 
     const { isGoogleSheetsEnabled } = await import("~/lib/commit.server");
     const sheetsEnabled = isGoogleSheetsEnabled(configContent);
@@ -543,14 +547,16 @@ export async function action({ request, context }: Route.ActionArgs) {
     // A Pages read that failed says nothing about whether Pages is on.
     if (urlCheck.readFailed) return { ok: false as const, reason: "unreachable" as const, intent: "check-site-config" as const };
 
+    // A refused Pages read (401 or 403) is a check that did not run: it says
+    // nothing about whether Pages is on or where the site is published, and
+    // the App's permission for Pages is what must change before it can.
+    if (urlCheck.readRefused) return { ok: false as const, reason: "pages_refused" as const, intent: "check-site-config" as const };
+
     return {
       ok: true,
       intent: "check-site-config",
       sheetsEnabled,
-      // A refused read (401 or 403) says nothing about whether Pages is on,
-      // and enabling it would be refused the same way, so the Pages step is
-      // not offered.
-      pagesNotEnabled: !urlCheck.pagesEnabled && !urlCheck.readRefused,
+      pagesNotEnabled: !urlCheck.pagesEnabled,
       urlMismatch: urlCheck.pagesEnabled && !urlCheck.match ? { pagesUrl: urlCheck.pagesUrl, configUrl: urlCheck.configUrl } : null,
     };
   }
@@ -651,7 +657,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         ? pagesUrl.replace(/\/+$/, "")
         : null;
       // The record of the page files, derived from the folder at the new head
-      // and D1 (R4); left as it is when the folder cannot be read.
+      // and D1; left as it is when the folder cannot be read.
       const pageFilesJson = await onboardingRecordJson(env.DB, projectId, {
         access: { token, owner, repo },
         commit: result.newHeadSha,

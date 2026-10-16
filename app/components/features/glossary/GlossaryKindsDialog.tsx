@@ -2,8 +2,12 @@
  * The site's own glossary kinds, edited as one list and saved to the
  * glossary route's `save-kinds` action. The standard kinds come from the
  * site's files and are shown, not edited. The server refuses a list holding
- * any kind the framework would leave out, so the same check runs here first
- * and its findings show under each field.
+ * any kind the framework would leave out, or a kind whose id is new or
+ * changed and is not lowercase letters, digits and single hyphens between
+ * them; a kind already stored with another id keeps it until its id is
+ * edited. The same check runs here first and its findings show under each
+ * field, and the id field keeps only lowercase letters, digits and hyphens as
+ * it is typed.
  *
  * Everything is read once, when the dialog opens: the kinds, the stored text
  * the save names as the list it replaces, and the entries' kinds the counts
@@ -11,7 +15,7 @@
  * `from`, which is how the server reports a changed id; after a save, every
  * entry of a renamed kind is moved to its new id in the document.
  *
- * @version v1.5.1-beta
+ * @version v1.5.5-beta
  */
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -20,10 +24,11 @@ import { Dialog } from "~/components/ui/Dialog";
 import { Button } from "~/components/ui/Button";
 import { useSiteFetcher } from "~/lib/page-site";
 import { useIsPublisher } from "~/hooks/use-role";
+import { filterTermId } from "~/lib/glossary-slug";
 import { useToast } from "~/hooks/use-toast";
 import {
   isAcceptedKind,
-  validateSiteKinds,
+  validateSiteKindsForSave,
   type GlossaryKinds,
   type KindProblem,
   type SiteKindDraft,
@@ -274,9 +279,11 @@ function useKindRows(kinds: GlossaryKinds) {
   const [showAll, setShowAll] = useState(false);
   const added = useRef(0);
   const payload = useMemo(() => rows.map(kindPayload), [rows]);
-  const problems = useMemo(() => validateSiteKinds(kinds.core, payload), [kinds.core, payload]);
-  const editField = (key: string, field: Field, value: string) =>
-    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, [field]: value } : r)));
+  const problems = useMemo(() => validateSiteKindsForSave(kinds.core, payload, kinds.site), [kinds.core, kinds.site, payload]);
+  const editField = (key: string, field: Field, value: string) => {
+    const typed = field === "id" ? filterTermId(value) : value;
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, [field]: typed } : r)));
+  };
   const touch = (key: string, field: Field) => setTouched((prev) => new Set(prev).add(`${key}:${field}`));
   const removeKind = (key: string) => setRows((prev) => prev.filter((r) => r.key !== key));
   const add = () => {

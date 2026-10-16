@@ -26,7 +26,7 @@
  * future knap release that stops type-coercing shows up as a red test here
  * rather than as nothing.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -93,7 +93,7 @@ describe("yamlString", () => {
     ["date-shaped", "2026-09-13"],
     ["time-shaped", "12:30"],
     ["sexagesimal-shaped", "1:2:3"],
-    // Real authored text (F5): the case list above is YAML-shaped edge
+    // Real authored text: the case list above is YAML-shaped edge
     // inputs, not the Spanish and indigenous-language content Telar's
     // sites and users actually carry.
     ["accented Spanish", "á é í ó ú ñ ü"],
@@ -184,7 +184,7 @@ describe("Psych-unsafe code points never appear raw in the emitted scalar", () =
   );
 });
 
-// F3: a lone (unpaired) UTF-16 surrogate is a valid JS string element but
+// A lone (unpaired) UTF-16 surrogate is a valid JS string element but
 // not a valid Unicode character, and no YAML escape represents one — Psych
 // raises `found invalid Unicode character escape code` on `\ud800` even
 // though it accepts other `\uXXXX` escapes fine. Verified with `ruby

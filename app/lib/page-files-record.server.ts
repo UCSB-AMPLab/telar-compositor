@@ -7,7 +7,7 @@
  * files its snapshot's `page_slugs` names, so a page renamed or deleted before
  * any publish recorded its slug leaves no file behind.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { sql } from "drizzle-orm";
@@ -82,7 +82,7 @@ export function pageFilesRecordAdvancedFrom(fromSha: string | null, recordJson: 
 
 /**
  * The record given to a project with none yet, of a file no page holds that a
- * publish recorded (R9): `<slug>.md` for a slug in the snapshot's
+ * publish recorded: `<slug>.md` for a slug in the snapshot's
  * `page_slugs`. It is the old file of a page renamed or deleted here since that
  * publish, and is recorded with no page so the next publish deletes it.
  */
@@ -109,8 +109,8 @@ export interface OnboardingRecordInput {
  * there and D1: each file a page holds maps to that page. A file the replaced
  * record lists keeps its entry, so a page renamed here between the import and
  * onboarding does not read as an addition afterwards. Over no record, a file no
- * page holds that the snapshot's `page_slugs` names is recorded with no page
- * (R9). Any other file is left out.
+ * page holds that the snapshot's `page_slugs` names is recorded with no page.
+ * Any other file is left out.
  */
 export function onboardingPageFilesRecord(input: OnboardingRecordInput): PageFilesRecord {
   const held = heldFiles(input.pages);
@@ -189,7 +189,7 @@ export async function pagesImportCommit(access: RepoAccess, headSha: string | nu
 
 /**
  * Record the pages the Pages screen's import brought in: each file mapped to
- * the id of the page inserted from it, merged into the project's record (R10).
+ * the id of the page inserted from it, merged into the project's record.
  * The import records no head, so the write is a compare-and-set on the record
  * itself; one that loses to another writer reads the record again and merges
  * once more. True when a write landed or there was nothing to record.

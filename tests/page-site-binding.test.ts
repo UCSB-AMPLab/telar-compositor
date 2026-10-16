@@ -20,7 +20,7 @@
  * missing `siteId`, and every `row` intent from a tab whose session names
  * another site.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { readFileSync } from "node:fs";
@@ -166,7 +166,6 @@ const TABLE: Record<string, Record<string, Binding>> = {
     "remove-member": "site",
     "compute-full-sync-diff": "site",
     "apply-full-sync": "site",
-    "accept-divergence": "site",
     "choose-columns": "site",
     "restore-orphan-drafts": "site",
     "ignore-orphans": "site",
@@ -182,8 +181,6 @@ const TABLE: Record<string, Record<string, Binding>> = {
   },
   "_app.objects.tsx": {
     "toggle-featured": "row",
-    "compute-sync-diff": "site",
-    "sync-apply": "site",
     "fetch-iiif-preview": "exempt",
     "upload-image": "site",
     "pre-commit-check": "site",

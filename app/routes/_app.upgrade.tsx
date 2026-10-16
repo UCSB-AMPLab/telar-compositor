@@ -18,7 +18,7 @@
  * Renders a state machine — review | upgrading | choices | sheets |
  * building | done.
  *
- * @version v1.5.4-beta
+ * @version v1.5.5-beta
  */
 
 import { data, redirect } from "react-router";
@@ -74,6 +74,7 @@ import { requirePublishingRole } from "~/lib/membership.server";
 import { resolveActiveProjectFromRequest, resolvePageProject, siteChangedAnswer } from "~/lib/active-project.server";
 import { useSiteFetcher } from "~/lib/page-site";
 import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
+import { UpgradeReviewAction } from "~/components/features/upgrade/UpgradeReviewAction";
 import {
   InvalidPreparedStateError,
   assertPreparedUpgradeSignature,
@@ -101,6 +102,14 @@ import {
 } from "~/lib/upgrade-sheets.server";
 import { isGoogleSheetsOn } from "~/lib/pyyaml";
 import { repairSiteConfig } from "~/lib/config-repair.server";
+import {
+  applyLanguageMatchesToText,
+  glossaryDefinitionMatches,
+  glossaryMatchReportLines,
+  glossaryMatchesSettled,
+  matchGlossaryDefinitionsInDocument,
+  type GlossaryDefinitionMatch,
+} from "~/lib/glossary-language-match.server";
 import { answersPublishedDifferently, upgradeStartsCuttingAnswers, type UpgradeAnswer } from "~/lib/upgrade-answers.server";
 import { readGlossaryFiles } from "~/lib/upgrade-glossary-files.server";
 import { PublishedSheetUnreadableError, readPublishedTabs } from "~/lib/sheets.server";
@@ -1031,6 +1040,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         challenge,
         submitted: parsePostedChoices(posted.choices),
         sheetsAnswer: posted.sheets,
+        editTab: (path, text) => applyLanguageMatchesToText(path, text, manifestResult.languageMatches).text,
       });
       if (sheets.kind !== "ready") return sheetStageStop(sheets, activeProject.id, userId, env.SESSION_SECRET);
       // A site that stops reading Google Sheets commits `_config.yml` switched
@@ -1098,6 +1108,7 @@ export async function action({ request, context }: Route.ActionArgs) {
                   ),
             )
           : [],
+        ...withGlossaryMatches(glossaryDefinitionMatches(manifestResult.languageMatches)),
         operationId,
       };
       const prepared = await signPreparedUpgrade(preparedContent, activeProject.id, userId, env.SESSION_SECRET);
@@ -1144,11 +1155,50 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 
   /**
-   * Records `toSha` as synced, from the prepared head, unless the upgrade
-   * wrote a value the editor holds (`advancesHead`).
+   * Applies the chain's glossary definition matches to the Compositor's
+   * document, once the commit carrying the glossary has landed, and returns
+   * the done screen's lines for them and whether the document settled every
+   * match. Never throws.
    */
-  async function recordUpgradeHead(prepared: PreparedUpgrade, toSha: string): Promise<void> {
-    if (prepared.advancesHead) await bumpProjectHeadFrom(db, activeProject.id, prepared.expectedHeadOid, toSha);
+  async function glossaryFollowsUpgrade(prepared: PreparedUpgrade): Promise<GlossaryOutcome> {
+    const results = await matchGlossaryDefinitionsInDocument(db, env as never, activeProject.id, prepared.glossaryMatches ?? []);
+    return { lines: glossaryMatchReportLines(results), settled: glossaryMatchesSettled(results) };
+  }
+
+  /**
+   * Records `toSha` as synced, from the prepared head, unless the upgrade
+   * wrote a value the editor holds (`upgradeAdvancesHead`).
+   */
+  async function recordUpgradeHead(prepared: PreparedUpgrade, glossary: GlossaryOutcome | null, toSha: string): Promise<void> {
+    if (upgradeAdvancesHead(prepared, glossary)) await bumpProjectHeadFrom(db, activeProject.id, prepared.expectedHeadOid, toSha);
+  }
+
+  /** Records `toSha` as `recordUpgradeHead` does, and logs under `message` a failure to, which never reaches the author. */
+  async function recordHeadLogging(prepared: PreparedUpgrade, glossary: GlossaryOutcome | null, toSha: string, message: string): Promise<void> {
+    try {
+      await recordUpgradeHead(prepared, glossary, toSha);
+    } catch (d1Err) {
+      console.error(message, d1Err);
+    }
+  }
+
+  /**
+   * Writes the landed version to D1 when its commit carried it, then records
+   * `toSha` as synced. A failure is logged and not thrown: the commit has
+   * landed, so it must not report `upgrade_failed`.
+   */
+  async function recordLandedUpgrade(prepared: PreparedUpgrade, versionLanded: boolean, glossary: GlossaryOutcome | null, toSha: string): Promise<void> {
+    try {
+      if (versionLanded) {
+        await db
+          .update(project_config)
+          .set({ telar_version: prepared.toVersion, updated_at: new Date().toISOString() })
+          .where(eq(project_config.project_id, activeProject.id));
+      }
+      await recordUpgradeHead(prepared, glossary, toSha);
+    } catch (d1Err) {
+      console.error("D1 update after upgrade commit failed:", d1Err);
+    }
   }
 
   // runUpgradeCommit — takes a prepared upgrade payload and performs the
@@ -1163,7 +1213,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         repo: string;
         manualSteps: Record<Language, ManualStep[]>;
       } & UpgradeOutcome)
-    | { ok: false; error: string; message?: string; reauthUrl?: string }
+    | ({ ok: false; error: string; message?: string; reauthUrl?: string } & Partial<Pick<UpgradeOutcome, "sheetReport" | "advancesHead">>)
   > {
     try {
       // Verify before anything is minted or committed: preparedState is
@@ -1206,6 +1256,7 @@ export async function action({ request, context }: Route.ActionArgs) {
 
       let newHeadSha: string;
       let versionLanded: boolean;
+      let glossary: GlossaryOutcome | null = null;
 
       if (!partition.hasWorkflows) {
         // No workflow files — a single atomic commit is sufficient and keeps
@@ -1225,6 +1276,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         newHeadSha = result.newHeadSha;
         versionLanded = true;
         await settingsFollowSheetsOff(prepared);
+        glossary = await glossaryFollowsUpgrade(prepared);
       } else {
         // Hold _config.yml back with the workflow files so the version bump
         // only lands when the workflows do.
@@ -1259,6 +1311,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           );
           contentHeadSha = contentResult.newHeadSha;
           await settingsFollowSheetsOff(prepared);
+          glossary = await glossaryFollowsUpgrade(prepared);
         }
 
         // Commit 2 — workflow files + the held version-bumped _config.yml.
@@ -1296,17 +1349,18 @@ export async function action({ request, context }: Route.ActionArgs) {
           // permission error so the banner + modal prompt whoever can approve
           // it to do so. It advances only from the prepared head, the one the
           // diff was read at and commit 1 was built on, and only when the
-          // content changes no value the editor holds (`advancesHead`).
-          try {
-            await recordUpgradeHead(prepared, contentHeadSha);
-          } catch (d1Err) {
-            console.error("D1 head bump after partial upgrade failed:", d1Err);
-          }
-          return insufficientPermissionsResult(activeProject.installation_id);
+          // content changes no value the editor holds (`upgradeAdvancesHead`).
+          // What the landed content did to the sheets and the glossary rides
+          // with the error, since the author has to act on it either way.
+          await recordHeadLogging(prepared, glossary, contentHeadSha, "D1 head bump after partial upgrade failed:");
+          return {
+            ...insufficientPermissionsResult(activeProject.installation_id),
+            ...(glossary === null ? {} : landedContentOutcome(prepared, glossary)),
+          };
         }
       }
 
-      const now = new Date().toISOString();
+      glossary ??= await glossaryFollowsUpgrade(prepared);
 
       // Commit already landed; D1 failure must not report upgrade_failed.
       // The head advances only from the prepared head: every commit between
@@ -1314,21 +1368,12 @@ export async function action({ request, context }: Route.ActionArgs) {
       // commit 1, which is built on the prepared head), and any other head
       // recorded meanwhile is kept. It does not advance when the upgrade
       // wrote a value the editor holds — a column the author chose over
-      // another holding values — so the sync, which is three-way against the
+      // another holding values — or the glossary's document could not
+      // confirm a definition, so the sync, which is three-way against the
       // recorded head, offers that value to the editor before the next
       // publish can write the editor's over it; publish refuses as
       // `stale_head` until then.
-      try {
-        if (versionLanded) {
-          await db
-            .update(project_config)
-            .set({ telar_version: prepared.toVersion, updated_at: now })
-            .where(eq(project_config.project_id, activeProject.id));
-        }
-        await recordUpgradeHead(prepared, newHeadSha);
-      } catch (d1Err) {
-        console.error("D1 update after upgrade commit failed:", d1Err);
-      }
+      await recordLandedUpgrade(prepared, versionLanded, glossary, newHeadSha);
 
       // The upgrade does not rewrite the project's landing copy in D1, and it
       // does not need to. Three other places already hold that line:
@@ -1345,8 +1390,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         owner,
         repo,
         manualSteps: prepared.manualSteps,
-        sheetReport: prepared.sheetReport,
-        advancesHead: prepared.advancesHead,
+        ...landedContentOutcome(prepared, glossary),
         answers: prepared.answers,
         sheetsOff: prepared.sheetsOff,
         readsGoogleSheetsAfter: prepared.readsGoogleSheetsAfter,
@@ -1441,7 +1485,15 @@ export async function action({ request, context }: Route.ActionArgs) {
       const res = await runUpgradeCommit(prepared);
       if (!res.ok) {
         await endUpgradeLease(env, activeProject.id, userId, leaseOperation, "failed");
-        return { ok: false, intent: "upgrade-commit", error: res.error, message: res.message, reauthUrl: res.reauthUrl };
+        return {
+          ok: false,
+          intent: "upgrade-commit",
+          error: res.error,
+          message: res.message,
+          reauthUrl: res.reauthUrl,
+          sheetReport: res.sheetReport,
+          advancesHead: res.advancesHead,
+        };
       }
       await endUpgradeLease(env, activeProject.id, userId, leaseOperation, "succeeded");
       const { newHeadSha, newVersion, manualSteps, sheetReport, advancesHead, answers, sheetsOff, readsGoogleSheetsAfter } = res;
@@ -1599,6 +1651,34 @@ interface UpgradeOutcome {
   readsGoogleSheetsAfter: boolean;
 }
 
+/** What the glossary's document did once the commit carrying the glossary landed. */
+interface GlossaryOutcome {
+  lines: SheetReportLine[];
+  /** Whether the document settled every match: none is `unconfirmed`. */
+  settled: boolean;
+}
+
+/**
+ * Whether the landed upgrade is recorded as synced. Not when it wrote a value
+ * the editor holds (`advancesHead`), nor when the glossary's document could
+ * not confirm a definition: in both the sync, three-way against the recorded
+ * head, offers the repository's value to the editor before a publish can
+ * write the editor's over it.
+ */
+function upgradeAdvancesHead(prepared: PreparedUpgrade, glossary: GlossaryOutcome | null): boolean {
+  return prepared.advancesHead && (glossary?.settled ?? true);
+}
+
+/** The report and the sync line for content that landed, carried to the done screen or beside a refusal. */
+function landedContentOutcome(prepared: PreparedUpgrade, glossary: GlossaryOutcome): Pick<UpgradeOutcome, "sheetReport" | "advancesHead"> {
+  return { sheetReport: [...prepared.sheetReport, ...glossary.lines], advancesHead: upgradeAdvancesHead(prepared, glossary) };
+}
+
+/** The prepared upgrade's `glossaryMatches`, absent when there are none. */
+function withGlossaryMatches(matches: GlossaryDefinitionMatch[]): Pick<PreparedUpgradeContent, "glossaryMatches"> {
+  return matches.length > 0 ? { glossaryMatches: matches } : {};
+}
+
 /** Prepare's answer when the sheet stage stops it or asks the author, with the question's challenge signed. */
 async function sheetStageStop(
   sheets: Exclude<SheetStageResult, { kind: "ready" }>,
@@ -1639,7 +1719,7 @@ type UpgradeActionData =
   | ({ intent: "upgrade-prepare" } & Extract<PrepareAnswer, { ok: true }>)
   | { ok: false; intent: "upgrade-prepare"; error: string; message?: string; detail?: UpgradeFailureDetail }
   | CommittedUpgrade
-  | { ok: false; intent: "upgrade-commit"; error: string; message?: string; reauthUrl?: string }
+  | ({ ok: false; intent: "upgrade-commit"; error: string; message?: string; reauthUrl?: string } & Partial<Pick<UpgradeOutcome, "sheetReport" | "advancesHead">>)
   | { ok: true; intent: "poll-build"; buildStatus: string; buildConclusion: string | null; buildUrl: string | null; runId: number | null; phases: BuildPhaseStatus[] | null; pagesOff: boolean }
   | { ok: false; intent: "poll-build"; error: string; message?: string }
   | { ok: true; intent: "compute-diff"; diff: UpgradeDiff; latestRelease: TelarRelease }
@@ -1838,6 +1918,19 @@ function noticeValues(detail: UpgradeFailureDetail | null): Record<string, strin
 function failureDetail(data: object): UpgradeFailureDetail | null {
   return "detail" in data ? ((data.detail as UpgradeFailureDetail | undefined) ?? null) : null;
 }
+
+/** What a refused upgrade says its landed content did to the sheets, when it carries a report. */
+function landedBeforeRefusalOf(data: object): { lines: SheetReportLine[]; syncNeeded: boolean } | null {
+  if (!("sheetReport" in data) || !Array.isArray(data.sheetReport)) return null;
+  return { lines: data.sheetReport, syncNeeded: "advancesHead" in data && data.advancesHead === false };
+}
+
+/** The link to the App's permissions, which only a missing permission the acting user can grant comes with. */
+function reauthUrlOf(code: string, data: object): string | null {
+  if (code !== "insufficient_permissions" || !("reauthUrl" in data)) return null;
+  return typeof data.reauthUrl === "string" && data.reauthUrl !== "" ? data.reauthUrl : null;
+}
+
 type UpgradeSubStage = "preparing" | "committing";
 
 /** The two ways a rebuild can end without a run to follow. */
@@ -1930,35 +2023,59 @@ function VersionBadge({ label, version, variant }: { label: string; version: str
 }
 
 /**
+ * The heading's key for a finished build that did not succeed. A conclusion
+ * the page has no plain word for reads as a build that did not finish.
+ */
+const LANDED_HEADING_KEYS: Record<string, string> = {
+  failure: "upgradeLandedBuildFailed",
+  cancelled: "upgradeLandedBuildCancelled",
+  skipped: "upgradeLandedBuildSkipped",
+  timed_out: "upgradeLandedBuildTimedOut",
+};
+
+/**
  * The failed-build screen's account of what happened. The upgrade's commits
  * have landed by the time a build runs, so with a version to name it says the
- * files are on it and which step stopped the build; without one it keeps the
- * generic failure.
+ * files are on it and how the build ended; a failed build also names the step
+ * that stopped it. Without a version it keeps the generic failure.
  */
 function FailedBuildSummary({
   newVersion,
+  buildConclusion,
   phases,
   phaseLabels,
   pagesOff,
+  rebuildUnconfirmed,
 }: {
   newVersion: string | null;
+  buildConclusion: string | null;
   phases: BuildPhaseStatus[] | null;
   phaseLabels: Record<BuildPhaseId, string>;
   pagesOff: boolean;
+  rebuildUnconfirmed: boolean;
 }) {
   const { t } = useTranslation("upgrade");
   const failedPhase = phases?.find((phase) => phase.conclusion === "failure");
   const step = failedPhase ? phaseLabels[failedPhase.id as BuildPhaseId] : undefined;
   let detail = t("upgradeFailedDetail");
   if (newVersion) {
-    detail = step
-      ? t("upgradeLandedBuildFailedDetail", { version: newVersion, step })
-      : t("upgradeLandedBuildFailedNoStep", { version: newVersion });
+    if (buildConclusion !== "failure") detail = t("upgradeLandedBuildNotFinishedDetail", { version: newVersion });
+    else
+      detail = step
+        ? t("upgradeLandedBuildFailedDetail", { version: newVersion, step })
+        : t("upgradeLandedBuildFailedNoStep", { version: newVersion });
+  }
+  let headingKey = LANDED_HEADING_KEYS[buildConclusion ?? ""] ?? "upgradeLandedBuildNotFinished";
+  // A rebuild GitHub accepted without naming a run has no outcome the page can
+  // report either way.
+  if (newVersion && rebuildUnconfirmed) {
+    headingKey = "upgradeLandedRebuildUnconfirmed";
+    detail = t("upgradeLandedRebuildUnconfirmedDetail", { version: newVersion });
   }
   return (
     <>
       <h2 className="font-heading font-semibold text-xl text-charcoal">
-        {t(newVersion ? "upgradeLandedBuildFailed" : "upgradeFailed")}
+        {newVersion ? t(headingKey, { version: newVersion }) : t("upgradeFailed")}
       </h2>
       <p className="font-body text-sm text-gray-600">{detail}</p>
       {pagesOff && <p className="font-body text-sm text-amber-900">{t("upgradePagesOff")}</p>}
@@ -2148,6 +2265,9 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   // Whether the site reads Google Sheets after the upgrade, as the landed
   // upgrade says; null until one lands, when the loaded settings stand.
   const [readsSheetsAfter, setReadsSheetsAfter] = useState<boolean | null>(null);
+  // What the content commit did to the sheets and the glossary when the
+  // workflow commit after it was refused, shown beside the refusal.
+  const [landedBeforeRefusal, setLandedBeforeRefusal] = useState<{ lines: SheetReportLine[]; syncNeeded: boolean } | null>(null);
 
   const upgradeData = upgradeFetcher.data as UpgradeActionData;
   const pollData = pollFetcher.data as UpgradeActionData;
@@ -2180,14 +2300,11 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
       const code = upgradeFailureCode(upgradeData.error);
       setUpgradeError(code);
       setUpgradeErrorDetail(failureDetail(upgradeData));
+      setLandedBeforeRefusal(landedBeforeRefusalOf(upgradeData));
       // Only a missing permission the acting user can grant comes with a link;
       // the convenor-required variant has the same cause and no link, because
       // only the convenor can work the App's installation settings page.
-      setReauthUrl(
-        code === "insufficient_permissions" && "reauthUrl" in upgradeData && upgradeData.reauthUrl
-          ? upgradeData.reauthUrl
-          : null,
-      );
+      setReauthUrl(reauthUrlOf(code, upgradeData));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upgradeData]);
@@ -2310,6 +2427,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
   function handleUpgrade() {
     setUpgradeError(null);
     setReauthUrl(null);
+    setLandedBeforeRefusal(null);
     setStage("upgrading");
     setUpgradeSubStage("preparing");
     upgradeFetcher.submit({ intent: "upgrade-prepare", deletions: reviewedDeletions }, { method: "post" });
@@ -2471,12 +2589,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
           {upgradeError === "stale_head" && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 flex items-start gap-3">
               <p className="font-body text-sm text-amber-900 flex-1">{t("staleHead")}</p>
-              <Link
-                to="/dashboard"
-                className="font-heading font-semibold text-sm text-amber-900 underline underline-offset-2 hover:opacity-80 shrink-0"
-              >
-                {t("resync")}
-              </Link>
+              <UpgradeReviewAction actionKey="resync" className="shrink-0" />
             </div>
           )}
 
@@ -2508,6 +2621,11 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
                 />
               )}
             </div>
+          )}
+
+          {/* What the content commit landed before the permission refusal above */}
+          {landedBeforeRefusal && (
+            <UpgradeSheetOutcome lines={landedBeforeRefusal.lines} syncNeeded={landedBeforeRefusal.syncNeeded} answers={[]} />
           )}
 
           {/* Generic error banner */}
@@ -2635,7 +2753,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
               {/* Already up to date */}
               {!isBelowMinimum && !needsUpgrade && latestRelease && (
                 <p className="font-body text-sm text-green-700 text-center">
-                  ✓ {t("upgradeSuccessDetail", { version: latestRelease.tagName })}
+                  ✓ {t("upToDate", { version: latestRelease.tagName })}
                 </p>
               )}
             </div>
@@ -2816,7 +2934,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
             <>
               <div className="flex flex-col items-center gap-3 py-4 mb-6">
                 <XCircle className="w-12 h-12 text-red-500" />
-                <FailedBuildSummary newVersion={newVersion} phases={phases} phaseLabels={phaseLabels} pagesOff={pagesOff} />
+                <FailedBuildSummary newVersion={newVersion} buildConclusion={buildConclusion} phases={phases} phaseLabels={phaseLabels} pagesOff={pagesOff} rebuildUnconfirmed={rebuildNotice === "rebuild_unconfirmed"} />
                 {rebuildNotice && (
                   <p className="font-body text-sm text-amber-900">{t(rebuildNotice)}</p>
                 )}

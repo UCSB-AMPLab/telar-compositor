@@ -2,7 +2,7 @@
  * The `/dashboard` `remove-member` intent refuses to remove an instructor
  * row from a project that has a parent — a child site enrolled in a
  * course. Instructor membership on a child is tied to the course in both
- * directions (design §5, "Joining and leaving"): copied down at
+ * directions: copied down at
  * redemption, dropped only when the site itself leaves the course. A
  * convenor removing it here by the back door would produce a state the
  * design declares impossible.
@@ -17,7 +17,7 @@
  * `tests/membership-instructor-exit.test.ts` for the helper's own unit
  * coverage).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";

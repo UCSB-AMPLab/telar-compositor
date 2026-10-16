@@ -5,17 +5,24 @@
  * the page that walks a new site through its first steps.
  *
  * For sites created in the wizard (`created`), the copy reflects that the
- * compositor set the site up (not "imported") and that the first public
- * build is still running, with the site's own URL surfaced. Imported sites
- * keep the original "imported successfully" wording.
+ * compositor set the site up (not "imported"). The first-build note and the
+ * site's own URL show only where the build was started (`buildStarted`) and
+ * the setup was not skipped. Imported sites get the "imported successfully"
+ * wording.
  *
- * @version v1.5.3-beta
+ * After "Skip for now" on the settings check, the screen does not say the
+ * setup is complete: it lists the settings left unfixed and where each is
+ * fixed. Onboarding is still open on that screen; Continue completes it, and
+ * the screen goes to Start once the completion is confirmed.
+ *
+ * @version v1.5.5-beta
  */
 
 import { CheckCircle } from "lucide-react";
-import { useNavigate, useNavigation } from "react-router";
-import { useTranslation } from "react-i18next";
-import { Button } from "~/components/ui/Button";
+import { DoneContinue, DoneHeading, FirstBuildNote, UnfixedSettingsList } from "./StepDoneParts";
+
+/** A setting the site-configuration check found wrong and the author chose to leave. */
+export type UnfixedSetting = "sheets" | "pages" | "url";
 
 interface StepDoneProps {
   onDone: () => void;
@@ -23,40 +30,58 @@ interface StepDoneProps {
   created?: boolean;
   /** The site's public URL — shown only on the created path, where it's authoritative. */
   siteUrl?: string;
+  /** Settings the author skipped fixing; empty or absent when none were left. */
+  unfixed?: readonly UnfixedSetting[];
+  /** Asks the server to check the settings again; offered only while settings are left unfixed. */
+  onRecheck?: () => void;
+  /** The settings check is waiting on the server. */
+  rechecking?: boolean;
+  /** True only when the first build was started, which the first-build note claims. */
+  buildStarted?: boolean;
+  /** Completes onboarding when the author continues past skipped settings. */
+  onContinue?: () => void;
+  /** The completion is waiting on the server. */
+  continuing?: boolean;
+  /** The server confirmed the completion; the screen then goes to Start. */
+  completed?: boolean;
+  /** The server refused the completion. */
+  continueFailed?: boolean;
   className?: string;
 }
 
-export function StepDone({ onDone: _onDone, created = false, siteUrl, className = "" }: StepDoneProps) {
-  const { t } = useTranslation("onboarding");
-  const navigate = useNavigate();
-  // Onboarding sits outside the app layout and its loading overlay, and Start
-  // can take seconds to load: the button shows that it is working, and a second
-  // press cannot restart the load.
-  const opening = useNavigation().location?.pathname === "/start";
+export function StepDone({
+  onDone: _onDone,
+  created = false,
+  siteUrl,
+  unfixed = [],
+  onRecheck,
+  rechecking = false,
+  buildStarted = false,
+  onContinue,
+  continuing = false,
+  completed = false,
+  continueFailed = false,
+  className = "",
+}: StepDoneProps) {
+  const skipped = unfixed.length > 0;
 
   return (
     <div className={`flex flex-col items-center text-center py-8 ${className}`}>
       <CheckCircle className="w-16 h-16 text-green-500 mb-5" aria-hidden="true" />
 
-      <h2 className="font-heading font-semibold text-2xl text-charcoal mb-2">
-        {t("step_done.heading")}
-      </h2>
-      <p className="font-body text-sm text-gray-500 mb-6 max-w-sm">
-        {t(created ? "step_done.created_description" : "step_done.description")}
-      </p>
+      <DoneHeading skipped={skipped} created={created} />
 
-      {created && siteUrl && (
-        <div className="mb-8 max-w-sm rounded-lg bg-cream-dark/60 px-4 py-3">
-          <p className="font-body text-xs text-gray-500 mb-1">
-            {t("step_done.first_build_note")}
-          </p>
-          <span className="font-body text-sm text-charcoal break-all">{siteUrl}</span>
-        </div>
-      )}
+      <UnfixedSettingsList unfixed={unfixed} onRecheck={onRecheck} rechecking={rechecking} />
 
-      <Button variant="primary" loading={opening} onClick={() => navigate("/start")}>
-        {t("step_done.go_to_start")}
-      </Button>
+      <FirstBuildNote visible={created && buildStarted && !skipped} siteUrl={siteUrl} />
+
+      <DoneContinue
+        skipped={skipped}
+        onContinue={onContinue}
+        continuing={continuing}
+        completed={completed}
+        continueFailed={continueFailed}
+      />
     </div>
   );
 }

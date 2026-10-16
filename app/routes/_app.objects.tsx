@@ -6,15 +6,15 @@
  *
  * Loader fetches the active project's objects ordered by title ASC,
  * plus a step-reference count per `object_id` for "used in" info.
- * Action handles the `toggle-featured`, `compute-sync-diff`,
- * `sync-apply`, `fetch-iiif-preview`, `upload-image`, `commit-objects`,
- * and `poll-build` intents, among others. The page renders a table
+ * Action handles the `toggle-featured`, `fetch-iiif-preview`,
+ * `upload-image`, `commit-objects` and `poll-build` intents, among
+ * others. The page renders a table
  * view with thumbnails, sort/filter controls, featured-star toggles, a
  * slide-in edit panel, and a build progress banner.
  *
- * Registering an uploaded or synced object is the one action here
- * that does not reach D1 on its own: the committing actions and the
- * objects sync apply post the rows to the collaboration DO, which
+ * Registering an uploaded object is the one action here that does
+ * not reach D1 on its own: the committing actions post the rows to
+ * the collaboration DO, which
  * appends them to the shared document and lets its snapshot write
  * them. `objects` has no unique index on `(project_id, object_id)`,
  * so a writer outside that gate can duplicate a key the snapshot is
@@ -25,13 +25,7 @@
  * before it reads D1;
  * `insert-pending-objects` is the modal's retry of one record.
  *
- * As the daily home, this page also hosts the full-repo sync review
- * modal (SyncConfirmModal, opened via the `?sync=1` deep-link) — not
- * to be confused with this route's own objects-scoped SyncDiffDialog.
- * The modal's intents live on the /dashboard action; this page only
- * mounts it and surfaces the version-change toast.
- *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { and, asc, eq } from "drizzle-orm";
@@ -39,11 +33,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { redirect, useFetcher, useOutletContext, useRouteLoaderData, useSearchParams } from "react-router";
 import * as Y from "yjs";
-import { GraduationCap, RefreshCw } from "lucide-react";
+import { GraduationCap } from "lucide-react";
 import type { Route } from "./+types/_app.objects";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
-import { readSiteTelarVersion } from "~/lib/site-version.server";
 import { projects, objects, project_config, project_members, users } from "~/db/schema";
 import { resolveActiveProjectFromRequest, siteChangedAnswer } from "~/lib/active-project.server";
 import { gatePageSite } from "~/lib/page-site-gate.server";
@@ -79,7 +72,6 @@ import { useObjectEnrichment } from "~/hooks/use-object-enrichment";
 import { ownValue } from "~/components/features/dashboard/sync-changes";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
 import { useDocumentStepCounts } from "~/hooks/use-document-step-counts";
-import { useSiteStatus } from "~/components/features/site-status/useSiteStatus";
 import { useStructuralOps } from "~/hooks/use-structural-ops";
 import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { useDocumentSource } from "~/hooks/use-document-source";
@@ -91,31 +83,16 @@ import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
 import { useToast } from "~/hooks/use-toast";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
 import { DocsLink } from "~/components/ui/DocsLink";
-import {
-  SyncConfirmModal,
-  SYNC_DIFF_FETCHER_KEY,
-} from "~/components/features/dashboard/SyncConfirmModal";
-import { useVersionChangeToast } from "~/hooks/use-version-change-toast";
-import { useSyncApplyOutcome } from "~/hooks/use-sync-apply-outcome";
 import { useCompletePendingObjects } from "~/hooks/use-complete-pending-objects";
 import { fetchAndParseManifest } from "~/lib/iiif.server";
 import { deriveStatus } from "~/lib/iiif-types";
 import type { IiifFetchResult } from "~/lib/iiif-types";
 import { decrypt } from "~/lib/crypto.server";
 import { getFileContent, getFileOnDefaultBranch, getRepoHead } from "~/lib/github.server";
-import { holdOperationLease, recordIfLeaseFree } from "~/lib/operation-lease.server";
-import { syncedRowsFingerprint } from "~/lib/synced-rows-fingerprint.server";
-import {
-  computeSyncDiff, applySyncChanges, finishPendingBeforeCheck, checkRepairingLegacyIds, objectsBaseAt, ObjectsSyncStale, SyncBaseStale, SyncEntriesRefused, refuseMovedObjectsBase,
-} from "~/lib/sync.server";
-import { legacyRecordRef } from "~/lib/legacy-object-ids.server";
-import { headConfigSheets, headHasGlossaryCsv, markSheetsEffects } from "~/lib/unreadable-characters.server";
-import { syncFailure } from "~/lib/sync-failure.server";
-import type { CollidingColumns } from "~/lib/sync-failure.server";
-import { syncErrorToast } from "~/components/features/objects/sync-error-toast";
-import { SheetChoicesDialog, choicesQuestionOf, type SheetChoicesQuestion } from "~/components/features/dashboard/SheetChoicesStep";
+import { holdOperationLease } from "~/lib/operation-lease.server";
 import { bumpObjectsReadFrom, bumpProjectHeadFrom } from "~/lib/github-status.server";
 import { generateUniqueObjectSlug, slugify } from "~/lib/slugify";
+import { uploadIdFor } from "~/lib/object-upload-id";
 import {
   commitFilesToRepo,
   dispatchWorkflow,
@@ -134,11 +111,11 @@ import { serializeObjectsCsv, dbObjectToCsvRow } from "~/lib/csv-export.server";
 import { ManifestValidationNote } from "~/components/features/objects/ManifestValidationNote";
 import { ObjectRow } from "~/components/features/objects/ObjectRow";
 import { ObjectsEmptyState, ObjectsLoadingNote } from "~/components/features/objects/ObjectsEmptyState";
-import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
 import { AddObjectDialog } from "~/components/features/objects/AddObjectDialog";
 import { CommitAndBuildModal } from "~/components/features/objects/CommitAndBuildModal";
 import type { ObjectRowObject } from "~/components/features/objects/ObjectRow";
-import type { SyncDiff, SyncChanges, PendingObject } from "~/lib/sync.server";
+import { reviewerLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
+import type { PendingObject } from "~/lib/sync.server";
 import type {
   AddObjectIiifPayload,
   AddObjectExternalPayload,
@@ -148,61 +125,12 @@ import { matchesObjectFilter } from "~/lib/objects-filter";
 import { siteSheetFileAt } from "~/lib/site-sheets.server";
 import { commitMultipleBinaryFilesWithCsv, createImageBlobs, arrayBufferToBase64, validateUploadFile } from "~/lib/upload.server";
 import { storedExtensionFor, UPLOAD_ACCEPTED_FORMAT_LIST, uploadedSourceUrl } from "~/lib/file-types";
-import type { SyncApplyPayload } from "~/components/features/objects/SyncDiffDialog";
 
-// "dashboard" and "upgrade" ride along for the full-repo sync review modal
-// this page hosts (SyncConfirmModal + its version-change toast).
-export const handle = { i18n: ["common", "objects", "structural", "dashboard", "upgrade"] };
-
-/**
- * What `sync-apply` answers for a failed apply. A check whose commit is not
- * GitHub's head, or whose base is no longer the project's objects_read_sha, is
- * `sync_stale`, which the page answers by checking again; an apply held back
- * for entries the Compositor cannot store is `entries_refused`; anything else
- * is the shared sync failure.
- */
-function syncApplyFailure(err: unknown) {
-  if (err instanceof ObjectsSyncStale || err instanceof SyncBaseStale) return { ok: false as const, intent: "sync-apply" as const, error: "sync_stale" as const };
-  if (err instanceof SyncEntriesRefused) return syncFailure("sync-apply", err, "entries_refused");
-  return syncFailure("sync-apply", err, "apply_failed");
-}
+export const handle = { i18n: ["common", "objects", "structural"] };
 
 /** The project's record of the last commit whose objects.csv D1 accounts for. */
 function objectsReadShaOf(project: { objects_read_sha?: string | null }): string | null {
   return project.objects_read_sha ?? null;
-}
-
-/**
- * Advance the project's objects_read_sha to `readAt`, a commit whose
- * objects.csv object rows D1 now accounts for, from the record the page
- * loaded. Best-effort: a record left behind only refuses the next objects
- * commit, which the objects sync clears. Returns whether the record moved.
- */
-async function recordObjectsRead(
-  db: ReturnType<typeof getDb>,
-  project: { id: number; objects_read_sha?: string | null },
-  readAt: string | undefined,
-  label: string,
-): Promise<boolean> {
-  if (!readAt) return false;
-  try {
-    return await bumpObjectsReadFrom(db, project.id, objectsReadShaOf(project), readAt);
-  } catch (err) {
-    console.error(`${label}: objects_read_sha write failed`, err);
-    return false;
-  }
-}
-
-
-/**
- * An objects check that finds nothing to bring in from GitHub: no new,
- * changed or missing object, no reorder, and no row still under a stripped id
- * whose repair did not land. Image files with no row are not
- * rows of objects.csv, so they do not count.
- */
-function syncDiffBringsNothingIn(diff: SyncDiff): boolean {
-  const listed = diff.newObjects.length + diff.changedObjects.length + diff.missingObjects.length;
-  return listed === 0 && diff.reordered == null && diff.respelled === undefined;
 }
 
 /**
@@ -339,7 +267,6 @@ export async function clientAction({ request, serverAction }: Route.ClientAction
   return answerReadsWhenUnreachable(request, serverAction, [
     "poll-build",
     "pre-commit-check",
-    "compute-sync-diff",
     "fetch-iiif-preview",
     "probe-tiles",
     "enrich-external",
@@ -435,124 +362,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         formData.get("currentValue") !== "true",
       );
       return { ok: true, intent: "toggle-featured" };
-
-    case "compute-sync-diff": {
-      // Membership-aware resolution — the old owner-only query with the
-      // ?? allProjects[0] fallback could diff the WRONG owned project when
-      // the session id pointed elsewhere. Sync is convenor-only in the UI;
-      // enforce the same here.
-      const resolvedDiff = page;
-      if (!resolvedDiff) {
-        return { ok: false, intent: "compute-sync-diff", error: "no_project" };
-      }
-      if (resolvedDiff.userRole !== "convenor") {
-        return { ok: false, intent: "compute-sync-diff", error: "forbidden" };
-      }
-      const activeProject = resolvedDiff.project;
-
-      try {
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-        const [owner, repo] = activeProject.github_repo_full_name.split("/");
-        await finishPendingBeforeCheck(env, db, activeProject.id, user.id, { token, owner, repo });
-        // Everything in D1 the check compares, taken before it reads any of
-        // it, the site's version included: a write landing during the check's
-        // reads, or after them, answers a different fingerprint at the record
-        // below.
-        const compared = await syncedRowsFingerprint(db, activeProject.id);
-        const version = { d1: await readSiteTelarVersion(db, activeProject.id) };
-        // Three-way against the commit whose objects.csv D1 last accounted
-        // for, as the full sync compares against its recorded base; two-way
-        // where there is no record or GitHub does not hold the commit.
-        const recorded = await objectsBaseAt(token, owner, repo, objectsReadShaOf(activeProject));
-        // The first check on the project gives rows an earlier import stored
-        // under a stripped id GitHub's spelling, with nothing offered.
-        const diff = await checkRepairingLegacyIds(
-          env,
-          activeProject.id,
-          user.id,
-          (legacyRef) => computeSyncDiff(
-            activeProject.id, token, owner, repo, db, recorded, undefined, true, version, legacyRef,
-          ),
-          (checked) => checked,
-          { db, open: activeProject.legacy_ids_repaired_at == null, ref: legacyRecordRef(activeProject) },
-        );
-        // Google Sheets as the build reads it: from _config.yml at the head
-        // the check read.
-        await markSheetsEffects(diff.warnings, headConfigSheets(token, owner, repo, diff.headSha), undefined, headHasGlossaryCsv(token, owner, repo, diff.headSha));
-        // D1 already holds everything the commit's objects.csv holds. Recorded
-        // only under the objects lease, and only while D1 is as it was before
-        // the check read it (`recordIfLeaseFree`, `compared`).
-        const advanced = syncDiffBringsNothingIn(diff) && await recordIfLeaseFree(
-          env, activeProject.id, user.id, "objects",
-          async () => (await syncedRowsFingerprint(db, activeProject.id)) === compared
-            && recordObjectsRead(db, activeProject, diff.headSha, "compute-sync-diff"),
-        );
-        // The base the apply must still find: the record as this check left it.
-        const baseSha = advanced ? diff.headSha ?? null : objectsReadShaOf(activeProject);
-        return { ok: true, intent: "compute-sync-diff", diff: { ...diff, baseSha } };
-      } catch (err) {
-        return await (await import("~/lib/sheet-choices.server")).refusalOrChoices("compute-sync-diff", err, "sync_failed", { env, user, project: activeProject });
-      }
-    }
-
-    case "sync-apply": {
-      const changesJson = formData.get("changes") as string;
-      if (!changesJson) {
-        return { ok: false, intent: "sync-apply", error: "missing_changes" };
-      }
-
-      let changes: SyncChanges;
-      try {
-        changes = JSON.parse(changesJson) as SyncChanges;
-      } catch {
-        return { ok: false, intent: "sync-apply", error: "invalid_changes" };
-      }
-
-      // Membership-aware resolution + convenor gate (matches the UI; the old
-      // owner-only query could apply sync changes to the wrong owned project).
-      const resolvedApply = page;
-      if (!resolvedApply) {
-        return { ok: false, intent: "sync-apply", error: "no_project" };
-      }
-      if (resolvedApply.userRole !== "convenor") {
-        return { ok: false, intent: "sync-apply", error: "forbidden" };
-      }
-      const activeProject = resolvedApply.project;
-
-      try {
-        const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-        const [owner, repo] = activeProject.github_repo_full_name.split("/");
-
-        await refuseMovedObjectsBase(db, activeProject.id, changes);
-        // The apply holds the objects lease and changes the document on the
-        // server; the page removes nothing.
-        const applied = await applySyncChanges(
-          activeProject.id,
-          changes,
-          token,
-          owner,
-          repo,
-          db,
-          env,
-          user.id,
-        );
-        // The apply recorded objects_read_sha under its lease
-        // (`readRecorded`); false is a record another writer moved first, so
-        // what the apply landed is not recorded as read and the page says so.
-        return {
-          ok: true,
-          intent: "sync-apply",
-          projectId: activeProject.id,
-          appliedCount: applied.appliedCount,
-          pendingObjects: applied.pendingObjects,
-          notAdded: applied.notAdded,
-          changedSinceReview: applied.changedSinceReview ?? [],
-          ...(applied.readRecorded === false ? { readNotRecorded: true as const } : {}),
-        };
-      } catch (err) {
-        return syncApplyFailure(err);
-      }
-    }
 
     case "fetch-iiif-preview": {
       const url = (formData.get("url") as string | null)?.trim();
@@ -689,14 +498,13 @@ export async function action({ request, context }: Route.ActionArgs) {
         const imageFile = imageFiles[i];
         const metadata = metadataArray[i];
 
-        // Normalise the user-typed id with the same slugifier used for
-        // titles — users type "Mission Bell #2" in good faith, and rejecting
-        // it was issue #25's deterministic failure. Fall back to the title,
-        // then to "object" for titles with no ASCII alphanumerics
-        // (slugify("中文") === ""). generateUniqueObjectSlug appends -2, -3…
-        // on collision; each call sees previously generated IDs via DB.
-        const requestedSlug =
-          slugify(metadata.objectId, 0) || slugify(metadata.title) || "object";
+        // The dialog shows and submits the ID `uploadIdFor` settles, so this
+        // call leaves a dialog-made ID unchanged; a request that bypasses it
+        // ("Mission Bell #2") is settled the same way rather than rejected.
+        // The fallback to the title, then to "object", covers titles with no
+        // ASCII alphanumerics. generateUniqueObjectSlug appends -2, -3… on
+        // collision; each call sees previously generated IDs via DB.
+        const requestedSlug = uploadIdFor(metadata.objectId, metadata.title);
         const uploadObjectId = await generateUniqueObjectSlug(requestedSlug, uploadActiveProject.id, db);
 
         // Backstop: slug must stay path-safe (no traversal, only lowercase
@@ -863,7 +671,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         // Nothing is registered before the commit lands, so a failure here
         // leaves nothing to roll back. The operation's record, if the commit
         // was attempted, is settled by `commitUnderRecord`. Object rows
-        // changed on GitHub are refused as a head that moved: the objects sync
+        // changed on GitHub are refused as a head that moved: the full sync
         // clears both.
         if (err instanceof StaleHeadError || err instanceof ObjectsSheetChanged) {
           return { ok: false, intent: "upload-image", error: "stale_head" };
@@ -1552,6 +1360,7 @@ function commitCheckPending(checkedSite: number | null, projectId: number, fetch
 export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   const { openDoc } = useOutletContext<{ openDoc?: (id: string) => void }>() ?? {};
   const { t } = useTranslation("objects");
+  const { canReview, coordinatorName } = useSyncReview();
   const { t: tStructural } = useTranslation("structural");
   const { t: tCommon } = useTranslation("common");
   const {
@@ -1592,16 +1401,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     },
     [setSearchParams],
   );
-
-  // Sync dialog state. `syncCheckId` names the check the dialog shows, and
-  // keys it, so each check starts from the dialog's defaults. `syncNotice`
-  // says why the list changed, after an apply was refused as stale.
-  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
-  const [syncDiffData, setSyncDiffData] = useState<SyncDiff | null>(null);
-  const [syncCheckId, setSyncCheckId] = useState(0);
-  const [syncNotice, setSyncNotice] = useState<string | null>(null);
-  // A check refused for columns read as one field, offered in the column picker.
-  const [syncQuestion, setSyncQuestion] = useState<SheetChoicesQuestion | null>(null);
 
   // Unified Add Object dialog state (replaces the chooser + AddIiif + Upload
   // trio). The IIIF tab still drives the iiif-preview fetch.
@@ -1647,25 +1446,9 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   function handleThumbnailRefreshed(object: ObjectRowObject, thumbnail: string) {
     writeObjectThumbnail(ydoc, object.id, thumbnail);
   }
-  const syncFetcher = useSiteFetcher();
   const iiifFetcher = useFetcher();
   const sheetsFetcher = useSiteFetcher();
   const uploadFetcher = useSiteFetcher();
-
-  // Handle sync diff result
-  const syncFetcherData = syncFetcher.data as
-    | { ok: true; intent: "compute-sync-diff"; diff: SyncDiff }
-    | {
-        ok: true;
-        intent: "sync-apply";
-        projectId: number;
-        appliedCount: number;
-        pendingObjects: PendingObject[];
-        notAdded: string[];
-      }
-    | { ok: false; intent: string; error: string; collidingColumns?: CollidingColumns; sheet?: string }
-    | null
-    | undefined;
 
   const iiifFetcherData = iiifFetcher.data as
     | { ok: true; intent: "fetch-iiif-preview"; result: IiifFetchResult }
@@ -1720,41 +1503,10 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [denied]);
 
-  // Full-repo sync review modal (SyncConfirmModal) — distinct from this
-  // route's objects-scoped SyncDiffDialog. Opened by the ?sync=1 deep-link
-  // that the out-of-sync popover and the publish page's stale-head blocker
-  // point at; the param is stripped once consumed (mirrors `denied` above)
-  // so the modal never re-fires on refresh. The modal's conflict warning reads
-  // the count useSiteStatus gives the header chip: the live count, else the loader's estimate.
   const appLoaderData = useRouteLoaderData("routes/_app") as
     | { needsUpgrade?: boolean; upgradeAwaitsConvenor?: boolean; releaseUnknown?: boolean }
     | undefined;
   const upgradeAwaitsConvenor = appLoaderData?.upgradeAwaitsConvenor ?? false;
-  const { count: unpublishedCount, countKnown } = useSiteStatus();
-  const [fullSyncModalOpen, setFullSyncModalOpen] = useState(false);
-  const syncParam = searchParams.get("sync");
-  useEffect(() => {
-    if (syncParam !== "1") return;
-    setFullSyncModalOpen(true);
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("sync");
-        return next;
-      },
-      { replace: true, preventScrollReset: true },
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncParam]);
-
-  // Surface external version drift as a toast. The compute-full-sync-diff
-  // submission happens inside SyncConfirmModal via useFetcher({ key }); we
-  // subscribe to the same fetcher here so the toast fires once at the page
-  // level and stays visible after the modal closes.
-  const fullSyncDiffFetcher = useFetcher({ key: SYNC_DIFF_FETCHER_KEY });
-  useVersionChangeToast(
-    fullSyncDiffFetcher.data as Parameters<typeof useVersionChangeToast>[0],
-  );
 
   // Update state from pre-commit check result. A check that could not be made
   // leaves the dialog waiting: an earlier answer is not the current one.
@@ -1774,83 +1526,12 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     }
   }, [preCommitData, preCheckFailed]);
 
-  // Update sync diff data when compute returns
-  useEffect(() => {
-    if (syncFetcherData?.ok && syncFetcherData.intent === "compute-sync-diff") {
-      setSyncDiffData(syncFetcherData.diff);
-      setSyncCheckId((id) => id + 1);
-    }
-  }, [syncFetcherData]);
-
   // Update IIIF fetch result
   useEffect(() => {
     if (iiifFetcherData?.ok && iiifFetcherData.intent === "fetch-iiif-preview") {
       setIiifFetchResult(iiifFetcherData.result);
     }
   }, [iiifFetcherData]);
-
-  // Close the sync dialog (if open) and open the commit modal on a successful
-  // apply, exactly once per response — see useSyncApplyOutcome. Handling does
-  // not depend on the dialog being open: the apply has already changed the
-  // document by the time its response arrives, so the objects it left to
-  // commit need the commit window whether or not the dialog is still on screen.
-  const closeSyncDialogAndDiff = useCallback(() => {
-    setSyncDialogOpen(false);
-    setSyncDiffData(null);
-    setSyncNotice(null);
-  }, []);
-  const openCommitModalWithPending = useCallback(
-    (pendingObjects: PendingObject[]) => {
-      setPendingObjects(pendingObjects);
-      sheetsFetcher.submit({ intent: "pre-commit-check" }, { method: "post" });
-      setCommitModalOpen(true);
-    },
-    [sheetsFetcher.submit],
-  );
-  const toastSyncNotAdded = useCallback(() => {
-    showToast({ type: "warning", message: t("sync_not_added") });
-  }, [showToast, t]);
-  const toastSyncChangedSinceReview = useCallback(() => {
-    showToast({ type: "warning", message: t("sync_changed_none_applied") });
-  }, [showToast, t]);
-  const toastSyncReadNotRecorded = useCallback(() => {
-    showToast({ type: "warning", message: t("sync_read_not_recorded") });
-  }, [showToast, t]);
-  useSyncApplyOutcome({
-    data: syncFetcherData,
-    projectId: project.id,
-    onClose: closeSyncDialogAndDiff,
-    onApplied: openCommitModalWithPending,
-    onNotAdded: toastSyncNotAdded,
-    onChangedSinceReview: toastSyncChangedSinceReview,
-    onReadNotRecorded: toastSyncReadNotRecorded,
-  });
-
-  // Surface sync failures: a failed result that is not shown leaves the
-  // dialog open on blank content or a stopped spinner. An apply refused because
-  // GitHub is not at the commit the author reviewed keeps the dialog open and
-  // checks again, with a notice saying why the list changed; any other failure
-  // is toasted and the dialog closes so the author can retry.
-  useEffect(() => {
-    if (
-      syncFetcherData &&
-      !syncFetcherData.ok &&
-      (syncFetcherData.intent === "compute-sync-diff" || syncFetcherData.intent === "sync-apply")
-    ) {
-      if (syncFetcherData.intent === "sync-apply" && syncFetcherData.error === "sync_stale") {
-        setSyncDiffData(null);
-        setSyncNotice(t("sync_stale"));
-        syncFetcher.submit({ intent: "compute-sync-diff" }, { method: "post" });
-        return;
-      }
-      // The layout's notice speaks for a sync refused because the site
-      // changed; the dialog still closes. Columns read as one field go to the picker.
-      setSyncQuestion(choicesQuestionOf(syncFetcherData));
-      if (!isSiteChanged(syncFetcherData) && !choicesQuestionOf(syncFetcherData)) showToast(syncErrorToast(syncFetcherData, t));
-      closeSyncDialogAndDiff();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncFetcherData]);
 
   // IIIF add flow migrated to Yjs — no route action for add-iiif-object.
   // The confirm handler below writes to the Y.Array and kicks off client-side
@@ -1882,7 +1563,11 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       // be mapped — unmapped codes fell back to the generic "check your
       // connection" copy, which is how issue #25's real cause stayed hidden.
       const errorMap: Record<string, string> = {
-        stale_head: t("upload_error_stale"),
+        stale_head: t(...reviewerLine(
+          { convenor: "upload_error_stale", named: "upload_error_stale_collab", unnamed: "upload_error_stale_collab_unnamed" },
+          canReview,
+          coordinatorName,
+        )),
         upgrade_required: t("upload_disabled_upgrade_required"),
         upgrade_awaits_convenor: t("upload_disabled_upgrade_awaits_convenor"),
         release_unknown: t("repo_write_release_unknown"),
@@ -1901,7 +1586,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       setUploadError(errorMap[uploadFetcherData.error] || t("upload_error_generic"));
       setUploadErrorCode(uploadFetcherData.error);
     }
-  }, [uploadFetcherData, addObjectOpen, t]);
+  }, [uploadFetcherData, addObjectOpen, t, canReview, coordinatorName]);
 
   function handleToggleFeatured(object: ObjectRowObject) {
     // Y.Doc is the source of truth for object metadata in collaborative mode;
@@ -1926,23 +1611,9 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     );
   }
 
-  function handleSyncClick() {
-    setSyncDiffData(null);
-    setSyncNotice(null);
-    setSyncDialogOpen(true);
-    syncFetcher.submit({ intent: "compute-sync-diff" }, { method: "post" });
-  }
-
   function handleAddObjectClick() {
     setIiifFetchResult(null);
     setAddObjectOpen(true);
-  }
-
-  function handleSyncApply(payload: SyncApplyPayload) {
-    syncFetcher.submit(
-      { intent: "sync-apply", changes: JSON.stringify(payload) },
-      { method: "post" }
-    );
   }
 
   function handleIiifFetch(url: string) {
@@ -2143,10 +1814,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
     dialogFetchResult = { ok: false, error: "fetch_failed" };
   }
 
-  const isComputing = syncFetcher.state !== "idle" &&
-    syncFetcher.formData?.get("intent") === "compute-sync-diff";
-  const isApplying = syncFetcher.state !== "idle" &&
-    syncFetcher.formData?.get("intent") === "sync-apply";
   const isFetchingIiif = iiifFetcher.state !== "idle" &&
     iiifFetcher.formData?.get("intent") === "fetch-iiif-preview";
   // add-iiif-object is no longer a route action — the Y.Array path is
@@ -2305,8 +1972,7 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
   );
 
   const hasObjects = sourceList.length > 0;
-  // isConvenor still gates sync-from-GitHub and delete authority — those stay
-  // convenor-only. canUpload is the separate, broader check the Upload tab
+  // isConvenor gates delete authority, which stays convenor-only. canUpload is the separate, broader check the Upload tab
   // and the object-write commit flow use (any publishing role).
   const isConvenor = userRole === "convenor";
   const canUpload = isPublishingRole(userRole);
@@ -2365,20 +2031,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
             className="w-56 font-body text-sm text-charcoal bg-surface border border-gray-200 rounded-md px-3 py-1.5"
           />
 
-          {/* Sync from GitHub — convenor-only ghost button.
-              Repo writes require convenor; collaborators see only filter + Add. */}
-          {isConvenor && (
-            <button
-              type="button"
-              onClick={handleSyncClick}
-              disabled={isComputing || awaitingDoc}
-              className="inline-flex items-center gap-1.5 border border-gray-200 text-charcoal hover:bg-cream font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-4 py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <RefreshCw className="w-4 h-4" />
-              {t("sync_from_github")}
-            </button>
-          )}
-
           {/* Single +Add object — opens the unified AddObjectDialog */}
           <button
             type="button"
@@ -2396,7 +2048,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
       <div>
         {!hasObjects ? (
           <ObjectsEmptyState
-            onSync={handleSyncClick}
             onAddIiif={handleAddObjectClick}
             awaitingSync={awaitingDoc}
           />
@@ -2460,20 +2111,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         )}
       </div>
 
-      {/* Sync diff dialog */}
-      <SyncDiffDialog
-        key={syncCheckId}
-        open={syncDialogOpen}
-        onClose={closeSyncDialogAndDiff}
-        diffData={syncDiffData}
-        onApply={handleSyncApply}
-        isComputing={isComputing}
-        isApplying={isApplying}
-        notice={syncNotice}
-      />
-
-      <SheetChoicesDialog question={syncQuestion} onChosen={() => { setSyncQuestion(null); handleSyncClick(); }} onClose={() => setSyncQuestion(null)} />
-
       {/* Unified Add Object dialog (IIIF / Upload / External) */}
       <AddObjectDialog
         open={addObjectOpen}
@@ -2529,14 +2166,6 @@ export default function ObjectsPage({ loaderData }: Route.ComponentProps) {
         entityType="object"
         entityLabel={deleteTarget?.object.title ?? deleteTarget?.object.object_id ?? ""}
         contributors={deleteTarget?.contributors}
-      />
-
-      {/* Full-repo sync review (?sync=1 deep-link) */}
-      <SyncConfirmModal
-        open={fullSyncModalOpen}
-        unpublishedCount={unpublishedCount}
-        countKnown={countKnown}
-        onClose={() => setFullSyncModalOpen(false)}
       />
     </div>
   );

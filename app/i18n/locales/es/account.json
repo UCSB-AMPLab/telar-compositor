@@ -24,7 +24,7 @@
     "presence_color_amber": "ocre",
     "presence_color_purple": "lavanda",
     "presence_color_pink": "rosado",
-    "create_site_lang_patch_failed_body": "Tu nuevo sitio se creó en inglés. Para cambiarlo al español, edita `telar_language` en <0>Configuración</0>.",
+    "create_site_lang_patch_failed_body": "Tu nuevo sitio se creó en inglés. Para que quede en español, abre <0>Configuración del sitio</0> y elige español en el campo Idioma.",
     "create_site_lang_patch_failed_aria_label": "Advertencia de idioma del nuevo sitio",
     "create_site_lang_patch_failed_continue": "Continuar de todos modos"
   },

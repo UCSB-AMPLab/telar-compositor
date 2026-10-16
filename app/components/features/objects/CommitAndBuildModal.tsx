@@ -7,9 +7,19 @@
  * 3. 6-phase build progress tracking via the Jobs API
  * 4. Success dismissal or failure rollback
  *
- * Triggered after sync-apply or add-iiif-object adds new objects.
+ * The Objects page opens it after an image upload, whose action has already
+ * committed the files and objects.csv and registered the objects, and an
+ * object's page opens it after dispatching the build that generates tiles.
+ * Both pass `skipCommit`, so the modal starts at the build and tracks the run
+ * the action dispatched (`dispatchRunId`); steps 1 and 2 serve a caller that
+ * does not.
  *
- * @version v1.5.0-beta
+ * When the repository changed under the commit, nothing was saved and the
+ * changes on GitHub need review: the heading asks the convenor to review
+ * them, and tells anyone else that the site's coordinator reviews them,
+ * naming the coordinator where the name is known (`reviewerLine`).
+ *
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -18,6 +28,7 @@ import { useSiteFetcher } from "~/lib/page-site";
 import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
 import { CheckCircle2, ExternalLink, Loader2, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { reviewerLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 import type { BuildPhaseStatus } from "~/lib/commit.server";
 import type { RegistrationResult } from "~/lib/register-objects.server";
 import { Button } from "~/components/ui/Button";
@@ -302,6 +313,13 @@ export function CommitAndBuildModal({ open, sheetsEnabled, objectsFile = "object
   const buildSkipped = build === "skipped";
   /** Objects committed and registered, over a build that did not succeed. */
   const addedBeforeBuild = !commitError && pendingObjects.length > 0;
+  const { canReview, coordinatorName } = useSyncReview();
+  // A repository that changed under the commit is reviewed by the convenor; everyone else is told who does.
+  const headingKey = commitFailureHeadingKey(commitError, addedBeforeBuild);
+  const [failureKey, failureValues] =
+    headingKey === "staleHeadError"
+      ? reviewerLine({ convenor: "staleHeadError", named: "staleHeadError_collab", unnamed: "staleHeadError_collab_unnamed" }, canReview, coordinatorName)
+      : [headingKey, {}];
 
   const commitData = commitFetcher.data as CommitData;
   const pollData = pollFetcher.data as PollData;
@@ -738,7 +756,7 @@ export function CommitAndBuildModal({ open, sheetsEnabled, objectsFile = "object
             <div className="flex flex-col items-center gap-3 py-4 mb-4">
               <XCircle className="w-12 h-12 text-red-500" />
               <h3 className="font-heading font-semibold text-lg text-charcoal text-center">
-                {t(commitFailureHeadingKey(commitError, addedBeforeBuild))}
+                {t(failureKey, failureValues)}
               </h3>
               {commitError === "upgrade_required" && (
                 <Link

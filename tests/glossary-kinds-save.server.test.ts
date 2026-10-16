@@ -3,7 +3,7 @@
  * the column the page read, the check against the core kinds read at save
  * time, and the first save over the kinds the config holds.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -116,6 +116,21 @@ describe("saveGlossaryKinds", () => {
     expect(stored()).toBeNull();
   });
 
+  it("refuses a new kind whose id has characters other than lowercase letters, digits and hyphens", async () => {
+    const result = await save({ kinds: [species, { id: "Wild_Cat", label: "Wild cat", heading: "Wild cats" }] });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "invalid",
+      problems: [{}, { id: { key: "kind_error_id_characters", value: "Wild_Cat" } }],
+    });
+    expect(stored()).toBeNull();
+  });
+
+  it("refuses a second kind whose id the first already uses once case and hyphens are folded", async () => {
+    const result = await save({ kinds: [species, { id: "Species", label: "Again", heading: "Again" }] });
+    expect(result).toMatchObject({ ok: false, reason: "invalid", problems: [{}, { id: { key: "kind_error_id_taken" } }] });
+  });
+
   it("checks a kind against the core kinds read at save time", async () => {
     const readRepo = vi.fn(async () => parseGlossaryKinds(`${CORE}- id: species\n  panel_label: Core species\n`, CONFIG, null));
     const result = await save({ readRepoKinds: readRepo });
@@ -201,5 +216,21 @@ describe("the first save, over the config's kinds", () => {
       ],
     });
     expect(result).toMatchObject({ ok: true, renamed: { kept: "renamed" } });
+  });
+
+  it("does not let a fabricated previous id exempt a new kind's characters", async () => {
+    setStored(JSON.stringify([species]));
+    const result = await save({
+      base: stored(),
+      kinds: [species, { id: "Wild_Cat", label: "Wild cat", heading: "Wild cats", values: [], from: "Wild_Cat" }],
+    });
+    expect(result).toMatchObject({ ok: false, reason: "invalid" });
+  });
+
+  it("keeps a stored kind's id as written when it is unchanged", async () => {
+    const legacy = { id: "Wild_Cat", label: "Wild cat", heading: "Wild cats", values: [] };
+    setStored(JSON.stringify([legacy]));
+    const result = await save({ base: stored(), kinds: [{ ...legacy, from: "Wild_Cat" }] });
+    expect(result).toMatchObject({ ok: true });
   });
 });

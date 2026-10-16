@@ -8,7 +8,7 @@
  * framing stage will draw it: the author zooms and pans, and
  * `captureViewportState` stores what the viewport reads: the view's centre
  * above zoom 1, and at 1 and below the image's centre, which replay shows
- * there whatever is stored (ruling 17).
+ * there whatever is stored.
  *
  * REPLAY runs through the framework's own `snapIiifToPosition`, imported into
  * a jsdom window of the visitor's size with the live card rect from `cardBox`
@@ -51,12 +51,12 @@
  *   fit in the region at 1, the circle drawn across the region's shorter side
  *   at 2, and a straight line between them.
  * - Below zoom 1 the framework fits the whole object to the region, the
- *   editor to the frame inscribed in it (ruling 1, accepted). The replayed
+ *   editor to the frame inscribed in it. The replayed
  *   image is larger than the one the author saw by the ratio of the two fits,
  *   and that ratio is recorded per window and image as an exact expectation.
  *   The image's centre sits at the region's, wherever the author's point was.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { execFileSync } from "node:child_process";
@@ -380,7 +380,7 @@ function workedAxis(start: number, extent: number, dim: number, a: number, s: nu
 }
 
 /**
- * The stated difference at an overview (ruling 1): the whole-object fit in the
+ * The stated difference at an overview: the whole-object fit in the
  * region over the fit in the frame inscribed in it, for each window and image
  * aspect, worked by hand from the region and `AUTHORING_ASPECT`. It is 1 where
  * the image is limited by an axis the frame shares with the region: the height
@@ -587,7 +587,7 @@ describeWithFramework("a framing captured in the region, replayed by the framewo
 });
 
 /**
- * Round trips below and across zoom 2 (ruling 17): the author frames a view,
+ * Round trips below and across zoom 2: the author frames a view,
  * the editor captures it and settles where the site will put it
  * (`captureFocal`'s view, which is what the column then shows), and the
  * framework replays what was stored. The views are near the centre, near the

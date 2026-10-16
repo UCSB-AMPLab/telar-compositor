@@ -10,7 +10,7 @@
  * refuses, as changed since review or as malformed, or fails to save, keeps
  * it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -27,6 +27,10 @@ const gh = vi.hoisted(() => ({
   files: {} as Record<string, string>,
   trees: {} as Record<string, Record<string, Record<string, string>>>,
   subtreesFail: false,
+  /** The subtree path whose listing answers null, as one holding a symlink or cut short does. */
+  unlistable: null as string | null,
+  /** A commit GitHub no longer holds, as after a force-push. */
+  unresolved: null as string | null,
   subtreeCommits: [] as Array<{ commits: string[]; paths: string[] }>,
   /** "<ref>:<path>" reads that fail. */
   failing: new Set<string>(),
@@ -48,6 +52,7 @@ vi.mock("~/lib/github.server", async (orig) => {
     getSubtreeOids: vi.fn(async (_t: string, _o: string, _r: string, commits: string[], paths: string[]) => {
       gh.subtreeCommits.push({ commits: [...commits], paths: [...paths] });
       if (gh.subtreesFail && paths.includes(PAGES)) return { ok: false, reason: "malformed" };
+      if (gh.unresolved && commits.includes(gh.unresolved)) return { ok: false, reason: "unresolved" };
       return {
         ok: true,
         at: (commit: string, path: string) =>
@@ -56,6 +61,7 @@ vi.mock("~/lib/github.server", async (orig) => {
     }),
     listSubtreeEntries: vi.fn(async (_t: string, _o: string, _r: string, oid: string) => {
       const [commit, path] = oid.split("|");
+      if (path === gh.unlistable) return null;
       return { files: new Map(Object.entries(gh.trees[commit]?.[path] ?? {})), dirs: new Set() };
     }),
   };
@@ -67,7 +73,7 @@ import { __clearStoryBlobCacheForTest } from "~/lib/story-files.server";
 import { project_config, project_pages, projects } from "~/db/schema";
 import { buildThreeWayChanges, emptySelections } from "~/components/features/dashboard/SyncConfirmModal";
 import { InsertsNotAdded, SyncBaseStale } from "~/lib/sync.server";
-import { checkPageFiles, keptPageFilesRecordJson } from "~/lib/page-files-check.server";
+import { checkPageFiles } from "~/lib/page-files-check.server";
 import type { PageCheckScope } from "~/lib/page-files-check.server";
 import { parsePageMarkdown } from "~/lib/import.server";
 import { pageContentAsLoaded, pageRawHash } from "~/lib/page-canonical";
@@ -158,6 +164,8 @@ const applied = (ids: number[]) => () => ({ pageContent: { applied: ids, already
 beforeEach(() => {
   gh.reads.length = 0;
   gh.subtreesFail = false;
+  gh.unlistable = null;
+  gh.unresolved = null;
   gh.subtreeCommits.length = 0;
   gh.failing.clear();
   gh.files = { [`${HEAD}:${PAGES}/about.md`]: EDITED, [`${BASE}:${PAGES}/about.md`]: ABOUT };
@@ -293,6 +301,54 @@ describe("head_sha and the page files the check read", () => {
     await applyFullSyncChanges(1, changes({ pages: { acceptContent: [] } }), "tok", "o", "r", db, 7, ingestEnv(applied([]), []));
     expect(gh.subtreeCommits.filter((c) => c.paths.includes(PAGES)).map((c) => c.commits)).toEqual([[BASE, HEAD]]);
     expect(row.head_sha).toBe(HEAD);
+  });
+});
+
+describe("keeping the Compositor's version of page files the check could not read", () => {
+  const unread = (keep?: FullSyncChanges["keepUnreadFiles"]) => {
+    const { pageContentChecked: _dropped, ...rest } = changes({ pages: { acceptContent: [] } });
+    return (keep ? { ...rest, keepUnreadFiles: keep } : rest) as FullSyncChanges;
+  };
+
+  it("advances head_sha over a folder that cannot be listed whole, carrying the record unchanged", async () => {
+    gh.unlistable = PAGES;
+    const { db, sets, row } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(["pages"]), "tok", "o", "r", db, 7, ingestEnv(applied([]), []));
+    expect(result).toEqual({ newHeadSha: HEAD, storyFilesInconclusive: false, pageFilesInconclusive: false });
+    expect(row.head_sha).toBe(HEAD);
+    const write = sets.find((s) => "head_sha" in s)!;
+    expect("page_files_json" in write).toBe(false);
+  });
+
+  it("holds head_sha over the same folder without the choice", async () => {
+    gh.unlistable = PAGES;
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(), "tok", "o", "r", db, 7, ingestEnv(applied([]), []));
+    expect(result).toEqual({ newHeadSha: null, storyFilesInconclusive: false, pageFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+
+  it("never applies to a request cause: holds head_sha over a malformed answer", async () => {
+    gh.subtreesFail = true;
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(["pages"]), "tok", "o", "r", db, 7, ingestEnv(applied([]), []));
+    expect(result).toEqual({ newHeadSha: null, storyFilesInconclusive: false, pageFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+
+  it("never applies to a request cause: holds head_sha over a failed read of a page file", async () => {
+    gh.failing.add(`${HEAD}:${PAGES}/about.md`);
+    const { db, sets } = recordingDb(BASE, [{ id: 5, slug: "about", title: "About", body: "", frontmatter: null }]);
+    const result = await applyFullSyncChanges(1, unread(["pages"]), "tok", "o", "r", db, 7, ingestEnv(applied([]), []));
+    expect(result).toEqual({ newHeadSha: null, storyFilesInconclusive: false, pageFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+
+  it("holds head_sha when the page files now conclude", async () => {
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(["pages"]), "tok", "o", "r", db, 7, ingestEnv(applied([]), []));
+    expect(result).toEqual({ newHeadSha: null, storyFilesInconclusive: false, pageFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
   });
 });
 
@@ -477,7 +533,7 @@ describe("the accept of the pages GitHub added", () => {
     expect(JSON.parse(headWrite.page_files_json as string)).toEqual({ commit: HEAD, files: { "about.md": 21 } });
   });
 
-  it("records a file the last publish named over no record with no page, and does not take it (R9)", async () => {
+  it("records a file the last publish named over no record with no page, and does not take it", async () => {
     githubAddedTwo();
     const { db, sets } = recordingDb(BASE, [], { project: { snapshot: JSON.stringify({ page_slugs: ["credits"] }) } });
     const sent: SyncIngestPayload[] = [];
@@ -530,10 +586,8 @@ describe("the accept of a page GitHub deleted", () => {
   });
 });
 
-describe("one file per page: a sister file GitHub added", () => {
+describe("a page in another language is a page of its own to the sync", () => {
   const insertedAnswer = (ids: Record<string, number>) => () => ({ insertedPages: ids });
-  /** acerca.md as the Compositor stores it: its block without the two language lines. */
-  const ACERCA_AS_PAGE = parsePageMarkdown(ACERCA.replace("localized_for: about.md\nlanguage: es\n", ""), "about");
 
   function githubAddedAboutAndAcerca() {
     gh.trees = { [BASE]: { [PAGES]: {} }, [HEAD]: { [PAGES]: { "about.md": "a1", "acerca.md": "c1" } } };
@@ -546,77 +600,11 @@ describe("one file per page: a sister file GitHub added", () => {
 
   function githubAddedAcerca() {
     gh.trees = { [BASE]: { [PAGES]: { "about.md": "a1" } }, [HEAD]: { [PAGES]: { "about.md": "a1", "acerca.md": "c1" } } };
-    gh.files = { [`${HEAD}:${PAGES}/about.md`]: ABOUT, [`${BASE}:${PAGES}/about.md`]: ABOUT, [`${HEAD}:${PAGES}/acerca.md`]: ACERCA };
+    gh.files = {
+      [`${HEAD}:${PAGES}/about.md`]: ABOUT, [`${BASE}:${PAGES}/about.md`]: ABOUT, [`${HEAD}:${PAGES}/acerca.md`]: ACERCA,
+      [`${HEAD}:_data/navigation.yml`]: TEMPLATE_MENU,
+    };
   }
-
-  it("on a Spanish site takes the added about page from acerca.md, never offers acerca.md, and records it with no page", async () => {
-    githubAddedAboutAndAcerca();
-    const { db, sets } = recordingDb(BASE, [], { config: { navigation: JSON.stringify(SAVED_MENU), lang: "es" } });
-    const sent: SyncIngestPayload[] = [];
-    await applyFullSyncChanges(1, noPageChoices(["about.md"]), "tok", "o", "r", db, 7, ingestEnv(insertedAnswer({ about: 11 }), sent));
-    expect(sent[0].pages?.insert).toEqual([expect.objectContaining({ slug: "about", ...ACERCA_AS_PAGE })]);
-    const headWrite = sets.find((s) => "head_sha" in s)!;
-    expect(JSON.parse(headWrite.page_files_json as string).files).toEqual({ "about.md": 11, "acerca.md": null });
-  });
-
-  it("on an English site takes about.md as it is and records acerca.md with no page", async () => {
-    githubAddedAboutAndAcerca();
-    const check = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope(), BASE, HEAD);
-    if (!check.conclusive) throw new Error(check.reason);
-    expect(check.additions?.map((a) => [a.name, a.title, a.readFrom])).toEqual([["about.md", "About", undefined]]);
-    expect(check.record?.files).toEqual({ "about.md": null, "acerca.md": null });
-  });
-
-  it("on a Spanish site gives a held page acerca.md's text as a change from GitHub, taken by default", async () => {
-    githubAddedAcerca();
-    const about = importedPageRow(5, "about", ABOUT);
-    const check = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: [about], siteLanguage: "es" }), BASE, HEAD);
-    if (!check.conclusive) throw new Error(check.reason);
-    const expected = await pageRawHash(pageContentAsLoaded(about));
-    expect(check.changes).toEqual([{ pageId: 5, slug: "acerca", title: "About", kind: "github-only", acceptByDefault: true, expected, takesLanguageFrom: "acerca.md" }]);
-    expect(check.additions).toEqual([]);
-    expect(check.record?.files).toEqual({ "about.md": 5, "acerca.md": null });
-
-    const { db } = recordingDb(BASE, [about], { config: { lang: "es" } });
-    const sent: SyncIngestPayload[] = [];
-    const accept = changes({ pages: { acceptContent: [{ pageId: 5, slug: "acerca", expected }], addFiles: [] } });
-    await applyFullSyncChanges(1, accept, "tok", "o", "r", db, 7, ingestEnv(applied([5]), sent));
-    expect(sent[0].pages?.replaceContent).toEqual([{ pageId: 5, expected, ...ACERCA_AS_PAGE }]);
-  });
-
-  it("on a Spanish site offers acerca.md's text alone when GitHub also edited about.md, which the site does not show", async () => {
-    githubAddedAcerca();
-    gh.trees[HEAD][PAGES]["about.md"] = "a2";
-    gh.files[`${HEAD}:${PAGES}/about.md`] = EDITED;
-    const about = importedPageRow(5, "about", ABOUT);
-    const check = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: [about], siteLanguage: "es" }), BASE, HEAD);
-    if (!check.conclusive) throw new Error(check.reason);
-    expect(check.changes.map((c) => [c.pageId, c.slug])).toEqual([[5, "acerca"]]);
-  });
-
-  it("on a Spanish site offers acerca.md's text as a conflict, the author's version kept, when the held page was edited here", async () => {
-    githubAddedAcerca();
-    const about = { ...importedPageRow(5, "about", ABOUT), body: "Edited in the Compositor." };
-    const check = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: [about], siteLanguage: "es" }), BASE, HEAD);
-    if (!check.conclusive) throw new Error(check.reason);
-    expect(check.changes).toEqual([expect.objectContaining({ pageId: 5, slug: "acerca", kind: "conflict", acceptByDefault: false })]);
-  });
-
-  it("on an English site offers nothing for acerca.md and records it with no page", async () => {
-    githubAddedAcerca();
-    const about = importedPageRow(5, "about", ABOUT);
-    const check = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: [about] }), BASE, HEAD);
-    if (!check.conclusive) throw new Error(check.reason);
-    expect([check.changes, check.additions]).toEqual([[], []]);
-    expect(check.record?.files).toEqual({ "about.md": 5, "acerca.md": null });
-  });
-});
-
-describe("one file per page: a pair the project already holds", () => {
-  const ACERCA_AS_PAGE = parsePageMarkdown(ACERCA.replace("localized_for: about.md\nlanguage: es\n", ""), "acerca");
-  /** Rows as an import before blocks were stored left them: no front matter in D1. */
-  const about = { ...importedPageRow(5, "about", ABOUT), frontmatter: null };
-  const acerca = { ...importedPageRow(6, "acerca", ACERCA), frontmatter: null };
 
   function githubHoldsBoth() {
     gh.trees = { [BASE]: { [PAGES]: { "about.md": "a1", "acerca.md": "c1" } }, [HEAD]: { [PAGES]: { "about.md": "a1", "acerca.md": "c1" } } };
@@ -625,109 +613,52 @@ describe("one file per page: a pair the project already holds", () => {
       [`${BASE}:${PAGES}/acerca.md`]: ACERCA, [`${HEAD}:${PAGES}/acerca.md`]: ACERCA,
     };
   }
-  const check = (d1: unknown[], siteLanguage: string) =>
-    checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: d1 as never, siteLanguage }), BASE, HEAD);
 
-  const sisterText = (row: { title: string; body: string | null }) => ({ title: row.title, body: row.body, frontmatter: ACERCA_AS_PAGE.frontmatter });
-  const hashOf = (row: Parameters<typeof pageContentAsLoaded>[0]) => pageRawHash(pageContentAsLoaded(row));
-  const bothApplied = (content: number[], removed: number[]) => () => ({
-    pageContent: { applied: content, alreadyApplied: [], changedSinceReview: [], failed: [] }, pageRemove: { applied: removed },
-  });
-
-  it("on a Spanish site gives the page the sister's text from the Compositor's copy, edits made here included, and removes the sister with no card of its own", async () => {
-    githubHoldsBoth();
-    const edited = { ...acerca, body: "Editado aquí." };
-    const result = await check([about, edited], "es");
-    if (!result.conclusive) throw new Error(result.reason);
-    expect(result.files).toEqual([]);
-    const expected = await hashOf(about);
-    expect(result.changes).toEqual([expect.objectContaining({ pageId: 5, slug: "acerca", kind: "github-only", acceptByDefault: true, expected, takesLanguageFrom: "acerca.md" })]);
-    expect(result.record?.files).toEqual({ "about.md": 5, "acerca.md": null });
-
-    const { db } = recordingDb(BASE, [about, edited], { config: { lang: "es" } });
+  it("on a Spanish site inserts about.md and acerca.md GitHub added as two pages, each from its own file, and records both", async () => {
+    githubAddedAboutAndAcerca();
+    const { db, sets } = recordingDb(BASE, [], { config: { navigation: JSON.stringify(SAVED_MENU), lang: "es" } });
     const sent: SyncIngestPayload[] = [];
-    const accept = changes({ pages: { acceptContent: [{ pageId: 5, slug: "acerca", expected }], takeFiles: [], addFiles: [] } });
-    await applyFullSyncChanges(1, accept, "tok", "o", "r", db, 7, ingestEnv(bothApplied([5], [6]), sent));
-    expect(sent[0].pages?.replaceContent).toEqual([{ pageId: 5, expected, ...sisterText(edited) }]);
-    expect(sent[0].pages?.remove).toEqual([{ pageId: 6, slug: "acerca", expected: await hashOf(edited) }]);
+    const accept = noPageChoices(["about.md", "acerca.md"]);
+    await applyFullSyncChanges(1, accept, "tok", "o", "r", db, 7, ingestEnv(insertedAnswer({ about: 11, acerca: 12 }), sent));
+    const textOf = (file: string, slug: string) => {
+      const { title, body } = parsePageMarkdown(file, slug);
+      return { slug, title, body };
+    };
+    expect(sent[0].pages?.insert).toEqual([
+      expect.objectContaining(textOf(ABOUT, "about")),
+      expect.objectContaining(textOf(ACERCA, "acerca")),
+    ]);
+    const headWrite = sets.find((s) => "head_sha" in s)!;
+    expect(JSON.parse(headWrite.page_files_json as string).files).toEqual({ "about.md": 11, "acerca.md": 12 });
   });
 
-  it("on a Spanish site makes the page a conflict when it was edited here, keeping the author's version by default, and removes the sister either way", async () => {
-    githubHoldsBoth();
-    const edited = { ...about, body: "Edited in the Compositor." };
-    const result = await check([edited, acerca], "es");
-    if (!result.conclusive) throw new Error(result.reason);
-    expect(result.files).toEqual([]);
-    expect(result.changes).toEqual([expect.objectContaining({ pageId: 5, kind: "conflict", acceptByDefault: false, takesLanguageFrom: "acerca.md" })]);
-
-    const { db } = recordingDb(BASE, [edited, acerca], { config: { lang: "es" } });
+  it("keeps acerca.md's language lines, so the publish page can ask which version of the pair to keep", async () => {
+    githubAddedAboutAndAcerca();
+    const { db } = recordingDb(BASE, [], { config: { navigation: JSON.stringify(SAVED_MENU), lang: "es" } });
     const sent: SyncIngestPayload[] = [];
-    const keep = changes({ pages: { acceptContent: [], takeFiles: [], addFiles: [] } });
-    await applyFullSyncChanges(1, keep, "tok", "o", "r", db, 7, ingestEnv(bothApplied([], [6]), sent));
-    expect(sent[0].pages?.replaceContent).toBeUndefined();
-    expect(sent[0].pages?.remove).toEqual([{ pageId: 6, slug: "acerca", expected: await hashOf(acerca) }]);
+    await applyFullSyncChanges(1, noPageChoices(["about.md", "acerca.md"]), "tok", "o", "r", db, 7, ingestEnv(insertedAnswer({ about: 11, acerca: 12 }), sent));
+    const acerca = sent[0].pages?.insert?.find((p) => p.slug === "acerca");
+    expect(acerca?.frontmatter).toMatch(/localized_for/);
   });
 
-  it("on an English site offers the sister's removal alone", async () => {
+  it("offers acerca.md GitHub added beside a held about.md as an addition, and no change to about.md", async () => {
+    githubAddedAcerca();
+    const about = importedPageRow(5, "about", ABOUT);
+    const check = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: [about], siteLanguage: "es" }), BASE, HEAD);
+    if (!check.conclusive) throw new Error(check.reason);
+    expect(check.changes).toEqual([]);
+    expect(check.files).toEqual([]);
+    expect(check.additions?.map((a) => a.name)).toEqual(["acerca.md"]);
+  });
+
+  it("finds nothing to sync in a pair the project already holds, in either language", async () => {
     githubHoldsBoth();
-    const result = await check([about, acerca], "en");
-    if (!result.conclusive) throw new Error(result.reason);
-    expect(result.files?.map((f) => [f.name, f.kind, f.acceptByDefault, f.otherLanguageOf])).toEqual([["acerca.md", "deleted", true, "about.md"]]);
-    expect(result.changes).toEqual([]);
-
-    const { db, sets } = recordingDb(BASE, [about, acerca]);
-    const sent: SyncIngestPayload[] = [];
-    const expected = await hashOf(acerca);
-    const take = changes({ pages: { acceptContent: [], takeFiles: [{ name: "acerca.md", pageId: 6, expected }], addFiles: [] } });
-    await applyFullSyncChanges(1, take, "tok", "o", "r", db, 7, ingestEnv(bothApplied([], [6]), sent));
-    expect(sent[0].pages).toEqual({ remove: [{ pageId: 6, slug: "acerca", expected }] });
-    expect(JSON.parse(sets.find((s) => "head_sha" in s)!.page_files_json as string).files).toEqual({ "about.md": 5, "acerca.md": null });
-  });
-
-  it("on an English site makes a sister edited here and kept a page of its own, which the next check leaves alone", async () => {
-    githubHoldsBoth();
-    const edited = { ...acerca, body: "Editado aquí." };
-    const result = await check([about, edited], "en");
-    if (!result.conclusive) throw new Error(result.reason);
-    expect(result.files).toEqual([expect.objectContaining({ name: "acerca.md", kind: "deleted-conflict", acceptByDefault: false, otherLanguageOf: "about.md" })]);
-
-    const { db, sets } = recordingDb(BASE, [about, edited], { project: { record: JSON.stringify({ commit: BASE, files: { "about.md": 5, "acerca.md": 6 } }) } });
-    const sent: SyncIngestPayload[] = [];
-    const keep = changes({ pages: { acceptContent: [], takeFiles: [], addFiles: [] } });
-    const result2 = await applyFullSyncChanges(1, keep, "tok", "o", "r", db, 7, ingestEnv(bothApplied([6], []), sent));
-    const expected = await hashOf(edited);
-    expect(sent[0].pages?.replaceContent).toEqual([{ pageId: 6, expected, ...sisterText(edited) }]);
-    expect(sent[0].pages?.remove).toBeUndefined();
-    expect(result2.newHeadSha).toBe(HEAD);
-    const record = JSON.parse(sets.find((s) => "head_sha" in s)!.page_files_json as string);
-    expect(record.files).toEqual({ "about.md": 5, "acerca.md": 6 });
-
-    const ownPage = { ...edited, frontmatter: ACERCA_AS_PAGE.frontmatter };
-    const next = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: [about, ownPage] as never, record }), HEAD, HEAD);
-    if (!next.conclusive) throw new Error(next.reason);
-    expect([next.changes, next.files, next.additions]).toEqual([[], [], []]);
-  });
-});
-
-describe("Keep my version's record", () => {
-  it("records a page GitHub added with no page, so the next publish deletes it (R5)", async () => {
-    githubAddedTwo();
-    const { db } = recordingDb(BASE, []);
-    const json = await keptPageFilesRecordJson(db, 1, { token: "t", owner: "o", repo: "r" }, BASE, HEAD);
-    expect(JSON.parse(json!)).toEqual({ commit: HEAD, files: { "about.md": null, "credits.md": null } });
-  });
-
-  it("leaves out a page GitHub deleted, which stays a page and the next publish writes back", async () => {
-    gh.trees = { [BASE]: { [PAGES]: { "about.md": "a1" } }, [HEAD]: { [PAGES]: {} } };
-    gh.files = { [`${BASE}:${PAGES}/about.md`]: ABOUT };
-    const { db } = recordingDb(BASE, [importedPageRow(5, "about", ABOUT)]);
-    const json = await keptPageFilesRecordJson(db, 1, { token: "t", owner: "o", repo: "r" }, BASE, HEAD);
-    expect(JSON.parse(json!)).toEqual({ commit: HEAD, files: {} });
-  });
-
-  it("carries the record unchanged when the page trees cannot be read", async () => {
-    gh.subtreesFail = true;
-    const { db } = recordingDb(BASE, []);
-    expect(await keptPageFilesRecordJson(db, 1, { token: "t", owner: "o", repo: "r" }, BASE, HEAD)).toBeUndefined();
+    const rows = [importedPageRow(5, "about", ABOUT), importedPageRow(6, "acerca", ACERCA)];
+    for (const siteLanguage of ["es", "en"]) {
+      const check = await checkPageFiles({ token: "t", owner: "o", repo: "r" }, scope({ d1: rows as never, siteLanguage }), BASE, HEAD);
+      if (!check.conclusive) throw new Error(check.reason);
+      expect([check.changes, check.files, check.additions]).toEqual([[], [], []]);
+      expect(check.record?.files).toEqual({ "about.md": 5, "acerca.md": 6 });
+    }
   });
 });

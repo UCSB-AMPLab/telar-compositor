@@ -5,13 +5,14 @@
  * what the accept is sent for that choice.
  *
  * Every listed story carries a choice the author can take in the Compositor:
- * a change GitHub alone made is taken by default, a conflict and deleted
- * steps are kept by default, and an unreadable story can only be kept, which
- * the next publish writes back. A check that could not read the story files
- * lists none and says so. Dialogs are queried through `screen`, so the tests
- * hold whether or not the dialog portals to the document body.
+ * a change GitHub alone made (deleted steps among them) is taken by default,
+ * a conflict and any change of a two-way check have no choice made, and Apply waits for
+ * one; an unreadable story can only be kept, which the next publish writes
+ * back. A check that could not read the story files lists none and says so.
+ * Dialogs are queried through `screen`, so the tests hold whether or not the
+ * dialog portals to the document body.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -88,15 +89,21 @@ function diffWith(
 }
 
 function renderWithDiff(diff: FullSyncDiff, unpublishedCount = 0) {
-  const view = render(<SyncConfirmModal open unpublishedCount={unpublishedCount} onClose={() => {}} />);
-  fireEvent.click(screen.getByText("sync_modal.check_changes"));
+  const view = render(<SyncConfirmModal open onClose={() => {}} />);
   fetcherData.current = { ok: true, intent: "compute-full-sync-diff", diff };
-  view.rerender(<SyncConfirmModal open unpublishedCount={unpublishedCount} onClose={() => {}} />);
+  view.rerender(<SyncConfirmModal open onClose={() => {}} />);
   return view;
 }
 
+const TAKE = "sync_modal.review.use_github_text";
+const KEEP = "sync_modal.review.keep_compositor_text";
+
+function applyButton(): HTMLButtonElement {
+  return screen.getByText(/^sync_modal\.(review\.apply|apply_other_changes)$/) as HTMLButtonElement;
+}
+
 function applied(): Record<string, unknown> {
-  fireEvent.click(screen.getByText(/^sync_modal\.apply_(sync|other_changes)$/));
+  fireEvent.click(applyButton());
   const call = submitSpy.mock.calls.find(([body]) => (body as { intent?: string }).intent === "apply-full-sync");
   return JSON.parse((call![0] as { changes: string }).changes);
 }
@@ -106,7 +113,7 @@ function isChecked(el: HTMLElement): boolean {
 }
 
 function card(storyId: string): HTMLElement {
-  return screen.getByTestId(`story-content-${storyId}`);
+  return screen.getByTestId(`sync-item-story:${storyId}`);
 }
 
 beforeEach(() => {
@@ -117,45 +124,49 @@ beforeEach(() => {
 describe("each kind with its default and its choice", () => {
   it("github-only: listed with its summary and taken by default", () => {
     renderWithDiff(diffWith([change("s1", "github-only")]));
-    const box = within(card("s1")).getByRole("checkbox");
-    expect(isChecked(box)).toBe(true);
+    expect(isChecked(within(card("s1")).getByRole("radio", { name: TAKE }))).toBe(true);
     expect(within(card("s1")).getByText(/sync_modal\.content_summary/).textContent).toContain('"d1":3');
     expect(within(card("s1")).getByText(/sync_modal\.content_summary/).textContent).toContain('"head":4');
     expect(within(card("s1")).getByText(/sync_modal\.content_summary/).textContent).toContain('"count":2');
     expect(applied()).toMatchObject({ stories: { acceptContent: ["s1"], contentExpected: { s1: "hash-s1" } } });
   });
 
-  it("github-only: unchecked, nothing of it is sent", () => {
+  it("github-only: kept, nothing of it is sent", () => {
     renderWithDiff(diffWith([change("s1", "github-only")]));
-    fireEvent.click(within(card("s1")).getByRole("checkbox"));
+    fireEvent.click(within(card("s1")).getByRole("radio", { name: KEEP }));
     expect(applied()).toMatchObject({ stories: { acceptContent: [], contentExpected: {} } });
   });
 
-  it("conflict: the conflict pattern, keeping the Compositor's version by default", () => {
+  it("conflict: changed in both places, with no choice made until the author keeps one", () => {
     renderWithDiff(diffWith([change("s1", "conflict")]));
-    const keep = within(card("s1")).getByRole("radio", { name: "sync_modal.conflict_keep_mine" });
-    const take = within(card("s1")).getByRole("radio", { name: "sync_modal.conflict_use_repo" });
-    expect(isChecked(keep)).toBe(true);
+    const keep = within(card("s1")).getByRole("radio", { name: KEEP });
+    const take = within(card("s1")).getByRole("radio", { name: TAKE });
+    expect(within(card("s1")).getByText("sync_modal.review.badge_both")).toBeTruthy();
+    expect(isChecked(keep)).toBe(false);
     expect(isChecked(take)).toBe(false);
+    expect(applyButton().disabled).toBe(true);
+    fireEvent.click(keep);
     expect(applied()).toMatchObject({ stories: { acceptContent: [] } });
   });
 
   it("conflict: taking GitHub's sends the content", () => {
     renderWithDiff(diffWith([change("s1", "conflict")]));
-    fireEvent.click(within(card("s1")).getByRole("radio", { name: "sync_modal.conflict_use_repo" }));
+    fireEvent.click(within(card("s1")).getByRole("radio", { name: TAKE }));
     expect(applied()).toMatchObject({ stories: { acceptContent: ["s1"], contentExpected: { s1: "hash-s1" } } });
   });
 
-  it("steps-deleted: says so, and is not taken by default", () => {
+  it("steps-deleted: says so, and defaults to GitHub's version, as a change GitHub alone made", () => {
     renderWithDiff(diffWith([change("s1", "steps-deleted", { summary: { d1Steps: 3, headSteps: null, changedSteps: 3 } })]));
     expect(within(card("s1")).getByText("sync_modal.content_steps_deleted")).toBeTruthy();
-    expect(isChecked(within(card("s1")).getByRole("checkbox"))).toBe(false);
+    expect(isChecked(within(card("s1")).getByRole("radio", { name: "sync_modal.review.use_github" }))).toBe(true);
+    expect(applyButton().disabled).toBe(false);
+    fireEvent.click(within(card("s1")).getByRole("radio", { name: "sync_modal.review.keep_compositor" }));
     expect(applied()).toMatchObject({ stories: { acceptContent: [] } });
   });
 
   it("steps-deleted: taken, it is sent, and so the story is emptied", () => {
     renderWithDiff(diffWith([change("s1", "steps-deleted", { summary: { d1Steps: 3, headSteps: null, changedSteps: 3 } })]));
-    fireEvent.click(within(card("s1")).getByRole("checkbox"));
+    fireEvent.click(within(card("s1")).getByRole("radio", { name: "sync_modal.review.use_github" }));
     expect(applied()).toMatchObject({ stories: { acceptContent: ["s1"] } });
   });
 
@@ -166,7 +177,7 @@ describe("each kind with its default and its choice", () => {
     const radios = within(card("s1")).getAllByRole("radio");
     expect(radios).toHaveLength(1);
     expect(isChecked(radios[0])).toBe(true);
-    expect(within(card("s1")).queryByRole("checkbox")).toBeNull();
+    expect(radios[0]).toBe(within(card("s1")).getByRole("radio", { name: KEEP }));
     const sent = applied();
     expect(sent).toMatchObject({ headSha: HEAD, stories: { acceptContent: [], contentExpected: {} } });
   });
@@ -205,14 +216,18 @@ describe("each kind with its default and its choice", () => {
     const diff = diffWith([change("s9", "restore-choice", { expected: null })]);
     diff.stories.newStories = [{ story_id: "s9", title: "Story s9", deletedInCompositor: true } as never];
     renderWithDiff(diff);
-    expect(screen.queryByTestId("story-content-s9")).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: "sync_modal.conflict_restore" }));
+    expect(screen.queryByTestId("sync-item-story:s9")).toBeNull();
+    const restoreCard = screen.getByTestId("sync-item-story:new:s9");
+    fireEvent.click(within(restoreCard).getByRole("radio", { name: "sync_modal.review.restore" }));
     expect(applied()).toMatchObject({ stories: { insertNew: ["s9"], acceptContent: [] } });
   });
 
-  it("lists a content change in two-way mode with the same defaults", () => {
-    renderWithDiff(diffWith([change("s1", "conflict")], { classification: "two-way" }));
-    expect(isChecked(within(card("s1")).getByRole("radio", { name: "sync_modal.conflict_keep_mine" }))).toBe(true);
+  it("lists a content change in two-way mode with no choice made, even one GitHub alone made", () => {
+    renderWithDiff(diffWith([change("s1", "conflict"), change("s2", "github-only")], { classification: "two-way" }));
+    for (const id of ["s1", "s2"]) expect(within(card(id)).getAllByRole("radio").some(isChecked)).toBe(false);
+    expect(applyButton().disabled).toBe(true);
+    fireEvent.click(within(card("s1")).getByRole("radio", { name: KEEP }));
+    fireEvent.click(within(card("s2")).getByRole("radio", { name: KEEP }));
     expect(applied()).toMatchObject({ stories: { acceptContent: [] } });
   });
 });
@@ -220,8 +235,8 @@ describe("each kind with its default and its choice", () => {
 describe("one choice for a story's row and its content", () => {
   it("lists the story once, and taking it accepts both", () => {
     renderWithDiff(diffWith([change("s1", "github-only")], { rows: ["s1"] }));
-    expect(screen.queryByText(/sync_modal\.item_changed.*Story s1/)).toBeNull();
-    expect(within(card("s1")).getByText("sync_modal.content_also_details")).toBeTruthy();
+    expect(screen.getAllByTestId(/^sync-item-/)).toHaveLength(1);
+    expect(within(card("s1")).getByText("sync_modal.review.story_details_too")).toBeTruthy();
     expect(applied()).toMatchObject({
       stories: { accept: ["s1"], reject: [], acceptContent: ["s1"], fieldChoices: { s1: { title: "repo" } } },
     });
@@ -229,7 +244,7 @@ describe("one choice for a story's row and its content", () => {
 
   it("keeping it keeps both", () => {
     renderWithDiff(diffWith([change("s1", "github-only")], { rows: ["s1"] }));
-    fireEvent.click(within(card("s1")).getByRole("checkbox"));
+    fireEvent.click(within(card("s1")).getByRole("radio", { name: KEEP }));
     const sent = applied() as { stories: { accept: string[]; reject: string[]; acceptContent: string[]; fieldChoices: unknown } };
     expect(sent.stories.accept).toEqual([]);
     expect(sent.stories.reject).toEqual(["s1"]);
@@ -262,20 +277,21 @@ describe("the payload", () => {
     expect(buildThreeWayChanges(diff, emptySelections()).stories.acceptContent).toEqual([]);
   });
 
-  it("counts a diff holding only content changes as changes", () => {
+  it("counts a diff holding only content changes as changes, with no warning step before the review", () => {
     renderWithDiff(diffWith([change("s1", "github-only")], { classification: "two-way" }), 2);
-    expect(screen.getByText("sync_modal.sync_anyway")).toBeTruthy();
+    expect(screen.getByText("sync_modal.review.title")).toBeTruthy();
+    expect(card("s1")).toBeTruthy();
   });
 });
 
 describe("the story files could not be read", () => {
-  it("says so, lists no story, and offers checking again or keeping the Compositor's version", () => {
+  it("says so, lists no story, and offers trying again, with no whole-site Keep", () => {
     renderWithDiff(diffWith([], { conclusive: false }));
-    expect(screen.getByText("sync_modal.content_inconclusive")).toBeTruthy();
+    expect(screen.getByText("sync_modal.review.request_stories")).toBeTruthy();
     expect(screen.queryByText(/^sync_modal\.apply_/)).toBeNull();
-    expect(screen.getByText("sync_modal.use_compositor_version")).toBeTruthy();
+    expect(screen.queryByText("sync_modal.use_compositor_version")).toBeNull();
     submitSpy.mockClear();
-    fireEvent.click(screen.getByText("sync_modal.check_again"));
+    fireEvent.click(screen.getByText("sync_modal.review.try_again"));
     expect(submitSpy).toHaveBeenCalledWith({ intent: "compute-full-sync-diff" }, expect.anything());
   });
 
@@ -291,8 +307,55 @@ describe("the story files could not be read", () => {
     const view = renderWithDiff(diffWith([], { conclusive: false, rows: ["s2"] }));
     applied();
     fetcherData.current = { ok: true, intent: "apply-full-sync", newHeadSha: null, storyFilesInconclusive: true };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(screen.getByText("sync_modal.success_inconclusive")).toBeTruthy();
+  });
+});
+
+describe("story files the check could not read for a structural cause", () => {
+  function structural(rows: string[] = []): FullSyncDiff {
+    const diff = diffWith([], { rows });
+    diff.stories.content = { conclusive: false, reason: "telar-content/texts/stories could not be listed completely", cause: "structure" };
+    return diff;
+  }
+
+  it("lists them as one item with only the Compositor's version, not chosen, and Apply waits for it", () => {
+    renderWithDiff(structural());
+    const item = screen.getByTestId("sync-item-story:nocheck:all");
+    expect(within(item).getByText("sync_modal.review.nocheck_all_stories_title")).toBeTruthy();
+    expect(within(item).getByText("sync_modal.review.nocheck_truncated")).toBeTruthy();
+    const [keep] = within(item).getAllByRole("radio") as HTMLInputElement[];
+    expect(within(item).getAllByRole("radio")).toHaveLength(1);
+    expect(keep.checked).toBe(false);
+    expect(within(item).getByText("sync_modal.review.badge_choose")).toBeTruthy();
+    expect(screen.queryByTestId("request-unread")).toBeNull();
+    expect(applyButton().disabled).toBe(true);
+    fireEvent.click(keep);
+    expect(applyButton().disabled).toBe(false);
+    expect(applied()).toMatchObject({ keepUnreadFiles: ["stories"] });
+  });
+});
+
+describe("a story whose file GitHub holds with characters that cannot be read", () => {
+  it("is the story's card, named with the file, with either version and none chosen", () => {
+    const diff = diffWith([change("s1", "github-only")]);
+    diff.unreadable = [{ file: "s1.csv", storyIds: ["s1"], effect: "left_out", notice: false }];
+    renderWithDiff(diff);
+    expect(within(card("s1")).getByText("Story s1: s1.csv")).toBeTruthy();
+    expect(within(card("s1")).getByText("sync_modal.review.bad_what")).toBeTruthy();
+    const radios = within(card("s1")).getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.checked)).toEqual([false, false]);
+    expect(applyButton().disabled).toBe(true);
+    fireEvent.click(within(card("s1")).getByRole("radio", { name: "sync_modal.review.use_github" }));
+    expect(applied()).toMatchObject({ stories: { acceptContent: ["s1"] } });
+  });
+
+  it("is a notice when the site does not use the file", () => {
+    const diff = diffWith([change("s1", "github-only")]);
+    diff.unreadable = [{ file: "_old/s1.csv", effect: "not_used", notice: true }];
+    renderWithDiff(diff);
+    expect(screen.getByTestId("unreadable-notice").textContent).toContain("common:sheet_warnings.unreadable_characters.not_used");
+    expect(isChecked(within(card("s1")).getByRole("radio", { name: TAKE }))).toBe(true);
   });
 });
 
@@ -302,13 +365,13 @@ describe("the accept's refusals", () => {
     applied();
     submitSpy.mockClear();
     fetcherData.current = { ok: false, intent: "apply-full-sync", error: "story_changed_since_review", storyIds: ["s1"] };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(submitSpy).toHaveBeenCalledWith({ intent: "compute-full-sync-diff" }, expect.anything());
     const FRESH = "89abcdef0123456789abcdef0123456789abcdef";
     const recheck = diffWith([change("s1", "github-only", { expected: "hash-s1-fresh" })]);
     recheck.headSha = FRESH;
     fetcherData.current = { ok: true, intent: "compute-full-sync-diff", diff: recheck };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     const notice = screen.getByText(/sync_modal\.story_changed_none_applied/);
     expect(notice.textContent).toContain("Story s1");
     expect(card("s1")).toBeTruthy();
@@ -324,7 +387,7 @@ describe("the accept's refusals", () => {
     const view = renderWithDiff(diffWith([change("s1", "github-only")]));
     applied();
     fetcherData.current = { ok: false, intent: "apply-full-sync", error: "story_content_failed", storyIds: ["s1"] };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(screen.getByText(/sync_modal\.error_story_failed/).textContent).toContain("Story s1");
     expect(screen.getByText("sync_modal.retry")).toBeTruthy();
   });
@@ -334,7 +397,7 @@ describe("the accept's refusals", () => {
     const view = renderWithDiff(diffWith([change("s1", "github-only")]));
     applied();
     fetcherData.current = { ok: false, intent: "apply-full-sync", error: "objects_not_added", objectIds: ["o2"] };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(screen.getByText(/objects:sync_not_added/)).toBeTruthy();
     expect(screen.getByText("sync_modal.retry")).toBeTruthy();
   });
@@ -344,7 +407,7 @@ describe("the accept's refusals", () => {
     const view = renderWithDiff(diffWith([change("s1", "github-only")]));
     applied();
     fetcherData.current = { ok: false, intent: "apply-full-sync", error: "entries_refused", message: "sync apply refused: raw detail" };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(screen.getByText(/sync_modal\.error_entries_refused/)).toBeTruthy();
     expect(screen.queryByText(/raw detail/)).toBeNull();
   });
@@ -353,7 +416,7 @@ describe("the accept's refusals", () => {
     const view = renderWithDiff(diffWith([change("s1", "github-only")]));
     applied();
     fetcherData.current = { ok: false, intent: "apply-full-sync", error: "inserts_not_added", failed: { glossaryInsert: ["t9"] } };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(screen.getByText(/sync_modal\.error_terms_not_added/)).toBeTruthy();
     expect(screen.queryByText("unknown_error")).toBeNull();
   });
@@ -393,8 +456,8 @@ describe("story ids that name Object.prototype's own properties", () => {
 
   it.each(["constructor", "__proto__"])("%s: choosing GitHub's version in the dialog sends it with its hash", (id) => {
     renderWithDiff(diffWith([change(id, "conflict")]));
-    expect(isChecked(within(card(id)).getByRole("radio", { name: "sync_modal.conflict_keep_mine" }))).toBe(true);
-    fireEvent.click(within(card(id)).getByRole("radio", { name: "sync_modal.conflict_use_repo" }));
+    expect(within(card(id)).getAllByRole("radio").some(isChecked)).toBe(false);
+    fireEvent.click(within(card(id)).getByRole("radio", { name: TAKE }));
     const sent = applied() as { stories: { acceptContent: string[]; contentExpected: Record<string, string> } };
     expect(sent.stories.acceptContent).toEqual([id]);
     expect(Object.hasOwn(sent.stories.contentExpected, id)).toBe(true);

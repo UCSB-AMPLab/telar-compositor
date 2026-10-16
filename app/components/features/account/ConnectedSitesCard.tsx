@@ -8,16 +8,16 @@
  * Each ProjectRow shows: title + role badge (Coordinador/a for
  * convenor, Docente for instructor, Colaborador/a for collaborator) +
  * last-edited relative timestamp + collaborator count (other-than-self,
- * instructor rows excluded — design §3) + Open link + KebabMenu trigger
+ * instructor rows excluded) + Open link + KebabMenu trigger
  * with per-row Delete project (convenor) / Leave (collaborator or
  * instructor) actions. A leave attempt refused because the row is an
- * instructor on a course-enrolled child site (design §5) surfaces its
+ * instructor on a course-enrolled child site surfaces its
  * own explanatory toast rather than the generic failure copy.
  *
  * Relative time uses Intl.RelativeTimeFormat for ≤30 days; absolute
  * Intl.DateTimeFormat short date thereafter.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -253,7 +253,7 @@ function ProjectRow({
           type: "info",
         });
       } else {
-        // A refused instructor-on-child exit (design §5) gets its own
+        // A refused instructor-on-child exit gets its own
         // explanatory copy; every other failure falls back to the generic
         // retry message.
         showToast({

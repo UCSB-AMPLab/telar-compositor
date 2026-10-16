@@ -1,5 +1,6 @@
 /**
- * The warning for a file read at the head whose bytes are not valid UTF-8.
+ * The warning for a file read at the head whose bytes are not valid UTF-8,
+ * and the sync review's item for it.
  *
  * The framework reads every file the Compositor writes with strict UTF-8, so
  * such a file is already broken on the site: a story's step CSV is left out,
@@ -8,6 +9,13 @@
  * U+FFFD where the invalid bytes were, which repairs it. The warning names
  * the file, says which of these the site does, and says what makes the next
  * publish write it.
+ *
+ * The sync's review lists each such file (`unreadableItems`) with what the
+ * site does with it and the stories whose step or layer file it is. A file
+ * the site does not use, or takes from Google Sheets, is a notice and offers
+ * no choice. Any other file offers GitHub's version, the text as read with
+ * U+FFFD where the invalid bytes were, or the Compositor's, which keeps what
+ * the Compositor holds; neither is the default.
  *
  * A site with Google Sheets on takes each sheet the published sheet has a tab
  * for from that tab, over GitHub's copy (`fetch_google_sheets.py`), so an
@@ -26,7 +34,7 @@
  * (`stories.source_path`): the import reads a root copy, and so warns about
  * one, only when it is the story's source.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { getFileAtRef } from "~/lib/github.server";
@@ -64,6 +72,51 @@ export function unreadableEffectOf(path: string): Exclude<UnreadableEffect, "fro
   if (isOlderStoryPath(path)) return path.startsWith(JEKYLL_DATA_DIR) ? "build_stops" : "not_used";
   if (isSheetPath(path) && !SITE_SHEETS.has(unreadableFileName(path))) return "left_out";
   return "build_stops";
+}
+
+/** The repository path a name `unreadableFileName` gave stands for. */
+function pathOfName(file: string): string {
+  return file.includes("/") ? file : `${SHEETS_DIR}${file}`;
+}
+
+/**
+ * One file read lossily at the head, as the sync's review lists it: its name
+ * as `FullSyncDiff.unreadableFiles` carries it, the stories whose step or
+ * layer file it is, and what the site does with it. A `notice` is a file the
+ * site does not use, or takes from Google Sheets: it is shown, and offers no
+ * choice. Any other file offers GitHub's version, which brings in the text as
+ * read, U+FFFD where the invalid bytes were, or the Compositor's, which keeps
+ * what the Compositor holds; neither is the default.
+ */
+export interface UnreadableFileItem {
+  file: string;
+  storyIds?: string[];
+  effect: UnreadableEffect;
+  notice: boolean;
+}
+
+/**
+ * The review's items for `files`: each one's effect as the warning naming it
+ * in `warnings` settled it (`markSheetsEffects`), else as its path gives it
+ * (`unreadableEffectOf`), and its stories from `stories`, keyed by the same
+ * name.
+ */
+export function unreadableItems(
+  files: readonly string[],
+  warnings: readonly SheetWarning[],
+  stories: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+): UnreadableFileItem[] {
+  return files.map((file) => {
+    const warning = warnings.find((w): w is UnreadableWarning => w.code === "unreadable_characters" && w.file === file);
+    const effect = warning?.effect ?? unreadableEffectOf(pathOfName(file));
+    const ids = stories.get(file);
+    return {
+      file,
+      ...(ids && ids.size > 0 ? { storyIds: [...ids].sort() } : {}),
+      effect,
+      notice: effect === "not_used" || effect === "from_sheets",
+    };
+  });
 }
 
 /**

@@ -25,7 +25,7 @@
  * (structural) operations, distinct from the per-field undo inside text
  * editors.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -67,7 +67,7 @@ const tabs: Tab[] = [
   { key: "config",   to: "/config",   icon: Settings, labelKey: "nav.config" }, // label = "Site settings"
   { key: "publish",  to: "/publish",  icon: Upload,   labelKey: "nav.publish" },
   // Rightmost, and conditional: a course is run from its own screen rather
-  // than from rights folded into the site tabs (ruling 16), so the tab is the
+  // than from rights folded into the site tabs, so the tab is the
   // one way in and is offered only where there is a course to run.
   { key: "course",   to: "/course",   icon: GraduationCap, labelKey: "nav.course" },
 ];

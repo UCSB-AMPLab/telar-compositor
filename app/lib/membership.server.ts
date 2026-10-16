@@ -19,7 +19,7 @@
  * six-entry palette, prefer a user's consistent choice across their
  * other memberships, and fall back to first-unused for the project.
  *
- * @version v1.5.4-beta
+ * @version v1.5.5-beta
  */
 
 import { eq, and, getTableColumns, inArray, isNull, isNotNull, ne, sql } from "drizzle-orm";
@@ -110,19 +110,18 @@ export async function getUserProjects(
  *
  * An instructor is copied into every site that joins their course, so a
  * term's worth of them would bury the instructor's own work in the header
- * switcher, the start page and the account card. Ruling 18 takes them out
- * of those lists; ruling 22 makes that a listing concern and nothing more —
- * the instructor keeps full access, `switch-project` still admits a child
- * by id, and `resolveActiveProject` still falls back to one.
+ * switcher, the start page and the account card. They are left out of
+ * those lists, and that is a listing concern and nothing more — the
+ * instructor keeps full access, `switch-project` still admits a child by id,
+ * and `resolveActiveProject` still falls back to one.
  *
  * The pair is what suppresses, not either half. An `instructor` row on a
  * project with no parent is the course itself, or an unaffiliated site, and
  * both stay listed — a co-instructor whose only row on the course is an
- * instructor row would otherwise lose the course from their own switcher,
- * which is the surface ruling 18 keeps it on. A `convenor` or
- * `collaborator` row on a child stays listed too: that is the student's own
- * group site in their own switcher, and the TA who really collaborates on
- * one child.
+ * instructor row would otherwise lose the course from their own switcher. A
+ * `convenor` or `collaborator` row on a child stays listed too: that is the
+ * student's own group site in their own switcher, and the TA who really
+ * collaborates on one child.
  *
  * The same pair `isMembershipExitRefused` tests, for the same reason —
  * instructor membership on a child belongs to the course rather than to the
@@ -441,7 +440,7 @@ export async function hasCourseStanding(
  * course).
  *
  * Instructor membership on a child is tied to the course in both
- * directions (design §5, "Joining and leaving") — copied down at
+ * directions — copied down at
  * redemption, dropped only when the site leaves the course. Removing it
  * any other way would produce a state the design declares impossible, so
  * this check is shared by every membership exit: `remove-member` (a

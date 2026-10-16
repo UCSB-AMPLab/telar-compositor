@@ -12,8 +12,9 @@
  * panel layer of their own, above the chrome (`StagePanels`). The title card
  * and section cards frame nothing: each is drawn on the stage as the
  * published page draws it, edited in place (`CardStage`, `TitleCardView`,
- * `SectionCardView`), and the title card's ID and section-list switch stand
- * in a bar above it (`TitleCardSettings`).
+ * `SectionCardView`). The story's ID and section-list switch are in the
+ * settings panel beside the stage, whichever step is selected
+ * (`StorySettingsPanel`).
  *
  * Where there is no Y.Text to type into, a field saves through the route's
  * action (`useRouteFieldSave`), so a loader read begun before the save never
@@ -23,10 +24,10 @@
  * editor that shows it.
  *
  * The site's theme comes from the preview configuration the loader streams:
- * its colours and fonts over the shipped theme's, and the shipped theme's web
+ * its colors and fonts over the shipped theme's, and the shipped theme's web
  * fonts where it names one.
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
@@ -40,7 +41,8 @@ import { ViewerColumn } from "~/components/features/editor/ViewerColumn";
 import { LayerPanel, type LayerFieldSaves, type LayerTextField } from "~/components/features/editor/LayerPanel";
 import { StagePanels, type StagePanelLayer } from "~/components/features/editor/StagePanels";
 import type { PanelLevel, PanelOpenRequest } from "~/hooks/use-layer-panels";
-import { TitleCardSettings, TitleCardView, type TitleCardData } from "~/components/features/editor/TitleCardView";
+import { StorySettingsPanel } from "~/components/features/editor/StorySettingsPanel";
+import { TitleCardView, type TitleCardData } from "~/components/features/editor/TitleCardView";
 import { SectionCardView } from "~/components/features/editor/SectionCardView";
 import { AnswerBudgetCounter } from "~/components/ui/InlineTextArea";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
@@ -198,7 +200,7 @@ function usePreviewConfig(source: PanelPreviewSource | undefined): PanelPreviewC
 }
 
 /**
- * The visitor layer's theme: the shipped theme's colours and fonts, the
+ * The visitor layer's theme: the shipped theme's colors and fonts, the
  * site's own file over them where it was read.
  */
 function themeStyleOf(config: PanelPreviewConfig | undefined): CSSProperties {
@@ -746,7 +748,7 @@ export function StoryStage({ storyTitle, sidebar, titleCard, isSectionCard, ...r
   let stage: ReactNode = null;
   if (stepIndex === 0) {
     stage = (
-      <CardStage settings={<TitleCardSettings {...titleCard} />} themeStyle={themeStyleOf(config)}>
+      <CardStage themeStyle={themeStyleOf(config)}>
         {(geometry) => <TitleCardView {...titleCard} layoutMode={geometry.layout.mode} />}
       </CardStage>
     );
@@ -772,7 +774,13 @@ export function StoryStage({ storyTitle, sidebar, titleCard, isSectionCard, ...r
   return (
     <>
       {fontHref && <link rel="stylesheet" href={fontHref} />}
-      <EditorShell storyTitle={storyTitle} sidebar={sidebar} stage={stage} framing={stage !== null && stepIndex > 0 && !isSectionCard} />
+      <EditorShell
+        storyTitle={storyTitle}
+        sidebar={sidebar}
+        stage={stage}
+        framing={stage !== null && stepIndex > 0 && !isSectionCard}
+        settings={(close) => <StorySettingsPanel {...titleCard} onClose={close} />}
+      />
     </>
   );
 }

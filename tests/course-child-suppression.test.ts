@@ -1,12 +1,12 @@
 /**
- * This file pins ruling 18's suppression and ruling 22's limit on it, run
+ * This file pins the suppression of instructor-only child sites and its limit, run
  * against a real D1 (via `createMemoryD1`) so the assertions are about the
  * rows the loaders actually return.
  *
  * An instructor is copied into every site that joins their course, so a
- * term of them buries the instructor's own work. Ruling 18 takes those
- * sites out of the header switcher, the start page's other-projects ribbon
- * and the account card. Ruling 22 stops there: they keep full access, and
+ * term of them buries the instructor's own work. Those
+ * sites are taken out of the header switcher, the start page's other-projects ribbon
+ * and the account card. That stops there: they keep full access, and
  * the site the lists no longer name is still reached by `switch-project`
  * and by direct URL. That second half is the one a careless suppression
  * breaks, so it is asserted on every route the first half touches.
@@ -16,7 +16,7 @@
  * by a co-instructor, a child a TA really collaborates on, and the group's
  * own site seen by the student who convenes it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -321,7 +321,7 @@ describe("/account — the connected-sites card", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ruling 22 — a suppressed site is still reachable
+// A suppressed site is still reachable
 // ---------------------------------------------------------------------------
 
 describe("a suppressed child keeps full access", () => {
@@ -372,8 +372,7 @@ describe("a suppressed child keeps full access", () => {
   });
 
   it("falls back to a child when it is the only project the session has", async () => {
-    // resolveActiveProject's stale-session fallback is left alone (ruling
-    // 22): an instructor with no session and nothing but children still
+    // resolveActiveProject's stale-session fallback is left alone: an instructor with no session and nothing but children still
     // lands somewhere rather than on an empty app.
     const instructor = await seedUser();
     const convenor = await seedUser();

@@ -1,7 +1,7 @@
 {
   "convenor_label": "Coordinador/a",
   "collaborator_label": "Colaborador/a",
-  "pending_label": "Pendiente · 48h",
+  "pending_label": "Pendiente",
   "invite_button": "+ Invitar colaborador",
   "search_placeholder": "Buscar usuario de GitHub",
   "search_could_not_search": "No pudimos buscar personas. Intenta de nuevo en un momento.",

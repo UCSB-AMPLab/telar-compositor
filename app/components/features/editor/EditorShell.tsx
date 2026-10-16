@@ -11,6 +11,10 @@
  * page's own layout breakpoints decide only what the stage draws, never
  * whether the sidebar shows.
  *
+ * When the story has settings (`settings`), a button at the right end of the
+ * bar opens them in a panel on the right of the stage. At `lg` and above the
+ * stage narrows to make room; below it the panel lies over the stage.
+ *
  * On a phone held in portrait (< sm, coarse pointer) a dismissible hint nudges
  * the user to rotate to landscape. It shows only while the stage frames a
  * step (`framing`), and stays dismissed for the rest of the session.
@@ -20,13 +24,13 @@
  * space by growing to `100dvh - 2.75rem` (header only) instead of the default
  * `100dvh - 6rem` (header + tab nav).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import React, { useState } from "react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
-import { PanelLeft, RotateCw, X } from "lucide-react";
+import { PanelLeft, RotateCw, Settings, X } from "lucide-react";
 import { useMediaQuery } from "~/hooks/use-media-query";
 
 const ROTATE_HINT_DISMISSED_KEY = "telar:editor:rotate-hint-dismissed";
@@ -37,10 +41,13 @@ interface EditorShellProps {
   stage: React.ReactNode;
   /** The stage frames a step, which is when rotating a phone is worth suggesting. */
   framing?: boolean;
+  /** The story's settings panel, given the function that closes it; the bar's button shows it. */
+  settings?: (close: () => void) => React.ReactNode;
 }
 
-export function EditorShell({ storyTitle, sidebar, stage, framing }: EditorShellProps) {
+export function EditorShell({ storyTitle, sidebar, stage, framing, settings }: EditorShellProps) {
   const { t } = useTranslation("editor");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Open the steps drawer by default so its importance is obvious on entering
   // the editor. It only renders below `lg` (the desktop sidebar is always
   // visible), and `closeDrawerOnTap` dismisses it the moment the user picks a
@@ -102,6 +109,19 @@ export function EditorShell({ storyTitle, sidebar, stage, framing }: EditorShell
         </Link>
         <span className="text-cream/50">›</span>
         <span className="truncate">{storyTitle || t("breadcrumb.untitled")}</span>
+        {settings && (
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-expanded={settingsOpen}
+            className={`ml-auto shrink-0 inline-flex items-center gap-1.5 font-heading font-semibold text-xs uppercase tracking-wider rounded-full px-3.5 py-1.5 transition-colors ${
+              settingsOpen ? "bg-anil text-charcoal" : "border border-cream/40 text-cream hover:bg-white/10"
+            }`}
+          >
+            <Settings size={14} aria-hidden="true" />
+            {t("story_settings.button")}
+          </button>
+        )}
       </div>
 
       {/* Rotate-to-landscape nudge (phone portrait only) */}
@@ -161,6 +181,9 @@ export function EditorShell({ storyTitle, sidebar, stage, framing }: EditorShell
 
         {/* The stage: everything beside the step list */}
         <div className="relative flex-1 min-w-0 overflow-hidden bg-charcoal-deep">{stage}</div>
+
+        {/* The story's settings, beside the stage */}
+        {settings && settingsOpen && settings(() => setSettingsOpen(false))}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 /**
  * A section card (`kind='section'`) on the framing stage: the framework's
- * centred card (`.title-card`, built by card-pool.js), with the step's
+ * centered card (`.title-card`, built by card-pool.js), with the step's
  * question as its heading and its answer under it, each edited in place. The
  * card frames nothing, so it has no frame, circle or capture.
  *
@@ -13,12 +13,12 @@
  * saves it when the field is finished, through the route's step-field save
  * the step card uses, and a failed save keeps the field open with its draft.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useTranslation } from "react-i18next";
 import type * as Y from "yjs";
-import { InPlaceText } from "~/components/ui/InPlaceText";
+import { IntroText, CardAnswerPencil } from "~/components/features/editor/IntroText";
 import { StageIntroHint } from "~/components/features/editor/TitleCardView";
 import { AnswerField, routeSaveFor, type StepTextField } from "~/components/features/editor/StepCard";
 import type { GlossaryContext } from "~/lib/card-markdown";
@@ -66,7 +66,8 @@ export function SectionCardView({
     <div data-testid="section-card" className="title-card">
       <div className="title-card-inner">
         <h2 className="title-card-heading">
-          <InPlaceText
+          <IntroText
+            pencilLabel={t("stage.edit_section_heading")}
             target={`${target}:question`}
             yText={questionYText}
             initialValue={step.question ?? ""}
@@ -82,7 +83,9 @@ export function SectionCardView({
           <p className="hidden group-has-[textarea]/answer:block font-body text-xs uppercase tracking-wider text-anil-ink mb-1">
             {t("stage.answer_field_label")}
           </p>
+          <CardAnswerPencil>
           <AnswerField
+            pencilLabel={t("stage.edit_answer")}
             target={`${target}:answer`}
             yText={answerYText}
             initialValue={step.answer ?? ""}
@@ -96,6 +99,7 @@ export function SectionCardView({
             delimiters={delimiters}
             textOnlyMessageKey="section_card.subtitle_text_only"
           />
+          </CardAnswerPencil>
           <p className="hidden group-has-[textarea]/answer:block font-body text-xs text-gray-500 mt-1">
             {t("stage.answer_field_hint")}
           </p>

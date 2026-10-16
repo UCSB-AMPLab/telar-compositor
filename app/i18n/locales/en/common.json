@@ -44,7 +44,7 @@
     "unpublished_one": "{{n}} unpublished change",
     "unpublished_other": "{{n}} unpublished changes",
     "publish_cta": "Publish",
-    "out_of_sync": "GitHub has changed",
+    "out_of_sync": "Changes on GitHub",
     "review_cta": "Review",
     "publishing": "Publishing…",
     "upgrade": "Telar {{version}} available",
@@ -53,19 +53,21 @@
     "repo_unavailable": "Repo unavailable",
     "halted": "Saving stopped",
     "halted_action": "Restore",
-    "repo_invitation": "Repository invitation"
+    "repo_invitation": "Repository invitation",
+    "first_publish": "Not yet published from the Compositor",
+    "check_failed": "Couldn't check GitHub"
   },
   "untitled": "Untitled",
   "a11y": {
     "notifications": "Notifications",
     "close_notification": "Close notification",
     "main_navigation": "Main navigation",
-    "edit_slug": "Edit URL slug",
     "onboarding_progress": "Onboarding progress",
     "import_progress": "Import progress",
     "activity_rail": "Activity and recovery rail"
   },
   "cancel": "Cancel",
+  "change_id": "Change ID",
   "close": "Close",
   "sign_out": "Sign out",
   "no_image": "No image",

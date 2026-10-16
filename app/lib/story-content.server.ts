@@ -29,19 +29,19 @@
  * the `step` cell the framework orders by; the mapper's own `step_number`
  * falls back to the row's position, which the framework does not.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
-import { pythonStrip } from "~/lib/column-mapping";
-import { SPREADSHEETS_DIR, STORY_TEXTS_DIR, readBlobText, readReportedBlobText, storyTrees } from "~/lib/story-files.server";
-import type { CommitFiles, RepoAccess } from "~/lib/story-files.server";
+import { SPREADSHEETS_DIR, isInconclusive, readBlobText, readReportedBlobText, storyTrees } from "~/lib/story-files.server";
+import type { CommitFiles, InconclusiveCause, RepoAccess, TreesInconclusive } from "~/lib/story-files.server";
 import { collidedValues, maskedRows, sameLayerFiles, storyMaskFor } from "~/lib/story-collided-fields.server";
 import type { StoryMask } from "~/lib/story-collided-fields.server";
 import { SheetUnreadableError } from "~/lib/unreadable-file.server";
-import { LayerReferenceUnreadable, reasonOf } from "~/lib/story-unreadable.server";
+import { unreadableFileName } from "~/lib/unreadable-characters.server";
+import { reasonOf } from "~/lib/story-unreadable.server";
+import { isAscii, isPlainReference, layerFilesAt, layerPathCandidates, namedLayerFiles } from "~/lib/story-layer-references.server";
 import {
   STORY_CANONICAL_SCOPE,
-  isLayerFileReference,
   layerFrontmatterBlock,
   mapStoryCsv,
   parseTelarCsv,
@@ -349,9 +349,6 @@ export function rawCanonicalFromD1(
 // The change check for step and layer files
 // ---------------------------------------------------------------------------
 
-/** Every column the framework reads a layer from, however many layers the sheet has (processors/stories.py). */
-const LAYER_CELL_SUFFIX = /_(content|file)$/;
-
 /** How the dialog lists one story whose content differs. */
 export type StoryContentKind = "github-only" | "conflict" | "steps-deleted" | "unreadable" | "restore-choice";
 
@@ -400,10 +397,24 @@ export interface StoryContentChange {
  * The story-file part of the change check: the stories whose content differs,
  * or why the trees could not settle it, in which case the site stays
  * divergent and nothing of it is offered.
+ *
+ * A check that concludes with `baseUnresolved` read HEAD alone, because the
+ * recorded base is no longer a commit GitHub holds (a force-push): every
+ * difference is then a change with no default. One that does not conclude
+ * carries its `cause` (`InconclusiveCause`), and where known the repository
+ * paths and the stories it covers; none named covers them all.
  */
 export type StoryContentCheck =
-  | { conclusive: true; changes: StoryContentChange[]; suppressedEditorOnly: number }
-  | { conclusive: false; reason: string };
+  | { conclusive: true; changes: StoryContentChange[]; suppressedEditorOnly: number; baseUnresolved?: true }
+  | StoryContentInconclusive;
+
+export interface StoryContentInconclusive {
+  conclusive: false;
+  reason: string;
+  cause: InconclusiveCause;
+  paths?: string[];
+  storyIds?: string[];
+}
 
 /** A story D1 holds; its rows are read only when the story is compared. */
 /**
@@ -441,81 +452,13 @@ export interface StoryCheckInput {
    * read at the base, the state last reconciled, is reported.
    */
   warnings?: SheetWarning[];
+  /**
+   * Receives, for each step or layer file read at HEAD whose bytes are not
+   * valid UTF-8, by the name the author sees (`unreadableFileName`), the
+   * stories whose file it is; filled whether or not `warnings` are given.
+   */
+  lossyStories?: Map<string, Set<string>>;
 }
-
-/**
- * The paths the framework tries for a layer reference, in its order
- * (the framework's scripts/telar/images.py:143-177,
- * `resolve_path_case_insensitive`, called from markdown.py:187 with
- * `stories/<cell>` under telar-content/texts): the reference as written; its
- * filename lowercased, the directories kept; the whole reference lowercased.
- * Relative to texts/stories, as the story subtree listing is. The two
- * lowercased forms are tried only for an ASCII reference (see
- * `resolveLayerPath`).
- */
-function layerPathCandidates(name: string): string[] {
-  if (!isAscii(name)) return [name];
-  const slash = name.lastIndexOf("/");
-  const lowerFile = slash === -1 ? name.toLowerCase() : name.slice(0, slash + 1) + name.slice(slash + 1).toLowerCase();
-  return [name, lowerFile, name.toLowerCase()];
-}
-
-function isAscii(text: string): boolean {
-  return /^[\x00-\x7f]*$/.test(text);
-}
-
-/** Every segment non-empty and none "." or "..": no "./", no "//", no trailing "/". */
-function isPlainReference(name: string): boolean {
-  return name.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
-}
-
-export type LayerResolution = { kind: "file"; path: string } | { kind: "absent" } | { kind: "unreadable"; reason: UnreadableReason };
-
-/**
- * The file the framework reads for a layer reference at a commit, that it
- * reads none (so it shows the cell's own text), or that this cannot be told.
- *
- * Complete by construction: the only references resolved are plain ASCII
- * ones, whose three candidate paths Python's `Path` and `str.lower()` and
- * JavaScript's string operations compute alike, and exact matches of any
- * reference. Everything else is unreadable, never a wrong reading:
- * - a reference that is not a plain path (`isPlainReference`), which
- *   Python's `Path` normalises in ways not emulated here;
- * - a non-ASCII reference with no exact match, since the two languages'
- *   Unicode lowercasing tables differ (U+A7CE lowercases in one and not the
- *   other);
- * - a directory at a path the framework tries before any file, where
- *   `exists()` finds the directory and the framework falls back to the
- *   cell's text. The paths are tried in the framework's order, so a file
- *   found first is read whatever a later path holds.
- */
-export function resolveLayerPath(name: string, files: Pick<CommitFiles, "texts" | "textDirs">): LayerResolution {
-  if (!isPlainReference(name)) return { kind: "unreadable", reason: { code: "layer_reference_not_plain", reference: name } };
-  for (const path of layerPathCandidates(name)) {
-    if (files.textDirs.has(path)) return { kind: "unreadable", reason: { code: "layer_reference_directory", reference: name } };
-    if (files.texts.has(path)) return { kind: "file", path };
-  }
-  if (!isAscii(name)) {
-    return { kind: "unreadable", reason: { code: "layer_reference_non_ascii", reference: name } };
-  }
-  return { kind: "absent" };
-}
-
-/** The layer file names a step CSV's cells reference, as the import resolves them. */
-export function namedLayerFiles(slug: string, csv: string, severalHoldValues: SeveralHoldValues = "refuse"): string[] {
-  const rows = parseTelarCsv(csv, undefined, false, STORY_CANONICAL_SCOPE, {
-    severalHoldValues,
-    sheetName: `${slug}.csv`,
-  });
-  const names = new Set<string>();
-  for (const row of rows) {
-    for (const col of Object.keys(row)) {
-      if (LAYER_CELL_SUFFIX.test(col) && isLayerFileReference(row[col])) names.add(pythonStrip(row[col]));
-    }
-  }
-  return [...names];
-}
-
 type StoryRows = { stepRows: StoryStepRow[]; layerRows: StoryLayerRow[] };
 
 type StorySide =
@@ -542,47 +485,35 @@ type StorySide =
     };
 
 /**
- * The layer files a story's CSV names, read strictly at `commit`: as the
- * framework reads the references (`resolveLayerPath`), and as the import
- * does, which fetches the exact name only. A reference no file answers is
- * left out of both, so its cell reads inline. `severalHoldValues` is the CSV
- * parse's, as `readStory` takes it; `warnings` names each file of invalid UTF-8.
- */
-export async function layerFilesAt(
-  input: RepoAccess,
-  commit: string,
-  files: CommitFiles,
-  id: string,
-  csv: string,
-  severalHoldValues: SeveralHoldValues = "refuse",
-  warnings?: SheetWarning[],
-): Promise<{ framework: Record<string, string>; imported: Record<string, string> }> {
-  const framework: Record<string, string> = {};
-  const imported: Record<string, string> = {};
-  for (const name of namedLayerFiles(id, csv, severalHoldValues)) {
-    const resolved = resolveLayerPath(name, files);
-    if (resolved.kind === "unreadable") throw new LayerReferenceUnreadable(resolved.reason);
-    if (resolved.kind === "absent") continue;
-    const path = resolved.path;
-    const text = await readReportedBlobText(input, commit, `${STORY_TEXTS_DIR}/${path}`, files.texts.get(path)!, warnings);
-    framework[name] = text;
-    if (path === name) imported[name] = text;
-  }
-  return { framework, imported };
-}
-
-/**
  * Why the story subtrees at `base` and `head` (at `head` alone when there is
- * no base) cannot be read to a conclusion, or null when they can: the
- * tree-level conclusion `checkStoryContent` reaches first, reading no file.
+ * no base, or the base is no longer a commit GitHub holds) cannot be read to
+ * a conclusion, or null when they can: the tree-level conclusion
+ * `checkStoryContent` reaches first, reading no file.
  */
 export async function storyTreesInconclusive(
   input: RepoAccess,
   base: string | null,
   head: string,
-): Promise<string | null> {
+): Promise<TreesInconclusive | null> {
+  const read = await checkedStoryTrees(input, base, head);
+  return isInconclusive(read) ? read : null;
+}
+
+/**
+ * The story subtrees at `base` and `head`, as `storyTrees` reads them, with
+ * the base the reading kept: null when there is none, or when the base no
+ * longer resolves and `head` alone does, so the check runs at the head.
+ */
+async function checkedStoryTrees(
+  input: RepoAccess,
+  base: string | null,
+  head: string,
+): Promise<{ trees: Map<string, CommitFiles>; base: string | null } | TreesInconclusive> {
   const trees = await storyTrees(input, base ? [base, head] : [head]);
-  return typeof trees === "string" ? trees : null;
+  if (!isInconclusive(trees)) return { trees, base };
+  if (!base || !trees.unresolved) return trees;
+  const atHead = await storyTrees(input, [head]);
+  return isInconclusive(atHead) ? atHead : { trees: atHead, base: null };
 }
 
 /**
@@ -605,7 +536,7 @@ export async function readStoriesForAccept(
   const out = new Map<string, { stepRows: StoryStepRow[]; layerRows: StoryLayerRow[] }>();
   if (storyIds.length === 0) return out;
   const trees = await storyTrees(input, [head]);
-  if (typeof trees === "string") throw new Error(`the accepted stories could not be read: ${trees}`);
+  if (isInconclusive(trees)) throw new Error(`the accepted stories could not be read: ${trees.reason}`);
   const files = trees.get(head)!;
   for (const id of storyIds) out.set(id, await storyRowsAt(input, head, files, id));
   return out;
@@ -649,10 +580,10 @@ async function storyAt(
 ): Promise<StorySide> {
   const csvSha = files.sheets.get(`${id}.csv`);
   if (csvSha === undefined) return { present: false };
-  const reported = !base && commit === input.head ? input.warnings : undefined;
-  const csv = await readReportedBlobText(input, commit, `${SPREADSHEETS_DIR}/${id}.csv`, csvSha, reported);
+  const { reported, onLossy } = headReporting(input, !base && commit === input.head, id);
+  const csv = await readReportedBlobText(input, commit, `${SPREADSHEETS_DIR}/${id}.csv`, csvSha, reported, undefined, onLossy);
   const severalHoldValues: SeveralHoldValues = base ? "keep-last" : "refuse";
-  const { framework, imported } = await layerFilesAt(input, commit, files, id, csv, severalHoldValues, reported);
+  const { framework, imported } = await layerFilesAt(input, commit, files, id, csv, severalHoldValues, reported, onLossy);
   // The base's findings are not reported, only read for the parse's choice.
   const baseIssues: SheetWarning[] = [];
   const warnings = base ? baseIssues : commit === input.head ? input.warnings : undefined;
@@ -675,6 +606,25 @@ async function storyAt(
     ...(asImportedRows ? { asImportedRows } : {}),
     ...(collided.size > 0 ? { collided } : {}),
   };
+}
+
+/** What a read at HEAD reports: its warnings, and the story each lossy file is tagged to; nothing for a read at any other commit. */
+function headReporting(
+  input: StoryCheckInput,
+  atHead: boolean,
+  id: string,
+): { reported: SheetWarning[] | undefined; onLossy: ((path: string) => void) | undefined } {
+  if (!atHead) return { reported: undefined, onLossy: undefined };
+  return { reported: input.warnings, onLossy: (path) => tagLossy(input.lossyStories, path, id) };
+}
+
+/** Records in `sink` that the file at `path`, read lossily at HEAD, is one of story `id`'s. */
+function tagLossy(sink: Map<string, Set<string>> | undefined, path: string, id: string): void {
+  if (!sink) return;
+  const file = unreadableFileName(path);
+  const stories = sink.get(file) ?? new Set<string>();
+  stories.add(id);
+  sink.set(file, stories);
 }
 
 /**
@@ -814,12 +764,13 @@ function unreadableReason(...sides: Array<CanonicalStory | null>): UnreadableRea
 type Classified = StoryContentChange | "none" | "editor-only";
 
 /**
- * One D1 story, classified from its compare forms (design §3):
+ * One D1 story, classified from its compare forms:
  * - HEAD equal to D1: nothing, whoever changed what;
  * - with a base: GitHub only (listed, accepted by default), the Compositor
  *   only (not listed), both (a conflict, resolved for the whole story); a step
  *   CSV present at the base and absent at HEAD while its project.csv row
- *   remains is "steps deleted", not accepted by default;
+ *   remains is "steps deleted", not accepted by default, or a conflict when
+ *   the Compositor also changed the story since the base (`editedSinceBase`);
  * - with no base there is nothing to tell which side changed, so any
  *   difference is a conflict, not accepted by default, and a step CSV absent
  *   at HEAD while HEAD's project.csv holds the story's row is "steps deleted";
@@ -855,8 +806,9 @@ async function classifyD1Story(
     // With a base, the CSV was there before; with none, a row HEAD's
     // project.csv still holds says the story was published.
     const wasThere = baseSide === null || baseSide.present;
-    if (wasThere && input.headRowIds.has(story.story_id)) return change("steps-deleted", false);
-    return "none";
+    if (!wasThere || !input.headRowIds.has(story.story_id)) return "none";
+    const edited = baseSide?.present && (await editedSinceBase(story.story_id, { stepRows, layerRows }, d1, baseSide));
+    return change(edited ? "conflict" : "steps-deleted", false);
   }
   if (sameContent(head, d1)) return "none";
   if (baseSide?.present && baseSide.collided) {
@@ -871,8 +823,26 @@ async function classifyD1Story(
 }
 
 /**
+ * Whether D1's story differs from the base as the import reads it, the
+ * Compositor's side of `classifyD1Story`. A base whose step CSV had colliding
+ * columns holding values compares with those fields masked out
+ * (`storyMaskFor`); one no mask can be made for, or whose rows are not in a
+ * known order, counts as changed, since nothing then says it is not.
+ */
+async function editedSinceBase(
+  slug: string,
+  d1Rows: StoryRows,
+  d1: CanonicalStory,
+  baseSide: Extract<StorySide, { present: true }>,
+): Promise<boolean> {
+  if (!baseSide.collided) return !sameContent(d1, baseSide.asImported ?? null);
+  const mask = storyMaskFor(baseSide.collided);
+  return !mask || !(await agreeMasked(slug, d1Rows, baseSide.asImportedRows, mask));
+}
+
+/**
  * The step and layer files of the stories a sync concerns, compared across
- * the recorded base, HEAD and D1 (design §1, §3), every read at the one HEAD
+ * the recorded base, HEAD and D1, every read at the one HEAD
  * commit (or the base) it is given and strict: an absent file is absent, and
  * any other failure makes the check inconclusive, never a value. A story
  * whose files were read and cannot be understood is listed as unreadable.
@@ -892,15 +862,18 @@ async function classifyD1Story(
  * Candidates, with a base: the stories whose step CSV changed between base and
  * HEAD, or whose CSV at either commit names a layer file that changed. Only
  * candidates are read in full. With no base every D1 story whose step CSV
- * HEAD holds is compared, since nothing says which changed. Each file is read
- * once per blob SHA and kept for later checks (`readBlobText`), so a file shared
- * by two stories is read once and an unchanged one is not read again.
+ * HEAD holds is compared, since nothing says which changed; so with a base
+ * GitHub no longer holds, read at HEAD alone (`baseUnresolved`). Each file is
+ * read once per blob SHA and kept for later checks (`readBlobText`), so a file
+ * shared by two stories is read once and an unchanged one is not read again.
  */
-export async function checkStoryContent(input: StoryCheckInput): Promise<StoryContentCheck> {
+export async function checkStoryContent(given: StoryCheckInput): Promise<StoryContentCheck> {
+  const read = await checkedStoryTrees(given, given.base, given.head);
+  if (isInconclusive(read)) return { conclusive: false, ...read };
+  const { trees } = read;
+  const baseUnresolved = given.base !== null && read.base === null;
+  const input = baseUnresolved ? { ...given, base: null, deletedHere: [] } : given;
   const { base, head } = input;
-  const commits = base ? [base, head] : [head];
-  const trees = await storyTrees(input, commits);
-  if (typeof trees === "string") return { conclusive: false, reason: trees };
 
   const headFiles = trees.get(head)!;
   const changedLayers = new Set<string>();
@@ -913,9 +886,29 @@ export async function checkStoryContent(input: StoryCheckInput): Promise<StoryCo
   const scope: CheckScope = { input, trees, changedLayers };
 
   try {
-    return { conclusive: true, ...(await classifyStories(scope)) };
+    return { conclusive: true, ...(await classifyStories(scope)), ...(baseUnresolved ? { baseUnresolved: true as const } : {}) };
   } catch (err) {
-    if (err instanceof SheetUnreadableError) return { conclusive: false, reason: err.message };
+    if (err instanceof StoryFileUnread) {
+      return { conclusive: false, reason: err.message, cause: "request", paths: [err.path], storyIds: [err.storyId] };
+    }
+    throw err;
+  }
+}
+
+/** A read of one story's file that failed: the check does not conclude, for a request cause. */
+class StoryFileUnread extends Error {
+  constructor(readonly path: string, readonly storyId: string, message: string) {
+    super(message);
+    this.name = "StoryFileUnread";
+  }
+}
+
+/** `run` for story `id`, a failed read named with the story. */
+async function forStory<T>(id: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof SheetUnreadableError) throw new StoryFileUnread(err.path, id, err.message);
     throw err;
   }
 }
@@ -926,12 +919,12 @@ async function classifyStories(scope: CheckScope): Promise<{ changes: StoryConte
   const changes: StoryContentChange[] = [];
   let suppressedEditorOnly = 0;
   for (const story of input.d1) {
-    const result = await checkD1Story(scope, story);
+    const result = await forStory(story.story_id, () => checkD1Story(scope, story));
     if (result === "editor-only") suppressedEditorOnly++;
     else if (result !== "none") changes.push(result);
   }
   for (const id of input.base ? input.deletedHere : []) {
-    const result = await checkDeletedHere(scope, id);
+    const result = await forStory(id, () => checkDeletedHere(scope, id));
     if (result) changes.push(result);
   }
   return { changes, suppressedEditorOnly };

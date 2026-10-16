@@ -5,16 +5,30 @@
  * new path is absent, so the publish reads the file its `source_path` names in
  * the spreadsheets folder, when the listing at the publish ref holds it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getFileAtRef, getSubtreeOids, listSubtreeEntries } = vi.hoisted(() => ({
-  getFileAtRef: vi.fn(),
-  getSubtreeOids: vi.fn(),
-  listSubtreeEntries: vi.fn(),
-}));
+const { getFileAtRef, getSubtreeOids, listSubtreeEntries, listDirectoryEntries } = vi.hoisted(() => {
+  const getSubtreeOids = vi.fn();
+  const listSubtreeEntries = vi.fn();
+  return {
+    getFileAtRef: vi.fn(),
+    getSubtreeOids,
+    listSubtreeEntries,
+    // The publish lists the spreadsheets folder without recursion: the
+    // entries directly in it, from the same subtree and listing as above.
+    listDirectoryEntries: vi.fn(async (t: string, o: string, r: string, commit: string, dir: string) => {
+      const at = (await getSubtreeOids(t, o, r, [commit], [dir])).at(commit, dir);
+      if (at.kind !== "tree") return [];
+      const listing = (await listSubtreeEntries(t, o, r, at.oid)) as { files: Map<string, string> };
+      return [...listing.files]
+        .filter(([name]) => !name.includes("/"))
+        .map(([name, sha]) => ({ path: `${dir}/${name}`, sha, type: "blob", mode: "100644" }));
+    }),
+  };
+});
 
 vi.mock("~/lib/db.server", async () => {
   const { fakeGetDb } = await import("./story-canonical-fakedb");
@@ -22,7 +36,7 @@ vi.mock("~/lib/db.server", async () => {
 });
 vi.mock("~/lib/github.server", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
-  return { ...actual, getFileAtRef, getSubtreeOids, listSubtreeEntries, getFileContent: vi.fn(async () => null) };
+  return { ...actual, getFileAtRef, getSubtreeOids, listSubtreeEntries, listDirectoryEntries, getFileContent: vi.fn(async () => null) };
 });
 
 import { buildPublishFileSet, computeStoryDeletions, renderStoryFiles, type PublishSnapshot } from "~/lib/publish.server";

@@ -2,9 +2,10 @@
 /**
  * The sync modal's failed step names a sheet the sync refused for its
  * colliding columns, whether the refusal came from computing the diff or from
- * applying it, and shows the general sync failure message, never the server's text, for any other failure.
+ * applying it, and shows the general sync failure message, never the
+ * server's text, for any other failure.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -60,7 +61,7 @@ const SUCCESS_DIFF: FullSyncDiff = {
 };
 
 function renderModal() {
-  return render(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+  return render(<SyncConfirmModal open onClose={() => {}} />);
 }
 
 describe("SyncConfirmModal — a sheet the sync refuses", () => {
@@ -71,14 +72,13 @@ describe("SyncConfirmModal — a sheet the sync refuses", () => {
 
   it("names the sheet and the columns when computing the diff is refused", () => {
     const { getByText, rerender } = renderModal();
-    fireEvent.click(getByText("sync_modal.check_changes"));
     fetcherData.diff = {
       ok: false,
       intent: "compute-full-sync-diff",
       error: "colliding_columns",
       collidingColumns: COLLIDING,
     };
-    rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(getByText(EXPECTED)).toBeTruthy();
   });
 
@@ -86,14 +86,13 @@ describe("SyncConfirmModal — a sheet the sync refuses", () => {
     const { getByText, queryByText, rerender } = renderModal();
 
     // First check fails.
-    fireEvent.click(getByText("sync_modal.check_changes"));
     fetcherData.diff = {
       ok: false,
       intent: "compute-full-sync-diff",
       error: "colliding_columns",
       collidingColumns: COLLIDING,
     };
-    rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(getByText(EXPECTED)).toBeTruthy();
 
     // Retry, then check again. React Router keeps the previous (failed)
@@ -101,8 +100,7 @@ describe("SyncConfirmModal — a sheet the sync refuses", () => {
     // mock mirrors that by leaving fetcherData.diff on the old failure
     // across this second submission.
     fireEvent.click(getByText("sync_modal.retry"));
-    fireEvent.click(getByText("sync_modal.check_changes"));
-    rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(queryByText(EXPECTED)).toBeNull();
 
     // The fresh response lands — a success this time.
@@ -111,8 +109,8 @@ describe("SyncConfirmModal — a sheet the sync refuses", () => {
       intent: "compute-full-sync-diff",
       diff: SUCCESS_DIFF,
     };
-    rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
-    expect(getByText("sync_modal.apply_sync")).toBeTruthy();
+    rerender(<SyncConfirmModal open onClose={() => {}} />);
+    expect(getByText("sync_modal.review.apply")).toBeTruthy();
     expect(queryByText(EXPECTED)).toBeNull();
   });
 
@@ -135,9 +133,8 @@ describe("SyncConfirmModal — a sheet the sync refuses", () => {
     if (fetcher === "apply") fetcherData.apply = answer;
     const { getByText, rerender } = renderModal();
     if (fetcher === "diff") {
-      fireEvent.click(getByText("sync_modal.check_changes"));
       fetcherData.diff = answer;
-      rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+      rerender(<SyncConfirmModal open onClose={() => {}} />);
     }
     expect(getByText('sync_modal.error_sheet_unreadable {"sheet":"glossary.csv"}')).toBeTruthy();
     expect(getByText("sync_modal.retry")).toBeTruthy();
@@ -170,9 +167,8 @@ describe("SyncConfirmModal — a check that failed in transit", () => {
 
   it("reaches the failed step, with its retry, rather than staying on the spinner", () => {
     const { getByText, rerender } = renderModal();
-    fireEvent.click(getByText("sync_modal.check_changes"));
     fetcherData.diff = { ok: false, reason: "unreachable", intent: "compute-full-sync-diff" };
-    rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(getByText("sync_modal.retry")).toBeTruthy();
     expect(getByText("unknown_error")).toBeTruthy();
   });

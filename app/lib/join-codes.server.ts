@@ -60,9 +60,9 @@
  *
  * Preconditions this module does not check and callers must:
  *   - `createCode` callers gate instructor-role codes to the course
- *     convenor and class codes to any course staff member (design §5).
+ *     convenor and class codes to any course staff member.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { and, eq, isNull, sql } from "drizzle-orm";

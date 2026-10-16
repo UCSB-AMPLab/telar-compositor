@@ -1,8 +1,8 @@
 /**
  * Attributing the rows the documents can no longer speak for.
  *
- * The Phase 3 recovery reads authorship out of a project's Yjs document, and it
- * has taken everything the documents hold. What it cannot reach is most of the
+ * The recovery that reads authorship out of a project's Yjs document has taken
+ * everything the documents hold. What it cannot reach is most of the
  * database, for a structural reason: when the Durable Object rehydrates a
  * document from D1 it rewrites every key under its own client id, and the
  * per-session history of everything it rehydrated is gone. Measured across
@@ -41,7 +41,7 @@
  * people's coursework should be something you read as SQL before any of it
  * runs.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { AUTHOR_ACTORS } from "~/lib/authorship";

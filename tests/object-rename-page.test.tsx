@@ -15,12 +15,13 @@
  * `t` echoes the key and its values, so each assertion names the message the
  * page chose and what it filled in.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
+import { SyncReviewContext } from "~/components/features/dashboard/SyncReviewProvider";
 import {
   objectRenameFacts,
   renameFactsFingerprint,
@@ -158,7 +159,16 @@ function loaderData(setup: PageSetup = {}) {
 
 type Rendered = ReturnType<typeof render>;
 type PageProps = { loaderData: ReturnType<typeof loaderData>; actionData: undefined };
-const Page = ObjectDetailPage as unknown as (p: PageProps) => React.ReactElement;
+const DetailPage = ObjectDetailPage as unknown as (p: PageProps) => React.ReactElement;
+/** Who is reading: the convenor, who can review the changes on GitHub, unless a test says otherwise. */
+let review = { canReview: true, coordinatorName: "Ana" as string | null };
+function Page(props: PageProps) {
+  return (
+    <SyncReviewContext.Provider value={{ ...review, openReview: () => {} }}>
+      <DetailPage {...props} />
+    </SyncReviewContext.Provider>
+  );
+}
 
 function renderPage(setup: PageSetup = {}): Rendered {
   return render(<Page loaderData={loaderData(setup)} actionData={undefined} />);
@@ -202,6 +212,7 @@ beforeEach(() => {
   fetcherData = undefined;
   submissions = [];
   navigate.mockClear();
+  review = { canReview: true, coordinatorName: "Ana" };
   window.history.replaceState(null, "", "/objects/mapa");
 });
 
@@ -398,6 +409,25 @@ describe("the answers", () => {
       expect(navigate).not.toHaveBeenCalled();
     });
   }
+
+  it("tells a collaborator who reviews the changes on GitHub, by name, for rename_unregistered_files", () => {
+    review = { canReview: false, coordinatorName: "Ana" };
+    const view = renderPage({ userRole: "collaborator", currentUserId: CREATOR_ID });
+    openAndType("mapa-nuevo");
+    submit();
+    answer(view, refusal("rename_unregistered_files"), { userRole: "collaborator", currentUserId: CREATOR_ID });
+    expect(screen.queryByText(echo("rename_unregistered_files_collab", { name: "Ana" }))).not.toBeNull();
+    expect(screen.queryByText("rename_unregistered_files")).toBeNull();
+  });
+
+  it("tells a collaborator who reviews them without a name when none is stored, for rename_unregistered_files", () => {
+    review = { canReview: false, coordinatorName: null };
+    const view = renderPage({ userRole: "collaborator", currentUserId: CREATOR_ID });
+    openAndType("mapa-nuevo");
+    submit();
+    answer(view, refusal("rename_unregistered_files"), { userRole: "collaborator", currentUserId: CREATOR_ID });
+    expect(screen.queryByText(echo("rename_unregistered_files_collab_unnamed", {}))).not.toBeNull();
+  });
 
   it("shows the facts the action found instead of renaming, says the counts were updated, and posts them next", () => {
     const view = renderPage();

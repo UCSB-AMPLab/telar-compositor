@@ -5,7 +5,7 @@
  * restore's outcome. Choosing posts the challenge with the choices, and the
  * sync dialog runs its check again once the choice is committed.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -123,10 +123,9 @@ describe("the import's sync step", () => {
 
 describe("the sync dialog", () => {
   it("offers the picker for a refused check, posts the choice, and checks again once it is committed", () => {
-    const view = render(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
-    fireEvent.click(screen.getByText("sync_modal.check_changes"));
+    const view = render(<SyncConfirmModal open onClose={() => {}} />);
     fetchers.data.set(SYNC_DIFF_FETCHER_KEY, { ok: false, intent: "compute-full-sync-diff", ...askedQuestion() });
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(screen.getByText("columnPickerIntroSite")).toBeTruthy();
     keepSecondColumn();
     expect(fetchers.submits.at(-1)?.payload).toEqual({
@@ -137,7 +136,7 @@ describe("the sync dialog", () => {
 
     const checks = fetchers.submits.filter((s) => s.payload.intent === "compute-full-sync-diff").length;
     fetchers.data.set("unkeyed", { ok: true, intent: "choose-columns" });
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(fetchers.submits.filter((s) => s.payload.intent === "compute-full-sync-diff").length).toBe(checks + 1);
   });
 });

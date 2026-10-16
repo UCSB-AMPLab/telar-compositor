@@ -2,7 +2,7 @@
 /**
  * Collaboration sidebar tests
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
@@ -381,7 +381,7 @@ describe("CollaborationSidebar", () => {
   });
 
   // -------------------------------------------------------------------------
-  // isCourseProject threading to MemberRow's kebab (design §5 / item 4):
+  // isCourseProject threading to MemberRow's kebab:
   // an instructor row's kebab shows only on the course project's own
   // member list, gated by isCourseProject — never on a child site's.
   // -------------------------------------------------------------------------

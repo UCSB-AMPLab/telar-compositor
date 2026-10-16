@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 /**
- * Unit tests for useSiteStatus — the client hook that derives the single active
- * Site Status state by precedence plus the ~1.5s Saving overlay. The pure
- * deriveState() is tested exhaustively for precedence; the Saving timer is
- * tested through the hook with fake timers and mocked react-router /
- * use-collaboration signals.
+ * Unit tests for `useSiteStatus`, the client hook that derives the single
+ * active site status by precedence, plus the Saving overlay of about 1.5
+ * seconds. The pure `deriveState()` is tested for precedence, including the
+ * failed check, the first publish, the member's repository invitation and the
+ * halt, which outranks the rest and over which Saving stays an overlay. The
+ * hook is tested with fake timers and mocked react-router and collaboration
+ * signals: the Saving timer, the states that come from the poll and then the
+ * loader, and the count, which is known only once the live status answers.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -192,6 +195,46 @@ describe("deriveState (precedence)", () => {
 // useSiteStatus — Saving overlay timer (1500ms)
 // ---------------------------------------------------------------------------
 
+describe("deriveState — the failed check and the first publish", () => {
+  it("a failed check is its own state, under a divergence and over the rest", () => {
+    expect(deriveState({ ...BASE, checkFailed: true, unpublishedCount: 3, needsUpgrade: true })).toBe("check-failed");
+    expect(deriveState({ ...BASE, checkFailed: true, headDiverged: true })).toBe("out-of-sync");
+  });
+
+  it("no recorded head is the blue state under the unpublished count, which keeps its Publish action", () => {
+    expect(deriveState({ ...BASE, firstPublish: true, unpublishedCount: 4 })).toBe("unpublished");
+    expect(deriveState({ ...BASE, firstPublish: true, needsUpgrade: true })).toBe("first-publish");
+  });
+
+  it("a failed check outranks the first publish", () => {
+    expect(deriveState({ ...BASE, firstPublish: true, checkFailed: true })).toBe("check-failed");
+  });
+});
+
+describe("useSiteStatus — the failed check and the first publish come from the poll, then the loader", () => {
+  const answer = (over: Partial<DerivedGithubStatus>): DerivedGithubStatus => ({
+    repoUnavailable: false, headDiverged: false, checkFailed: false, firstPublish: false,
+    needsUpgrade: false, isBelowMinimum: false, latestTelarTag: null, ...over,
+  });
+  afterEach(() => { mockPollData = undefined; mockLoaderData = null; });
+
+  it("the loader's failed check shows before the poll answers", () => {
+    mockLoaderData = { checkFailed: true };
+    expect(renderHook(() => useSiteStatus()).result.current.state).toBe("check-failed");
+  });
+
+  it("the poll's answer replaces the loader's failed check", () => {
+    mockLoaderData = { checkFailed: true };
+    mockPollData = answer({ checkFailed: false });
+    expect(renderHook(() => useSiteStatus()).result.current.state).toBe("in-sync");
+  });
+
+  it("a poll that reports no head shows the first publish", () => {
+    mockPollData = answer({ firstPublish: true });
+    expect(renderHook(() => useSiteStatus()).result.current.state).toBe("first-publish");
+  });
+});
+
 describe("deriveState — the member's own repository invitation", () => {
   it("sits below out-of-sync and above unpublished", () => {
     expect(deriveState({ ...BASE, invitationOpen: true, unpublishedCount: 3, needsUpgrade: true })).toBe("repo-invitation");
@@ -207,7 +250,7 @@ describe("deriveState — the member's own repository invitation", () => {
 
 describe("useSiteStatus — the invitation comes from the poll", () => {
   const stage = (stage: "pending" | "lapsed" | "access" | "none") => ({
-    repoUnavailable: false, headDiverged: false, needsUpgrade: false, isBelowMinimum: false,
+    repoUnavailable: false, headDiverged: false, checkFailed: false, firstPublish: false, needsUpgrade: false, isBelowMinimum: false,
     latestTelarTag: null, unpublishedCount: 0, ownRepoAccess: { stage, invitationUrl: "https://github.com/o/r/invitations" },
   });
   afterEach(() => { mockPollData = undefined; });
@@ -349,7 +392,7 @@ describe("useSiteStatus — poll count overrides loader proxy", () => {
     };
     mockPollData = {
       repoUnavailable: false,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: false,
       isBelowMinimum: false,
       latestTelarTag: null,
@@ -369,7 +412,7 @@ describe("useSiteStatus — poll count overrides loader proxy", () => {
     };
     mockPollData = {
       repoUnavailable: false,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: false,
       isBelowMinimum: false,
       latestTelarTag: null,
@@ -404,7 +447,7 @@ describe("useSiteStatus — poll count overrides loader proxy", () => {
     };
     mockPollData = {
       repoUnavailable: false,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: false,
       isBelowMinimum: false,
       latestTelarTag: null,
@@ -431,7 +474,7 @@ describe("useSiteStatus — the count is known only once the live status answers
   it("countKnown is false when the poll answers without a count", () => {
     mockPollData = {
       repoUnavailable: false,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: false,
       isBelowMinimum: false,
       latestTelarTag: null,
@@ -443,7 +486,7 @@ describe("useSiteStatus — the count is known only once the live status answers
   it("countKnown is true, with the live number, once the poll answers", () => {
     mockPollData = {
       repoUnavailable: false,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: false,
       isBelowMinimum: false,
       latestTelarTag: null,

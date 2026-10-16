@@ -16,7 +16,7 @@
  * is verified against the database. The session's active project is
  * deliberately something else in one test, to pin that.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -38,7 +38,7 @@ vi.mock("~/lib/session.server", () => ({
   createSessionStorage: vi.fn(() => ({
     getSession: vi.fn(async () => ({
       get: vi.fn((key: string) => {
-        // Managing a course's codes takes the course password (ruling 20);
+        // Managing a course's codes takes the course password;
         // these tests are about standing, so the session has answered it.
         if (key === "courseGateUnlocked") return true;
         return key === "activeProjectId" ? sessionActiveProjectId : undefined;

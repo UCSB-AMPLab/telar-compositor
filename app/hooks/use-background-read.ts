@@ -25,8 +25,13 @@
  *   submissions seen (any form method but GET) are recorded, and the hook
  *   reads again when one of them is gone or idle. A navigation submission
  *   completes when `useNavigation()` returns to idle from one.
+ * - Every read takes the next place in one count shared by all background
+ *   reads (`readsStartedSoFar`), and the stamped form of the hook
+ *   (`useStampedBackgroundRead`) answers the place of the read whose answer
+ *   it holds. A caller holding an answer obtained another way can tell from
+ *   it whether the kept answer comes from a read started after its own.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -47,9 +52,27 @@ export interface BackgroundReadOptions {
   scope: number | string | null;
 }
 
-type ReadResult = { ok: true; data: unknown } | { ok: false; reason: string };
+export type ReadResult = { ok: true; data: unknown } | { ok: false; reason: string };
 
-async function readOnce(url: string, signal: AbortSignal): Promise<ReadResult> {
+let readsStarted = 0;
+
+/** How many background reads have started on this page so far. */
+export function readsStartedSoFar(): number {
+  return readsStarted;
+}
+
+/** A kept answer and the place in `readsStartedSoFar`'s count of the read that brought it; null with none. */
+export interface StampedRead<T> {
+  data: T | undefined;
+  startedAt: number | null;
+}
+
+/**
+ * One read under the acceptance rules above, for a caller that makes a single
+ * read of its own and keeps its answer itself. A failed read is `ok: false`; it
+ * never throws.
+ */
+export async function readBackgroundOnce(url: string, signal?: AbortSignal): Promise<ReadResult> {
   let response: Response;
   try {
     response = await fetch(url, { signal, headers: { Accept: "application/json" } });
@@ -69,17 +92,21 @@ function isSubmission(formMethod: string | undefined): boolean {
   return !!formMethod && formMethod.toUpperCase() !== "GET";
 }
 
-export function useBackgroundRead<T>({
+export function useBackgroundRead<T>(options: BackgroundReadOptions): T | undefined {
+  return useStampedBackgroundRead<T>(options).data;
+}
+
+export function useStampedBackgroundRead<T>({
   url,
   enabled,
   intervalMs,
   onFocus = false,
   afterActions = false,
   scope,
-}: BackgroundReadOptions): T | undefined {
+}: BackgroundReadOptions): StampedRead<T> {
   const key = JSON.stringify([scope, url]);
   const active = enabled && url !== null;
-  const [kept, setKept] = useState<{ key: string; data: T } | null>(null);
+  const [kept, setKept] = useState<{ key: string; data: T; startedAt: number } | null>(null);
 
   // The read below outlives renders; it reads the latest of these.
   const current = useRef({ key, url, active, afterActions });
@@ -93,12 +120,13 @@ export function useBackgroundRead<T>({
     inFlight.current?.abort();
     const controller = new AbortController();
     inFlight.current = controller;
-    void readOnce(target, controller.signal).then((result) => {
+    const startedAt = ++readsStarted;
+    void readBackgroundOnce(target, controller.signal).then((result) => {
       if (controller.signal.aborted || current.current.key !== startedUnder) return;
       if (inFlight.current === controller) inFlight.current = null;
       if (result.ok) {
         failing.current = false;
-        setKept({ key: startedUnder, data: result.data as T });
+        setKept({ key: startedUnder, data: result.data as T, startedAt });
         return;
       }
       if (!failing.current) console.warn(`[background-read] ${target}: ${result.reason}`);
@@ -153,5 +181,7 @@ export function useBackgroundRead<T>({
     if (current.current.afterActions) read();
   }, [navigation.state, navigation.formMethod, read]);
 
-  return kept && kept.key === key ? kept.data : undefined;
+  return kept && kept.key === key ? { data: kept.data, startedAt: kept.startedAt } : NOTHING_KEPT;
 }
+
+const NOTHING_KEPT: StampedRead<never> = { data: undefined, startedAt: null };

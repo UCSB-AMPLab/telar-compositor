@@ -1,10 +1,13 @@
 /**
- * Unit tests for extended sync.server.ts full sync functions.
+ * Unit tests for `app/lib/sync.server.ts`. `computeFullSyncDiff` and
+ * `applyFullSyncChanges` are pinned for stories, objects, glossary terms and
+ * config (the Telar version, `show_sections`, `telar_theme`, `story_key`),
+ * with the payload each accept sends to the collaboration object.
+ * `computeSyncDiff` and `computeGlossarySyncDiff` are pinned for the object
+ * and glossary fields they compare, and the config readers
+ * (`extractConfigFields`, `configHealPatch`) for quoting and nesting.
  *
- * Tests computeFullSyncDiff and applyFullSyncChanges for stories,
- * steps, and config — beyond the existing objects-only sync.
- *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -54,14 +57,12 @@ vi.mock("~/lib/story-files-to-delete.server", async (orig) => {
 import * as githubServer from "~/lib/github.server";
 import { recordStoryFileReads } from "~/lib/story-files-to-delete.server";
 import { gitBlobSha } from "~/lib/story-files.server";
-import { syncIngestRecorder } from "./helpers/sync-ingest-recorder";
 import { glossary_terms, projects, stories } from "~/db/schema";
 import {
   computeFullSyncDiff,
   applyFullSyncChanges,
   resolveFullSyncPayload,
   computeSyncDiff,
-  applySyncChanges,
   computeGlossarySyncDiff,
   extractTelarVersion,
   configHealPatch,
@@ -74,8 +75,24 @@ import { CollidingColumnsRefusal, OBJECTS_CANONICAL_SCOPE, parseTelarCsv } from 
 import type { IngestObjectInsert } from "../workers/collaboration";
 import { yamlString } from "~/lib/knap-filters.server";
 
-/** The commit an objects check was read at, and GitHub's head at its apply. */
+/** The commit an objects check was read at, which the apply reads at. */
 const OBJECTS_CHECKED_HEAD = "0".repeat(40);
+
+/** The full sync's changes accepting only `objects`, as the dialog posts them. */
+function objectsOnlyChanges(objects: Partial<FullSyncChanges["objects"]>): FullSyncChanges {
+  return {
+    objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], ...objects },
+    stories: { accept: [], reject: [], insertNew: [] },
+    config: { accept: [], reject: [] },
+    glossary: { accept: [], reject: [], insertNew: [] },
+  };
+}
+
+/** objects.csv at every commit, and no other file. */
+function serveObjectsCsvOnly(csv: string): void {
+  vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) =>
+    path === "telar-content/spreadsheets/objects.csv" ? csv : null);
+}
 
 // The owner who accepted the sync, as the route resolves them server-side.
 const SYNC_ACTOR_ID = 7;
@@ -437,8 +454,7 @@ describe("computeFullSyncDiff — stories", () => {
 
     const result = await computeFullSyncDiff(projectId, token, owner, repo, mockDb);
 
-    expect(result.stories.missingStories).toHaveLength(1);
-    expect(result.stories.missingStories[0].story_id).toBe("my-story");
+    expect(result.stories.missingStories).toEqual([{ story_id: "my-story", title: "My Story", dbId: 1 }]);
   });
 });
 
@@ -939,7 +955,12 @@ describe("applyFullSyncChanges — object inserts", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], truncated: false });
+    // The image file with no row the cases register: an apply takes only a
+    // stem of an image file at the head it reads.
+    vi.mocked(githubServer.getRepoTree).mockResolvedValue({
+      tree: [{ path: "telar-content/objects/stray-image.jpg", type: "blob", mode: "100644", sha: "0".repeat(40) }],
+      truncated: false,
+    } as never);
     vi.mocked(githubServer.getRepoHead).mockResolvedValue("newsha123");
     vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) => {
       if (path === "telar-content/spreadsheets/objects.csv") return OBJECTS_CSV;
@@ -1923,36 +1944,25 @@ describe("computeSyncDiff — dimensions reconciliation", () => {
     expect(changed?.changedFields ?? []).not.toContain("dimensions");
   });
 
-  it("apply with dimensions choice 'repo' writes the repo value into the D1 update payload", async () => {
-    vi.mocked(githubServer.getFileContent).mockResolvedValue(objectsCsv("24 x 30 cm"));
+  it("apply with dimensions choice 'repo' writes the repo value into the payload's update", async () => {
+    serveObjectsCsvOnly(objectsCsv("24 x 30 cm"));
 
-    // applySyncChanges queries: d1Objects. The accepted field goes through the
-    // document's ingest, not a D1 update.
-    const mockDb = createTrackedMockDb({ responses: [[d1Object("10 x 10 cm")]] });
-    const ingest = syncIngestRecorder();
+    // The payload's D1 reads: the objects, then project_config. The accepted
+    // field goes through the document's ingest, not a D1 update.
+    const mockDb = createSequentialMockDb([[d1Object("10 x 10 cm")], []]);
 
-    vi.mocked(githubServer.getRepoHead).mockResolvedValue(OBJECTS_CHECKED_HEAD);
-    await applySyncChanges(
+    const { payload } = await resolveFullSyncPayload(
       projectId,
-      {
-        newObjectIds: [],
+      objectsOnlyChanges({
         changedObjectIds: ["obj-1"],
         changedDocIds: { "obj-1": 1 },
         fieldChoices: { "obj-1": { dimensions: "repo" } },
         fieldsSeen: { "obj-1": { dimensions: "10 x 10 cm" } },
-        removedObjectIds: [],
-        unregisteredObjectIds: [],
-        headSha: OBJECTS_CHECKED_HEAD,
-      },
-      token,
-      owner,
-      repo,
-      mockDb,
-      ingest.env,
-      1,
+      }),
+      token, owner, repo, mockDb, 1, OBJECTS_CHECKED_HEAD,
     );
 
-    expect(ingest.fieldsFor("obj-1")?.dimensions).toBe("24 x 30 cm");
+    expect(payload.objects.update.find((u) => u.objectId === "obj-1")?.fields.dimensions).toBe("24 x 30 cm");
   });
 });
 
@@ -1960,10 +1970,10 @@ describe("computeSyncDiff — dimensions reconciliation", () => {
 // New-object sync carries dimensions + extra_columns
 //
 // An object brand-new to D1 (present in repo CSV, absent from D1) is pulled in
-// via the sync new-object path (PendingObject → client → D1 insert). Both the
-// first-class `dimensions` field and the `extra_columns` custom-column blob
-// must travel on the PendingObject so they survive the round-trip. Also pin
-// that computeSyncDiff's newObjects entry carries `dimensions`.
+// by the sync's insert. Both the first-class `dimensions` field and the
+// `extra_columns` custom-column blob must travel on the insert so they survive
+// the round-trip. Also pin that computeSyncDiff's newObjects entry carries
+// `dimensions`.
 // ---------------------------------------------------------------------------
 
 describe("sync new-object path carries dimensions + extra_columns", () => {
@@ -1985,35 +1995,18 @@ describe("sync new-object path carries dimensions + extra_columns", () => {
     vi.mocked(githubServer.getFileContent).mockResolvedValue(NEW_OBJECT_CSV);
   });
 
-  // The apply registers the new row itself: the registration's
-  // insert entry carries the columns the repo row has.
-  it("applySyncChanges registers a new row carrying dimensions and extra_columns", async () => {
+  // The apply registers the new row itself: the insert entry carries the
+  // columns the repo row has.
+  it("the full sync's payload inserts a new row carrying dimensions and extra_columns", async () => {
+    serveObjectsCsvOnly(NEW_OBJECT_CSV);
     // D1 has no objects → repo's new-obj is brand-new.
-    // applySyncChanges queries: d1Objects (empty)
-    const mockDb = createTrackedMockDb({ responses: [[]] });
-    const ingest = syncIngestRecorder();
+    const mockDb = createSequentialMockDb([[], []]);
 
-    vi.mocked(githubServer.getRepoHead).mockResolvedValue(OBJECTS_CHECKED_HEAD);
-    const result = await applySyncChanges(
-      projectId,
-      {
-        newObjectIds: ["new-obj"],
-        changedObjectIds: [],
-        fieldChoices: {},
-        removedObjectIds: [],
-        unregisteredObjectIds: [],
-        headSha: OBJECTS_CHECKED_HEAD,
-      },
-      token,
-      owner,
-      repo,
-      mockDb,
-      ingest.env,
-      1,
+    const { payload } = await resolveFullSyncPayload(
+      projectId, objectsOnlyChanges({ newObjectIds: ["new-obj"] }), token, owner, repo, mockDb, 1, OBJECTS_CHECKED_HEAD,
     );
 
-    expect(result.pendingObjects).toEqual([]);
-    const inserts = (ingest.bodies.at(-1)?.objects as unknown as { insert: Array<Record<string, unknown>> }).insert;
+    const inserts = payload.objects.insert as unknown as Array<Record<string, unknown>>;
     expect(inserts).toHaveLength(1);
     const registered = inserts[0];
     expect(registered.object_id).toBe("new-obj");
@@ -2511,35 +2504,30 @@ describe("computeSyncDiff — published object round-trip fields", () => {
     expect(changed?.changedFields).toContain("extra_columns");
   });
 
-  it("apply writes accepted alt_text/source_url/thumbnail/extra_columns into the D1 payload", async () => {
+  it("apply writes accepted alt_text/source_url/thumbnail/extra_columns into the payload's update", async () => {
     const csv = [
       "object_id,title,creator,description,object_type,source_url,thumbnail,alt_text,accession_number",
       "obj-1,Woven Cloth,Jane Weaver,A textile,Textile,https://repo/new,repo-thumb.jpg,Repo alt,ACC-NEW",
     ].join("\n");
-    vi.mocked(githubServer.getFileContent).mockResolvedValue(csv);
+    serveObjectsCsvOnly(csv);
 
-    const mockDb = createTrackedMockDb({
-      responses: [[roundTripD1Object({ alt_text: "D1 alt", source_url: "https://d1/old", thumbnail: "d1-thumb.jpg", extra_columns: JSON.stringify({ accession_number: "ACC-OLD" }) })]],
-    });
-    const ingest = syncIngestRecorder();
+    const mockDb = createSequentialMockDb([
+      [roundTripD1Object({ alt_text: "D1 alt", source_url: "https://d1/old", thumbnail: "d1-thumb.jpg", extra_columns: JSON.stringify({ accession_number: "ACC-OLD" }) })],
+      [],
+    ]);
 
-    vi.mocked(githubServer.getRepoHead).mockResolvedValue(OBJECTS_CHECKED_HEAD);
-    await applySyncChanges(
+    const { payload } = await resolveFullSyncPayload(
       projectId,
-      {
-        newObjectIds: [],
+      objectsOnlyChanges({
         changedObjectIds: ["obj-1"],
         changedDocIds: { "obj-1": 1 },
         fieldChoices: { "obj-1": { alt_text: "repo", source_url: "repo", thumbnail: "repo", extra_columns: "repo" } },
         fieldsSeen: { "obj-1": { alt_text: null, source_url: null, thumbnail: null, extra_columns: null } },
-        removedObjectIds: [],
-        unregisteredObjectIds: [],
-        headSha: OBJECTS_CHECKED_HEAD,
-      },
-      token, owner, repo, mockDb, ingest.env, 1,
+      }),
+      token, owner, repo, mockDb, 1, OBJECTS_CHECKED_HEAD,
     );
 
-    const captured = ingest.fieldsFor("obj-1");
+    const captured = payload.objects.update.find((u) => u.objectId === "obj-1")?.fields as Record<string, unknown> | undefined;
     expect(captured).toBeDefined();
     expect(captured!.alt_text).toBe("Repo alt");
     expect(captured!.source_url).toBe("https://repo/new");

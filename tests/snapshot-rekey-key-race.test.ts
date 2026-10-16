@@ -1,6 +1,6 @@
 /**
  * What a minted page slug costs when a writer outside the DO takes it first
- * (R2-5) — a characterization of D1's semantics, not of a reachable state.
+ * — a characterization of D1's semantics, not of a reachable state.
  *
  * `fetchEntityKeys` reads `project_pages.slug` at the top of a snapshot; the
  * re-key it seeds lands in D1 as an `UPDATE project_pages SET ... slug = ?` in
@@ -29,7 +29,7 @@
  *      same colliding UPDATE. Dedupe settles doc-vs-doc collisions; this one is
  *      doc-vs-D1, which no pass owns.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -220,7 +220,7 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); });
 
-describe("R2-5 — a minted slug taken between the seed read and the batch", () => {
+describe("a minted slug taken between the seed read and the batch", () => {
   it("aborts the whole batch, taking every unrelated entity's write with it", async () => {
     const { doInstance, db, ydoc } = collidingProject();
 

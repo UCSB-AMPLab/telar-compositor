@@ -6,8 +6,10 @@
  * - GitHub Pages enabled
  * - Site URL configured correctly
  *
- * Each item shows its status (pass/needs fix) with a brief explanation.
- * A single "Fix and continue" button resolves all issues at once.
+ * Each item shows its status (pass/needs fix); an item that needs fixing also
+ * says why. A single "Fix and continue" button resolves all issues at once.
+ *
+ * @version v1.5.5-beta
  */
 
 import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
@@ -45,6 +47,22 @@ const REFUSAL_COPY: Record<string, { title: string; body: string }> = {
     title: "site_config.error_pages_permission_title",
     body: "site_config.error_pages_permission",
   },
+  pages_failed: {
+    title: "site_config.error_pages_failed_title",
+    body: "site_config.error_pages_failed",
+  },
+  sheets_not_disableable: {
+    title: "site_config.error_sheets_not_disableable_title",
+    body: "site_config.error_sheets_not_disableable",
+  },
+  config_not_found: {
+    title: "site_config.error_config_not_found_title",
+    body: "site_config.error_config_not_found",
+  },
+  not_found: {
+    title: "site_config.error_not_found_title",
+    body: "site_config.error_not_found",
+  },
 };
 
 const GENERIC_REFUSAL = {
@@ -62,6 +80,7 @@ function CheckItem({
   passed: boolean;
   passedTitle: string;
   failedTitle: string;
+  /** Why the item matters; shown only while it still needs fixing. */
   explanation: string;
   detail?: React.ReactNode;
 }) {
@@ -78,9 +97,11 @@ function CheckItem({
         <p className={`font-heading font-semibold text-sm ${passed ? "text-green-800" : "text-charcoal"}`}>
           {passed ? passedTitle : failedTitle}
         </p>
-        <p className="font-body text-xs text-gray-500 mt-0.5">
-          {explanation}
-        </p>
+        {!passed && (
+          <p className="font-body text-xs text-gray-500 mt-0.5">
+            {explanation}
+          </p>
+        )}
         {detail && <div className="mt-2">{detail}</div>}
       </div>
     </div>

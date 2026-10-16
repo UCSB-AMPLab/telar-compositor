@@ -15,7 +15,7 @@
  * `resolveFullSyncPayload` in `app/lib/sync.server.ts`, the page import in
  * `app/routes/_app.pages.tsx`, the object registration in
  * `app/routes/_app.objects.tsx`, `preloadCourseObjects`, and the publish's
-kept-columns capture in `app/lib/kept-columns-capture.server.ts`, and the
+ * kept-columns capture in `app/lib/kept-columns-capture.server.ts`, and the
  * publish's written-block store in `app/lib/page-written-frontmatter.server.ts`.
  * A field no producer emits at all is absent from the tables and is ignored,
  * which is what keeps an unknown key on an object update from refusing the
@@ -26,7 +26,7 @@ kept-columns capture in `app/lib/kept-columns-capture.server.ts`, and the
  * field path and the type that stood there, because rendering an untrusted
  * value to describe it is the operation this whole boundary exists to prevent.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { pythonStrip } from "~/lib/python-whitespace";
@@ -608,6 +608,18 @@ function valueOfObjectUpdate(entry: object): FieldRefusal[] {
   ];
 }
 
+/**
+ * A glossary update's own fields and its already-shaped `seen` map's, which
+ * holds the values the update's caller read (see glossary-seen-fields.ts).
+ */
+function valueOfGlossaryUpdate(entry: object): FieldRefusal[] {
+  const { seen } = entry as { seen?: unknown };
+  return [
+    ...refusedFields(entry, GLOSSARY_UPDATE_FIELDS, ""),
+    ...(seen === undefined ? [] : refusedFields(seen as object, GLOSSARY_UPDATE_FIELDS, "seen.")),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // The arms
 // ---------------------------------------------------------------------------
@@ -708,8 +720,8 @@ const INGEST_ARMS: Readonly<Record<IngestArmName, ArmDomain>> = {
   glossaryUpdate: {
     root: "glossary",
     entriesAreStrings: false,
-    shapeCheck: null,
-    check: (entry) => refusedFields(entry, GLOSSARY_UPDATE_FIELDS, ""),
+    shapeCheck: (entry) => refusedInObjectContainerShape((entry as { seen?: unknown }).seen, "seen"),
+    check: valueOfGlossaryUpdate,
   },
   glossaryInsert: {
     root: "glossary",

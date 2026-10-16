@@ -5,28 +5,30 @@
  * keeps every navigation fast: GitHub work never blocks the loader, and the
  * pill reconciles the cache in the background.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import { layers, project_config, project_pages, projects, steps, stories } from "~/db/schema";
+import { projects } from "~/db/schema";
 import { getDb } from "~/lib/db.server";
-import { checkRepoAvailability, getFileAtRef, getRepoHead, getSubtreeOids, listSubtreeFiles } from "~/lib/github.server";
-import type { SubtreeAt } from "~/lib/github.server";
+import { checkRepoAvailability, getRepoHead } from "~/lib/github.server";
 import type { OwnRepoAccess } from "~/lib/repo-access";
-import { carriedPageFile, renderStoryFiles } from "~/lib/publish.server";
-import { holdsReducedPair } from "~/lib/page-files-check.server";
-import { PAGE_TEXTS_DIR, heldPageFileName, pageFileReader, publishedPageFile } from "~/lib/page-content.server";
-import { isRecordedPageFileName, parsePageFilesRecord, serialisePageFilesRecord } from "~/lib/page-files-record";
+import { parsePageFilesRecord, serialisePageFilesRecord } from "~/lib/page-files-record";
 import { heldPagesRecord, pageFilesRecordAdvancedFrom } from "~/lib/page-files-record.server";
-import type { PageCheckD1Page } from "~/lib/page-content.server";
-import type { CommitFile } from "~/lib/commit.server";
-import { gitBlobSha } from "~/lib/story-files.server";
 import { computeFullSyncDiff, hasDivergentChanges } from "~/lib/sync.server";
+import { CollidingColumnsRefusal } from "~/lib/import.server";
 import { legacyRecordRef } from "~/lib/legacy-object-ids.server";
 import { readSiteTelarVersion } from "~/lib/site-version.server";
 import { recordIfLeaseFree } from "~/lib/operation-lease.server";
 import { syncedRowsFingerprint } from "~/lib/synced-rows-fingerprint.server";
+import {
+  contentFilesMayHaveChanged,
+  pageRowsOf,
+  renderedContentMatchesHead,
+  storyRowsOf,
+  watchedPageFiles,
+} from "~/lib/head-content-match.server";
+import type { StoryRow } from "~/lib/head-content-match.server";
 import { fetchLatestRelease } from "~/lib/upgrade.server";
 import type { ReleaseLookupError } from "~/lib/upgrade.server";
 
@@ -36,6 +38,7 @@ export const TAG_TTL_MS = 600_000;
 export interface CachedGithubStatus {
   gh_repo_available: number | null;
   gh_remote_head_sha: string | null;
+  /** null = cold, 0 = in sync, 1 = diverged, 2 = the last check could not be made. */
   gh_diverged: number | null;
   gh_diverged_against_sha: string | null;
   gh_checked_at: string | null;
@@ -49,6 +52,10 @@ export interface CachedGithubStatus {
 export interface DerivedGithubStatus {
   repoUnavailable: boolean;
   headDiverged: boolean;
+  /** The last check of GitHub did not conclude, so divergence is unknown. */
+  checkFailed: boolean;
+  /** No head is recorded: the site has not been published from the Compositor. */
+  firstPublish: boolean;
   needsUpgrade: boolean;
   isBelowMinimum: boolean;
   latestTelarTag: string | null;
@@ -77,6 +84,16 @@ export function deriveHeadDiverged(cache: CachedGithubStatus, localHeadSha: stri
     cache.gh_remote_head_sha !== null &&
     cache.gh_remote_head_sha !== localHeadSha
   );
+}
+
+/**
+ * The failed state, tagged like the divergence verdict: it describes the check
+ * made against `localHeadSha` and lapses when the head moves. Unlike a
+ * divergence it needs no remote head, since a check that could not read the
+ * remote head is one of the ways it fails.
+ */
+export function deriveCheckFailed(cache: CachedGithubStatus, localHeadSha: string | null): boolean {
+  return cache.gh_diverged === 2 && cache.gh_diverged_against_sha === localHeadSha;
 }
 
 export interface WorkflowsApproval {
@@ -268,7 +285,8 @@ export async function claimRefresh(
  * matches no row in SQL. Returns whether a row changed; zero rows is another
  * writer's head, to be left alone. `also` is written with the head, and only
  * when the head is. objects_read_sha advances with it as
- * `objectsReadAdvancedFrom` has it.
+ * `objectsReadAdvancedFrom` has it, from `objectsReadFrom` where the record
+ * the writer read is not `fromSha`.
  */
 export async function bumpProjectHeadFrom(
   db: ReturnType<typeof getDb>,
@@ -277,6 +295,7 @@ export async function bumpProjectHeadFrom(
   toSha: string,
   now = Date.now(),
   also: { last_synced_at?: string; page_files_json?: string } = {},
+  objectsReadFrom: string | null = fromSha,
 ): Promise<boolean> {
   const atFrom = fromSha === null ? isNull(projects.head_sha) : eq(projects.head_sha, fromSha);
   const updated = await db
@@ -284,7 +303,7 @@ export async function bumpProjectHeadFrom(
     .set({
       ...also,
       head_sha: toSha,
-      objects_read_sha: objectsReadAdvancedFrom(fromSha, toSha),
+      objects_read_sha: objectsReadAdvancedFrom(fromSha, toSha, objectsReadFrom),
       gh_checked_at: null,
       updated_at: new Date(now).toISOString(),
     })
@@ -312,10 +331,22 @@ export function headAdvancedFrom(fromSha: string | null, toSha: string): SQL {
  * (`bumpObjectsReadFrom`) is left, so a head write that lands late never moves
  * it back. Null-aware as `headAdvancedFrom` is. Only a writer that has read
  * objects.csv at `toSha`, or holds what that commit's objects.csv holds, may
- * write it.
+ * write it. `readFrom` is the record the write replaces where it is not the
+ * head, as over no head, when it is the import's or none.
  */
-export function objectsReadAdvancedFrom(fromSha: string | null, toSha: string): SQL {
-  return sql`CASE WHEN ${projects.head_sha} IS ${fromSha} AND ${projects.objects_read_sha} IS ${fromSha} THEN ${toSha} ELSE ${projects.objects_read_sha} END`;
+export function objectsReadAdvancedFrom(fromSha: string | null, toSha: string, readFrom: string | null = fromSha): SQL {
+  return sql`CASE WHEN ${projects.head_sha} IS ${fromSha} AND ${projects.objects_read_sha} IS ${readFrom} THEN ${toSha} ELSE ${projects.objects_read_sha} END`;
+}
+
+/**
+ * The commit an import read, while no head is recorded: the commit of the page
+ * files record the import writes, which every later writer of the record keeps
+ * until a head is recorded with it. Null once a head is recorded, and for a
+ * project whose import wrote no record.
+ */
+export function importCommitOf(project: { head_sha: string | null; page_files_json?: string | null }): string | null {
+  if (project.head_sha !== null) return null;
+  return parsePageFilesRecord(project.page_files_json)?.commit ?? null;
 }
 
 /**
@@ -331,8 +362,8 @@ export function objectsReadFollowingHead(toSha: string): SQL {
 
 /**
  * Compare-and-set advance of objects_read_sha alone, for a writer that read
- * objects.csv without reading the rest of the commit: the objects sync, and
- * the objects commits, whose objects.csv is the one they wrote from D1. Lands
+ * objects.csv without reading the rest of the commit: the objects commits,
+ * whose objects.csv is the one they wrote from D1, and the object rename. Lands
  * only while the record is still `fromSha`, null matched with IS NULL. Returns
  * whether a row changed.
  */
@@ -351,243 +382,7 @@ export async function bumpObjectsReadFrom(
   return updated.length === 1;
 }
 
-const SPREADSHEETS_DIR = "telar-content/spreadsheets";
-const STORY_TEXTS_DIR = "telar-content/texts/stories";
-
 type Db = ReturnType<typeof getDb>;
-
-const INCONCLUSIVE = null;
-
-/**
- * One story subtree at both commits, as a comparable pair: both files maps,
- * with an absent subtree as an empty map, or null when the trees cannot
- * settle it (anything but a tree at the path, a tree at one commit only, or
- * a listing `listSubtreeFiles` cannot trust). Equal oids are listed once.
- */
-async function subtreePair(
-  token: string,
-  owner: string,
-  repo: string,
-  before: SubtreeAt,
-  after: SubtreeAt,
-): Promise<{ same: boolean; before: Map<string, string>; after: Map<string, string> } | null> {
-  if (before.kind === "absent" && after.kind === "absent") return { same: true, before: new Map(), after: new Map() };
-  if (before.kind !== "tree" || after.kind !== "tree") return INCONCLUSIVE;
-  if (before.oid === after.oid) {
-    const files = await listSubtreeFiles(token, owner, repo, before.oid);
-    return files === null ? INCONCLUSIVE : { same: true, before: files, after: files };
-  }
-  const [b, a] = await Promise.all([
-    listSubtreeFiles(token, owner, repo, before.oid),
-    listSubtreeFiles(token, owner, repo, after.oid),
-  ]);
-  return b === null || a === null ? INCONCLUSIVE : { same: false, before: b, after: a };
-}
-
-/**
- * Whether the files of a D1 story or page may have changed between `base`
- * and `head`, decided from trees alone, all three subtrees read in one
- * request: any blob change under `texts/stories`, a change to
- * `spreadsheets/<story>.csv` for a story D1 holds, or a page file added,
- * removed or changed as the change check reads it (`pageFilesMayHaveChanged`).
- *
- * It answers "may have changed" whenever the trees cannot settle it: a commit
- * that does not resolve or a malformed answer (`getSubtreeOids`), anything
- * but a tree at a subtree path, a story subtree at one commit only, a
- * truncated listing, or a symlink or submodule anywhere in a subtree it
- * lists. A story subtree absent at both commits is no change.
- */
-async function contentFilesMayHaveChanged(
-  token: string,
-  owner: string,
-  repo: string,
-  base: string,
-  head: string,
-  storyIds: readonly string[],
-  pageFileNames: ReadonlySet<string>,
-): Promise<boolean> {
-  const trees = await getSubtreeOids(token, owner, repo, [base, head], [SPREADSHEETS_DIR, STORY_TEXTS_DIR, PAGE_TEXTS_DIR]);
-  if (!trees.ok) return true;
-  if (await storyFilesMayHaveChanged(token, owner, repo, base, head, trees, storyIds)) return true;
-  return pageFilesMayHaveChanged(token, owner, repo, trees.at(base, PAGE_TEXTS_DIR), trees.at(head, PAGE_TEXTS_DIR), pageFileNames);
-}
-
-type SubtreeAnswers = Extract<Awaited<ReturnType<typeof getSubtreeOids>>, { ok: true }>;
-
-/** The story half of `contentFilesMayHaveChanged`. */
-async function storyFilesMayHaveChanged(
-  token: string,
-  owner: string,
-  repo: string,
-  base: string,
-  head: string,
-  trees: SubtreeAnswers,
-  storyIds: readonly string[],
-): Promise<boolean> {
-  const texts = trees.at(base, STORY_TEXTS_DIR);
-  const textsAfter = trees.at(head, STORY_TEXTS_DIR);
-  if (texts.kind === "tree" && textsAfter.kind === "tree" && texts.oid !== textsAfter.oid) return true;
-  const [sheets, textPair] = await Promise.all([
-    subtreePair(token, owner, repo, trees.at(base, SPREADSHEETS_DIR), trees.at(head, SPREADSHEETS_DIR)),
-    subtreePair(token, owner, repo, texts, textsAfter),
-  ]);
-  if (sheets === null || textPair === null) return true;
-  if (sheets.same) return false;
-  return storyIds.some((id) => sheets.before.get(`${id}.csv`) !== sheets.after.get(`${id}.csv`));
-}
-
-/**
- * Whether the page files may have changed between the two commits as the
- * change check reads them: a `.md` file directly in the pages
- * folder added, or one of `watchedNames` (the files a page holds or the
- * record gives a page) removed or with a different blob. A file in a
- * subfolder, which the framework does not build, is not a change.
- *
- * It answers "may have changed" whenever the trees cannot settle it: anything
- * but a tree at the path, or a listing `listSubtreeFiles` cannot trust. The
- * folder absent at both commits is no change, and absent at one only is one.
- */
-async function pageFilesMayHaveChanged(
-  token: string,
-  owner: string,
-  repo: string,
-  before: SubtreeAt,
-  after: SubtreeAt,
-  watchedNames: ReadonlySet<string>,
-): Promise<boolean> {
-  if (before.kind === "other" || after.kind === "other") return true;
-  if (before.kind === "absent" || after.kind === "absent") return before.kind !== after.kind;
-  const pair = await subtreePair(token, owner, repo, before, after);
-  if (pair === null) return true;
-  if (pair.same) return false;
-  const added = [...pair.after.keys()].some((name) => isRecordedPageFileName(name) && !pair.before.has(name));
-  return added || [...watchedNames].some((name) => pair.before.get(name) !== pair.after.get(name));
-}
-
-/** A project's story rows. */
-function storyRowsOf(db: Db, projectId: number) {
-  return db.select().from(stories).where(eq(stories.project_id, projectId));
-}
-
-type StoryRow = Awaited<ReturnType<typeof storyRowsOf>>[number];
-
-/** A story's step and layer rows, read as a publish reads them. */
-async function storyContentRows(db: Db, story: StoryRow) {
-  const stepRows = await db.select().from(steps).where(eq(steps.story_id, story.id));
-  const layerRows: (typeof layers.$inferSelect)[] = [];
-  for (const step of stepRows) {
-    layerRows.push(...(await db.select().from(layers).where(eq(layers.step_id, step.id))));
-  }
-  return { stepRows, layerRows };
-}
-
-/**
- * Whether HEAD already holds exactly what a publish of D1's stories would
- * commit: each story's step CSV and layer files, rendered by
- * `renderStoryFiles`, have the git blob SHA HEAD's tree gives their paths.
- * A differing or missing file is a difference. A file HEAD has that the
- * render does not produce is one only if a story's step CSV names it, and
- * then that CSV differs from the rendered one, so it is already counted;
- * a file no CSV names changes no story. Blob SHAs are compared; the only file
- * read is a story CSV whose blob is not the plain render, which the publish
- * wrote in the file's own layout (`storyFilesAsPublished`).
- *
- * A HEAD the trees cannot settle is no match: a commit that does not resolve
- * or a malformed answer, anything but a tree at a subtree path, a truncated
- * listing, or a symlink or submodule in a story subtree (`listSubtreeFiles`), so a
- * symlink where a rendered file should be is a mismatch even when its blob
- * SHA happens to equal the rendered file's.
- */
-async function renderedStoriesMatchHead(
-  token: string,
-  owner: string,
-  repo: string,
-  head: string,
-  db: Db,
-  projectId: number,
-  storyRows: StoryRow[],
-): Promise<boolean> {
-  const trees = await getSubtreeOids(token, owner, repo, [head], [SPREADSHEETS_DIR, STORY_TEXTS_DIR]);
-  if (!trees.ok) return false;
-  const headBlobs = new Map<string, string>();
-  for (const dir of [SPREADSHEETS_DIR, STORY_TEXTS_DIR]) {
-    const at = trees.at(head, dir);
-    if (at.kind === "other") return false;
-    if (at.kind === "absent") continue;
-    const files = await listSubtreeFiles(token, owner, repo, at.oid);
-    if (files === null) return false;
-    for (const [path, sha] of files) headBlobs.set(`${dir}/${path}`, sha);
-  }
-  const [config] = await db
-    .select({ lang: project_config.lang })
-    .from(project_config)
-    .where(eq(project_config.project_id, projectId));
-  const siteLang = config?.lang ?? undefined;
-  for (const story of storyRows) {
-    const { stepRows, layerRows } = await storyContentRows(db, story);
-    const at = { token, owner, repo, head, headBlobs };
-    if (!(await storyMatchesHead(at, story.story_id, stepRows, layerRows, siteLang))) return false;
-  }
-  return true;
-}
-
-/** What reading a story's files at HEAD needs: the repository, HEAD, and the blob SHAs HEAD's story subtrees hold. */
-interface StoryHeadRead {
-  token: string;
-  owner: string;
-  repo: string;
-  head: string;
-  headBlobs: ReadonlyMap<string, string>;
-}
-
-/** Whether HEAD's blobs hold every file a publish writes for one story, in the layout of the story's CSV at HEAD. */
-async function storyMatchesHead(
-  at: StoryHeadRead,
-  storyId: string,
-  stepRows: Parameters<typeof renderStoryFiles>[1],
-  layerRows: Parameters<typeof renderStoryFiles>[2],
-  siteLang: string | undefined,
-): Promise<boolean> {
-  const files = await storyFilesAsPublished(
-    at,
-    storyId,
-    await renderStoryFiles(storyId, stepRows, layerRows, siteLang),
-    (existingCsv) => renderStoryFiles(storyId, stepRows, layerRows, siteLang, existingCsv),
-  );
-  if (files === null) return false;
-  for (const file of files) {
-    if (at.headBlobs.get(file.path) !== (await gitBlobSha(file.content))) return false;
-  }
-  return true;
-}
-
-/**
- * A story's files as a publish writes them. The publish writes the step CSV in
- * the file's own layout, so when HEAD's CSV is another blob than the plain
- * render, it is read strictly at HEAD and the story rendered again in that
- * layout, as `storyFilesForPublish` does. A CSV HEAD lacks, or one that cannot
- * be read, gives no files: the story does not match.
- */
-async function storyFilesAsPublished(
-  at: StoryHeadRead,
-  storyId: string,
-  plain: CommitFile[],
-  renderIn: (existingCsv: string) => Promise<CommitFile[]>,
-): Promise<CommitFile[] | null> {
-  const path = `${SPREADSHEETS_DIR}/${storyId}.csv`;
-  const headSha = at.headBlobs.get(path);
-  const plainCsv = plain.find((file) => file.path === path);
-  if (headSha === undefined || plainCsv === undefined || headSha === (await gitBlobSha(plainCsv.content))) return plain;
-  const read = await getFileAtRef(at.token, at.owner, at.repo, path, at.head, { strict: true });
-  return read.status === "ok" ? renderIn(read.content) : null;
-}
-
-/** The files a page holds, and those the stored record gives a page. */
-async function watchedPageFiles(db: Db, projectId: number, pageRows: readonly PageCheckD1Page[]): Promise<Set<string>> {
-  const [stored] = await db.select({ record: projects.page_files_json }).from(projects).where(eq(projects.id, projectId));
-  const recorded = Object.entries(parsePageFilesRecord(stored?.record)?.files ?? {}).flatMap(([name, id]) => (id === null ? [] : [name]));
-  return new Set([...pageRows.flatMap((page) => heldPageFileName(page) ?? []), ...recorded]);
-}
 
 /** The page files record the diff's page check gives at its head, for the silent bump; none when it gives none. */
 function checkedRecord(diff: Awaited<ReturnType<typeof computeFullSyncDiff>>): { recordJson?: string } {
@@ -598,116 +393,6 @@ function checkedRecord(diff: Awaited<ReturnType<typeof computeFullSyncDiff>>): {
 /** A verdict that records `remoteHead`, over D1's rows as `d1Fingerprint` read them. */
 function advanceTo(remoteHead: string, d1Fingerprint: string): HeadVerdict {
   return { diverged: 0, against: remoteHead, headToWrite: remoteHead, d1Fingerprint };
-}
-
-/** A project's pages, as the refresh compares them. */
-function pageRowsOf(db: Db, projectId: number): Promise<PageCheckD1Page[]> {
-  return db
-    .select({
-      id: project_pages.id,
-      slug: project_pages.slug,
-      title: project_pages.title,
-      body: project_pages.body,
-      frontmatter: project_pages.frontmatter,
-      frontmatter_source: project_pages.frontmatter_source,
-    })
-    .from(project_pages)
-    .where(eq(project_pages.project_id, projectId));
-}
-
-/**
- * Whether HEAD already holds exactly what a publish of D1's pages would
- * commit: each page's file (`publishedPageFile`), directly in the pages
- * folder, has the git blob SHA HEAD's tree gives its path. A differing or
- * missing file is a difference, and so is a `.md` file directly in the
- * folder that no page holds, which the change check reads as an addition. A page whose block was never captured is rendered with the block
- * of the file publish carries it from, read at HEAD by publish's own rule
- * (`carriedPageFile`), and that read is the only file read here; a captured
- * page reads none. A page whose title is blank, for which a publish writes no
- * file, is no match while HEAD holds a file at its slug (`heldPageFileName`).
- *
- * A HEAD the trees cannot settle is no match, as for the stories: a commit
- * that does not resolve, anything but a tree at the path, a listing that
- * cannot be trusted, a carried file that cannot be read, and a page whose
- * front matter no publish could write.
- */
-async function renderedPagesMatchHead(
-  token: string,
-  owner: string,
-  repo: string,
-  head: string,
-  pageRows: readonly PageCheckD1Page[],
-): Promise<boolean> {
-  const held = pageRows.flatMap((page) => {
-    const name = heldPageFileName(page);
-    return name === null ? [] : [{ page, name }];
-  });
-  const files = await pageFilesAtHead(token, owner, repo, head);
-  if (files === null) return false;
-  const heldNames = new Set(held.map(({ name }) => name));
-  if ([...files.keys()].some((name) => isRecordedPageFileName(name) && !heldNames.has(name))) return false;
-  const read = pageFileReader({ token, owner, repo }, head, files);
-  try {
-    for (const { page, name } of held) {
-      if (!(await renderedPageMatches(page, name, files, read))) return false;
-    }
-  } catch {
-    return false;
-  }
-  return true;
-}
-
-/**
- * The pages folder at `head`, blob SHAs by path relative to it, or null when
- * the tree cannot settle it (`renderedPagesMatchHead`). A folder absent at a
- * commit that resolves is empty.
- */
-async function pageFilesAtHead(token: string, owner: string, repo: string, head: string): Promise<Map<string, string> | null> {
-  const trees = await getSubtreeOids(token, owner, repo, [head], [PAGE_TEXTS_DIR]);
-  if (!trees.ok) return null;
-  const at = trees.at(head, PAGE_TEXTS_DIR);
-  if (at.kind === "other") return null;
-  if (at.kind === "absent") return new Map();
-  return listSubtreeFiles(token, owner, repo, at.oid);
-}
-
-/**
- * Whether HEAD holds, at `name`, the blob a publish of `page` would commit,
- * the block of a page never captured carried by publish's rule through
- * `read`. A page a publish writes no file for, and a carried file that cannot
- * be read, are no match; a block no publish could write throws.
- */
-async function renderedPageMatches(
-  page: PageCheckD1Page,
-  name: string,
-  files: ReadonlyMap<string, string>,
-  read: ReturnType<typeof pageFileReader>,
-): Promise<boolean> {
-  const carried = page.frontmatter === null ? await carriedPageFile(page, read) : { ok: true as const, content: "" };
-  if (!carried.ok) return false;
-  const slug = name.slice(0, -".md".length);
-  const file = await publishedPageFile({ slug, title: page.title, body: page.body, frontmatter: page.frontmatter }, carried.content);
-  return file !== null && files.get(name) === (await gitBlobSha(file.content));
-}
-
-/**
- * Whether HEAD already holds what a publish of D1's stories and pages would
- * commit (`renderedStoriesMatchHead`, `renderedPagesMatchHead`). No story
- * reads no story tree.
- */
-async function renderedContentMatchesHead(
-  token: string,
-  owner: string,
-  repo: string,
-  head: string,
-  db: Db,
-  projectId: number,
-  storyRows: StoryRow[],
-  pageRows: readonly PageCheckD1Page[],
-): Promise<boolean> {
-  const storiesMatch =
-    storyRows.length === 0 || (await renderedStoriesMatchHead(token, owner, repo, head, db, projectId, storyRows));
-  return storiesMatch && renderedPagesMatchHead(token, owner, repo, head, pageRows);
 }
 
 interface RefreshableProject {
@@ -769,10 +454,19 @@ export async function refreshGithubStatus(
         .where(eq(projects.id, project.id));
       return;
     }
-    // Repo is available (or transient "error" → fail-open). If the head fetch
-    // failed, do NOT clobber the last-known verdict — leave prior gh_* intact.
+    // A rate-limited probe says nothing about the repository: the check could
+    // not be made, whatever the head fetch returned. A head that was read does
+    // show the repository is reachable, so an earlier refusal stops standing.
+    if (availability === "rate_limited") {
+      console.warn("[github-status] rate limited checking", project.github_repo_full_name);
+      await writeCheckFailed(db, project, nowIso, remoteHead ? { gh_repo_available: 1 } : {});
+      return;
+    }
+    // Repo is available (or transient "error" → fail-open). A head fetch that
+    // failed is a check that could not be made.
     if (!remoteHead) {
       console.warn("[github-status] getRepoHead returned null for", project.github_repo_full_name);
+      await writeCheckFailed(db, project, nowIso);
       return;
     }
 
@@ -795,9 +489,31 @@ export async function refreshGithubStatus(
     });
     if (!recorded) await writeRefreshCache(false);
   } catch (err) {
-    // Fail open — leave the claimed gh_checked_at; retry after TTL.
+    // The check did not conclude: record that, stamped now, so the next
+    // refresh after the TTL tries again.
     console.warn("[github-status] refreshGithubStatus failed", err);
+    await writeCheckFailed(db, project, nowIso).catch(() => {});
   }
+}
+
+/**
+ * Records that the check could not be made (`gh_diverged` 2), against the head
+ * loaded. What GitHub last reported (availability, remote head) is left as it
+ * was, since this check read none of it, unless `reachable` says the head read
+ * succeeded, which shows the repository is available.
+ */
+async function writeCheckFailed(
+  db: ReturnType<typeof getDb>,
+  project: RefreshableProject,
+  nowIso: string,
+  reachable: { gh_repo_available?: 1 } = {},
+): Promise<void> {
+  const loadedHead = project.head_sha;
+  const whileLoaded = (value: string | number | null, otherwise: SQL) =>
+    sql`CASE WHEN ${projects.head_sha} IS ${loadedHead} THEN ${value} ELSE ${otherwise} END`;
+  await db.update(projects)
+    .set({ ...verdictColumns({ diverged: 2, against: loadedHead }, nowIso, whileLoaded), ...reachable })
+    .where(eq(projects.id, project.id));
 }
 
 /**
@@ -855,22 +571,23 @@ function verdictColumns(
  * is still `loadedHead`: none when the verdict advances nothing. The page
  * files record goes with the head when the verdict carries one. The backfill
  * over no head compares rendered stories and reads no objects.csv, so
- * objects_read_sha advances only from a recorded head, whose advance the diff
- * settled with objects.csv read.
+ * objects_read_sha advances only from a base whose advance the diff settled
+ * with objects.csv read: the recorded head, or the import's commit.
  */
 function refreshHeadAdvance(loadedHead: string | null, verdict: HeadVerdict, updatedAt: SQL) {
-  const { headToWrite, recordJson } = verdict;
+  const { headToWrite, recordJson, objectsReadFrom } = verdict;
   if (!headToWrite) return {};
   const head = {
     head_sha: headAdvancedFrom(loadedHead, headToWrite), updated_at: updatedAt,
     ...(recordJson ? { page_files_json: pageFilesRecordAdvancedFrom(loadedHead, recordJson) } : {}),
   };
-  if (loadedHead === null) return head;
-  return { ...head, objects_read_sha: objectsReadAdvancedFrom(loadedHead, headToWrite) };
+  if (objectsReadFrom === undefined) return head;
+  return { ...head, objects_read_sha: objectsReadAdvancedFrom(loadedHead, headToWrite, objectsReadFrom) };
 }
 
 interface HeadVerdict {
-  diverged: 0 | 1;
+  /** 2 is a check that could not be made, which says nothing about divergence. */
+  diverged: 0 | 1 | 2;
   against: string | null;
   /** Set when head_sha advances: the backfill, or the silent no-change bump. */
   headToWrite?: string;
@@ -881,20 +598,8 @@ interface HeadVerdict {
   d1Fingerprint?: string;
   /** With `headToWrite`: the page files record at it, written with the head. */
   recordJson?: string;
-}
-
-/** Whether the project holds a pair of page files the one-language reduction would change, over its site's language. */
-async function holdsPairOfPages(
-  project: RefreshableProject,
-  token: string,
-  owner: string,
-  repo: string,
-  db: Db,
-  head: string,
-  pageRows?: readonly PageCheckD1Page[],
-): Promise<boolean> {
-  const [config] = await db.select({ lang: project_config.lang }).from(project_config).where(eq(project_config.project_id, project.id));
-  return holdsReducedPair({ token, owner, repo }, head, pageRows ?? (await pageRowsOf(db, project.id)), config?.lang);
+  /** With `headToWrite`: the base the diff compared objects.csv from, which objects_read_sha advances from. */
+  objectsReadFrom?: string;
 }
 
 /**
@@ -919,17 +624,39 @@ async function holdsPairOfPages(
  * which reads those four files; whether each change there is a real one is
  * the dialog's decision.
  *
- * With no base, HEAD is backfilled as acknowledged only when it already holds
- * what a publish of D1's stories and pages would commit
+ * The base is the recorded head, or with none the commit the import read
+ * (`importCommitOf`). With no base, HEAD is backfilled as acknowledged only
+ * when it already holds what a publish of D1's stories and pages would commit
  * (`renderedStoriesMatchHead`, `renderedPagesMatchHead`); otherwise the site
- * is divergent against no head. With a base, a possible change to a D1 story's
+ * is divergent against no head. With no head and GitHub still at the
+ * import's commit, HEAD is backfilled the same way, and otherwise nothing has
+ * changed on GitHub. With a base GitHub has moved from, a possible change to a D1 story's
  * or page's files (`contentFilesMayHaveChanged`) is divergence; everything
- * else is decided by the existing diff, as before. Any failure is divergence,
- * and the head never advances on one. A project holding a pair of page files
- * the one-language reduction would change is divergent whether or not GitHub
- * moved (`holdsPairOfPages`); it reads D1's blocks, and GitHub only for a
- * page whose block D1 does not hold.
+ * else is decided by the existing diff, as before. A page held in two
+ * languages is not a change on GitHub: the publish page asks which to keep.
+ *
+ * A listing that comes back null (truncated, a symlink, a submodule) and a
+ * sheet the sync refuses for its colliding columns are divergence; a request
+ * that throws is not one but a check that could not be made (`diverged` 2),
+ * and the head never advances on either.
  */
+/**
+ * The verdict where HEAD is the import's commit or no base is known: a HEAD
+ * that holds what a publish would commit is recorded with the page files
+ * record it matches; one that does not is a difference only where there is no
+ * base to say the files are the import's own layout.
+ */
+function atImportVerdict(
+  hasBase: boolean,
+  matches: boolean,
+  remoteHead: string,
+  d1Fingerprint: string,
+  pageRows: Parameters<typeof heldPagesRecord>[1],
+): HeadVerdict {
+  if (!matches) return { diverged: hasBase ? 0 : 1, against: null };
+  return { ...advanceTo(remoteHead, d1Fingerprint), recordJson: serialisePageFilesRecord(heldPagesRecord(remoteHead, pageRows)) };
+}
+
 async function headVerdict(
   project: RefreshableProject,
   token: string,
@@ -938,29 +665,28 @@ async function headVerdict(
   db: Db,
   remoteHead: string,
 ): Promise<HeadVerdict> {
-  const base = project.head_sha;
-  if (base === remoteHead) {
-    // Nothing moved on GitHub; a pair the reduction would change is still a change,
-    // and a pair check that cannot finish cannot rule one out.
-    const pair = await holdsPairOfPages(project, token, owner, repo, db, remoteHead).catch(() => true);
-    return { diverged: pair ? 1 : 0, against: base };
-  }
+  const recorded = project.head_sha;
+  // With no head recorded, the commit the import read is the base: an edit on
+  // GitHub since the import is a change to review, which the first publish
+  // would otherwise overwrite unread.
+  const base = recorded ?? importCommitOf(project);
+  if (recorded !== null && base === remoteHead) return { diverged: 0, against: recorded };
   try {
     // Everything in D1 the verdict compares, taken before it reads any of it.
     const d1Fingerprint = await syncedRowsFingerprint(db, project.id);
     const storyRows = await storyRowsOf(db, project.id);
     const pageRows = await pageRowsOf(db, project.id);
-    if (!base) {
-      if (await holdsPairOfPages(project, token, owner, repo, db, remoteHead, pageRows)) return { diverged: 1, against: null };
-      const matches = await renderedContentMatchesHead(token, owner, repo, remoteHead, db, project.id, storyRows, pageRows);
-      if (!matches) return { diverged: 1, against: null };
-      return { ...advanceTo(remoteHead, d1Fingerprint), recordJson: serialisePageFilesRecord(heldPagesRecord(remoteHead, pageRows)) };
+    if (!base || base === remoteHead) {
+      // No head recorded, and no base or GitHub still at the import's commit.
+      // There, files that differ from what a publish would commit are the
+      // import's own layout, which the first publish rewrites, not a change
+      // on GitHub.
+      return atImportVerdict(!!base, await renderedContentMatchesHead(token, owner, repo, remoteHead, db, project.id, storyRows, pageRows), remoteHead, d1Fingerprint, pageRows);
     }
-    if (await holdsPairOfPages(project, token, owner, repo, db, remoteHead, pageRows)) return { diverged: 1, against: base };
     const storyIds = storyRows.map((s) => s.story_id);
     const watched = await watchedPageFiles(db, project.id, pageRows);
     if (await contentFilesMayHaveChanged(token, owner, repo, base, remoteHead, storyIds, watched)) {
-      return { diverged: 1, against: base };
+      return { diverged: 1, against: recorded };
     }
     const diff = await computeFullSyncDiff(project.id, token, owner, repo, db, base, {
       headRef: remoteHead,
@@ -969,9 +695,11 @@ async function headVerdict(
       // (`respelled`), which sends the author to the sync that repairs it.
       legacyRef: project.legacy_ids_repaired_at == null ? legacyRecordRef(project) : undefined,
     });
-    if (hasDivergentChanges(diff)) return { diverged: 1, against: base };
-    return { ...advanceTo(remoteHead, d1Fingerprint), ...checkedRecord(diff) };
-  } catch {
-    return { diverged: 1, against: base };
+    if (hasDivergentChanges(diff)) return { diverged: 1, against: recorded };
+    return { ...advanceTo(remoteHead, d1Fingerprint), ...checkedRecord(diff), objectsReadFrom: base };
+  } catch (err) {
+    // A sheet the sync refuses is a change GitHub holds, which the review
+    // names; any other throw is a request that did not conclude.
+    return { diverged: err instanceof CollidingColumnsRefusal ? 1 : 2, against: recorded };
   }
 }

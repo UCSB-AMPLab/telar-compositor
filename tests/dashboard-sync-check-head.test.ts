@@ -6,9 +6,11 @@
  * that commit as synced; when it holds anything, the route records nothing
  * and leaves the author's choice to the accept. It never records a head it
  * did not read, and it writes compare-and-set against the head it loaded,
- * so a writer that moved the head meanwhile keeps its head.
+ * so a writer that moved the head meanwhile keeps its head. With no head
+ * recorded, the check's base is the commit the import read, and the objects
+ * are compared against `objects_read_sha`, from which the record advances.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -22,6 +24,10 @@ const state = vi.hoisted(() => ({
   repairedAt: null as string | null,
   /** The project's objects_read_sha, as the route loaded it. */
   objectsReadSha: null as string | null,
+  /** The project's page files record, as the route loaded it. */
+  pageFilesJson: null as string | null,
+  /** The record each head write advanced objects_read_sha from. */
+  objectsReadFrom: [] as Array<string | null | undefined>,
   diff: undefined as unknown,
   applyThrows: undefined as unknown,
   /** What the lease begin answers: refused while an apply holds it, unavailable when the object cannot be asked. */
@@ -56,6 +62,7 @@ vi.mock("~/lib/membership.server", () => ({
       id: 1, github_repo_full_name: "owner/repo", head_sha: state.loadedHead, onboarding_completed: 1,
       legacy_ids_repaired_at: state.repairedAt,
       objects_read_sha: state.objectsReadSha,
+      page_files_json: state.pageFilesJson,
     },
     userRole: "convenor",
   })),
@@ -94,7 +101,10 @@ vi.mock("~/lib/sync.server", async (orig) => ({
 // holds `fromSha`.
 vi.mock("~/lib/github-status.server", async (orig) => ({
   ...((await orig()) as Record<string, unknown>),
-  bumpProjectHeadFrom: vi.fn(async (_db: unknown, _id: number, fromSha: string | null, toSha: string) => {
+  bumpProjectHeadFrom: vi.fn(async (
+    _db: unknown, _id: number, fromSha: string | null, toSha: string, _now?: number, _also?: unknown, objectsReadFrom?: string | null,
+  ) => {
+    state.objectsReadFrom.push(objectsReadFrom);
     if (state.row.head_sha !== fromSha) return false;
     state.row.head_sha = toSha;
     return true;
@@ -182,6 +192,9 @@ beforeEach(() => {
   state.leaseBegin = "applied";
   state.rows = "rows-as-compared";
   state.applyWrites = null;
+  state.objectsReadSha = null;
+  state.pageFilesJson = null;
+  state.objectsReadFrom = [];
 });
 
 describe("the change check keeps head_sha when the dialog has something to offer", () => {
@@ -340,6 +353,37 @@ describe("a first sync, with no head recorded", () => {
   });
 });
 
+describe("an imported site, with no head recorded", () => {
+  const IMPORT = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+  const OBJECTS_READ = "9999999999999999999999999999999999999999";
+
+  it("checks against the commit the import read", async () => {
+    at(null);
+    state.pageFilesJson = JSON.stringify({ commit: IMPORT, files: {} });
+    await check();
+    const { computeFullSyncDiff } = await import("~/lib/sync.server");
+    expect(vi.mocked(computeFullSyncDiff).mock.calls[0][5]).toBe(IMPORT);
+  });
+
+  it("checks against no base when the import wrote no record", async () => {
+    at(null);
+    await check();
+    const { computeFullSyncDiff } = await import("~/lib/sync.server");
+    expect(vi.mocked(computeFullSyncDiff).mock.calls[0][5]).toBeNull();
+  });
+
+  it("compares the objects against objects_read_sha, and records the head from it", async () => {
+    at(null);
+    state.pageFilesJson = JSON.stringify({ commit: IMPORT, files: {} });
+    state.objectsReadSha = OBJECTS_READ;
+    await check();
+    const { computeFullSyncDiff } = await import("~/lib/sync.server");
+    expect((vi.mocked(computeFullSyncDiff).mock.calls[0][6] as { objectsReadSha?: string | null }).objectsReadSha).toBe(OBJECTS_READ);
+    expect(state.row.head_sha).toBe(READ);
+    expect(state.objectsReadFrom).toEqual([OBJECTS_READ]);
+  });
+});
+
 describe("an apply whose accepted pages were not applied", () => {
   async function apply() {
     const context = {
@@ -396,7 +440,9 @@ describe("the change check asks for the sheets' warnings", () => {
   it("passes collectWarnings to the diff", async () => {
     await check();
     const { computeFullSyncDiff } = await import("~/lib/sync.server");
-    expect(vi.mocked(computeFullSyncDiff).mock.calls[0][6]).toEqual({ collectWarnings: true, frameworkVersion: "1.8.0" });
+    expect(vi.mocked(computeFullSyncDiff).mock.calls[0][6]).toEqual({
+      collectWarnings: true, frameworkVersion: "1.8.0", objectsReadSha: null,
+    });
   });
 });
 

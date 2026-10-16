@@ -29,8 +29,13 @@
  *     to it at validation.
  *   - yaml_list_add edits a YAML list in place (yaml-list-add.server.ts) and
  *     throws YamlListAddError when it cannot, which the upgrade names.
+ *   - csv_language_match replaces one cell's text in place
+ *     (csv-language-match.server.ts), in the language the framework reads
+ *     from `_config.yml` as the chain has left it rather than `lang`. The
+ *     cell is a value the Compositor's editor holds, so the result carries
+ *     each one the chain ran, for the upgrade to apply to the editor's copy.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import Papa from "papaparse";
@@ -49,10 +54,12 @@ import {
   type GitignoreAddOp,
   type RegexReplaceOp,
   type CreateDirectoryOp,
+  type CsvLanguageMatchOp,
   isPathInScope,
   resolveBilingual,
 } from "~/lib/manifest-schema.server";
 import { applyYamlListAdd } from "~/lib/yaml-list-add.server";
+import { applyCsvLanguageMatch, frameworkLanguage } from "~/lib/csv-language-match.server";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -68,6 +75,18 @@ export interface ManifestApplyResult {
    * shown in the Compositor's interface language, which is not the site's.
    */
   manualSteps: Record<Language, ManualStep[]>;
+  /**
+   * Every csv_language_match the chain ran, in order, with the language it
+   * ran in and whether it changed its file.
+   */
+  languageMatches: LanguageMatchRun[];
+}
+
+/** One csv_language_match as the chain ran it. */
+export interface LanguageMatchRun {
+  op: CsvLanguageMatchOp;
+  lang: Language;
+  changed: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +568,7 @@ const OPERATION_RUNNERS: { readonly [K in Operation["type"]]: OperationRunner<K>
   regex_replace: (files, op) => opRegexReplace(files, op),
   yaml_list_add: (files, op) => applyYamlListAdd(files, op),
   create_directory: (files, op) => opCreateDirectory(files, op),
+  csv_language_match: (files, op) => void applyCsvLanguageMatch(files, op, frameworkLanguage(files.get("_config.yml"))),
 };
 
 /**
@@ -570,7 +590,8 @@ export function applyOperation(
 /**
  * Applies a chain of manifests to a virtual filesystem in order, concatenating
  * manual steps in both languages (`lang` only selects the language of file
- * operations). Each manifest's steps are
+ * operations, and not csv_language_match's, which reads the framework's).
+ * Each manifest's steps are
  * classified first, while both languages and the release version are in
  * hand. Returns a new Map so callers can
  * mutate the result without affecting the input.
@@ -586,13 +607,19 @@ export function applyManifestChain(
   const current = new Map(files);
   const deletions: string[] = [];
   const manualSteps: Record<Language, ManualStep[]> = { en: [], es: [] };
+  const languageMatches: LanguageMatchRun[] = [];
   for (const m of manifests) {
     for (const op of m.operations) {
+      if (op.type === "csv_language_match") {
+        const matchLang = frameworkLanguage(current.get("_config.yml"));
+        languageMatches.push({ op, lang: matchLang, changed: applyCsvLanguageMatch(current, op, matchLang) });
+        continue;
+      }
       applyOperation(current, op, lang, deletions);
     }
     const classified = classifyManualSteps(m);
     manualSteps.en.push(...classified.en);
     manualSteps.es.push(...classified.es);
   }
-  return { files: current, deletions, manualSteps };
+  return { files: current, deletions, manualSteps, languageMatches };
 }

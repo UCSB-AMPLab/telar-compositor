@@ -1,5 +1,5 @@
 /**
- * An `_id: null` entity is unsaved, not disposable (R2-2).
+ * An `_id: null` entity is unsaved, not disposable.
  *
  * Before a project's first snapshot every top-level Y.Map carries `_id: null`,
  * so "no D1 row behind it" does not mean "nothing behind it" — it means the
@@ -14,7 +14,7 @@
  * carries a key is an entity somebody is writing, and the collision is settled
  * by re-keying the loser.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -208,10 +208,10 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 // ---------------------------------------------------------------------------
-// R2-2 — the reported probe
+// The reported probe
 // ---------------------------------------------------------------------------
 
-describe("R2-2 — an unsaved same-key entity is re-keyed, never deleted", () => {
+describe("an unsaved same-key entity is re-keyed, never deleted", () => {
   it("keeps a peer's unsaved story when a hollow map claims its slug from above", () => {
     // Before the first snapshot every map is _id: null and D1 knows no keys, so
     // nothing but the array position separates the two — and a client writes that.
@@ -309,7 +309,7 @@ describe("R2-2 — an unsaved same-key entity is re-keyed, never deleted", () =>
 // What two same-key unsaved maps produce downstream
 // ---------------------------------------------------------------------------
 
-describe("R2-2 — through a full snapshot", () => {
+describe("through a full snapshot", () => {
   it("INSERTs two rows with distinct slugs and deletes nothing", async () => {
     const { doInstance, db, ydoc } = makeDo({});
     seedConfig(ydoc);

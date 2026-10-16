@@ -13,7 +13,7 @@
  * a11y: focus-trap via close button focus on open; focus-return on close;
  *       Escape closes; aria-hidden when closed; role="complementary" when open.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -73,7 +73,7 @@ export interface CollaborationSidebarProps {
    * MemberRow's kebab for instructor rows: course-management, including
    * removing staff, belongs to the course project's own member list —
    * never a child's, where instructor membership is tied to the course
-   * and can only be ended by leaving it (design §5).
+   * and can only be ended by leaving it.
    */
   isCourseProject?: boolean;
   /** ref to the Users icon button — focus returns here on close (a11y) */
@@ -184,7 +184,7 @@ export function CollaborationSidebar({
   // the panel reports a refusal as though nothing had been asked.
   //
   // `instructor_on_child` has its own sentence: instructor membership on a
-  // child is tied to the course in both directions (design §5), which is a
+  // child is tied to the course in both directions, which is a
   // standing rule rather than a failure, and the kebab already hides the
   // path (MemberRow's isCourseProject gate). Every other refusal —
   // `cannot_remove_owner`, `no_project`, a missing id — is a state the

@@ -2,19 +2,26 @@
  * ValidationChecks — "What we checked" section for the single-page Publish surface.
  *
  * Renders a chilca-pale numbered list of the pre-publish checks that PASSED,
- * followed by any blockers (red) and warnings (amber). `runPrePublishValidation`
- * only emits FAILURES, never a passed-check enumeration — so the passed list is
- * a STATIC canonical set minus the codes whose failures appear in the result.
+ * followed by any suggestions (neutral), blockers (red) and warnings (amber).
+ * A suggestion is an invitation rather than a failure: it takes no part in the
+ * passed-check derivation, and nothing about it blocks or needs acknowledging.
+ * `runPrePublishValidation` only emits FAILURES, never a passed-check
+ * enumeration — so each entry of the passed list names a check that code
+ * actually runs, and shows unless a failure with its code appears in the
+ * result. A check with no code behind it
+ * is not listed.
  *
  * Passed-check ↔ failing-code mapping:
- *   - object_metadata  ← suppressed by an `object_no_title` warning
- *   - term_links       ← no validation code yet (always passes)
- *   - iiif_tiles        ← no validation code yet (always passes)
- *   - site_url          ← no validation code yet (always passes)
- *   - telar_version     ← no validation code yet (always passes)
+ *   - object_titles    ← suppressed by an `object_no_title` warning
  * The `stale_head` / `page_no_title` blockers and the `step_no_position` and
  * `renamed_duplicate_column(s)` warnings have no passed-check label; they only
  * render in the failures lists.
+ *
+ * The `stale_head` blocker says GitHub has commits made after the last
+ * publish. The convenor, who can apply the review of those changes, gets a
+ * button that opens the review dialog the app layout mounts
+ * (`useSyncReview().openReview`); everyone else is told who chooses, with no
+ * button.
  *
  * Warnings whose code appears in WARNING_DOCS_LINKS render through `Trans` so
  * their copy can carry an external docs link; every other warning renders as
@@ -32,20 +39,26 @@
  * the column's own case: `Note` beside `note` is a collision, and an
  * uppercased label would name both the same way.
  *
- * Tailwind token classes only (no hardcoded hex).
- *
  * With an `onResetPageFrontmatter` prop, a page front-matter blocker carries
  * a button that keeps only that page's title in its block.
  *
- * @version v1.5.0-beta
+ * With a `headState` prop, the list is followed by what the checks read of
+ * GitHub: the first publish's notice, or a note that GitHub could not be
+ * checked, with a button that runs the checks again (`GithubHeadNotice`).
+ *
+ * Tailwind token classes only (no hardcoded hex).
+ *
+ * @version v1.5.5-beta
  */
 
 import { cloneElement, useState, type ReactElement } from "react";
-import { AlertCircle, AlertTriangle, Check } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { AlertCircle, AlertTriangle, Check, Info } from "lucide-react";
 import { Link } from "react-router";
-import type { RemovableColumns, ValidationItem, ValidationResult } from "~/lib/publish.server";
+import { useTranslation } from "react-i18next";
+import type { PublishHeadState, RemovableColumns, ValidationItem, ValidationResult } from "~/lib/publish.server";
 import { sheetWarningText } from "~/components/ui/SheetWarnings";
+import { Button } from "~/components/ui/Button";
+import { coordinatorLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 
 /**
  * Where the repair stands. `running` belongs to the button's label; the other
@@ -87,6 +100,15 @@ export interface WorkflowRepair {
 
 interface ValidationChecksProps {
   validation: ValidationResult | null;
+  /**
+   * Where GitHub's head stands for a publish, as the checks read it. Absent
+   * wherever the page shows no GitHub state; the checks render unchanged.
+   */
+  headState?: PublishHeadState;
+  /** Runs the checks again, which read GitHub's head again. */
+  onRecheckGithub?: () => void;
+  /** The checks are running again. */
+  recheckingGithub?: boolean;
   /** Absent wherever the page offers no repair; the checks render unchanged. */
   workflowRepair?: WorkflowRepair;
   /**
@@ -139,17 +161,13 @@ function PageFrontmatterReset({
 const INSTALLATIONS_SETTINGS_URL = "https://github.com/settings/installations";
 
 /**
- * Canonical passed-check labels, in display order. Each entry names the
- * validation code(s) whose presence (as a blocker OR warning) removes it from
- * the passed list. An empty `suppressedBy` means there is no validation code
- * for that check yet, so it always shows as passed.
+ * Passed-check labels, in display order. Each entry names the validation
+ * code(s) whose presence (as a blocker OR warning) removes it from the passed
+ * list. `suppressedBy` is never empty: an entry with no code to suppress it
+ * would report a check that nothing ran.
  */
 const CANONICAL_PASSED_CHECKS: { key: string; suppressedBy: string[] }[] = [
-  { key: "object_metadata", suppressedBy: ["object_no_title"] },
-  { key: "term_links", suppressedBy: [] },
-  { key: "iiif_tiles", suppressedBy: [] },
-  { key: "site_url", suppressedBy: [] },
-  { key: "telar_version", suppressedBy: [] },
+  { key: "object_titles", suppressedBy: ["object_no_title"] },
 ];
 
 /**
@@ -247,6 +265,28 @@ function WorkflowRepairDoneLine({ build }: { build: WorkflowRepairBuild | null }
 }
 
 /**
+ * GitHub has commits made after the last publish. The convenor, who can apply
+ * the review, is told so with a button that opens it in place; everyone else
+ * is told who chooses, with no button.
+ */
+function StaleHeadMessage() {
+  const { t } = useTranslation("publish");
+  const { openReview, canReview, coordinatorName } = useSyncReview();
+  if (!canReview) {
+    const [key, values] = coordinatorLine("checks.stale_head_collab", "checks.stale_head_collab_unnamed", coordinatorName);
+    return <p className="font-body text-sm text-terracotta-deep">{t(key, values)}</p>;
+  }
+  return (
+    <>
+      <p className="font-body text-sm text-terracotta-deep">{t("checks.stale_head")}</p>
+      <Button variant="secondary" type="button" onClick={openReview} className="mt-2">
+        {t("checks.stale_head_action")}
+      </Button>
+    </>
+  );
+}
+
+/**
  * What the repair did, rendered at section level rather than inside the
  * warning: a successful repair makes the warning disappear on the re-run, and
  * the line that says so has to survive that.
@@ -272,13 +312,7 @@ function WorkflowRepairStatusLine({ repair }: { repair: WorkflowRepair }) {
   if (repair.status === "stale") {
     return (
       <div className="mt-4">
-        <p className="font-body text-sm text-terracotta-deep">{t("checks.stale_head")}</p>
-        <Link
-          to="/objects?sync=1"
-          className="font-body text-sm text-terracotta underline hover:text-terracotta-deep mt-1 inline-block"
-        >
-          {t("checks.stale_head_action")}
-        </Link>
+        <StaleHeadMessage />
       </div>
     );
   }
@@ -655,8 +689,56 @@ function ColumnRemoval({
   );
 }
 
+/**
+ * What the checks say of GitHub beside their list: the first publish's notice
+ * while no head is recorded and GitHub is still where the import read it, or,
+ * when GitHub's head could not be read, a note that publishing waits, with
+ * the control that checks again. Nothing for any other state: a change on
+ * GitHub is a blocker, and a head that matches says nothing.
+ */
+function GithubHeadNotice({
+  headState,
+  onRecheck,
+  rechecking,
+}: {
+  headState?: PublishHeadState;
+  onRecheck?: () => void;
+  rechecking?: boolean;
+}) {
+  const { t } = useTranslation("publish");
+  if (headState === "first_publish") {
+    const code = <code key="path" className="font-mono" />;
+    return (
+      <div role="note" className="mt-2 rounded-lg bg-anil-pale border border-anil/40 px-4 py-3 font-body text-sm text-anil-ink">
+        <p className="font-semibold">{t("checks.first_publish_title")}</p>
+        <p className="mt-1">{t("checks.first_publish_body")}</p>
+        <ul className="mt-1 list-disc pl-5 space-y-0.5">
+          <li><CatalogueMessage text={t("checks.first_publish_sheets")} link={code} /></li>
+          <li><CatalogueMessage text={t("checks.first_publish_texts")} link={code} /></li>
+        </ul>
+      </div>
+    );
+  }
+  if (headState === "unchecked") {
+    return (
+      <div role="status" className="mt-2 flex items-center justify-between gap-4 rounded-lg bg-cream border border-cream-dark px-4 py-3">
+        <p className="font-body text-sm text-charcoal">{t("checks.github_unchecked")}</p>
+        {onRecheck && (
+          <Button type="button" variant="secondary" onClick={onRecheck} loading={rechecking} className="flex-shrink-0">
+            {t("checks.github_unchecked_retry")}
+          </Button>
+        )}
+      </div>
+    );
+  }
+  return null;
+}
+
 export function ValidationChecks({
   validation,
+  headState,
+  onRecheckGithub,
+  recheckingGithub,
   workflowRepair,
   onResetPageFrontmatter,
   onRemoveColumn,
@@ -678,8 +760,9 @@ export function ValidationChecks({
 
   const hasBlockers = validation.blockers.length > 0;
   const hasWarnings = validation.warnings.length > 0;
+  const suggestions = validation.suggestions ?? [];
 
-  // Derive passed checks: the canonical set minus any check whose failing code
+  // Derive passed checks: the listed checks minus any check whose failing code
   // is present in blockers or warnings (validation reports failures only).
   const failingCodes = new Set<string>([
     ...validation.blockers.map((b) => b.code),
@@ -707,6 +790,30 @@ export function ValidationChecks({
         </ol>
       )}
 
+      <GithubHeadNotice headState={headState} onRecheck={onRecheckGithub} rechecking={recheckingGithub} />
+
+      {suggestions.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {suggestions.map((suggestion, idx) => (
+            <div
+              key={`${suggestion.code}-${suggestion.entityId ?? idx}`}
+              className="flex items-start gap-3 bg-cream-dark border border-charcoal/10 rounded-lg p-3"
+            >
+              <Info className="w-4 h-4 text-charcoal/60 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-body text-sm text-charcoal">{checkMessage(t, suggestion)}</p>
+                <Link
+                  to={`/pages?page=${encodeURIComponent(suggestion.entityId ?? "")}`}
+                  className="mt-1 inline-block font-body text-sm text-charcoal underline hover:text-charcoal/70"
+                >
+                  {checkMessage(t, { ...suggestion, code: `${suggestion.code}_link` })}
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {hasBlockers && (
         <div className="mt-4">
           <h3 className="font-heading font-semibold text-sm text-terracotta mb-2">
@@ -722,16 +829,12 @@ export function ValidationChecks({
               >
                 <AlertCircle className="w-4 h-4 text-terracotta flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-body text-sm text-terracotta-deep">
-                    {checkMessage(t, blocker)}
-                  </p>
-                  {blocker.code === "stale_head" && (
-                    <Link
-                      to="/objects?sync=1"
-                      className="font-body text-sm text-terracotta underline hover:text-terracotta-deep mt-1 inline-block"
-                    >
-                      {t("checks.stale_head_action")}
-                    </Link>
+                  {blocker.code === "stale_head" ? (
+                    <StaleHeadMessage />
+                  ) : (
+                    <p className="font-body text-sm text-terracotta-deep">
+                      {checkMessage(t, blocker)}
+                    </p>
                   )}
                   <PageFrontmatterReset
                     blocker={blocker}

@@ -4,7 +4,7 @@
  * limits), the refresh claim, the two head-bump writers, and the refreshGithubStatus
  * waterfall they compose into.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -59,6 +59,7 @@ import { CollidingColumnsRefusal } from "~/lib/import.server";
 import {
   isStale,
   deriveHeadDiverged,
+  deriveCheckFailed,
   STATUS_TTL_MS,
   __resetTagCacheForTest,
   getCachedLatestTagIfWarm,
@@ -210,6 +211,23 @@ describe("deriveHeadDiverged (SHA-tagged verdict)", () => {
     expect(deriveHeadDiverged({ ...base, gh_diverged: 0 } as any, "localA")).toBe(false));
   it("false on cold cache (nulls)", () =>
     expect(deriveHeadDiverged({ gh_diverged: null, gh_diverged_against_sha: null, gh_remote_head_sha: null } as any, "localA")).toBe(false));
+});
+
+describe("deriveCheckFailed (SHA-tagged failed state)", () => {
+  const failed = { gh_diverged: 2, gh_diverged_against_sha: "localA", gh_remote_head_sha: null };
+  it("true when the last check failed against the current local head", () =>
+    expect(deriveCheckFailed({ ...failed } as any, "localA")).toBe(true));
+  it("holds without a remote head, since a failed head read is one way to fail", () =>
+    expect(deriveCheckFailed({ ...failed, gh_remote_head_sha: null } as any, "localA")).toBe(true));
+  it("false once the local head has moved", () =>
+    expect(deriveCheckFailed({ ...failed } as any, "localZ")).toBe(false));
+  it("false for a divergence, an in-sync verdict and a cold cache", () => {
+    expect(deriveCheckFailed({ ...failed, gh_diverged: 1 } as any, "localA")).toBe(false);
+    expect(deriveCheckFailed({ ...failed, gh_diverged: 0 } as any, "localA")).toBe(false);
+    expect(deriveCheckFailed({ gh_diverged: null, gh_diverged_against_sha: null, gh_remote_head_sha: null } as any, "localA")).toBe(false);
+  });
+  it("a failed check is not a divergence", () =>
+    expect(deriveHeadDiverged({ ...failed, gh_remote_head_sha: "remoteB" } as any, "localA")).toBe(false));
 });
 
 describe("getCachedLatestTagIfWarm", () => {
@@ -601,6 +619,30 @@ describe("refreshGithubStatus", () => {
     });
   });
 
+  it("(d2) rate limited with the head read: the failed state is written and the repository counts as reachable", async () => {
+    mocks.checkRepoAvailabilityMock.mockResolvedValue({ availability: "rate_limited", canonicalFullName: null });
+    mocks.getRepoHeadMock.mockResolvedValue("remoteHead");
+    const db = makeFakeDb();
+
+    await refreshGithubStatus({ ...baseProject, gh_repo_available: 0 } as typeof baseProject, "tok", db as any, NOW, LEASE);
+
+    expect(mocks.computeFullSyncDiffMock).not.toHaveBeenCalled();
+    expect(db.sets).toHaveLength(1);
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 2, gh_diverged_against_sha: "localHead", gh_repo_available: 1 });
+  });
+
+  it("(d3) rate limited with no head read: the failed state is written and availability is left as it was", async () => {
+    mocks.checkRepoAvailabilityMock.mockResolvedValue({ availability: "rate_limited", canonicalFullName: null });
+    mocks.getRepoHeadMock.mockResolvedValue(null);
+    const db = makeFakeDb();
+
+    await refreshGithubStatus({ ...baseProject }, "tok", db as any, NOW, LEASE);
+
+    expect(db.sets).toHaveLength(1);
+    expect(db.sets[0]).not.toHaveProperty("gh_repo_available");
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 2 });
+  });
+
   it("(e) local head null + remote present: ONE write backfills head_sha + in-sync verdict", async () => {
     mocks.checkRepoAvailabilityMock.mockResolvedValue({ availability: "available", canonicalFullName: "owner/repo" });
     mocks.getRepoHeadMock.mockResolvedValue("remoteHead");
@@ -631,7 +673,7 @@ describe("refreshGithubStatus", () => {
     expect(final).not.toHaveProperty("objects_read_sha");
   });
 
-  it("(f) repo available but getRepoHead null: no cache write, prior verdict preserved", async () => {
+  it("(f) repo available but the head read fails: the failed state is written against the local head, and nothing else of GitHub's", async () => {
     mocks.checkRepoAvailabilityMock.mockResolvedValue({ availability: "available", canonicalFullName: "owner/repo" });
     mocks.getRepoHeadMock.mockRejectedValue(new Error("fetch failed"));
     const db = makeFakeDb();
@@ -639,7 +681,44 @@ describe("refreshGithubStatus", () => {
     await refreshGithubStatus({ ...baseProject }, "tok", db as any, NOW, LEASE);
 
     expect(mocks.computeFullSyncDiffMock).not.toHaveBeenCalled();
-    expect(db.sets).toHaveLength(0);
+    expect(db.sets).toHaveLength(1);
+    expect(db.sets[0]).not.toHaveProperty("head_sha");
+    expect(db.sets[0]).not.toHaveProperty("gh_remote_head_sha");
+    expect(db.sets[0]).not.toHaveProperty("gh_repo_available");
+    expect(db.sets[0]).toMatchObject({
+      gh_diverged: 2,
+      gh_diverged_against_sha: "localHead",
+      gh_checked_at: new Date(NOW).toISOString(),
+    });
+  });
+
+  it("(f3) a request the diff makes throws: the failed state, not a divergence, and the head is left alone", async () => {
+    mocks.checkRepoAvailabilityMock.mockResolvedValue({ availability: "available", canonicalFullName: "owner/repo" });
+    mocks.getRepoHeadMock.mockResolvedValue("remoteHead");
+    mocks.computeFullSyncDiffMock.mockRejectedValue(new Error("GitHub API error listing telar-content: 502"));
+    const db = makeFakeDb();
+
+    await refreshGithubStatus({ ...baseProject }, "tok", db as any, NOW, LEASE);
+
+    expect(db.sets).toHaveLength(1);
+    expect(db.sets[0]).not.toHaveProperty("head_sha");
+    expect(db.sets[0]).toMatchObject({
+      gh_diverged: 2,
+      gh_diverged_against_sha: "localHead",
+      gh_remote_head_sha: "remoteHead",
+    });
+  });
+
+  it("(f4) the availability check itself throws: the failed state is written, and the refresh still resolves", async () => {
+    mocks.checkRepoAvailabilityMock.mockRejectedValue(new Error("network down"));
+    mocks.getRepoHeadMock.mockResolvedValue("remoteHead");
+    const db = makeFakeDb();
+
+    await expect(refreshGithubStatus({ ...baseProject }, "tok", db as any, NOW, LEASE)).resolves.toBeUndefined();
+
+    expect(db.sets).toHaveLength(1);
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 2, gh_diverged_against_sha: "localHead" });
+    expect(db.sets[0]).not.toHaveProperty("gh_repo_available");
   });
 
   // A sheet the sync refuses for its colliding columns has changed since the

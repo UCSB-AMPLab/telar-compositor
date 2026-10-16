@@ -7,7 +7,7 @@
  * over the file, hands the rows to the publish assembly as D1 returns them,
  * and reads the project.csv it writes.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -28,6 +28,8 @@ vi.mock("~/lib/github.server", async (orig) => {
     getFileContent: vi.fn(async () => null),
     // No story sheets in the repository yet.
     getSubtreeOids: vi.fn(async () => ({ ok: true, at: () => ({ kind: "absent" }) })),
+    // The publish lists the spreadsheets folder on its own; here it holds no story sheets.
+    listDirectoryEntries: vi.fn(async () => []),
   };
 });
 

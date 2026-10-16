@@ -1,35 +1,40 @@
 // @vitest-environment jsdom
 /**
- * The objects page shows its existing stale message for an upload refused
- * because objects.csv has object rows the Compositor has not read.
+ * The objects page shows its stale message for an upload refused because
+ * objects.csv has object rows the Compositor has not read.
  *
- * The upload answers that refusal as `stale_head`, the answer it already gives
- * for a commit that landed during it, and the Add Object dialog shows
- * `objects:upload_error_stale`, which sends the author to the objects sync.
+ * The upload answers that refusal as `stale_head`, the answer it gives for a
+ * commit that landed during it, and the Add Object dialog shows
+ * `objects:upload_error_stale` to the convenor, who reviews the changes on
+ * GitHub, and to everyone else the line that says who does.
  *
  * This renders the real page on React Router's routes stub, and answers the
  * upload from a stand-in action.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createRoutesStub, useLoaderData } from "react-router";
+import { SyncReviewContext } from "~/components/features/dashboard/SyncReviewProvider";
 
 const showToast = vi.fn();
 
 /** Hoisted with the mocks that read it. */
 const { UPLOAD } = vi.hoisted(() => ({
   UPLOAD: {
-    file: new File([new Uint8Array([0xff, 0xd8, 0xff])], "p.jpg", { type: "image/jpeg" }),
+    // Node's own File, which the request body's FormData accepts; jsdom's is refused.
+    file: new (process.getBuiltinModule("node:buffer").File)([new Uint8Array([0xff, 0xd8, 0xff])], "p.jpg", { type: "image/jpeg" }),
     objectId: "", title: "A Title", creator: "", description: "", source: "", credit: "", period: "", year: "", altText: "",
   },
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, values?: Record<string, unknown>) => (values && Object.keys(values).length > 0 ? `${key} ${JSON.stringify(values)}` : key),
+  }),
 }));
 vi.mock("~/hooks/use-collaboration", () => ({ useCollaborationContext: () => ({ ydoc: null, provider: null }) }));
 vi.mock("~/hooks/use-structural-ops", () => ({ useStructuralOps: () => null }));
@@ -97,12 +102,16 @@ const loaderData = {
 
 const uploads: string[] = [];
 
-async function renderPage() {
+async function renderPage(review: { canReview: boolean; coordinatorName: string | null }) {
   const route = (await import("~/routes/_app.objects")) as unknown as {
     default: React.ComponentType<{ loaderData: unknown }>;
   };
   function Page() {
-    return <route.default loaderData={useLoaderData()} />;
+    return (
+      <SyncReviewContext.Provider value={{ ...review, openReview: () => {} }}>
+        <route.default loaderData={useLoaderData()} />
+      </SyncReviewContext.Provider>
+    );
   }
   const Stub = createRoutesStub([
     {
@@ -128,12 +137,24 @@ afterEach(() => {
 
 vi.setConfig({ testTimeout: 15000 });
 
+async function refuseUpload(review: { canReview: boolean; coordinatorName: string | null }, shown: string) {
+  await renderPage(review);
+  fireEvent.click(await screen.findByRole("button", { name: "add-object" }, SETTLE));
+  fireEvent.click(await screen.findByRole("button", { name: "confirm-upload" }, SETTLE));
+  await screen.findByText(shown, undefined, SETTLE);
+  expect(uploads).toContain("upload-image");
+}
+
 describe("an upload refused as stale_head", () => {
-  it("shows the dialog's existing stale message", async () => {
-    await renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "add-object" }, SETTLE));
-    fireEvent.click(await screen.findByRole("button", { name: "confirm-upload" }, SETTLE));
-    await screen.findByText("upload_error_stale", undefined, SETTLE);
-    expect(uploads).toContain("upload-image");
+  it("tells the convenor to review the changes on GitHub", async () => {
+    await refuseUpload({ canReview: true, coordinatorName: "Ana" }, "upload_error_stale");
+  });
+
+  it("tells a collaborator who reviews them, by name", async () => {
+    await refuseUpload({ canReview: false, coordinatorName: "Ana" }, 'upload_error_stale_collab {"name":"Ana"}');
+  });
+
+  it("tells a collaborator who reviews them without a name when none is stored", async () => {
+    await refuseUpload({ canReview: false, coordinatorName: null }, "upload_error_stale_collab_unnamed");
   });
 });

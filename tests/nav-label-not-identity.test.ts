@@ -23,10 +23,10 @@
  * only where the assignment cannot be wrong: a group of entries that are
  * identical field for field, where any assignment among them produces the same
  * array. Everywhere else the group is left exactly as it stands — the standing
- * ruling that a duplicate link the author can delete beats a swap they cannot
+ * rule that a duplicate link the author can delete beats a swap they cannot
  * see.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";

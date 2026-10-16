@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
 /**
- * What the two sync dialogs show for a reorder of objects on GitHub.
+ * What the sync dialog shows for a reorder of objects on GitHub.
  *
- * A reorder has no choice: it is one line, applied with the sync. In the
- * objects page's dialog it follows the changed objects; in the full sync's it
- * is one item among the objects, counted in that section's number. A check
- * whose only change is a reorder has an enabled apply in both.
+ * A reorder has no choice: it is a notice, applied with the sync, and "When
+ * you apply" speaks for it (`applySummaryOf`). A check whose only change is a
+ * reorder has an enabled apply.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -31,7 +30,6 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
 import { SyncConfirmModal } from "~/components/features/dashboard/SyncConfirmModal";
 
 const REORDER = { order: [{ objectId: "b", docId: 2 }, { objectId: "a", docId: 1 }] };
@@ -66,52 +64,26 @@ afterEach(() => {
   cleanup();
 });
 
-describe("the objects page's dialog", () => {
-  function renderDialog(diffData: SyncDiff, onApply = vi.fn()) {
-    render(
-      <SyncDiffDialog open onClose={() => {}} diffData={diffData} onApply={onApply} isComputing={false} isApplying={false} />,
-    );
-    return onApply;
-  }
-
-  it("shows the line, and an enabled apply, for a check whose only change is a reorder", () => {
-    const onApply = renderDialog(objectsDiff(REORDER));
-    expect(screen.getByText("sync_order_changed")).toBeTruthy();
-    expect(screen.queryByText("sync_no_changes")).toBeNull();
-    const apply = screen.getByText("sync_apply").closest("button") as HTMLButtonElement;
-    expect(apply.disabled).toBe(false);
-    fireEvent.click(apply);
-    expect(onApply).toHaveBeenCalledWith(expect.objectContaining({ headSha: HEAD }));
-  });
-
-  it("shows no line without a reorder", () => {
-    renderDialog(objectsDiff(null));
-    expect(screen.queryByText("sync_order_changed")).toBeNull();
-    expect(screen.getByText("sync_no_changes")).toBeTruthy();
-  });
-});
-
 describe("the full sync's dialog", () => {
   function atDiffReady(diff: FullSyncDiff) {
-    const view = render(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
-    fireEvent.click(view.getByText("sync_modal.check_changes"));
+    const view = render(<SyncConfirmModal open onClose={() => {}} />);
     fetcherData.current = { ok: true, intent: "compute-full-sync-diff", diff };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     return view;
   }
 
-  it("lists the reorder as one item among the objects, with an enabled apply", () => {
+  it("shows the reorder as a notice with no choice, said in When you apply, with an enabled apply", () => {
     atDiffReady(fullDiff(REORDER));
-    // The section opens on a click, as every category section does.
-    fireEvent.click(screen.getByText("sync_modal.objects_category (sync_modal.section_count:1)"));
     expect(screen.getByText("objects:sync_order_changed")).toBeTruthy();
-    const apply = screen.getByText("sync_modal.apply_sync").closest("button") as HTMLButtonElement;
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.getByTestId("when-you-apply").textContent).toContain("sync_modal.review.compositor_does");
+    const apply = screen.getByText("sync_modal.review.apply").closest("button") as HTMLButtonElement;
     expect(apply.disabled).toBe(false);
   });
 
   it("lists no reorder without one", () => {
     atDiffReady(fullDiff(null));
-    expect(screen.queryByText(/sync_modal\.objects_category/)).toBeNull();
+    expect(screen.queryByTestId("sync-notices")).toBeNull();
     expect(screen.queryByText("objects:sync_order_changed")).toBeNull();
   });
 });

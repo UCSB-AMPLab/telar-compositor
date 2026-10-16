@@ -1,5 +1,5 @@
 /**
- * R2-3 — the replacement sweep must cover ordinary content, not course items
+ * The replacement sweep must cover ordinary content, not course items
  * alone.
  *
  * A restored entity is only safe if nothing else in the array claims its
@@ -21,7 +21,7 @@
  * row; the dedupe re-keys it rather than deleting it, and this pass must not do
  * what that rule exists to prevent.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -169,7 +169,7 @@ function title(m: Y.Map<unknown>): string {
 // The reported attack, end to end through the DO's own dedupe
 // ---------------------------------------------------------------------------
 
-describe("R2-3 — a hollow replacement on ordinary content", () => {
+describe("a hollow replacement on ordinary content", () => {
   it("does not survive the revert to be finished off by the pre-snapshot dedupe", () => {
     const { doInstance, ydoc } = makeDo();
     const stories = ydoc.getArray<Y.Map<unknown>>("stories");
@@ -283,7 +283,7 @@ describe("R2-3 — a hollow replacement on ordinary content", () => {
 // The honest paths the sweep must not touch
 // ---------------------------------------------------------------------------
 
-describe("R2-3 — the sweep leaves honest content alone", () => {
+describe("the sweep leaves honest content alone", () => {
   it("keeps a same-key neighbour that predates the offending transaction", () => {
     // A live second row under a colliding key is exactly what the dedupe
     // re-keys rather than deletes. Removing it here would destroy a member's
@@ -361,7 +361,7 @@ describe("R2-3 — the sweep leaves honest content alone", () => {
 // The course-item sweep keeps its wider reach
 // ---------------------------------------------------------------------------
 
-describe("R2-3 — a marked course item still sweeps competitors from any transaction", () => {
+describe("a marked course item still sweeps competitors from any transaction", () => {
   it("removes a twin planted in an earlier transaction", () => {
     const h = makeHarness();
     const makeObject = (spec: {

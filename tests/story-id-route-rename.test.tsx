@@ -9,7 +9,7 @@
  *
  * Mounted as story-editor-live-objects.test.tsx mounts the route.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -127,55 +127,59 @@ async function mountRenameEditor() {
     },
   ]);
   render(<Stub initialEntries={["/stories/blank_template"]} />);
-  await screen.findByText("title_card.story_id_label");
+  const opener = await screen.findByRole("button", { name: "story_settings.button" });
   await act(async () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
   });
+  fireEvent.click(opener);
 }
 
+/** The editor the Change ID button opens; null while the ID is shown locked. */
 function storyIdInput(): HTMLInputElement | null {
-  return document.getElementById("story-id") as HTMLInputElement | null;
+  return screen.queryByRole("textbox", { name: "title_card.story_id_label" }) as HTMLInputElement | null;
 }
 
-async function typeAndBlur(value: string) {
-  await act(async () => {
-    fireEvent.change(storyIdInput()!, { target: { value } });
-    fireEvent.blur(storyIdInput()!);
-  });
+function changeIdButton(): HTMLElement | null {
+  return screen.queryByRole("button", { name: "change_id" });
+}
+
+async function typeStoryId(value: string) {
+  await act(async () => { fireEvent.click(changeIdButton()!); });
+  await act(async () => { fireEvent.change(storyIdInput()!, { target: { value } }); });
 }
 
 describe("renaming a story's ID on the story route", () => {
   it("writes the confirmed ID to the story's map once", async () => {
     await mountRenameEditor();
-    await typeAndBlur("fluidity");
+    await typeStoryId("fluidity");
     expect(storyIdWrites).toEqual([]);
 
-    await act(async () => { fireEvent.click(screen.getByText("title_card.story_id_confirm")); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "change_id" })); });
 
     expect(storyIdWrites).toEqual(["fluidity"]);
   });
 
   it("refuses an ID another story took after the field checked it", async () => {
     await mountRenameEditor();
-    await typeAndBlur("fluidity");
+    await typeStoryId("fluidity");
     act(() => { doc.getArray<Y.Map<unknown>>("stories").get(1).set("story_id", "fluidity"); });
 
-    await act(async () => { fireEvent.click(screen.getByText("title_card.story_id_confirm")); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "change_id" })); });
 
     expect(storyIdWrites).toEqual([]);
     expect(doc.getArray<Y.Map<unknown>>("stories").get(0).get("story_id")).toBe("blank_template");
   });
 
-  it("shows a collaborator who did not create the story its ID and no field", async () => {
+  it("shows a collaborator who did not create the story its ID and no Change ID button", async () => {
     viewer = { currentUserId: 9, userRole: "collaborator" };
     await mountRenameEditor();
-    expect(storyIdInput()).toBeNull();
+    expect(changeIdButton()).toBeNull();
     expect(screen.getByText("blank_template")).toBeTruthy();
   });
 
-  it("gives the story's creator the field when they are a collaborator", async () => {
+  it("gives the story's creator the Change ID button when they are a collaborator", async () => {
     viewer = { currentUserId: 7, userRole: "collaborator" };
     await mountRenameEditor();
-    expect(storyIdInput()).not.toBeNull();
+    expect(changeIdButton()).not.toBeNull();
   });
 });

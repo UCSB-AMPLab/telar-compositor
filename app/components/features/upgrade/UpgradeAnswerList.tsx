@@ -4,7 +4,7 @@
  * link to the step in the editor. Shown on the confirmation screen and again
  * on the done screen; it never stops the upgrade.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
@@ -24,7 +24,13 @@ function stepPath(answer: UpgradeAnswer): string | null {
   return answer.position === null ? story : `${story}?step=${answer.position}`;
 }
 
-export function UpgradeAnswerList({ answers, className = "" }: { answers: readonly UpgradeAnswer[]; className?: string }) {
+export function UpgradeAnswerList({
+  answers,
+  className = "",
+}: {
+  answers: readonly UpgradeAnswer[];
+  className?: string;
+}) {
   const { t } = useTranslation("upgrade");
   const { t: tPublish } = useTranslation("publish");
   if (answers.length === 0) return null;

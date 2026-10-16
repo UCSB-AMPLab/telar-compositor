@@ -3,7 +3,7 @@
  * author's will see, drawn in the editor's content area.
  *
  * The stage is the largest rectangle of the author's window proportions that
- * fits the content area, centred, with the editor chrome's colour around it
+ * fits the content area, centered, with the editor chrome's color around it
  * (`stageRect`); the weave is the viewer's own surface, inside the stage. It
  * clips everything it holds. Its layers, bottom to top, each with its own
  * z-index since the visitor layer's transform makes a stacking context of its
@@ -34,7 +34,7 @@
  * Geometry comes from `framing-stage.ts` in visitor pixels; `stageBox` turns
  * one of its boxes into stage pixels.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useCallback, useRef, type CSSProperties, type ReactNode } from "react";
@@ -142,8 +142,6 @@ export function VisitorLayer({
 }
 
 interface CardStageProps {
-  /** The editor's own controls for the card, in a bar above the stage, which the stage letterboxes under. */
-  settings?: ReactNode;
   themeStyle?: CSSProperties;
   /** The card, for the geometry measured, drawn in a visitor layer that takes pointer events. */
   children: (geometry: StageGeometry) => ReactNode;
@@ -154,10 +152,9 @@ interface CardStageProps {
  * card: the card fills the visitor's window, so the visitor layer takes
  * pointer events itself, and there is no image under it.
  */
-export function CardStage({ settings, themeStyle, children }: CardStageProps) {
+export function CardStage({ themeStyle, children }: CardStageProps) {
   return (
     <div className="absolute inset-0 flex flex-col">
-      {settings}
       <div className="relative flex-1 min-h-0">
         <FramingStage>
           {(geometry) => (

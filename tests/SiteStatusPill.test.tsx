@@ -1,25 +1,23 @@
 // @vitest-environment jsdom
 /**
- * Pins the `SiteStatusPill` — the global header pill that shows one of five
- * states with its LOCKED bg/ink pair, pulses only when publishing, renders the
- * transient `Saving…` overlay, and opens the matching popover (lazily fetching
- * its payload) inside the StatusPopoverShell on click.
+ * Tests for `SiteStatusPill`, the header pill that shows the site's single
+ * active status. Each of the ten states has its own background, ink and dot
+ * token pair and its own caption. The unpublished caption carries the count
+ * the loader supplies and shows no number while the live count is not yet
+ * known. Only the publishing dot pulses. The action label (Publish, Review,
+ * Run upgrade, Restore) appears only for the states and roles that can act on
+ * it, and the transient "Saving…" overlay leaves the base state's colors
+ * unchanged. Below the sm breakpoint the caption collapses to the dot and stays
+ * readable by assistive technology.
  *
- * Asserts:
- *   - each of the five states renders its exact bg/ink token pair
- *   - only the `publishing` dot carries the `site-status-pulse` ring animation
- *   - the per-state action label (Publish → / Review →) appears only for the two
- *     actionable states
- *   - saving=true renders a "Saving…" element over the unchanged base-state colour;
- *     saving=false renders none
- *   - clicking the pill opens the popover matching the active state, and the
- *     popover payload read fires on open (not on mount)
- *   - a popover never renders another payload's answer: the body read for one
- *     state is not handed to the next state's popover
- *   - a displayed outcome is dismissed through every close path — click,
- *     Escape, and the shell's outside-click overlay
+ * Clicking the pill opens the popover for the active state inside the
+ * popover shell. A popover reads its payload when it opens, not on mount, and
+ * never shows the answer read for another state. A displayed outcome is
+ * dismissed through every close path: the pill, Escape and the outside-click
+ * overlay. The halted popover stays open through a restore and when the pill
+ * re-derives to another state.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -46,6 +44,8 @@ const NO_HALT: SiteStatusResult["persistence"] = {
   dismissOutcome: dismissSpy,
 };
 
+const recheckSpy = vi.fn(async () => {});
+
 const siteStatusValue: { current: SiteStatusResult } = {
   current: {
     state: "in-sync",
@@ -57,6 +57,8 @@ const siteStatusValue: { current: SiteStatusResult } = {
     needsUpgrade: false,
     ownRepoAccess: null,
     persistence: NO_HALT,
+    recheck: recheckSpy,
+    rechecking: false,
   },
 };
 vi.mock("~/components/features/site-status/useSiteStatus", () => ({
@@ -97,7 +99,9 @@ vi.mock("react-i18next", () => ({
         "status.unpublished_one": "{{n}} unpublished change",
         "status.unpublished_other": "{{n}} unpublished changes",
         "status.publish_cta": "Publish",
-        "status.out_of_sync": "GitHub has changed",
+        "status.out_of_sync": "Changes on GitHub",
+        "status.first_publish": "Not yet published from the Compositor",
+        "status.check_failed": "Couldn't check GitHub",
         "status.review_cta": "Review",
         "status.publishing": "Publishing…",
         "status.upgrade": "Telar {{version}} available",
@@ -132,6 +136,14 @@ vi.mock("~/components/features/site-status/popovers/UnpublishedPopover", () => (
 }));
 vi.mock("~/components/features/site-status/popovers/OutOfSyncPopover", () => ({
   OutOfSyncPopover: () => <div data-testid="popover-out-of-sync" />,
+}));
+vi.mock("~/components/features/site-status/popovers/CheckFailedPopover", () => ({
+  CheckFailedPopover: (props: { onTryAgain: () => void; busy?: boolean }) => (
+    <button data-testid="popover-check-failed" data-busy={String(!!props.busy)} onClick={props.onTryAgain} />
+  ),
+}));
+vi.mock("~/components/features/site-status/popovers/FirstPublishPopover", () => ({
+  FirstPublishPopover: () => <div data-testid="popover-first-publish" />,
 }));
 vi.mock("~/components/features/site-status/popovers/PublishingPopover", () => ({
   PublishingPopover: () => <div data-testid="popover-publishing" />,
@@ -216,6 +228,8 @@ const TOKEN_PAIRS: Record<SiteStatusState, { bg: string; ink: string; dot: strin
   upgrade: { bg: "bg-terracotta-pale", ink: "text-terracotta", dot: "bg-terracotta" },
   "repo-unavailable": { bg: "bg-terracotta-pale", ink: "text-terracotta", dot: "bg-terracotta" },
   "repo-invitation": { bg: "bg-terracotta-pale", ink: "text-terracotta", dot: "bg-terracotta" },
+  "check-failed": { bg: "bg-cream-dark", ink: "text-charcoal", dot: "bg-fg-muted" },
+  "first-publish": { bg: "bg-anil-pale", ink: "text-anil-ink", dot: "bg-anil-deep" },
   "persistence-halted": { bg: "bg-terracotta-pale", ink: "text-terracotta", dot: "bg-terracotta" },
 };
 
@@ -241,6 +255,52 @@ describe("SiteStatusPill — per-state token pairs", () => {
   });
 });
 
+describe("SiteStatusPill — the three GitHub states", () => {
+  beforeEach(() => {
+    fetchSpy.mockClear();
+    recheckSpy.mockClear();
+    setState({ state: "in-sync", saving: false, count: 0, rechecking: false });
+  });
+
+  it("amber reads 'Changes on GitHub' with no count and keeps its Review action", () => {
+    setState({ state: "out-of-sync", count: 7 });
+    const { container } = renderPill();
+    expect(container.textContent).toContain("Changes on GitHub");
+    expect(container.textContent).toContain("Review →");
+    expect(container.textContent).not.toMatch(/\d/);
+  });
+
+  it("blue reads 'Not yet published from the Compositor', has no action and no payload fetch", () => {
+    setState({ state: "first-publish", count: 9 });
+    const { container } = renderPill();
+    expect(container.textContent).toContain("Not yet published from the Compositor");
+    expect(container.textContent).not.toContain("→");
+    fireEvent.click(pillButton(container));
+    expect(screen.getByTestId("popover-first-publish")).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("grey reads 'Couldn't check GitHub', has no action and no payload fetch", () => {
+    setState({ state: "check-failed" });
+    const { container } = renderPill();
+    expect(container.textContent).toContain("Couldn't check GitHub");
+    expect(container.textContent).not.toContain("→");
+    fireEvent.click(pillButton(container));
+    expect(screen.getByTestId("popover-check-failed")).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("Try again in the grey popover asks for a recheck, and says when one is running", () => {
+    setState({ state: "check-failed", rechecking: true });
+    const { container } = renderPill();
+    fireEvent.click(pillButton(container));
+    const button = screen.getByTestId("popover-check-failed");
+    expect(button.getAttribute("data-busy")).toBe("true");
+    fireEvent.click(button);
+    expect(recheckSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("SiteStatusPill — pulse is publishing-only", () => {
   beforeEach(() => setState({ state: "in-sync", saving: false }));
 
@@ -257,6 +317,8 @@ describe("SiteStatusPill — pulse is publishing-only", () => {
     "upgrade",
     "repo-unavailable",
     "repo-invitation",
+    "check-failed",
+    "first-publish",
     "persistence-halted",
   ] as SiteStatusState[]).forEach((state) => {
     it(`state='${state}' does NOT pulse`, () => {
@@ -317,6 +379,14 @@ describe("SiteStatusPill — per-state action label", () => {
     setState({ state: "out-of-sync" });
     const { container } = renderPill();
     expect(container.textContent).toContain("Review →");
+  });
+
+  it.each([["a collaborator", "collaborator"], ["an instructor", "instructor"]] as const)("out-of-sync shows no Review → action for %s, who cannot apply a review", (_who, userRole) => {
+    setState({ state: "out-of-sync", userRole });
+    const { container } = renderPill();
+    expect(container.textContent).toContain("Changes on GitHub");
+    expect(container.textContent).not.toContain("Review →");
+    setState({ userRole: "convenor" });
   });
 
   it("upgrade shows the Run upgrade → action divider for a publishing role", () => {
@@ -390,12 +460,12 @@ describe("SiteStatusPill — click opens the matching popover lazily", () => {
     expect(fetchSpy.mock.calls[0][0]).toContain("payload=unpublished");
   });
 
-  it("clicking opens the out-of-sync popover and fetches its payload", () => {
+  it("clicking opens the out-of-sync popover WITHOUT a payload fetch (it shows no counts)", () => {
     setState({ state: "out-of-sync" });
     const { container } = renderPill();
     fireEvent.click(pillButton(container));
     expect(screen.getByTestId("popover-out-of-sync")).toBeTruthy();
-    expect(fetchSpy.mock.calls[0][0]).toContain("payload=out-of-sync");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("clicking opens the publishing popover WITHOUT a payload fetch (driven by awareness)", () => {

@@ -1,10 +1,9 @@
 /**
- * This file is the /dashboard route — no longer a page, but the app's
- * shared global action endpoint. The dashboard was retired as a
- * destination: its panels were dispersed to the Homepage tab, the
- * collaboration sidebar, the header's project switcher, and the /start
- * recovery card, and the loader now redirects any stray GET (a stale
- * bookmark, an old link) to /objects, the daily home.
+ * This file is the /dashboard route — the app's shared global action
+ * endpoint, with no page of its own. Project management lives on the
+ * Homepage tab, the collaboration sidebar, the header's project switcher,
+ * and the /start recovery card; the loader redirects any GET of /dashboard
+ * to /objects, the daily home.
  *
  * The `action` export is what keeps this route alive. It is the one
  * endpoint for project-scoped intents that no single page owns, and
@@ -22,8 +21,10 @@
  *   Both are course management and take the course password on top of
  *   staff standing; `switch-project` below does not, and must not — it is
  *   the door a suppressed child site is still reached through.
- * - compute-full-sync-diff, apply-full-sync, accept-divergence — the
- *   repo sync review flow and the out-of-sync popover
+ * - compute-full-sync-diff, apply-full-sync — the review of the changes
+ *   made on GitHub, in the dialog the app layout mounts
+ * - choose-columns — the column picker, for sheets with two or more columns
+ *   Telar reads as one field (`sheet-choices.server`)
  * - restore-orphan-drafts, ignore-orphans — the orphan-story recovery
  *   card on /start
  *
@@ -31,7 +32,7 @@
  * a component on any route module that client-side navigations target,
  * so it stays (see the note above it).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { eq, and, isNull } from "drizzle-orm";
@@ -55,7 +56,6 @@ import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 import { recordActivity } from "~/lib/activity.server";
 import {
   applyFullSyncChanges,
-  applyGitHubObjectOrder,
   checkRepairingLegacyIds,
   computeFullSyncDiff,
   finishPendingBeforeCheck,
@@ -69,12 +69,10 @@ import { headConfigSheets, headHasGlossaryCsv, markSheetsEffects, pushUnreadable
 import { recordStorySheetReads, storySheetPath } from "~/lib/story-source-path.server";
 import { recordStoryFileReads, storyFileRead, type OwedStoryFile } from "~/lib/story-files-to-delete.server";
 import type { FullSyncChanges } from "~/lib/sync.server";
-import { bumpProjectHeadFrom } from "~/lib/github-status.server";
-import { keptPageFilesRecordJson } from "~/lib/page-files-check.server";
-import { pageFilesColumn } from "~/lib/page-files-record.server";
+import { bumpProjectHeadFrom, importCommitOf } from "~/lib/github-status.server";
 import { recordIfLeaseFree } from "~/lib/operation-lease.server";
 import { syncedRowsFingerprint } from "~/lib/synced-rows-fingerprint.server";
-import { legacyRecordRef, markLegacyIdsRepaired } from "~/lib/legacy-object-ids.server";
+import { legacyRecordRef } from "~/lib/legacy-object-ids.server";
 import { hasDiffChanges } from "~/components/features/dashboard/sync-changes";
 import {
   scanRepoOrphanStoryIds,
@@ -126,55 +124,6 @@ async function cancelInvite(db: ReturnType<typeof getDb>, userId: number, invite
       ),
     );
   return { ok: true, intent: "cancel-invite" };
-}
-
-/**
- * "Use Compositor version", once the posted identity has been checked: GitHub's
- * object order applied at `shown`, then `shown` recorded compare-and-set from
- * `base`. The order goes first because it has no Compositor side to keep:
- * recording the head without it would read a reorder as done while D1 keeps
- * its own. A head recorded since the check (`base` moved) answers stale before
- * any order is written; a row the order names that was re-created since
- * answers stale too, and a failed read or ingest answers failed. None of them
- * records anything. A Keep that records `shown` counts as the project's first
- * sync check: its ingest gave any row an earlier import stored stripped
- * GitHub's spelling, so the ids are marked repaired (`markLegacyIdsRepaired`).
- */
-async function keepCompositorVersion(
-  db: ReturnType<typeof getDb>,
-  env: Env,
-  user: { id: number; encrypted_access_token: string },
-  project: { id: number; github_repo_full_name: string },
-  base: string | null,
-  shown: string,
-) {
-  const stale = { ok: false, intent: "accept-divergence", error: "accept_divergence_stale" } as const;
-  try {
-    const token = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-    const [owner, repo] = project.github_repo_full_name.split("/");
-    // The page files record at `shown` with nothing applied (R5), carried
-    // unchanged when the check does not conclude.
-    const recordJson = await keptPageFilesRecordJson(db, project.id, { token, owner, repo }, base, shown);
-    // Recorded under the order's lease, before it is released.
-    const recordShownHead = () => {
-      const now = Date.now();
-      return bumpProjectHeadFrom(db, project.id, base, shown, now, {
-        last_synced_at: new Date(now).toISOString(), ...pageFilesColumn(recordJson),
-      });
-    };
-    const ordered = await applyGitHubObjectOrder(project.id, { token, owner, repo }, shown, base, db, env, user.id, recordShownHead);
-    if (ordered.superseded || !ordered.recorded) return stale;
-    if (!ordered.legacyUnjudged) await markLegacyIdsRepaired(db, project.id);
-    return { ok: true, intent: "accept-divergence" } as const;
-  } catch (err) {
-    if (err instanceof SyncBaseStale) return stale;
-    return {
-      ok: false,
-      intent: "accept-divergence",
-      error: "accept_divergence_failed",
-      message: err instanceof Error ? err.message : "Unknown error",
-    } as const;
-  }
 }
 
 // The user search and the sync diff answer "unreachable" when they fail in transit.
@@ -335,8 +284,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       return cancelInvite(db, user.id, Number(formData.get("inviteId")));
 
     case "create-code": {
-      // Issuing a code is running a course, which takes the course password
-      // (ruling 20). Answered before the caller's standing is looked up, so
+      // Issuing a code is running a course, which takes the course password.
+      // Answered before the caller's standing is looked up, so
       // a gate-less caller learns nothing about the project it names.
       requireCourseAccess(user);
 
@@ -461,8 +410,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
 
       // Instructor membership on a child project is tied to the course in
-      // both directions (design §5) — a convenor removing it here would
-      // produce a state the design declares impossible. Only queried when
+      // both directions — a convenor removing it here would
+      // produce a state that cannot exist. Only queried when
       // the target actually is an instructor; the shared check also gates
       // self-service `leave-project` in _app.account.tsx.
       if (
@@ -545,13 +494,19 @@ export async function action({ request, context }: Route.ActionArgs) {
         const frameworkVersion = await readSiteTelarVersion(db, activeProject.id);
         // Three-way base: the repo state D1 was last reconciled with, so the diff
         // suppresses the user's own unpublished edits and surfaces genuine
-        // repo↔editor conflicts. The author started this check, and the dialog
-        // shows what the reads found wrong in the sheets. The first check on the
-        // project gives rows an earlier import stored under a stripped id
-        // GitHub's spelling, with nothing offered.
+        // repo↔editor conflicts: the recorded head, or with none the commit
+        // the import read, so edits made on GitHub since the import are
+        // reviewed rather than overwritten by the first publish. The objects
+        // are compared against the commit whose object rows D1 accounts for
+        // where that is not the base. The author started this check, and the
+        // dialog shows what the reads found wrong in the sheets. The first
+        // check on the project gives rows an earlier import stored under a
+        // stripped id GitHub's spelling, with nothing offered.
+        const base = activeProject.head_sha ?? importCommitOf(activeProject);
+        const objectsRead = activeProject.objects_read_sha ?? null;
         const diff = await checkRepairingLegacyIds(env, activeProject.id, user.id, (legacyRef) => computeFullSyncDiff(
-          activeProject.id, token, owner, repo, db, activeProject.head_sha ?? null,
-          { collectWarnings: true, frameworkVersion, legacyRef },
+          activeProject.id, token, owner, repo, db, base,
+          { collectWarnings: true, frameworkVersion, legacyRef, objectsReadSha: objectsRead },
         ), (checked) => checked.objects, {
           db, open: activeProject.legacy_ids_repaired_at == null, ref: legacyRecordRef(activeProject),
         });
@@ -560,9 +515,10 @@ export async function action({ request, context }: Route.ActionArgs) {
         // record the commit this check read as synced, and no other. A commit
         // that landed after it is not read, so it is not recorded. Compare-and-
         // set against the head loaded above (null for a first sync), so a
-        // writer that moved the head meanwhile keeps it; and only under the
-        // objects lease, while everything in D1 this check compared is as it
-        // was before the check read it (`recordIfLeaseFree`, `compared`).
+        // writer that moved the head meanwhile keeps it, with objects_read_sha
+        // from the record the objects were compared against; and only under
+        // the objects lease, while everything in D1 this check compared is as
+        // it was before the check read it (`recordIfLeaseFree`, `compared`).
         // A story listed as unreadable for its colliding columns goes to the picker.
         const collided = await (await import("~/lib/sheet-choices.server")).collidedStoryChoices("compute-full-sync-diff", diff.stories.content, { env, user, project: activeProject });
         if (collided) return collided;
@@ -570,7 +526,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         if (!hasDiffChanges(diff) && diff.objects.respelled === undefined && checkedHead) {
           await recordIfLeaseFree(env, activeProject.id, user.id, "objects", async () =>
             (await syncedRowsFingerprint(db, activeProject.id)) === compared
-            && bumpProjectHeadFrom(db, activeProject.id, activeProject.head_sha ?? null, checkedHead));
+            && bumpProjectHeadFrom(db, activeProject.id, activeProject.head_sha ?? null, checkedHead, undefined, undefined, objectsRead));
         }
 
         return { ok: true, intent: "compute-full-sync-diff", diff };
@@ -652,36 +608,6 @@ export async function action({ request, context }: Route.ActionArgs) {
         }
         return syncFailure("apply-full-sync", err, "apply_failed");
       }
-    }
-
-    case "accept-divergence": {
-      // Keep my version: record, without re-importing, the commit whose
-      // differences the author was shown and chose to keep their version over.
-      // The page posts the identity of the diff it showed: its project, the
-      // base it was computed against ("" for none) and its HEAD. Never a head
-      // read here, and never the head loaded with this request: the choice is
-      // bound to the diff reviewed. It records compare-and-set from that base
-      // to that HEAD, so a head recorded since the check is kept; and only on
-      // the project the diff is of, since the session may have switched in
-      // another tab. A missing or malformed field, another project, or a moved
-      // head records nothing and answers accept_divergence_stale, and the page
-      // checks again.
-      // GitHub's object order is applied first (`keepCompositorVersion`).
-      const resolved = page;
-      if (!resolved) {
-        return { ok: false, intent: "accept-divergence", error: "no_project" };
-      }
-      const activeProject = resolved.project;
-      await requireOwner(db, activeProject.id, user.id);
-      const stale = { ok: false, intent: "accept-divergence", error: "accept_divergence_stale" } as const;
-      const isSha = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{40}$/.test(v);
-      const shown = formData.get("headSha");
-      const postedBase = formData.get("baseSha");
-      if (!isSha(shown)) return stale;
-      if (formData.get("projectId") !== String(activeProject.id)) return stale;
-      if (postedBase !== "" && !isSha(postedBase)) return stale;
-      const base = postedBase === "" ? null : postedBase;
-      return keepCompositorVersion(db, env, user, activeProject, base, shown);
     }
 
     case "choose-columns": {

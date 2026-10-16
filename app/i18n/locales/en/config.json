@@ -46,7 +46,12 @@
       "field_url": "Site URL",
       "field_url_help": "The full URL where your site is hosted (e.g. https://username.github.io).",
       "field_baseurl": "Base URL",
-      "field_baseurl_help": "The path after the domain (e.g. /my-telar-site). Leave empty if hosted at root."
+      "field_baseurl_help": "The path after the domain (e.g. /my-telar-site). Leave empty if hosted at root.",
+      "change_address": "Change",
+      "url_empty": "Enter the full address of your site.",
+      "url_invalid": "The Site URL must start with http:// or https:// and end at the domain, like https://username.github.io.",
+      "baseurl_invalid": "The Base URL must be empty or start with a slash, like /my-telar-site, and cannot contain spaces.",
+      "address_change_warning": "Every address on your site changes, and links to the old addresses stop working. The address is saved when you confirm, and your next publish carries it to your site."
     },
     "story_interface": {
       "title": "Story Interface",
@@ -76,7 +81,7 @@
     "google_sheets": {
       "title": "Google Sheets Integration",
       "disabled_notice": "Google Sheets has been disabled. The Compositor manages your content directly.",
-      "enabled_notice": "Google Sheets is currently the content source. Changes made here will be overwritten on next sync."
+      "enabled_notice": "Your site reads its content from Google Sheets. Each time it builds, the objects and stories in your sheet replace the ones you publish from the Compositor. To build from your Compositor content instead, save an object on the Objects page, which switches Google Sheets off."
     }
   },
   "navigation_menu_title": "Navigation Menu",

@@ -4,7 +4,7 @@
  * Tests: config values, locale file key parity (ES mirrors EN),
  * locale cookie configuration (sameSite lax, httpOnly false).
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -192,8 +192,8 @@ describe("EN/ES key parity (all namespaces, both directions)", () => {
 describe("status.* captions (common.json)", () => {
   type CommonStatus = { status?: Record<string, string> };
 
-  it("EN out_of_sync caption uses the wording 'GitHub has changed'", () => {
-    expect((enCommon as CommonStatus).status?.out_of_sync).toBe("GitHub has changed");
+  it("EN out_of_sync caption uses the wording 'Changes on GitHub'", () => {
+    expect((enCommon as CommonStatus).status?.out_of_sync).toBe("Changes on GitHub");
   });
 
   it("EN upgrade caption uses the wording 'Telar {version} available'", () => {
@@ -201,8 +201,8 @@ describe("status.* captions (common.json)", () => {
     expect((enCommon as CommonStatus).status?.upgrade).toContain("available");
   });
 
-  it("ES out_of_sync caption is 'GitHub ha cambiado'", () => {
-    expect((esCommon as CommonStatus).status?.out_of_sync).toBe("GitHub ha cambiado");
+  it("ES out_of_sync caption is 'Cambios en GitHub'", () => {
+    expect((esCommon as CommonStatus).status?.out_of_sync).toBe("Cambios en GitHub");
   });
 
   it("ES status values are not left equal to their EN counterparts where Spanish differs", () => {

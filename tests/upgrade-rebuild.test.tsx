@@ -19,7 +19,7 @@
  * the newest for the sha, and it skips a tick while a request is still in
  * flight, because a fetcher that submits again aborts its own pending request.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import React from "react";
@@ -124,7 +124,7 @@ vi.mock("~/lib/github-status.server", () => ({ bumpProjectHeadFrom: vi.fn(async 
 // Harness
 // ---------------------------------------------------------------------------
 
-function makeLoaderData() {
+function makeLoaderData(over: Record<string, unknown> = {}) {
   return {
     siteVersion: "1.6.1",
     latestRelease: null,
@@ -141,18 +141,19 @@ function makeLoaderData() {
       github_pages_url: "https://student.github.io/my-site",
       github_repo_full_name: "student/my-site",
     },
+    ...over,
   };
 }
 
 let Page: React.ComponentType<{ loaderData: unknown }>;
 let rerenderPage: () => void;
 
-async function renderUpgrade() {
+async function renderUpgrade(over: Record<string, unknown> = {}) {
   const mod = (await import("~/routes/_app.upgrade")) as unknown as {
     default: React.ComponentType<{ loaderData: unknown }>;
   };
   Page = mod.default;
-  const loaderData = makeLoaderData();
+  const loaderData = makeLoaderData(over);
   const view = render(<Page loaderData={loaderData as never} />);
   rerenderPage = () => {
     fetcherCallIndex = 0;
@@ -199,7 +200,7 @@ async function driveToFailedBuild(failedRun: Record<string, unknown> = FAILED_RU
   push(() => {
     fetchers.poll.data = failedRun;
   });
-  expect(screen.getByText("upgradeLandedBuildFailed")).toBeTruthy();
+  expect(screen.getByText(/^upgradeLandedBuild(Failed|Cancelled|Skipped|TimedOut|NotFinished) v1\.6\.2$/)).toBeTruthy();
   return view;
 }
 
@@ -395,7 +396,11 @@ describe("Upgrade page — the retry runs the build again", () => {
       };
     });
 
-    expect(screen.getByText("upgradeLandedBuildFailed")).toBeTruthy();
+    // The retry cleared the conclusion of the run it replaces, and the
+    // dispatch has not named a new one, so the page claims no outcome.
+    expect(screen.getByRole("heading", { name: "upgradeLandedRebuildUnconfirmed v1.6.2" })).toBeTruthy();
+    expect(screen.getByText("upgradeLandedRebuildUnconfirmedDetail v1.6.2")).toBeTruthy();
+    expect(screen.queryByText(/^upgradeLandedBuildNotFinished/)).toBeNull();
     expect(screen.getByText("rebuild_unconfirmed")).toBeTruthy();
     // The link is the one the response supplied, not the failed run's.
     const link = screen.getByRole("link", { name: /viewActions/ });
@@ -412,7 +417,9 @@ describe("Upgrade page — the retry runs the build again", () => {
       fetchers.rebuild.data = { ok: false, intent: "rebuild", error: "rebuild_failed" };
     });
 
-    expect(screen.getByText("upgradeLandedBuildFailed")).toBeTruthy();
+    // The retry cleared the conclusion of the run it replaces, and the
+    // dispatch has not named a new one, so the page claims no outcome.
+    expect(screen.getByText(/^upgradeLandedBuildNotFinished /)).toBeTruthy();
     expect(screen.getByText("rebuild_failed")).toBeTruthy();
     expect(screen.queryByText("buildTracking")).toBeNull();
   });
@@ -595,4 +602,40 @@ describe("a prepare refused over a read it could not complete", () => {
       expect(screen.queryByText("upgradeFailedDetail")).toBeNull();
     });
   }
+});
+
+describe("Upgrade page — what the heading says about a build that did not succeed", () => {
+  const runWith = (buildConclusion: string) => ({ ...FAILED_RUN, buildConclusion, phases: null });
+
+  it.each([
+    ["failure", "upgradeLandedBuildFailed"],
+    ["cancelled", "upgradeLandedBuildCancelled"],
+    ["skipped", "upgradeLandedBuildSkipped"],
+    ["timed_out", "upgradeLandedBuildTimedOut"],
+    ["neutral", "upgradeLandedBuildNotFinished"],
+    [null, "upgradeLandedBuildNotFinished"],
+  ])("a %s build is headed %s, with the landed version", async (conclusion, key) => {
+    await driveToFailedBuild(runWith(conclusion as string));
+    expect(screen.getByRole("heading", { name: `${key} v1.6.2` })).toBeTruthy();
+    expect(screen.queryByText("upgradeFailed")).toBeNull();
+    expect(screen.getByRole("button", { name: "retry" })).toBeTruthy();
+  });
+
+  it("says the build did not finish, not that it failed at a step, for a build that did not fail", async () => {
+    await driveToFailedBuild({ ...runWith("cancelled"), phases: FAILED_RUN.phases });
+    expect(screen.getByText("upgradeLandedBuildNotFinishedDetail v1.6.2")).toBeTruthy();
+    expect(screen.queryByText(/^upgradeLandedBuildFailedDetail/)).toBeNull();
+  });
+});
+
+describe("Upgrade page — a site that is already current", () => {
+  it("says it is on the latest release and never that it was upgraded or is building", async () => {
+    await renderUpgrade({
+      siteVersion: "1.6.2",
+      needsUpgrade: false,
+      latestRelease: { tagName: "v1.6.2" },
+    });
+    expect(screen.getByText(/upToDate v1\.6\.2/)).toBeTruthy();
+    expect(screen.queryByText(/upgradeSuccessDetail/)).toBeNull();
+  });
 });

@@ -17,7 +17,7 @@
  *     claim about D1 and must be established from D1's own answer: the `_id`
  *     backfill the successful INSERT writes onto the Y.Map.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -247,7 +247,7 @@ const ONE_PAGE = {
 };
 
 // ---------------------------------------------------------------------------
-// R5-2 — a silent snapshot is not persistence
+// A silent snapshot is not persistence
 // ---------------------------------------------------------------------------
 
 describe("/ingest-sync refuses rather than reporting a snapshot that did not run", () => {
@@ -299,7 +299,7 @@ describe("/restore-orphans shares the omission", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R5-3 — a swallowed INSERT is not an applied insert
+// A swallowed INSERT is not an applied insert
 // ---------------------------------------------------------------------------
 
 describe("a page INSERT the snapshot could not land is not reported as applied", () => {

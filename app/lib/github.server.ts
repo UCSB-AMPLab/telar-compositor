@@ -31,7 +31,7 @@
  *
  * API version is pinned to 2022-11-28 via the X-GitHub-Api-Version header.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 export const GITHUB_API = "https://api.github.com";
@@ -611,7 +611,7 @@ export async function commitExists(
 // checkRepoAvailability
 // ---------------------------------------------------------------------------
 
-export type RepoAvailability = "available" | "unavailable" | "error";
+export type RepoAvailability = "available" | "unavailable" | "rate_limited" | "error";
 
 export interface RepoAvailabilityResult {
   availability: RepoAvailability;
@@ -625,8 +625,12 @@ export interface RepoAvailabilityResult {
  * Probes whether the user can still reach a repository via
  * GET /repos/{owner}/{repo}.
  *
- * Distinguishes "gone / no access" (404 or 403) from transient failures
- * (5xx, network). GitHub deliberately returns 404 for BOTH a deleted repo
+ * Distinguishes "gone / no access" (404, or a 403 that is not a rate limit)
+ * from transient failures (5xx, network) and from a rate limit. GitHub answers
+ * a rate-limited request with 403, so a 403 is read for the rate-limit
+ * headers and message before it counts as lost access; a rate limit says
+ * nothing about the repository, so it is "rate_limited", a check that could
+ * not be made. GitHub deliberately returns 404 for BOTH a deleted repo
  * and a private repo the caller can't see, so "unavailable" deliberately
  * conflates deleted / renamed / made-private / access-removed — callers
  * alert on it. "error" is for transient problems, so callers fail open and
@@ -649,12 +653,32 @@ export async function checkRepoAvailability(
       const body = (await res.json()) as Pick<Repository, "full_name">;
       return { availability: "available", canonicalFullName: body.full_name ?? null };
     }
+    if (res.status === 403 && (await isRateLimited(res))) {
+      return { availability: "rate_limited", canonicalFullName: null };
+    }
     if (res.status === 404 || res.status === 403) {
       return { availability: "unavailable", canonicalFullName: null };
     }
     return { availability: "error", canonicalFullName: null };
   } catch {
     return { availability: "error", canonicalFullName: null };
+  }
+}
+
+/**
+ * Whether a 403 is GitHub's rate limit rather than a refusal of access: the
+ * primary limit sends `x-ratelimit-remaining: 0`, the secondary limit sends
+ * `retry-after` and a message naming it. A body that cannot be read counts as
+ * no evidence either way.
+ */
+async function isRateLimited(res: Response): Promise<boolean> {
+  if (res.headers?.get("x-ratelimit-remaining") === "0") return true;
+  if (res.headers?.get("retry-after") != null) return true;
+  try {
+    const body = (await res.json()) as { message?: unknown };
+    return typeof body.message === "string" && /rate limit/i.test(body.message);
+  } catch {
+    return false;
   }
 }
 

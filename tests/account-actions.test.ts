@@ -10,7 +10,7 @@
  * RouterContext stub; assert on the recorded mock calls and the action's
  * return value.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -372,7 +372,7 @@ describe("/account action — leave-project intent", () => {
 });
 
 // ---------------------------------------------------------------------------
-// leave-project intent — instructor-on-child exit refusal (design §5)
+// leave-project intent — instructor-on-child exit refusal
 // ---------------------------------------------------------------------------
 
 describe("/account action — leave-project intent refuses instructor-on-child exits", () => {

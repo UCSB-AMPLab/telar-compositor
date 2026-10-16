@@ -22,7 +22,7 @@
  * out of scope for this refactor, which never touches blob encoding); its SQL
  * and position in the stream ARE pinned.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -1289,7 +1289,7 @@ describe("deduplicateYArray — who keeps the key, and what happens to the loser
   it("RE-KEYS an UNSAVED same-story_id loser rather than dropping it", () => {
     // An `_id: null` twin is unsaved, not empty: before a project's first
     // snapshot every map carries one, so a null says where D1 has got to and
-    // nothing about whether someone is writing the story (R2-2).
+    // nothing about whether someone is writing the story.
     const { doInstance, ydoc } = makeDo(emptySeed());
     ydoc.transact(() => {
       ydoc.getArray<Y.Map<unknown>>("stories").push([

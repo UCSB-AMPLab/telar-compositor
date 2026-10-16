@@ -1,21 +1,18 @@
 // @vitest-environment jsdom
 
 /**
- * role-gating — don't-render contract coverage.
+ * role-gating — don't-render contract coverage: a role that may not act is
+ * not shown the control, and the server keeps its own check regardless.
  *
- * First block: source-level assertions that the three former
- * RestrictionBanner call sites (publish, upgrade, dashboard) no longer import
- * or render RestrictionBanner, and that publish/upgrade read role via the
- * typed useIsPublisher() hook (the shared publishing-role set)
- * rather than the ad-hoc useRouteLoaderData cast. The component file itself
- * is deleted, so a runtime import test is not possible; the conversion is
- * asserted against the route source.
+ * The first block reads the route sources. The publish, upgrade and dashboard
+ * routes mention no RestrictionBanner (its component file does not exist),
+ * and publish and upgrade read the role through `useIsPublisher()`, the
+ * shared publishing-role set, rather than casting the route loader data. Later
+ * blocks cover the unpublished popover's Publish action, the refusal copy,
+ * the `/objects` denied toast and empty-state hint, and the assertions that
+ * the server gates stay in place.
  *
- * Later blocks cover the popover's Publish affordance, the denied-toast,
- * the /objects empty-state hint, and the server-gate integrity assertions
- * proving don't-render never replaced the server boundary.
- *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
@@ -225,18 +222,17 @@ const appSrc = readFileSync(join(APP_DIR, "routes", "_app.tsx"), "utf-8");
 describe("server gates remain intact (security)", () => {
   it("keeps every requireOwner guard on the gated /dashboard intents", () => {
     const guards = dashboardSrc.match(/requireOwner\(db, activeProject\.id, user\.id\)/g) ?? [];
-    // The 8 per-intent guards on the session's site (generate-invite,
+    // The 7 per-intent guards on the session's site (generate-invite,
     // send-invite, remove-member, compute-full-sync-diff, apply-full-sync,
-    // accept-divergence, restore-orphan-drafts, ignore-orphans) are all
-    // present. autosave-config and reorder are retired (v1.4.0-beta) and
-    // never contributed to this count — they were requireProjectMember
-    // guards, not requireOwner.
-    expect(guards.length).toBe(8);
+    // restore-orphan-drafts, ignore-orphans) are all present. autosave-config
+    // and reorder are retired (v1.4.0-beta) and never contributed to this
+    // count — they were requireProjectMember guards, not requireOwner.
+    expect(guards.length).toBe(7);
     // cancel-invite is gated on the invite row's own site.
     expect(dashboardSrc).toContain("await requireOwner(db, invite.project_id, userId);");
     // The gate helpers come from membership.server and nowhere else. The
     // course-aware code gate sits alongside requireOwner rather than
-    // replacing it: the nine intents above are single-project operations
+    // replacing it: the intents above are single-project operations
     // that stay convenor-only.
     expect(dashboardSrc).toMatch(
       /import \{[^}]*\brequireOwner\b[^}]*\} from "~\/lib\/membership\.server"/s,

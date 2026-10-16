@@ -1,8 +1,8 @@
 /**
  * This file pins what the course password actually covers: running a
- * course, never joining one (ruling 20).
+ * course, never joining one.
  *
- * Three surfaces exist behind F1-a and F1-b. Creating a course project and
+ * Three surfaces are involved. Creating a course project and
  * managing a course's join codes are running it, and are refused without
  * the password. Redeeming a class code is joining, and is the one flow that
  * reaches people who have never seen the app — so it is asserted to work
@@ -12,7 +12,7 @@
  * anything the form rendered: the loader flag exists so the wizard knows
  * what to offer, and a submission that ignores it must still be refused.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

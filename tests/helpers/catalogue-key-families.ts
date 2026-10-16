@@ -27,7 +27,7 @@
  *                   than every other declaration here; the reason must say what
  *                   blocks enumeration.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { getTableColumns } from "drizzle-orm";
@@ -215,10 +215,7 @@ export function keyFamilies(repoRoot: string): KeyFamily[] {
       kind: "listed",
       domain: "`SYNC_FIELDS`, app/lib/sync.server.ts",
       reason: "the sync diff names every field it reconciles, one row per field",
-      callSites: [
-        "app/components/features/objects/SyncDiffDialog.tsx:306",
-        "app/components/features/dashboard/SyncConflictsBlock.tsx:127",
-      ],
+      callSites: ["app/components/features/dashboard/sync-items.ts:188"],
       members: readStringArray(repoRoot, "app/lib/sync.server.ts", "SYNC_FIELDS"),
     },
     {

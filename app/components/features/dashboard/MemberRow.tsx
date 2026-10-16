@@ -12,7 +12,7 @@
  * The kebab is wired to the existing onRemove callback so the Remove action
  * is always accessible (including on touch devices).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -41,7 +41,7 @@ interface MemberRowProps {
    * here — course staff management (removing a co-instructor) belongs to
    * the course project's own member list. On a child, instructor
    * membership is tied to the course and protected from removal by any
-   * door but leaving it (design §5).
+   * door but leaving it.
    */
   isCourseProject?: boolean;
   /** Legacy: called when the Remove item is clicked (TeamPanel pattern). */

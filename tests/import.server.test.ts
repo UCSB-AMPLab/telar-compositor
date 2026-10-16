@@ -5,12 +5,12 @@
  *
  * Tests cover header detection, comment-row skipping, the typed CSV
  * mappers (`mapConfigToProjectConfig`, `mapObjectsCsv`, `mapProjectCsv`,
- * `mapStoryCsv`), markdown parsing, the v1.3.0 liquid-block recognition,
+ * `mapStoryCsv`), markdown parsing, the recognition of the language-pack welcome block,
  * the kind/show_sections derivations, the `scanRepoPages` import-pages
  * path, the cascade-aware `deleteProjectCascade`, and the orphan-story
  * detection plus `.compositor-ignored` parsing.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Papa from "papaparse";
@@ -501,7 +501,7 @@ describe("parseTelarCsv", () => {
       });
 
       // Whether the import keeps one, refuses the sheet, or keeps both is
-      // awaiting a ruling. Until then it keeps the last column claiming the
+      // undecided. Until then it keeps the last column claiming the
       // name, drops the others, and warns naming every column.
       it("keeps the last by default when both hold values, and warns naming both", () => {
         const { rows, warnings } = parseObjects(
@@ -1640,6 +1640,33 @@ describe("every non-canonical private spelling is project-only, not just protect
 // ---------------------------------------------------------------------------
 
 describe("mapProjectCsv", () => {
+  describe("story id from order", () => {
+    it("addresses a row with no story_id column as story-<order>", () => {
+      const mapped = mapProjectCsv([{ order: "2", title: "Second" }]);
+      expect(mapped[0].story_id).toBe("story-2");
+    });
+
+    it("addresses a row with a blank story_id cell as story-<order>, order stripped", () => {
+      const mapped = mapProjectCsv([{ story_id: "  ", order: " 3 ", title: "Third" }]);
+      expect(mapped[0].story_id).toBe("story-3");
+    });
+
+    it("leaves the id blank when order is blank", () => {
+      const mapped = mapProjectCsv([{ story_id: "", order: " ", title: "No order" }]);
+      expect(mapped[0].story_id).toBe("");
+    });
+
+    it("leaves the id blank when title is blank", () => {
+      const mapped = mapProjectCsv([{ story_id: "", order: "1", title: " " }]);
+      expect(mapped[0].story_id).toBe("");
+    });
+
+    it("leaves a non-blank story_id untouched", () => {
+      const mapped = mapProjectCsv([{ story_id: "my-story", order: "1", title: "T" }]);
+      expect(mapped[0].story_id).toBe("my-story");
+    });
+  });
+
   it("maps project.csv rows to stories table columns", () => {
     const csv = readFixture("project.csv");
     const rows = parseTelarCsv(csv);

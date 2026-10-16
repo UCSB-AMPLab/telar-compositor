@@ -8,17 +8,22 @@
  *
  * It is a background read (`useBackgroundRead`): a failed poll keeps the last
  * status it had for the active project, and never reaches the error card.
+ * The stamped form says which read its answer came from (`StampedRead`).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
-import { useBackgroundRead } from "~/hooks/use-background-read";
+import { useStampedBackgroundRead, type StampedRead } from "~/hooks/use-background-read";
 import { usePageSite } from "~/lib/page-site";
 import type { DerivedGithubStatus } from "~/lib/github-status.server";
 
 const POLL_INTERVAL_MS = 45_000;
 
 export function useGithubStatusPoll(enabled = true): DerivedGithubStatus | undefined {
-  return useBackgroundRead<DerivedGithubStatus>({
+  return useStampedGithubStatusPoll(enabled).data;
+}
+
+export function useStampedGithubStatusPoll(enabled = true): StampedRead<DerivedGithubStatus> {
+  return useStampedBackgroundRead<DerivedGithubStatus>({
     url: "/api/site-status?payload=gh-status",
     enabled,
     intervalMs: POLL_INTERVAL_MS,

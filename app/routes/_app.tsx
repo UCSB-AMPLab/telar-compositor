@@ -3,8 +3,11 @@
  * page renders inside its shell. Applies auth middleware (all child
  * routes are protected) and renders Header + TabNav + content area +
  * Footer. The Site Status pill (mounted in the Header) is the single
- * surface for sync-divergence and upgrade signals — the old SyncBanner
- * and UpgradeBanner ribbons were retired.
+ * surface for sync-divergence and upgrade signals; no page carries a
+ * banner of its own for either. The review of the changes made on GitHub
+ * is mounted here too (`SyncReviewProvider`), once for every page, so it
+ * opens where the author is. It is offered to the convenor alone, and the
+ * loader names the convenor (`coordinatorName`) to everyone else.
  *
  * On every authenticated page load, the loader reads GitHub-derived
  * status from D1 cache columns (`gh_repo_available`, `gh_remote_head_sha`,
@@ -29,7 +32,7 @@
  * not a redirect: the loader reports `releaseUnknown` and Publish opens with
  * its button disabled (the publish action refuses on the same reading).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -43,6 +46,7 @@ import { readOwnRepoAccess } from "~/lib/own-repo-access.server";
 import { SiteChangedWatcher } from "~/components/features/site-status/SiteChangedNotice";
 import { PageSiteProvider } from "~/lib/page-site";
 import { SiteStatusProvider } from "~/components/features/site-status/SiteStatusProvider";
+import { SyncReviewProvider } from "~/components/features/dashboard/SyncReviewProvider";
 import { getDb } from "~/lib/db.server";
 import { projects, project_config, project_members, project_invites, users, stories, objects, project_pages, glossary_terms } from "~/db/schema";
 import { getUserRole, getPresenceColor, getUserProjects, listableProjects, hasCourseStanding } from "~/lib/membership.server";
@@ -51,7 +55,7 @@ import { isLegacyInviteToken } from "~/lib/join-codes.server";
 import { createSessionStorage } from "~/lib/session.server";
 import { isHandoffSite, resolveActiveProjectFromRequest, siteHint } from "~/lib/active-project.server";
 import { decrypt } from "~/lib/crypto.server";
-import { deriveHeadDiverged, readWarmLatestTag, readLatestTag, deriveWorkflowsApproval, type LatestTagRead, type WorkflowsApproval } from "~/lib/github-status.server";
+import { deriveHeadDiverged, deriveCheckFailed, readWarmLatestTag, readLatestTag, deriveWorkflowsApproval, type LatestTagRead, type WorkflowsApproval } from "~/lib/github-status.server";
 import type { OwnRepoAccess } from "~/lib/repo-access";
 import { compareTelarVersion } from "~/lib/telar-version";
 import { deriveUpgradeAwaitsConvenor, standingFromLatest } from "~/lib/upgrade-gate.server";
@@ -130,6 +134,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   const env = context.cloudflare.env as Env;
   let headDiverged = false;
+  let checkFailed = false;
+  let firstPublish = false;
   let activeProjectId: number | null = null;
   // The site the hand-off cookie named, when the render used it.
   let handoffSite: number | undefined;
@@ -154,7 +160,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // projects. Returned on BOTH loader paths.
   //
   // Not the caller's full membership set: a child site the caller holds only
-  // an instructor row on is left out (ruling 18). Nothing here decides
+  // an instructor row on is left out. Nothing here decides
   // access — the active project is resolved from the full set below, so the
   // project on screen may well be one this list does not name.
   let allProjects: Array<{
@@ -184,9 +190,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   let sidebarSeats = { used: 0, limit: 5 };
   // True when the active project IS a course project (kind === "course") —
   // as opposed to an ordinary site, whether or not it's enrolled in one.
-  // Drives MemberRow's kebab visibility for instructor rows (design §5:
-  // course-management, including staff removal, belongs to the course
-  // project's own member list, never a child's).
+  // Drives MemberRow's kebab visibility for instructor rows (course-management, including
+  // staff removal, belongs to the course project's own member list, never a
+  // child's).
   let sidebarIsCourseProject = false;
   // Whether to offer the Course tab. The screen is reachable only from here,
   // so without it a course could be created and then never run.
@@ -205,6 +211,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   let welcomeProject = "";
   let welcomeConvenor = "";
   let welcomeAccess: OwnRepoAccess | null = null;
+  // Who chooses what to keep of the changes made on GitHub, named to everyone
+  // who cannot apply the review themselves: the convenor's stored display
+  // name, else their GitHub login. Null when the site has no convenor row.
+  let coordinatorName: string | null = null;
 
   try {
     const db = getDb(env.DB);
@@ -247,7 +257,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
       // Suppression is applied here and nowhere else in this loader: the
       // switcher is a list, and everything below still resolves the active
-      // project from the full membership set (ruling 22).
+      // project from the full membership set.
       allProjects = listableProjects(userProjects).map((p) => ({
         id: p.id,
         github_repo_full_name: p.github_repo_full_name,
@@ -335,9 +345,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         contributions: m.contributions ? JSON.parse(m.contributions) : null,
       }));
       // Seat figure: convenor + collaborators against the display-only
-      // limit of five, instructor rows excluded (design §3 — "the seat
-      // display keeps its current form ... with instructor rows excluded
-      // from the count").
+      // limit of five, instructor rows excluded from the count.
       sidebarSeats = {
         used: memberRows.filter((m) => m.role !== "instructor").length,
         limit: 5,
@@ -381,6 +389,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       // hasn't been acknowledged yet (welcomed_at null). Convenor name + repo
       // name feed the landing modal; ack stamps welcomed_at via /api/welcome-ack.
       const myRow = memberRows.find((m) => m.userId === user.id);
+      const coordinatorRow = memberRows.find((m) => m.role === "convenor");
+      coordinatorName = coordinatorRow?.name || coordinatorRow?.username || null;
       if (userRole === "collaborator" && myRow && !myRow.welcomedAt) {
         const convenorRow = memberRows.find((m) => m.role === "convenor");
         needsWelcome = true;
@@ -439,6 +449,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
           github_email: user.github_email,
         },
         headDiverged: false,
+        checkFailed: false,
+        firstPublish: false,
         activeProjectId: null,
         siteFromHandoff: false,
         needsUpgrade: false,
@@ -456,6 +468,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         welcomeProject: "",
         welcomeConvenor: "",
         welcomeAccess: null,
+        coordinatorName: null,
         repoUnavailable: false,
         repoFullName: null,
         siteTelarVersion: null,
@@ -516,6 +529,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         // GitHub-derived status: read from the D1 cache — never call GitHub on the request path.
         repoUnavailable = project.gh_repo_available === 0;
         headDiverged = deriveHeadDiverged(project, project.head_sha);
+        checkFailed = deriveCheckFailed(project, project.head_sha);
+        firstPublish = project.head_sha === null;
 
         // Workflows-permission approval prompt — pure read off the cache the
         // gh-status poll fills. Convenor-only; cold cache → no prompt.
@@ -572,6 +587,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     if (err instanceof Response) throw err;
     // Fail open — don't block the user on GitHub API errors
     headDiverged = false;
+    checkFailed = false;
+    firstPublish = false;
   }
 
   // Once-per-release "What's new" modal. Welcome modal wins this load (a
@@ -588,6 +605,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       github_email: user.github_email,
     },
     headDiverged,
+    checkFailed,
+    firstPublish,
     activeProjectId,
     siteFromHandoff: isHandoffSite(handoffSite, activeProjectId),
     needsUpgrade,
@@ -611,6 +630,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     welcomeProject,
     welcomeConvenor,
     welcomeAccess,
+    coordinatorName,
     repoUnavailable,
     repoFullName,
     siteTelarVersion,
@@ -802,6 +822,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
       <PageSiteProvider activeProjectId={activeProjectId}>
       <SiteStatusProvider>
       <ToastProvider>
+      <SyncReviewProvider canReview={userRole === "convenor"} coordinatorName={loaderData.coordinatorName ?? null}>
         <NavigationOverlay />
         <LocationAwarenessSync />
         <UndoFeedback />
@@ -938,6 +959,7 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           headDiverged={loaderData.headDiverged}
           projectId={activeProjectId ?? undefined}
         />
+      </SyncReviewProvider>
       </ToastProvider>
       </SiteStatusProvider>
       </PageSiteProvider>

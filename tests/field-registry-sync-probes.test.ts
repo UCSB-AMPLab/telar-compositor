@@ -22,7 +22,7 @@
  * dedicated versionChange detector, never the managed-field diff) — plus
  * the semantic (key-order-insensitive) comparison of extra_columns.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -61,12 +61,10 @@ vi.mock("~/lib/github.server", () => {
 });
 
 import * as githubServer from "~/lib/github.server";
-import { syncIngestRecorder } from "./helpers/sync-ingest-recorder";
 import {
   computeSyncDiff,
   computeFullSyncDiff,
   computeGlossarySyncDiff,
-  applySyncChanges,
   resolveFullSyncPayload,
   SYNC_FIELDS,
   type SyncField,
@@ -79,7 +77,7 @@ import { getEntity, type FieldDecl } from "../app/lib/field-registry";
 // them without re-declaring a single helper (the debt gate forbids duplicate
 // helper bodies).
 import {
-  MockDb, probeSequentialMockDb, createTrackedMockDb, syncOf, syncFamily,
+  MockDb, probeSequentialMockDb, syncOf, syncFamily,
   objectSyncFields, storySyncFields, configSyncFields, glossarySyncFields,
   PROJECT_ID, TOKEN, OWNER, REPO, objectCsvHeader, objectBaseCell, objectMutatedCell,
   probeObjectsCsv, d1ObjectRow, expectedObjectRepoValue, storyCsvHeader, storyBaseCell,
@@ -339,8 +337,8 @@ describe("registry sync probes — glossary diff (computeGlossarySyncDiff)", () 
 // 5. Apply-side probes — accepting a repo change sends the repo value
 // ---------------------------------------------------------------------------
 
-describe("registry sync probes — objects apply (applySyncChanges)", () => {
-  // The commit the objects check was read at, and GitHub's head at the apply.
+describe("registry sync probes — objects apply (resolveFullSyncPayload)", () => {
+  // The commit the check was read at, which the apply reads at.
   const checkedHead = "e".repeat(40);
   beforeEach(() => {
     vi.clearAllMocks();
@@ -349,33 +347,23 @@ describe("registry sync probes — objects apply (applySyncChanges)", () => {
   });
 
   for (const field of objectSyncFields) {
-    it(`objects.${field.name}: accepting the repo value writes it into the ingest's update`, async () => {
-      vi.mocked(githubServer.getFileContent).mockResolvedValue(probeObjectsCsv(field.name));
+    it(`objects.${field.name}: accepting the repo value writes it into the payload's update`, async () => {
+      vi.mocked(githubServer.getFileContent).mockImplementation(async (_t, _o, _r, path) =>
+        path === "telar-content/spreadsheets/objects.csv" ? probeObjectsCsv(field.name) : null);
 
-      const mockDb = createTrackedMockDb({ responses: [[d1ObjectRow()]] });
-      const ingest = syncIngestRecorder();
-
-      await applySyncChanges(
-        PROJECT_ID,
-        {
-          newObjectIds: [],
-          changedObjectIds: ["obj-1"],
-          changedDocIds: { "obj-1": 1 },
-          fieldChoices: { "obj-1": { [field.name]: "repo" } },
-          fieldsSeen: { "obj-1": { [field.name]: null } },
-          removedObjectIds: [],
-          unregisteredObjectIds: [],
-          headSha: checkedHead,
-        },
-        TOKEN,
-        OWNER,
-        REPO,
-        mockDb,
-        ingest.env,
-        PROBE_ACTOR_ID,
+      const changes = emptyChanges();
+      Object.assign(changes.objects, {
+        changedObjectIds: ["obj-1"],
+        changedDocIds: { "obj-1": 1 },
+        fieldChoices: { "obj-1": { [field.name]: "repo" } },
+        fieldsSeen: { "obj-1": { [field.name]: null } },
+      });
+      // D1 reads: the objects, then project_config.
+      const { payload } = await resolveFullSyncPayload(
+        PROJECT_ID, changes, TOKEN, OWNER, REPO, probeSequentialMockDb([[d1ObjectRow()], []]), PROBE_ACTOR_ID, checkedHead,
       );
 
-      const captured = ingest.fieldsFor("obj-1");
+      const captured = payload.objects.update.find((u) => u.objectId === "obj-1")?.fields as Record<string, unknown> | undefined;
       expect(captured).toBeDefined();
       const written = captured![field.name];
       if (field.name === "extra_columns") {

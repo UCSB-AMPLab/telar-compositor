@@ -19,7 +19,7 @@
  * re-keying rather than deleting, so there is nothing destructive to prevent
  * and a rule reaching it would delete honest work.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi } from "vitest";
 import * as Y from "yjs";
@@ -97,7 +97,7 @@ function ids(arr: Y.Array<Y.Map<unknown>>): unknown[] {
 // The attack
 // ---------------------------------------------------------------------------
 
-describe("R3-1 — an inserted forgery claiming a live row id", () => {
+describe("an inserted forgery claiming a live row id", () => {
   it("removes the born map and leaves the genuine one, with a strike", () => {
     const h = makeHarness();
     seed(h.ydoc, "objects", {

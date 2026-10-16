@@ -3,12 +3,12 @@
  * author sees, what the site does with the file, and when Google Sheets takes
  * a sheet from its tab instead.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
 import type { SheetWarning } from "~/lib/sheet-warnings";
-import { markSheetsEffects, pushUnreadable } from "~/lib/unreadable-characters.server";
+import { markSheetsEffects, pushUnreadable, unreadableItems } from "~/lib/unreadable-characters.server";
 
 function warned(path: string, repair?: "publish" | "title_then_publish" | "import_then_publish"): SheetWarning[] {
   const sink: SheetWarning[] = [];
@@ -195,5 +195,35 @@ describe("a sheet Google Sheets takes from its tab", () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe("the review's items for files read lossily", () => {
+  it("takes each file's effect from the warning naming it, and marks a file the site does not use or takes from Google Sheets as a notice", () => {
+    const warnings: SheetWarning[] = [
+      { code: "unreadable_characters", file: "objects.csv", effect: "from_sheets", repair: "publish" },
+      { code: "unreadable_characters", file: "notes/story-one.csv", effect: "not_used", repair: "remove_old_copy" },
+      { code: "unreadable_characters", file: "project.csv", effect: "build_stops", repair: "publish" },
+    ];
+    expect(unreadableItems(["objects.csv", "notes/story-one.csv", "project.csv"], warnings)).toEqual([
+      { file: "objects.csv", effect: "from_sheets", notice: true },
+      { file: "notes/story-one.csv", effect: "not_used", notice: true },
+      { file: "project.csv", effect: "build_stops", notice: false },
+    ]);
+  });
+
+  it("takes a file no warning names by the path its name stands for", () => {
+    expect(unreadableItems(["story-one.csv", "telar-content/texts/stories/panel.md", "_config.yml"], [])).toEqual([
+      { file: "story-one.csv", effect: "left_out", notice: false },
+      { file: "telar-content/texts/stories/panel.md", effect: "name_shown", notice: false },
+      { file: "_config.yml", effect: "build_stops", notice: false },
+    ]);
+  });
+
+  it("tags a file with the stories it belongs to, in order", () => {
+    const stories = new Map([["telar-content/texts/stories/panel.md", new Set(["s2", "s1"])]]);
+    expect(unreadableItems(["telar-content/texts/stories/panel.md"], [], stories)).toEqual([
+      { file: "telar-content/texts/stories/panel.md", storyIds: ["s1", "s2"], effect: "name_shown", notice: false },
+    ]);
   });
 });

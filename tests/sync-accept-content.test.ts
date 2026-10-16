@@ -8,7 +8,7 @@
  * that HEAD and no later. A story the collaboration object refuses as changed
  * since review leaves head_sha where it was.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -23,6 +23,11 @@ const gh = vi.hoisted(() => ({
   files: {} as Record<string, string>,
   trees: {} as Record<string, Record<string, Record<string, string>>>,
   subtreesFail: false,
+  subtreeReason: "truncated" as string,
+  /** The subtree path whose listing answers null, as one holding a symlink or cut short does. */
+  unlistable: null as string | null,
+  /** A commit GitHub no longer holds, as after a force-push. */
+  unresolved: null as string | null,
   subtreeCommits: [] as string[][],
 }));
 
@@ -48,7 +53,8 @@ vi.mock("~/lib/github.server", async (orig) => {
     getSubtreeOids: vi.fn(async (_t: string, _o: string, _r: string, commits: string[]) => {
       for (const ref of commits) gh.reads.push({ fn: "getSubtreeOids", ref });
       gh.subtreeCommits.push([...commits]);
-      if (gh.subtreesFail) return { ok: false, reason: "truncated" };
+      if (gh.subtreesFail) return { ok: false, reason: gh.subtreeReason };
+      if (gh.unresolved && commits.includes(gh.unresolved)) return { ok: false, reason: "unresolved" };
       return {
         ok: true,
         at: (commit: string, path: string) =>
@@ -57,6 +63,7 @@ vi.mock("~/lib/github.server", async (orig) => {
     }),
     listSubtreeEntries: vi.fn(async (_t: string, _o: string, _r: string, oid: string) => {
       const [commit, path] = oid.split("|");
+      if (path === gh.unlistable) return null;
       return { files: new Map(Object.entries(gh.trees[commit]?.[path] ?? {})), dirs: new Set() };
     }),
   };
@@ -187,6 +194,9 @@ const CSV = "step,object,question,answer,layer1_button,layer1_content\n1,obj,Q1,
 beforeEach(() => {
   gh.reads.length = 0;
   gh.subtreesFail = false;
+  gh.subtreeReason = "truncated";
+  gh.unlistable = null;
+  gh.unresolved = null;
   gh.subtreeCommits.length = 0;
   gh.files = {
     [`${HEAD}:${SHEETS}/s1.csv`]: CSV,
@@ -475,6 +485,102 @@ describe("head_sha after the accept, when the check the dialog showed could not 
     const result = await applyFullSyncChanges(1, sent, "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, []));
     expect(result).toMatchObject({ newHeadSha: null, storyFilesInconclusive: true });
     expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+});
+
+describe("keeping the Compositor's version of story files the check could not read", () => {
+  const BASE = "fedcba9876543210fedcba9876543210fedcba98";
+  const emptyAnswer = () => ({ content: { applied: [], alreadyApplied: [], changedSinceReview: [], failed: [] } });
+  const unread = (keep?: FullSyncChanges["keepUnreadFiles"]) => {
+    const { storyContentChecked: _dropped, ...rest } = changes();
+    return (keep ? { ...rest, keepUnreadFiles: keep } : rest) as FullSyncChanges;
+  };
+
+  it("advances head_sha over a listing that cannot be read whole, a structural cause", async () => {
+    gh.unlistable = TEXTS;
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(["stories"]), "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, []));
+    expect(result).toEqual({ newHeadSha: HEAD, storyFilesInconclusive: false, pageFilesInconclusive: false });
+    expect(sets.filter((s) => "head_sha" in s).map((s) => s.head_sha)).toEqual([HEAD]);
+  });
+
+  it("holds head_sha over the same listing without the choice", async () => {
+    gh.unlistable = TEXTS;
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(), "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, []));
+    expect(result).toMatchObject({ newHeadSha: null, storyFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+
+  it.each([
+    ["a malformed answer", "malformed"],
+    ["a commit GitHub does not hold", "unresolved"],
+  ])("never applies to a request cause: holds head_sha over %s", async (_label, reason) => {
+    gh.subtreesFail = true;
+    gh.subtreeReason = reason;
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(["stories"]), "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, []));
+    expect(result).toMatchObject({ newHeadSha: null, storyFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+
+  it("never applies to a request cause: holds head_sha when the tree read throws", async () => {
+    vi.mocked(githubServer.getSubtreeOids).mockRejectedValueOnce(new Error("GitHub API error: 502"));
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(["stories"]), "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, []));
+    expect(result).toMatchObject({ newHeadSha: null, storyFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+
+  it("holds head_sha when the trees now conclude: what the dialog did not show is not acknowledged", async () => {
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, unread(["stories"]), "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, []));
+    expect(result).toMatchObject({ newHeadSha: null, storyFilesInconclusive: true });
+    expect(sets.some((s) => "head_sha" in s)).toBe(false);
+  });
+
+  it("advances head_sha when the base no longer resolves and the story trees conclude at the head alone", async () => {
+    gh.unresolved = BASE;
+    const { db, sets } = recordingDb(BASE);
+    const result = await applyFullSyncChanges(1, changes(), "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, []));
+    expect(result).toEqual({ newHeadSha: HEAD, storyFilesInconclusive: false, pageFilesInconclusive: false });
+    expect(gh.subtreeCommits).toContainEqual([HEAD]);
+    expect(sets.filter((s) => "head_sha" in s).map((s) => s.head_sha)).toEqual([HEAD]);
+  });
+
+  it("refuses a choice that names no file check, before any write", async () => {
+    const { db, sets } = recordingDb(BASE);
+    const sent: SyncIngestPayload[] = [];
+    const wire = { ...unread(), keepUnreadFiles: ["objects"] } as unknown as FullSyncChanges;
+    await expect(applyFullSyncChanges(1, wire, "tok", "o", "r", db, 7, ingestEnv(emptyAnswer, sent))).rejects.toThrow(/keepUnreadFiles/);
+    expect(sent).toEqual([]);
+    expect(sets).toEqual([]);
+  });
+});
+
+describe("a story file whose bytes are not valid UTF-8, by the author's choice", () => {
+  const R = "\uFFFD";
+  beforeEach(() => {
+    gh.files[`${HEAD}:${SHEETS}/s1.csv`] = CSV.replace("Q1", `Q${R}1`);
+  });
+
+  it("GitHub's version brings in the text as read, U+FFFD where the bytes were", async () => {
+    const { db } = recordingDb();
+    const sent: SyncIngestPayload[] = [];
+    const env = ingestEnv(() => ({ content: { applied: ["s1"], alreadyApplied: [], changedSinceReview: [], failed: [] } }), sent);
+    const result = await applyFullSyncChanges(1, changes({ acceptContent: ["s1"], contentExpected: { s1: "h" } }), "tok", "o", "r", db, 7, env);
+    expect(result.newHeadSha).toBe(HEAD);
+    const entry = (sent[0].stories as { replaceContent?: Array<{ steps: Array<{ question: string }> }> }).replaceContent![0];
+    expect(entry.steps[0].question).toBe(`Q${R}1`);
+  });
+
+  it("the Compositor's version sends no content for the story and records the head", async () => {
+    const { db, row } = recordingDb();
+    const sent: SyncIngestPayload[] = [];
+    const result = await applyFullSyncChanges(1, changes(), "tok", "o", "r", db, 7, ingestEnv(() => ({}), sent));
+    expect(sent[0].stories.replaceContent).toBeUndefined();
+    expect(result.newHeadSha).toBe(HEAD);
+    expect(row.head_sha).toBe(HEAD);
   });
 });
 

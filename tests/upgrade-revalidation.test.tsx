@@ -14,7 +14,7 @@
  * without the hold and shows the redirect firing, so the assertion above is a
  * claim about the hold rather than about the fixtures.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import React from "react";
@@ -95,6 +95,7 @@ vi.mock("~/lib/manifest-runner.server", () => ({
     files,
     deletions: [],
     manualSteps: { en: [], es: [] },
+    languageMatches: [],
   }),
 }));
 vi.mock("~/lib/v130-ingest.server", async () => ({

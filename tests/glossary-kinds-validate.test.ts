@@ -4,16 +4,16 @@
  *
  * The expected results in FRAMEWORK were produced once by running these same
  * fixtures through the framework's `_site_kind_problem`, in the order
- * `_site_kinds_for` runs it (scripts/telar/glossary_kinds.py at the framework
- * main b0cac927, with that checkout's .venv python), and are frozen here, so
- * this file runs without the checkout. The framework reports the first
- * problem it finds; `firstProblem` reads ours in the same order.
+ * `_site_kinds_for` runs it (scripts/telar/glossary_kinds.py in the framework
+ * at commit b0cac927), and are frozen here, so this file runs without a
+ * framework checkout. The framework reports the first problem it finds;
+ * `firstProblem` reads ours in the same order.
  *
  * CORE is the framework's `_data/glossary_kinds.yml` at that commit, its ids
  * and values verbatim, with each `panel_label` written as the English label
  * the language file gives it.
  *
- * @version v1.5.1-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -22,6 +22,7 @@ import {
   serializeSiteKinds,
   storedSiteKinds,
   validateSiteKinds,
+  validateSiteKindsForSave,
   withSiteKinds,
   type KindProblem,
   type SiteKindProblems,
@@ -258,5 +259,38 @@ describe("the kind a taken value belongs to", () => {
     ]);
     expect(problems.values).toMatchObject({ key: "kind_error_value_taken", kind: "Key term" });
     expect(problems.values?.standardKind).toBeUndefined();
+  });
+});
+
+describe("validateSiteKindsForSave, the characters of a new or changed id", () => {
+  const kind = (id: string, extra: Record<string, unknown> = {}) => ({ id, label: "L", heading: "H", ...extra });
+  let replaced: unknown[] = [];
+  const idProblem = (entry: unknown) => validateSiteKindsForSave(coreKinds.core, [entry], replaced)[0].id;
+
+  it.each(["Bad_Id", "has space", "-lead", "trail-", "dou--ble", "café"])("refuses a new kind with the id %j", (id) => {
+    expect(idProblem(kind(id))).toEqual({ key: "kind_error_id_characters", value: id });
+  });
+
+  it.each(["animal", "plant-2", "x9"])("accepts a new kind with the id %j", (id) => {
+    expect(idProblem(kind(id))).toBeUndefined();
+  });
+
+  it("refuses an existing kind whose id is changed to one with other characters", () => {
+    expect(idProblem(kind("New_Id", { from: "old" }))).toEqual({ key: "kind_error_id_characters", value: "New_Id" });
+  });
+
+  it("leaves an existing kind whose id is unchanged as the site wrote it", () => {
+    replaced = [kind("Legacy_Id")];
+    expect(idProblem(kind("Legacy_Id", { from: "Legacy_Id" }))).toBeUndefined();
+    expect(validateSiteKinds(coreKinds.core, [kind("Legacy_Id")])[0]).toEqual({});
+  });
+
+  it("refuses a kind that names itself as its own previous id when the replaced list has no such kind", () => {
+    replaced = [kind("other")];
+    expect(idProblem(kind("Wild_Cat", { from: "Wild_Cat" }))).toEqual({ key: "kind_error_id_characters", value: "Wild_Cat" });
+  });
+
+  it("keeps the finding about a taken id rather than adding a second", () => {
+    expect(idProblem(kind("Place"))).toMatchObject({ key: "kind_error_id_taken" });
   });
 });

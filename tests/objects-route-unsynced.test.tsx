@@ -12,7 +12,7 @@
  * This renders the real page on React Router's routes stub with a live Y.Doc
  * and a provider whose sync the test controls.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import React from "react";
@@ -139,7 +139,7 @@ describe("the objects page before the document has synced", () => {
     expect(screen.getByText("loading_state")).toBeTruthy();
     expect((screen.getByText("add_object_button") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText("mark_featured") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByText("sync_from_github").closest("button") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("sync_from_github")).toBeNull();
   });
 
   it("does not show the empty state for an empty list", async () => {

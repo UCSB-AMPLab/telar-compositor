@@ -19,7 +19,7 @@
  * delete op, so the assertion that the page writes nothing is about what the
  * document holds afterwards.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -46,10 +46,15 @@ let currentOps: { deleteObject: ReturnType<typeof vi.fn> } | null = null;
 let fetcherState: "idle" | "submitting" = "idle";
 let fetcherData: DeleteAnswer | undefined;
 let submissions: Record<string, string>[] = [];
+let stepsUsingObject = 0;
+let objectIsExternal = false;
 const navigate = vi.fn();
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: { count?: number }) =>
+      options?.count === undefined ? key : `${key}:${options.count}`,
+  }),
 }));
 
 vi.mock("react-router", () => ({
@@ -154,8 +159,11 @@ function makeLoaderData(projectId = PROJECT_ID) {
     },
     manifestUrl: null,
     infoJsonUrl: null,
-    isExternal: false,
-    usedInStories: [],
+    isExternal: objectIsExternal,
+    usedInStories: Array.from({ length: stepsUsingObject }, (_, i) => ({
+      storyTitle: "Story",
+      stepNumber: i + 1,
+    })),
     rename: { otherIds: [], version: null, stepsRewritten: 0, stepsKept: 0, unresolvedStepValues: [], shared: null },
     siteBase: "https://example.org/site",
     userRole: "convenor" as const,
@@ -245,6 +253,8 @@ beforeEach(() => {
   fetcherState = "idle";
   fetcherData = undefined;
   submissions = [];
+  stepsUsingObject = 0;
+  objectIsExternal = false;
   navigate.mockClear();
 });
 
@@ -283,6 +293,39 @@ describe("object detail delete — the affordance", () => {
       objectDbId: String(OBJECT_DB_ID),
       fromRepo: "true",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What each choice says it does
+// ---------------------------------------------------------------------------
+
+describe("object detail delete — each choice states its own effect", () => {
+  function openDialog() {
+    renderPage();
+    fireEvent.click(screen.getByTitle("delete_button"));
+  }
+
+  it("puts a description of its effect beside each button", () => {
+    openDialog();
+    expect(screen.getByText("delete_remove_compositor_effect")).toBeTruthy();
+    expect(screen.getByText("delete_remove_repo_effect")).toBeTruthy();
+    expect(screen.queryByText(/delete_used_in/)).toBeNull();
+  });
+
+  it("leaves out the repository choice and its description for an external object", () => {
+    objectIsExternal = true;
+    openDialog();
+    expect(screen.getByText("delete_remove_compositor_effect_external")).toBeTruthy();
+    expect(screen.queryByText("delete_remove_compositor_effect")).toBeNull();
+    expect(screen.queryByText("delete_remove_repo_effect")).toBeNull();
+    expect(screen.queryByText("delete_remove_repo")).toBeNull();
+  });
+
+  it("says how many steps use the object, with the count the page computed", () => {
+    stepsUsingObject = 3;
+    openDialog();
+    expect(screen.getByText("delete_used_in:3")).toBeTruthy();
   });
 });
 

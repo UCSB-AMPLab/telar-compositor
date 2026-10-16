@@ -35,7 +35,23 @@
  * storage base at the document's sequence and retired below it,
  * so the tail a load replays stays bounded whatever D1 is doing.
  *
- * @version v1.5.3-beta
+ * For every column the snapshot writes, D1 is a projection of the document,
+ * not its source. The snapshot writes the document's values down over the
+ * rows of stories, steps, layers, objects, glossary terms, the site's config,
+ * pages and the landing page, so a direct UPDATE to such a column reports a
+ * row written and is gone after the next snapshot (a story's title, order and
+ * draft flag among them). Columns the snapshot does not write, such as a
+ * story's `source_path` or `extra_columns`, are D1's own; so is the config's
+ * `telar_version`, which the document holds only as a copy of the
+ * repository's value (`CONFIG_COLUMNS` leaves it out). A change to
+ * snapshot-written content goes through the document: the editor, or a server
+ * path that posts to one of this object's routes (the sync ingest,
+ * `/reset-page-frontmatter`). The snapshot's UPDATE statements below are the
+ * list of what it overwrites. `/reset` rebuilds the document from the
+ * rows, but it is the recovery for a halted project and discards every edit
+ * since the last snapshot; it is not a way to apply a hand-edited row.
+ *
+ * @version v1.5.5-beta
  */
 
 import * as Y from "yjs";
@@ -94,6 +110,7 @@ import {
 import type { IngestArmPartition, IngestDiagnostic } from "./ingest-domains";
 import { applyObjectOrder, sheetPlacement, type IngestObjectOrder } from "./object-order";
 import { fieldsUnchangedSinceReview } from "./object-seen-fields";
+import { glossaryFieldsUnchangedSinceRead, type GlossaryFieldValues } from "./glossary-seen-fields";
 import { claimCandidates, enrichmentCandidates, fillFromManifests, readManifests, releaseCandidates, type ReadManifest } from "./object-enrichment";
 import { carryMissingOrigin, ingestHeldBack, objectArmsHeldBack, pageInsertsHeldBack } from "./ingest-held-back";
 import { objectInsertValues, objectInsertYValue } from "./object-insert-values";
@@ -2243,6 +2260,41 @@ function removeHeldTerms(
   }
 }
 
+/**
+ * Remove each map of `array` holding both the key and the D1 id an entry of
+ * `arm` names under `keyField`, from the last index down; the snapshot's
+ * orphan sweep then deletes its row. A map holding the key under another id
+ * is a row re-created since the check and is left alone, as is one holding no
+ * id yet. Entries that are not an object with a string key and a positive
+ * integer id remove nothing. Answers the keys removed and those not found.
+ */
+function removeRowsById(
+  array: Y.Array<Y.Map<unknown>>,
+  arm: unknown,
+  keyField: "story_id" | "term_id",
+  entryKey: "storyId" | "termId",
+): { removed: string[]; absent: string[] } {
+  if (!Array.isArray(arm)) return { removed: [], absent: [] };
+  const wanted = new Map<number, string>();
+  for (const entry of arm as unknown[]) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const key = (entry as Record<string, unknown>)[entryKey];
+    const docId = (entry as { docId?: unknown }).docId;
+    if (typeof key === "string" && isIngestOpId(docId)) wanted.set(docId, key);
+  }
+  const removed: string[] = [];
+  for (let i = array.length - 1; i >= 0; i--) {
+    const m = array.get(i);
+    if (!(m instanceof Y.Map)) continue;
+    const id = m.get("_id");
+    if (typeof id !== "number" || wanted.get(id) !== m.get(keyField)) continue;
+    removed.push(wanted.get(id)!);
+    wanted.delete(id);
+    array.delete(i, 1);
+  }
+  return { removed, absent: [...wanted.values()] };
+}
+
 /** The D1 table behind each `/ingest-sync` insert bucket, for receipt lookups. */
 const RECEIPT_TABLES = {
   objectInsert: "objects",
@@ -2555,6 +2607,8 @@ interface SyncIngestPayload {
       isPrivate?: boolean; showSections?: boolean;
       steps?: IngestStep[]; layers?: IngestLayer[];
     }>;
+    /** Stories deleted on GitHub to delete here too, by key and D1 id (`removeRowsById`). */
+    remove?: Array<{ storyId: string; docId: number }>;
   };
   /** Kept columns a publish read from a story's CSV, for steps that never recorded any. */
   steps?: {
@@ -2584,10 +2638,13 @@ interface SyncIngestPayload {
     rename?: IngestObjectRename[];
   };
   glossary: {
-    update: Array<{ termId: string; title?: string; definition?: string; kind?: string }>;
+    /** `seen` holds each field's value as the caller read it; see `glossaryFieldsUnchangedSinceRead`. */
+    update: Array<{ termId: string; title?: string; definition?: string; kind?: string; seen?: GlossaryFieldValues }>;
     insert: Array<{ termId: string; title: string; definition: string; kind?: string }>;
     /** Terms whose id publishes none (`isHeldTermId`) to remove, by D1 id, while they hold these values; the snapshot deletes each row. */
     removeHeld?: Array<{ dbId: number; title: string; definition: string; kind: string }>;
+    /** Terms deleted on GitHub to delete here too, by key and D1 id (`removeRowsById`). */
+    remove?: Array<{ termId: string; docId: number }>;
   };
   /**
    * A page's slug enters or changes only through an arm of this ingest:
@@ -3283,7 +3340,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // transaction's change set, which still names every key the guard put
     // back, and credits nobody for a marked one.
     //
-    // F1 holds across the pair: nothing here awaits, and the guard's
+    // Nothing awaits across the pair: nothing here does, and the guard's
     // `noteRevert` only sets a flag the message handler reads in the same
     // continuation.
     this.ydoc.on("afterTransaction", makeCanDeleteHandler({
@@ -4722,15 +4779,15 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       let pageSlugPlans: PageSlugPlans = { removals: [], renames: [] };
 
       const applied = {
-        config: 0, storyUpdate: 0, storyInsert: 0, objectUpdate: 0,
-        objectInsert: 0, objectRemove: 0, objectOrder: 0, glossaryUpdate: 0, glossaryInsert: 0,
+        config: 0, storyUpdate: 0, storyInsert: 0, storyRemove: 0, objectUpdate: 0,
+        objectInsert: 0, objectRemove: 0, objectOrder: 0, glossaryUpdate: 0, glossaryInsert: 0, glossaryRemove: 0,
         pageInsert: 0, pageCaptureFrontmatter: 0,
       };
       const skipped = {
         config: configArm.skipped,
-        storyUpdate: [] as string[], objectUpdate: [] as string[],
+        storyUpdate: [] as string[], storyRemove: [] as string[], objectUpdate: [] as string[],
         objectInsert: [] as string[], objectRemove: [] as string[], objectOrder: [] as string[],
-        glossaryUpdate: [] as string[], glossaryInsert: [] as string[],
+        glossaryUpdate: [] as string[], glossaryInsert: [] as string[], glossaryRemove: [] as string[],
         pageInsert: [] as string[], pageCaptureFrontmatter: [] as number[],
       };
       // The row ids whose front matter this call stored, which the Pages
@@ -4802,9 +4859,9 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       // An order entry is superseded on the same terms: the row the sync
       // paired no longer holds the key, and another row does.
       const superseded = { objectUpdate: updateMisses.superseded, objectOrder: [] as string[] };
-      // Object updates with a field left because the document's value is not
-      // the one the sync check read (`seen`): edited here since the review.
-      const changedSinceReview = { objectUpdate: [] as string[] };
+      // Object and glossary updates with a field left because the document's
+      // value is not the one the caller read (`seen`): edited here since.
+      const changedSinceReview = { objectUpdate: [] as string[], glossaryUpdate: [] as string[] };
       logIngestRefusals(this.projectId, refused, diagnostics);
       // Each entity this call pushed onto the document, held by reference so
       // the receipt check can read the `_id` the INSERT backfilled onto it.
@@ -4873,7 +4930,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
           // Checked against the live story inside the gate and before the
           // transaction: the hash is async, the transaction is not. A story
           // whose content is not applied keeps its row fields too, since the
-          // author's choice covered both (design §3).
+          // author's choice covered both.
           const replacements = await this.planContentReplacements(
             storiesArray, storyContent.accepted, content, contentCandidates,
           );
@@ -4986,6 +5043,11 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
               applied.storyInsert += 1;
             }
 
+            // --- story removes (see removeRowsById) ---
+            const storyRemoval = removeRowsById(storiesArray, payload.stories?.remove, "story_id", "storyId");
+            applied.storyRemove = storyRemoval.removed.length;
+            skipped.storyRemove.push(...storyRemoval.absent);
+
             // --- object updates (see updatedObject) ---
             for (const upd of objectUpdates.accepted) {
               const { map: m, missed } = this.updatedObject(objectsArray, upd);
@@ -5044,13 +5106,20 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
             for (const upd of glossaryUpdates.accepted) {
               const m = this.findByKey(glossaryArray, "term_id", upd.termId);
               if (!m) { skipped.glossaryUpdate.push(upd.termId); continue; }
-              this.replaceStatedYText(m, "title", upd.title);
-              this.replaceStatedYText(m, "definition", upd.definition);
-              this.setStatedValue(m, "kind", upd.kind);
+              const read = glossaryFieldsUnchangedSinceRead(m, upd);
+              if (read.changed) changedSinceReview.glossaryUpdate.push(upd.termId);
+              this.replaceStatedYText(m, "title", read.fields.title);
+              this.replaceStatedYText(m, "definition", read.fields.definition);
+              this.setStatedValue(m, "kind", read.fields.kind);
               applied.glossaryUpdate += 1;
             }
 
             removeHeldTerms(glossaryArray, payload.glossary);
+
+            // --- glossary removes (see removeRowsById) ---
+            const termRemoval = removeRowsById(glossaryArray, payload.glossary?.remove, "term_id", "termId");
+            applied.glossaryRemove = termRemoval.removed.length;
+            skipped.glossaryRemove.push(...termRemoval.absent);
 
             // --- glossary inserts (skip-if-present) ---
             for (const ins of glossaryInserts.accepted) {
@@ -6647,7 +6716,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
   /**
    * Forward an inbound sync packet to every other socket, unchanged.
    *
-   * Synchronous by contract (F1): it runs in the same continuation as the apply
+   * Synchronous by contract: it runs in the same continuation as the apply
    * that precedes it, and a send that throws is a client that has gone.
    */
   private relaySync(from: WebSocket, data: Uint8Array): void {
@@ -6942,7 +7011,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
    *
    * Its own method because the section from the second fence to the flush is
    * one continuation with one rule over it: nothing in it awaits until the
-   * drain has decided what the message may release (F1).
+   * drain has decided what the message may release.
    */
   private async handleSyncMessage(
     ws: WebSocket,
@@ -6961,7 +7030,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
     // generation and rebuild the document while it does — closing a socket
     // does not cancel a handler already running on it. This is what
     // establishes the generation at the point of application. From here
-    // through the apply, enforcement and the relay nothing awaits (F1), so
+    // through the apply, enforcement and the relay nothing awaits, so
     // no generation can move under them.
     const generation = this.socketMayReachDocument(ws);
     if (generation === null) return;
@@ -6975,7 +7044,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       return;
     }
 
-    // From here to the drain nothing awaits (F1), and everything the guard
+    // From here to the drain nothing awaits, and everything the guard
     // asks for is held rather than sent. The revert flag is the object's, and
     // messages resumed together from one membership read can each clear it
     // before another applies, so it is cleared here as well, where only this
@@ -7028,7 +7097,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       // reply, and a step 2 keeps its relay even when it triggered a revert:
       // it carries a peer's whole state, not one refused write.
       //
-      // F1: nothing is awaited between the apply above and the relay here.
+      // Nothing is awaited between the apply above and the relay here.
       if (!(this.revertedThisMessage && applied.type === syncProtocol.messageYjsUpdate)) {
         this.relaySync(ws, data);
       }
@@ -12246,7 +12315,7 @@ export class ProjectCollaborationDO extends DurableObject<Env> {
       // exists to remove. So it takes the stale branch WITHOUT the id: the
       // adopt-by-human-key arm below settles it against the row D1 says owns
       // the key, which is the pipeline that already owns that question and the
-      // downstream behaviour the detect-only ruling recorded. Where there is
+      // downstream behaviour already decided for detect-only. Where there is
       // no key to adopt by, there is nothing left that does not involve
       // trusting the value, so the entity is left alone and the sweep with it.
       const flagPlant = cfg.flagFields

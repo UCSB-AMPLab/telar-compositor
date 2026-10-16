@@ -70,7 +70,9 @@
     "back": "Elegir otro repositorio",
     "count_images": "{{count}} imágenes",
     "count_audio": "{{count}} audios",
-    "count_videos": "{{count}} videos"
+    "count_videos": "{{count}} videos",
+    "error_no_site_config": "Este repositorio no tiene un sitio Telar: no hay un archivo _config.yml en su carpeta principal. Selecciona un repositorio que lo tenga.",
+    "error_generic": "No pudimos importar este repositorio. Vuelve atrás y elígelo de nuevo, o prueba con otro."
   },
   "step_review": {
     "heading": "Importación completa",
@@ -92,7 +94,14 @@
     "description": "Tu sitio Telar se importó correctamente.",
     "created_description": "Tu nuevo sitio Telar está listo. Nos encargamos de toda la configuración por ti.",
     "first_build_note": "La primera construcción está en curso. Tu sitio estará disponible en unos minutos en:",
-    "go_to_start": "Ir a Inicio"
+    "go_to_start": "Ir a Inicio",
+    "heading_skipped": "Tu sitio quedó importado",
+    "description_skipped": "Algunos ajustes todavía no están bien, y es posible que tu sitio no se publique correctamente hasta que los corrijas.",
+    "unfixed_sheets": "Google Sheets sigue activado. Para desactivarlo, haz clic en Revisar los ajustes de nuevo y luego en Corregir y continuar.",
+    "unfixed_pages": "GitHub Pages no está activado, así que tu sitio no se puede publicar. Para activarlo, haz clic en Revisar los ajustes de nuevo y luego en Corregir y continuar.",
+    "unfixed_url": "La URL del sitio o la URL base no coincide con la dirección de tu sitio en GitHub Pages. Para corregirlas, haz clic en Revisar los ajustes de nuevo y luego en Corregir y continuar. También puedes corregirlas en Alojamiento, dentro de Configuración del sitio.",
+    "recheck": "Revisar los ajustes de nuevo",
+    "continue_failed": "No pudimos terminar de configurar tu sitio. Intenta de nuevo."
   },
   "inline_config": {
     "heading": "Configuración esencial",
@@ -117,7 +126,7 @@
     "url_passed": "La URL del sitio está configurada correctamente",
     "url_failed": "La URL del sitio necesita actualizarse",
     "url_pending": "La URL del sitio aún no se puede verificar",
-    "check_failed": "No pudimos leer la configuración de GitHub Pages de tu sitio. Seguiremos intentándolo.",
+    "check_failed": "No pudimos revisar la configuración de tu sitio en GitHub, así que todavía no terminamos de prepararlo. Volveremos a intentarlo en un momento; si prefieres, intenta de nuevo ahora.",
     "url_why": "La URL en _config.yml debe coincidir con tu despliegue en GitHub Pages para que las teselas IIIF se carguen desde la dirección correcta.",
     "url_pending_why": "Configuraremos la URL correcta automáticamente cuando habilitemos GitHub Pages. Si hay algún problema lo corregiremos.",
     "confirm": "Corregir y continuar",
@@ -130,7 +139,18 @@
     "error_generic": "No pudimos corregir la configuración. Intenta de nuevo o verifica los permisos de la App de GitHub.",
     "error_private_repo_title": "Este repositorio es privado",
     "error_private_repo": "GitHub Pages no se puede activar en un repositorio privado cuando la cuenta de GitHub es gratuita. Cambia el repositorio a público o usa una cuenta de pago, luego intenta de nuevo.",
-    "error_private_repo_link": "Abrir la configuración del repositorio en GitHub"
+    "error_private_repo_link": "Abrir la configuración del repositorio en GitHub",
+    "check_retry": "Intentar de nuevo",
+    "check_not_found": "No encontramos este sitio para revisar su configuración. Vuelve atrás y elige el repositorio de nuevo.",
+    "check_pages_refused": "No pudimos comprobar si GitHub Pages está activado porque GitHub rechazó la solicitud, así que todavía no terminamos de preparar tu sitio. En la configuración de la App de GitHub, permite que el Compositor lea GitHub Pages y luego intenta de nuevo.",
+    "error_pages_failed_title": "No se activó GitHub Pages",
+    "error_pages_failed": "GitHub se negó a activar Pages en este repositorio, así que no se cambió nada. En GitHub, abre la configuración del repositorio (Settings), elige Pages y, en Source, selecciona GitHub Actions. Luego intenta de nuevo.",
+    "error_sheets_not_disableable_title": "No se desactivó Google Sheets",
+    "error_sheets_not_disableable": "Telar no pudo desactivar Google Sheets por la forma en que está configurado en el _config.yml de tu sitio, así que no se cambió nada. En el _config.yml de tu repositorio, configura enabled: false en google_sheets y luego intenta de nuevo.",
+    "error_config_not_found_title": "No se encontró la configuración del sitio",
+    "error_config_not_found": "El Compositor no pudo leer el _config.yml de tu repositorio, así que no se cambió nada. Verifica que el archivo esté en la rama main y luego intenta de nuevo.",
+    "error_not_found_title": "No se encontró el sitio",
+    "error_not_found": "El Compositor no encontró este sitio, así que no se cambió nada. Vuelve atrás y elige el repositorio de nuevo."
   },
   "create_site": {
     "form": {

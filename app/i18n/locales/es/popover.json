@@ -1,7 +1,6 @@
 {
   "in_sync": {
     "title": "Todo está sincronizado",
-    "published": "Última publicación: {{time}}",
     "commit": "commit {{sha}}",
     "synced": "Sincronizado desde el repositorio {{time}}",
     "view_site": "Ver el sitio publicado",
@@ -26,16 +25,22 @@
     "review": "Revisar todos los cambios",
     "publish": "Publicar"
   },
+  "check_failed": {
+    "title": "No se pudo revisar GitHub",
+    "body": "El Compositor no pudo conectarse con tu repositorio hace un momento, así que no puede saber si alguien hizo cambios desde tu última publicación. Puedes seguir editando.",
+    "publish_line": "Podrás publicar cuando el Compositor logre revisar GitHub.",
+    "try_again": "Intentar de nuevo"
+  },
+  "first_publish": {
+    "title": "Aún no se ha publicado desde el Compositor",
+    "body": "Tu primera publicación desde el Compositor guarda los archivos de tu sitio con la estructura que usa el Compositor, sin perder nada de lo que contienen."
+  },
   "out_of_sync": {
-    "title": "GitHub ha cambiado",
-    "body": "Alguien editó el repositorio directamente. Revisa qué cambió antes de publicar.",
-    "diff_label": "Qué cambió",
-    "added": "{{n}} agregado",
-    "changed": "{{n}} cambiado",
-    "removed": "{{n}} eliminado",
-    "keep_mine": "Mantener mi versión",
+    "title": "Cambios en GitHub",
+    "body": "Alguien hizo cambios en el repositorio después de tu última publicación. Elige qué conservar antes de volver a publicar.",
     "review": "Revisar cambios",
-    "accept_divergence_stale": "GitHub cambió mientras revisabas las diferencias, así que no guardamos tu elección. Vuelve a revisar los cambios para ver los más recientes."
+    "collab_body": "Alguien hizo cambios en el repositorio después de la última publicación. {{name}}, quien coordina este sitio, elegirá qué versiones conservar. Puedes seguir editando, pero no podrás publicar hasta que lo haga.",
+    "collab_body_unnamed": "Alguien hizo cambios en el repositorio después de la última publicación. La persona que coordina este sitio elegirá qué versiones conservar. Puedes seguir editando, pero no podrás publicar hasta que lo haga."
   },
   "publishing": {
     "title": "Publicando… {{step}} de {{total}}",

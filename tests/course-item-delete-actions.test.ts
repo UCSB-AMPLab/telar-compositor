@@ -3,8 +3,7 @@
  *
  * `objects.course_project_id` gates deletion on every path, not only through
  * the collaborative document: the detail page's `delete-object` reads the
- * row's marker server-side, in the action, before doing any work of its own
- * (design §6). The UI gate is a mirror, not the enforcement.
+ * row's marker server-side, in the action, before doing any work of its own. The UI gate is a mirror, not the enforcement.
  *
  * The delete lives on the detail route alone, so the objects list is covered
  * here for what it must NOT do: the intent reaches its 400 default and no D1
@@ -13,7 +12,7 @@
  * so its unmarked case asserts the `ok` answer the page waits for, not a
  * DELETE.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

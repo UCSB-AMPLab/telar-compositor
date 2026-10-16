@@ -19,18 +19,15 @@
     "nothing_changing": "No hay cambios desde tu última publicación."
   },
   "passed_checks": {
-    "object_metadata": "Todos los objetos tienen los datos necesarios",
-    "term_links": "No hay enlaces [[término]] rotos",
-    "iiif_tiles": "Las teselas IIIF están listas",
-    "site_url": "La URL del sitio coincide con la configurada en GitHub Pages",
-    "telar_version": "telar_version al día"
+    "object_titles": "Todos los objetos tienen título"
   },
   "publish_section": {
     "commit_message_label": "Mensaje de commit",
     "edit_message": "Editar el mensaje",
     "done_editing": "Listo",
     "publish_now": "Publicar ahora",
-    "blocked_note": "Corrige lo de arriba antes de publicar."
+    "blocked_note": "Corrige lo de arriba antes de publicar.",
+    "language_choice_note": "Elige qué versión de cada página conservar antes de publicar."
   },
   "success_card": {
     "heading": "Publicado. {{url}}",
@@ -62,15 +59,22 @@
   "checks": {
     "heading": "Verificaciones previas",
     "state_unavailable": "No pudimos hacer estas verificaciones: no logramos ver el contenido actual de tu sitio. Vuelve a cargar la página en un momento.",
+    "may_be_behind": "Es posible que estas verificaciones no tengan en cuenta tus últimos cambios. Verifica de nuevo en un momento.",
     "failed": "No pudimos hacer estas verificaciones, y sin ellas no puedes publicar. Intenta de nuevo en un momento.",
     "run_again": "Verificar de nuevo",
+    "first_publish_title": "Tu primera publicación desde el Compositor",
+    "first_publish_body": "Esta publicación guarda los archivos de tu sitio con la estructura que usa el Compositor, sin perder nada de lo que contienen:",
+    "first_publish_sheets": "<0>project.csv</0> y las hojas de las historias reciben una fila de encabezados en español y las columnas que lee esta versión de Telar",
+    "first_publish_texts": "los textos de las historias pasan a <0>telar-content/texts/stories/</0>, un archivo por panel",
+    "github_unchecked": "No se pudo revisar GitHub hace un momento, así que el Compositor no puede saber si alguien hizo cambios desde tu última publicación. Podrás publicar cuando logre revisarlo.",
+    "github_unchecked_retry": "Intentar de nuevo",
     "workflow_repair_build_unchecked": "No pudimos ver cómo va la reconstrucción. Seguiremos intentándolo.",
-    "all_passed": "Todas las verificaciones pasaron",
-    "all_passed_description": "Tu contenido está listo para publicar.",
     "blockers_heading": "Debes corregir esto antes de publicar",
     "warnings_heading": "Sugerencias",
-    "stale_head": "El repositorio de tu sitio cambió desde la última sincronización. Sincroniza de nuevo antes de publicar.",
-    "stale_head_action": "Resolver sincronización",
+    "stale_head": "Alguien hizo cambios en el repositorio después de tu última publicación. Elige qué conservar antes de volver a publicar.",
+    "stale_head_action": "Revisar cambios",
+    "stale_head_collab": "Alguien hizo cambios en el repositorio después de la última publicación. {{name}}, quien coordina este sitio, elegirá qué versiones conservar. Puedes seguir editando, pero no podrás publicar hasta que lo haga.",
+    "stale_head_collab_unnamed": "Alguien hizo cambios en el repositorio después de la última publicación. La persona que coordina este sitio elegirá qué versiones conservar. Puedes seguir editando, pero no podrás publicar hasta que lo haga.",
     "object_no_title": "El objeto \"{{id}}\" no tiene título",
     "object_reserved_column": "El objeto \"{{id}}\" tiene una columna llamada \"{{column}}\" que Telar reserva para su propio uso. Quita esa columna antes de publicar, o la próxima construcción del sitio fallará.",
     "glossary_reserved_column": "El término del glosario \"{{id}}\" tiene una columna llamada \"{{column}}\" que Telar reserva para su propio uso. Quita esa columna antes de publicar, o la próxima construcción del sitio fallará.",
@@ -112,6 +116,8 @@
     "answer_format_heading": "encabezados",
     "answer_format_blockquote": "citas",
     "answer_format_rule": "líneas divisorias",
+    "about_page_template": "Tu página {{title}} todavía tiene el texto con el que empiezan todos los sitios nuevos de Telar: habla de Telar y no de tu proyecto. Cuando quieras, reescríbela para que hable del tuyo.",
+    "about_page_template_link": "Editar la página {{title}}",
     "page_no_title": "Una página no tiene título — abre Páginas para ponerle un título, o elimínala.",
     "page_frontmatter_unwritable": "El título de la página \"{{page}}\" está escrito de una forma que el Compositor no puede cambiar sin tocar el resto del bloque de ajustes en el que está. Para publicar, conserva en el bloque solo el título, lo que quita los demás ajustes de la página, o edita el archivo de la página en GitHub.",
     "page_frontmatter_reset": "Conservar solo el título",
@@ -123,6 +129,7 @@
     "renamed_duplicate_columns": "En {{file}} hay {{total}} columnas llamadas \"{{column}}\". Al publicar, todas menos la primera quedarán con nombres nuevos: {{renamed}}.",
     "private_story_no_key": "Estas historias son privadas, pero no hay una clave de acceso configurada: {{stories}}. La construcción del sitio fallará hasta que establezcas una clave de acceso en Configuración del sitio.",
     "private_story_workflow_stale": "Estas historias son privadas, pero el flujo de trabajo que construye tu sitio está desactualizado y no incluye el paso que las protege: {{stories}}. La construcción del sitio fallará hasta que reemplaces .github/workflows/build.yml por el más reciente del repositorio de Telar. <0>Las notas de actualización explican cómo hacerlo.</0>",
+    "stories_leave_site": "Al publicar, estas historias desaparecerán de tu sitio: {{stories}}. Las historias eliminadas o marcadas como borrador no se publican; para que una historia en borrador siga en el sitio, desactiva Borrador.",
     "workflow_repair_action": "Actualizar el flujo de trabajo",
     "workflow_repair_running": "Actualizando el flujo de trabajo…",
     "workflow_repair_done": "El flujo de trabajo quedó actualizado.",
@@ -219,7 +226,9 @@
   "build": {
     "failed_description": "Algo salió mal al construir tu sitio.",
     "publish_failed_description": "No pudimos publicar tus cambios en GitHub, así que tu sitio sigue igual. No se perdió nada de lo que editaste: intenta de nuevo en un momento.",
-    "stale_head_error": "El repositorio cambió mientras publicabas. Sincroniza de nuevo e intenta otra vez.",
+    "stale_head_error": "El repositorio cambió mientras publicabas, así que no se publicó nada. Revisa los cambios en GitHub y vuelve a publicar.",
+    "stale_head_error_collab": "El repositorio cambió mientras publicabas, así que no se publicó nada. {{name}}, quien coordina este sitio, revisará los cambios hechos en GitHub. Vuelve a publicar cuando lo haya hecho.",
+    "stale_head_error_collab_unnamed": "El repositorio cambió mientras publicabas, así que no se publicó nada. La persona que coordina este sitio revisará los cambios hechos en GitHub. Vuelve a publicar cuando lo haya hecho.",
     "snapshot_failed": "No pudimos guardar tus últimos cambios, así que detuvimos la publicación. Intenta de nuevo en un momento.",
     "snapshot_unreachable": "No pudimos conectarnos con tu sesión de edición. Detuvimos la publicación para no dejar por fuera tus cambios recientes.",
     "snapshot_incomplete": "No pudimos guardar parte de tu contenido, así que detuvimos la publicación: si publicábamos, esa parte quedaba por fuera de tu sitio. Vuelve a cargar la página e intenta de nuevo.",
@@ -234,12 +243,22 @@
     "operation_in_progress": "En este sitio ya hay una publicación, una actualización de Telar o una subida de objetos en curso, así que no pudimos empezar a publicar. Vuelve a intentarlo cuando termine.",
     "stories_unreadable": "No pudimos leer las historias de tu sitio en GitHub. Detuvimos la publicación para que no se pierda nada de las historias. Intenta de nuevo en un momento.",
     "changed_during_publish": "Alguien editó una historia mientras preparábamos la publicación, así que la detuvimos. Publica de nuevo para incluir ese cambio.",
-    "github_permission": "GitHub no permitió guardar tus cambios, así que tu sitio sigue igual. No se perdió nada de lo que editaste. Puede que Telar ya no tenga acceso al repositorio: pídele a quien lo administra en GitHub que revise si la App de GitHub del Compositor de Telar sigue instalada en él, y luego publica de nuevo."
+    "github_permission": "GitHub no permitió guardar tus cambios, así que tu sitio sigue igual. No se perdió nada de lo que editaste. Puede que Telar ya no tenga acceso al repositorio: pídele a quien lo administra en GitHub que revise si la App de GitHub del Compositor de Telar sigue instalada en él, y luego publica de nuevo.",
+    "page_language_unchosen": "Detuvimos la publicación: una de tus páginas está en dos idiomas y no has elegido qué versión conservar. Elige una arriba y vuelve a publicar.",
+    "page_language_not_applied": "No pudimos conservar la versión que elegiste porque la página cambió o no se pudo guardar. Detuvimos la publicación sin hacer ningún cambio. Vuelve a cargar la página e intenta de nuevo."
   },
   "repo_unavailable": {
     "heading": "La publicación está en pausa",
     "lead": "Telar no puede acceder al repositorio de este proyecto ({{repo}}).",
     "body": "Puede que lo hayan eliminado, le hayan cambiado el nombre o lo hayan hecho privado, o que la App de GitHub haya perdido el acceso. Tu trabajo está a salvo: todo lo que has editado en el Compositor se guarda aparte del repositorio. Pero no podrás publicar hasta que Telar vuelva a tener acceso.",
     "manage_cta": "Gestionar el acceso al repositorio en GitHub"
+  },
+  "language_choice": {
+    "heading": "Tu página {{page}} está en dos idiomas",
+    "heading_more": "Tu página {{page}} está en {{number}} idiomas",
+    "body": "Un sitio de Telar está en un solo idioma, pero esta página está en dos archivos: {{files}}. Elige cuál conservar. Cuando publiques, la otra versión se eliminará de tu sitio.",
+    "body_more": "Un sitio de Telar está en un solo idioma, pero esta página está en {{number}} archivos: {{files}}. Elige cuál conservar. Cuando publiques, las demás versiones se eliminarán de tu sitio.",
+    "keep": "Conservar {{file}}",
+    "keep_other_note": "Su texto pasa a {{page}}, así que la página conserva su dirección y su lugar en el menú, y {{file}} se elimina."
   }
 }

@@ -26,7 +26,7 @@
  * defaults are written to D1 alone and reach `_config.yml` at the next
  * publish, so creating a course cannot fail on a GitHub error.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { KNOWN_STORY_KEYS, isStoryStepRow } from "~/lib/story-step-rows";
@@ -304,8 +304,8 @@ export function parseProjectKind(value: unknown): ProjectKind {
 
 /**
  * The config a course is provisioned with: a shared collection, and no
- * stories section on the published site. Ruling 23 keeps these in D1 at
- * creation rather than committing them, so course creation does not depend
+ * stories section on the published site. They are kept in D1 at
+ * creation rather than committed, so course creation does not depend
  * on a GitHub round-trip and cannot fail on a repo error.
  */
 export function courseConfigDefaults(
@@ -325,6 +325,7 @@ export interface ImportResult {
   validationError?:
     | "not_telar"
     | "empty_repo"
+    | "no_site_config"
     | "already_connected"
     | "colliding_columns"
     | "sheet_unreadable"
@@ -2802,6 +2803,9 @@ export const KNOWN_PROJECT_KEYS: ReadonlySet<string> = new Set([
  * column; it applies PRIVATE_TRUTHY to whatever single cell it is handed,
  * whether that cell came from `parseTelarCsv` or was set directly (as
  * callers that build rows by hand do throughout this file's tests).
+ *
+ * A row whose `story_id` is blank but whose `order` and `title` are both
+ * filled is addressed `story-<order>`, as the framework reads it.
  */
 export function mapProjectCsv(
   rows: Record<string, string>[],
@@ -2826,9 +2830,17 @@ export function mapProjectCsv(
 
     const { extras } = collectExtraColumns(row, KNOWN_PROJECT_KEYS);
 
+    const orderText = pythonStrip(row.order ?? "");
+    const storyId =
+      pythonStrip(row.story_id ?? "") === "" &&
+      orderText !== "" &&
+      pythonStrip(row.title ?? "") !== ""
+        ? `story-${orderText}`
+        : (row.story_id ?? "");
+
     return {
       project_id: projectId ?? 0,
-      story_id: row.story_id ?? "",
+      story_id: storyId,
       title: row.title || undefined,
       subtitle: row.subtitle || undefined,
       byline: row.byline || undefined,
@@ -4373,9 +4385,9 @@ function objectsReadAtImport(googleSheetsEnabled: boolean, head: string): string
  * Every file, the tree, the pages scan and the orphan scan are read at one
  * commit, the head of the default branch resolved first (`importHead`), and
  * every file strictly (`readAtHead`). A missing file keeps its meaning at each
- * site: no `_config.yml`, or no default branch, is an empty repository; a
- * story file absent at one path is looked for at the next. A read that fails
- * throws `SheetUnreadableError` naming the file, and all reads come before the
+ * site: no default branch is an empty repository, no `_config.yml` is a
+ * repository with no Telar site; a story file absent at one path is looked
+ * for at the next. A read that fails throws `SheetUnreadableError` naming the file, and all reads come before the
  * first write, so a failed read seeds nothing: the seeded project is what the
  * next publish writes back, and a file taken as missing would be deleted there.
  */
@@ -4407,7 +4419,7 @@ export async function importRepo({
   if (configContent === null) {
     return {
       valid: false,
-      validationError: "empty_repo",
+      validationError: "no_site_config",
       project: { imported: false, storiesFound: 0 },
       objects: { imported: 0, skipped: 0, warnings: [] },
       stories: { imported: 0, warnings: [] },
@@ -4973,7 +4985,7 @@ export async function importRepo({
     }
   }
 
-  // The record of the page files read (R6): the commit read and each page
+  // The record of the page files read: the commit read and each page
   // file, mapped to the page inserted from it. head_sha stays null, so the
   // record's commit is the pages base until a head is recorded.
   await recordImportedPageFiles(db, projectId, head, pageRows, scannedPages.removed);

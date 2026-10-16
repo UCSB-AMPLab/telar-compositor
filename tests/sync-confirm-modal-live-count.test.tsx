@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 /**
- * SyncConfirmModal chooses its conflict-warning step from the count the header
- * reads through useSiteStatus: the live count when the poll gave one,
- * otherwise the loader's estimate, which can over-warn and never skips the
- * warning (it misses a local deletion, so an unknown count always warns). The number is stated only when it is the live count.
+ * A two-way check (no base) goes straight to the review, whatever count the
+ * header reads through useSiteStatus: every change is an item with no choice
+ * made, so nothing of the author's is overwritten without their choosing it,
+ * and no warning step stands before the list.
  *
-  * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -59,90 +59,56 @@ const diffWithChanges = {
 /** The modal wired the way the objects page wires it: one useSiteStatus read. */
 function Wired() {
   const { count, countKnown } = useSiteStatus();
-  return <SyncConfirmModal open unpublishedCount={count} countKnown={countKnown} onClose={() => {}} />;
+  return <SyncConfirmModal open onClose={() => {}} />;
 }
 
 /** Opens the dialog, starts the check, and delivers the diff. */
 function check(diff: FullSyncDiff = diffWithChanges) {
   const view = render(<Wired />);
-  fireEvent.click(screen.getByText("sync_modal.check_changes"));
   fetcherData.current = { ok: true, intent: "compute-full-sync-diff", diff };
   view.rerender(<Wired />);
   return view;
 }
 
-const warning = /sync_modal\.conflict_warning/;
+/** The review's item for the new object, and its Apply button. */
+const item = () => screen.getByTestId("sync-item-object:new:o1");
+const applyButton = () => screen.getByText("sync_modal.review.apply") as HTMLButtonElement;
 
-describe("SyncConfirmModal conflict warning reads the header's count", () => {
+describe("SyncConfirmModal on a two-way check, whatever the header's count", () => {
   beforeEach(() => {
     fetcherData.current = undefined;
     poll.current = undefined;
     estimate.current = 8;
   });
 
-  it("shows the warning from the estimate when the poll has failed (count unknown)", () => {
-    poll.current = undefined;
+  it.each([
+    ["the poll has failed (count unknown)", undefined],
+    ["the poll answered without a count", {}],
+    ["the live count is 0", { unpublishedCount: 0 }],
+    ["the live count is 4", { unpublishedCount: 4 }],
+  ] as const)("lists the change with no choice made and no warning step when %s", (_label, polled) => {
+    poll.current = polled as typeof poll.current;
     check();
-    expect(screen.getByText("sync_modal.conflict_warning_unknown")).toBeTruthy();
-    expect(screen.queryByText("sync_modal.computing")).toBeNull();
+    expect(screen.queryByText(/sync_modal\.(conflict_warning|sync_anyway|publish_first)/)).toBeNull();
+    expect(item()).toBeTruthy();
+    expect((screen.getAllByRole("radio") as HTMLInputElement[]).some((r) => r.checked)).toBe(false);
+    expect(applyButton().disabled).toBe(true);
   });
 
-  it("shows the warning from the estimate when the poll answered without a count", () => {
-    poll.current = {};
-    check();
-    expect(screen.getByText("sync_modal.conflict_warning_unknown")).toBeTruthy();
-  });
-
-  it("shows no warning when the live count is 0 although the estimate is 8", () => {
-    poll.current = { unpublishedCount: 0 };
-    check();
-    expect(screen.queryByText(warning)).toBeNull();
-    expect(screen.getByText("sync_modal.apply_sync")).toBeTruthy();
-  });
-
-  it("states the live count in the warning when it is 4", () => {
+  it("enables Apply once the change has a choice", () => {
     poll.current = { unpublishedCount: 4 };
     check();
-    expect(screen.getByText("sync_modal.conflict_warning:4")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "sync_modal.review.add" }));
+    expect(applyButton().disabled).toBe(false);
   });
 
-  it("withdraws a warning chosen from the estimate when the live count lands as 0", () => {
-    const view = check();
-    expect(screen.getByText("sync_modal.conflict_warning_unknown")).toBeTruthy();
-    poll.current = { unpublishedCount: 0 };
-    view.rerender(<Wired />);
-    expect(screen.queryByText(warning)).toBeNull();
-    expect(screen.getByText("sync_modal.apply_sync")).toBeTruthy();
-  });
-
-  it("states the number once the live count lands while the warning is shown", () => {
-    const view = check();
-    poll.current = { unpublishedCount: 4 };
-    view.rerender(<Wired />);
-    expect(screen.getByText("sync_modal.conflict_warning:4")).toBeTruthy();
-  });
-
-  it("warns without a number when the estimate is 0 and the count is unknown (a local deletion is not in the estimate)", () => {
-    estimate.current = 0;
-    check();
-    expect(screen.getByText("sync_modal.conflict_warning_unknown")).toBeTruthy();
-    expect(screen.queryByText("sync_modal.apply_sync")).toBeNull();
-  });
-
-  it("states the number when the live count lands after a warning chosen from an estimate of 0", () => {
-    estimate.current = 0;
-    const view = check();
-    poll.current = { unpublishedCount: 4 };
-    view.rerender(<Wired />);
-    expect(screen.getByText("sync_modal.conflict_warning:4")).toBeTruthy();
-  });
-
-  it("does not warn when the check found no changes", () => {
+  it("shows nothing to sync when the check found no changes", () => {
     const none = {
       ...diffWithChanges,
       objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [] },
     } as unknown as FullSyncDiff;
     check(none);
-    expect(screen.queryByText(warning)).toBeNull();
+    expect(screen.getByText("sync_modal.no_changes")).toBeTruthy();
+    expect(screen.queryByTestId(/^sync-item-/)).toBeNull();
   });
 });

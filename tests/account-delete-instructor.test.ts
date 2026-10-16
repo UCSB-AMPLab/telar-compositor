@@ -1,15 +1,15 @@
 /**
  * The `/account` `delete-account` action's race-guard EXISTS check must
- * exclude instructor rows (design §3): "an uncorrected instructor row
+ * exclude instructor rows: an uncorrected instructor row
  * would block a solo student from deleting their account while
- * remove-member refuses to remove the instructor."
+ * remove-member refuses to remove the instructor.
  *
  * Run against a real D1 database (via `createMemoryD1`), with the real
  * `deleteProjectCascade` — the point being verified is that account
  * deletion actually succeeds end-to-end for this scenario, not that a
  * mock was called.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";

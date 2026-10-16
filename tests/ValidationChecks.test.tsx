@@ -1,18 +1,23 @@
 // @vitest-environment jsdom
 /**
- * The rewritten Publish page's "What we checked" section renders a chilca-pale
- * numbered list of the checks that PASSED (the canonical passed-check label set
- * minus any failing codes — runPrePublishValidation only emits FAILURES, so
- * passed labels are derived from a static set minus the failures), alongside
- * the reworded `page_no_title` blocker that no longer interpolates an empty slug.
+ * Tests for `ValidationChecks`, the Publish page's "What we checked" section.
+ * It renders a chilca-pale numbered list of the checks that passed: a fixed
+ * set of check labels minus the ones a failing code suppresses, because
+ * `runPrePublishValidation` emits only failures. The set holds one check,
+ * `object_titles`, which an `object_no_title` warning removes. The blockers and
+ * warnings render with their actions: the `page_no_title` blocker names no
+ * empty slug, the stale-workflow warning offers its repair and a status line
+ * that follows the repair's own rebuild, and the `stale_head` blocker opens
+ * the review in place for the convenor and tells anyone else who chooses. The
+ * section also reports what the checks read of GitHub: the first publish's
+ * notice, and that GitHub could not be checked.
  *
- * The passed-check ↔ failing-code mapping lives in ValidationChecks: only
- * `object_metadata` is suppressed by a validation code (`object_no_title`);
- * the other four canonical checks have no code yet and always pass.
+ * A check that did not run is not listed as passed: there is no entry for
+ * term links, IIIF tiles, the site URL, the Telar version or object metadata.
  *
  * i18n is mocked as a key-passthrough so assertions key off the translation
- * keys, not the copy. MemoryRouter wraps the render because the stale_head
- * blocker renders a <Link>.
+ * keys, not the copy. The stale_head blocker opens the review the app layout
+ * mounts, read here from a `SyncReviewContext` the test provides.
  *
  * Several keys carry a fixture string instead of passing through, because a
  * message that renders a link needs a body with an interpolated value and a
@@ -21,12 +26,13 @@
  * which renders the same warning through the real i18next and the real
  * catalogues to pin what an author's own words become.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import { SyncReviewContext, type SyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 
 const { language, FIXTURE_STRINGS } = vi.hoisted(() => ({
   language: { current: "en" },
@@ -47,6 +53,7 @@ const { language, FIXTURE_STRINGS } = vi.hoisted(() => ({
     "checks.answer_format_heading": "headings",
     "checks.answer_format_blockquote": "block quotes",
     "checks.answer_format_rule": "horizontal rules",
+    "checks.first_publish_sheets": "<0>project.csv</0> and the story sheets",
   } as Record<string, string>,
 }));
 
@@ -75,13 +82,10 @@ vi.mock("react-i18next", () => ({
 
 import { ValidationChecks } from "~/components/features/publish/ValidationChecks";
 
-const CANONICAL_KEYS = [
-  "passed_checks.object_metadata",
-  "passed_checks.term_links",
-  "passed_checks.iiif_tiles",
-  "passed_checks.site_url",
-  "passed_checks.telar_version",
-];
+// Every check listed here has code behind it in runPrePublishValidation.
+const CANONICAL_KEYS = ["passed_checks.object_titles"];
+
+const review: { current: SyncReview } = { current: { openReview: vi.fn(), canReview: true, coordinatorName: "Ana Pérez" } };
 
 function renderChecks(
   validation: Parameters<typeof ValidationChecks>[0]["validation"],
@@ -89,10 +93,38 @@ function renderChecks(
 ) {
   return render(
     <MemoryRouter>
-      <ValidationChecks validation={validation} workflowRepair={workflowRepair} />
+      <SyncReviewContext.Provider value={review.current}>
+        <ValidationChecks validation={validation} workflowRepair={workflowRepair} />
+      </SyncReviewContext.Provider>
     </MemoryRouter>,
   );
 }
+
+describe("suggestions", () => {
+  const SUGGESTION = {
+    code: "about_page_template",
+    message: "about_page_template",
+    entityId: "about",
+    params: { title: "About" },
+  };
+
+  it("renders a suggestion with a link to the pages, in neutral styling, beside the passed checks", () => {
+    renderChecks({ blockers: [], warnings: [], suggestions: [SUGGESTION] });
+    const link = screen.getByRole("link", { name: "checks.about_page_template_link" });
+    expect(link.getAttribute("href")).toBe("/pages?page=about");
+    expect(screen.getByText("checks.about_page_template")).toBeTruthy();
+    expect(screen.getByText(CANONICAL_KEYS[0])).toBeTruthy();
+    const card = link.closest("div")!.parentElement!;
+    expect(card.className).not.toMatch(/amber|terracotta|red/);
+    expect(screen.queryByText("checks.warnings_heading")).toBeNull();
+    expect(screen.queryByText("checks.blockers_heading")).toBeNull();
+  });
+
+  it("renders nothing for an empty list", () => {
+    renderChecks({ blockers: [], warnings: [], suggestions: [] });
+    expect(screen.queryByRole("link", { name: "checks.about_page_template_link" })).toBeNull();
+  });
+});
 
 describe("'What we checked' passed-checks numbered list", () => {
   it("renders the canonical passed-check labels as a numbered list when nothing fails", () => {
@@ -105,20 +137,26 @@ describe("'What we checked' passed-checks numbered list", () => {
     expect(items.length).toBe(CANONICAL_KEYS.length);
   });
 
-  it("omits a check whose failing code appears in validation (passed = canonical set minus failures)", () => {
-    // object_no_title warning suppresses the object_metadata passed-check.
+  it("omits a check whose failing code appears in validation (passed = listed checks minus failures)", () => {
+    // object_no_title warning suppresses the object_titles passed-check.
     renderChecks({
       blockers: [],
       warnings: [{ code: "object_no_title", message: "object_no_title", entityId: "obj-1", params: { id: "obj-1" } }],
     });
-    expect(screen.queryByText("passed_checks.object_metadata")).toBeNull();
-    // The other four canonical checks (no validation code) still pass.
-    expect(screen.getByText("passed_checks.term_links")).toBeTruthy();
-    expect(screen.getByText("passed_checks.iiif_tiles")).toBeTruthy();
-    expect(screen.getByText("passed_checks.site_url")).toBeTruthy();
-    expect(screen.getByText("passed_checks.telar_version")).toBeTruthy();
+    expect(screen.queryByText("passed_checks.object_titles")).toBeNull();
+    // Nothing else is listed as passed, so there is no passed list at all.
+    expect(document.querySelectorAll("ol li").length).toBe(0);
     // And the warning itself renders.
     expect(screen.getByText("checks.object_no_title")).toBeTruthy();
+  });
+});
+
+describe("passed list lists only checks that ran", () => {
+  it("lists no check for term links, IIIF tiles, the site URL or the Telar version", () => {
+    renderChecks({ blockers: [], warnings: [] });
+    for (const key of ["term_links", "iiif_tiles", "site_url", "telar_version", "object_metadata"]) {
+      expect(screen.queryByText(`passed_checks.${key}`)).toBeNull();
+    }
   });
 });
 
@@ -298,11 +336,12 @@ describe("the repair status line, which outlives the warning", () => {
     expect(screen.getByText("checks.workflow_repair_failed")).toBeTruthy();
   });
 
-  it("renders the stale-head line with its re-sync link", () => {
+  it("renders the stale-head line with the button that opens the review", () => {
+    review.current = { openReview: vi.fn(), canReview: true, coordinatorName: "Ana Pérez" };
     renderChecks({ blockers: [], warnings: [] }, repaired("stale"));
     expect(screen.getByText("checks.stale_head")).toBeTruthy();
-    const link = screen.getByText("checks.stale_head_action").closest("a");
-    expect(link?.getAttribute("href")).toBe("/objects?sync=1");
+    fireEvent.click(screen.getByRole("button", { name: "checks.stale_head_action" }));
+    expect(review.current.openReview).toHaveBeenCalledTimes(1);
   });
 
   it("links the permission line to the installation settings page, in a new tab", () => {
@@ -455,15 +494,30 @@ describe("the status line follows the repair's own rebuild", () => {
   });
 });
 
-describe("stale_head blocker action link", () => {
-  it("deep-links to the Objects-page sync review flow", () => {
-    renderChecks({
-      blockers: [{ code: "stale_head", message: "stale_head" }],
-      warnings: [],
-    });
-    const link = screen.getByText("checks.stale_head_action").closest("a");
-    expect(link).not.toBeNull();
-    expect(link?.getAttribute("href")).toBe("/objects?sync=1");
+describe("stale_head blocker", () => {
+  const STALE = { blockers: [{ code: "stale_head", message: "stale_head" }], warnings: [] } as Parameters<typeof renderChecks>[0];
+
+  it("opens the review in place for the convenor, linking nowhere", () => {
+    review.current = { openReview: vi.fn(), canReview: true, coordinatorName: "Ana Pérez" };
+    const { container } = renderChecks(STALE);
+    expect(screen.getByText("checks.stale_head")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "checks.stale_head_action" }));
+    expect(review.current.openReview).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("a[href*='sync']")).toBeNull();
+  });
+
+  it("tells a collaborator or instructor who chooses, with no button", () => {
+    review.current = { openReview: vi.fn(), canReview: false, coordinatorName: "Ana Pérez" };
+    renderChecks(STALE);
+    expect(screen.getByText("checks.stale_head_collab")).toBeTruthy();
+    expect(screen.queryByText("checks.stale_head")).toBeNull();
+    expect(screen.queryByRole("button", { name: "checks.stale_head_action" })).toBeNull();
+  });
+
+  it("names no one when no name is stored", () => {
+    review.current = { openReview: vi.fn(), canReview: false, coordinatorName: null };
+    renderChecks(STALE);
+    expect(screen.getByText("checks.stale_head_collab_unnamed")).toBeTruthy();
   });
 });
 
@@ -581,5 +635,40 @@ describe("the page front-matter blocker", () => {
       </MemoryRouter>,
     );
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("what the checks read of GitHub", () => {
+  function renderWithHead(headState: Parameters<typeof ValidationChecks>[0]["headState"], onRecheckGithub = vi.fn()) {
+    render(
+      <MemoryRouter>
+        <ValidationChecks validation={{ blockers: [], warnings: [] }} headState={headState} onRecheckGithub={onRecheckGithub} />
+      </MemoryRouter>,
+    );
+    return onRecheckGithub;
+  }
+
+  it("shows the first publish's notice, its paths as code, in the first-publish state", () => {
+    renderWithHead("first_publish");
+    expect(screen.getByText("checks.first_publish_title")).toBeTruthy();
+    expect(screen.getByText("checks.first_publish_body")).toBeTruthy();
+    expect(screen.getByText("project.csv").tagName).toBe("CODE");
+    expect(screen.getByText("checks.first_publish_texts")).toBeTruthy();
+  });
+
+  it("shows no notice at the recorded head, nor over a change on GitHub", () => {
+    renderWithHead("current");
+    renderWithHead("stale");
+    expect(screen.queryByText("checks.first_publish_title")).toBeNull();
+    expect(screen.queryByText("checks.github_unchecked")).toBeNull();
+  });
+
+  it("says GitHub could not be checked, with no blocker and no first-publish notice, and checks again on request", () => {
+    const recheck = renderWithHead("unchecked");
+    expect(screen.getByText("checks.github_unchecked")).toBeTruthy();
+    expect(screen.queryByText("checks.blockers_heading")).toBeNull();
+    expect(screen.queryByText("checks.first_publish_title")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "checks.github_unchecked_retry" }));
+    expect(recheck).toHaveBeenCalledTimes(1);
   });
 });

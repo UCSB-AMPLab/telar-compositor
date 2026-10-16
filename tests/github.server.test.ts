@@ -12,7 +12,7 @@
  * file. The diff's reading of that same response is asserted alongside it, so
  * the two modes cannot drift into one.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -627,6 +627,62 @@ describe("checkRepoAvailability", () => {
 
   it("returns 'unavailable' on HTTP 403 (access removed)", async () => {
     globalThis.fetch = makeFetch({ message: "Forbidden" }, 403);
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toEqual({
+      availability: "unavailable",
+      canonicalFullName: null,
+    });
+  });
+
+  function makeForbidden(headers: Record<string, string>, body: unknown) {
+    return vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => body,
+      headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+    });
+  }
+
+  it("returns 'rate_limited' on a 403 with x-ratelimit-remaining 0 (primary limit)", async () => {
+    globalThis.fetch = makeForbidden({ "x-ratelimit-remaining": "0" }, { message: "Forbidden" });
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toEqual({
+      availability: "rate_limited",
+      canonicalFullName: null,
+    });
+  });
+
+  it("returns 'rate_limited' on a 403 with a retry-after header (secondary limit)", async () => {
+    globalThis.fetch = makeForbidden({ "retry-after": "60" }, { message: "Forbidden" });
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toEqual({
+      availability: "rate_limited",
+      canonicalFullName: null,
+    });
+  });
+
+  it("returns 'rate_limited' on a 403 whose body names a secondary rate limit and no headers say so", async () => {
+    globalThis.fetch = makeForbidden({}, { message: "You have exceeded a secondary rate limit." });
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toEqual({
+      availability: "rate_limited",
+      canonicalFullName: null,
+    });
+  });
+
+  it("returns 'unavailable' on a 403 with quota left and a non-rate-limit body", async () => {
+    globalThis.fetch = makeForbidden({ "x-ratelimit-remaining": "4999" }, { message: "Resource not accessible by integration" });
+    expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toEqual({
+      availability: "unavailable",
+      canonicalFullName: null,
+    });
+  });
+
+  it("returns 'unavailable' on a 403 whose body cannot be read", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => {
+        throw new Error("not json");
+      },
+      headers: { get: () => null },
+    });
     expect(await checkRepoAvailability(TOKEN, "owner", "repo")).toEqual({
       availability: "unavailable",
       canonicalFullName: null,

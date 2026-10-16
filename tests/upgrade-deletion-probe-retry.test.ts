@@ -14,7 +14,7 @@
  * way to show that the class travels from the probe out through
  * commitFilesToRepo to the retry that reads it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -58,6 +58,7 @@ vi.mock("~/lib/manifest-runner.server", () => ({
     files,
     deletions: [],
     manualSteps: { en: [], es: [] },
+    languageMatches: [],
   }),
 }));
 vi.mock("~/lib/v130-ingest.server", async () => ({

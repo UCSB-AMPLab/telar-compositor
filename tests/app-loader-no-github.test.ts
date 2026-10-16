@@ -1,28 +1,30 @@
 /**
- * This file tests the `/_app` layout loader's request-path GitHub
- * discipline (Navigation Performance Task 5).
+ * The `/_app` layout loader's request-path GitHub discipline.
  *
- * The loader was rewritten to read GitHub-derived status (repo
- * availability, head divergence, upgrade) from the D1 `gh_*` cache
- * columns instead of fanning out a per-navigation GitHub waterfall.
- * The ONLY GitHub call still permitted on the request path is the
- * global latest-tag fetch, and ONLY when the tag cache is cold AND the
- * route is gated (fail-closed upgrade gate).
+ * The loader reads GitHub-derived status (repo availability, head divergence,
+ * upgrade, a failed check, a first publish) from the D1 `gh_*` cache columns
+ * and makes no per-navigation GitHub calls. The only GitHub call permitted on
+ * the request path is the global latest-tag fetch, and only when the tag
+ * cache is cold and the route is gated (fail-closed upgrade gate).
  *
- * Strategy: mock every server-only dependency the loader touches —
- * membership, session, crypto, db — plus the GitHub-touching modules
- * (`~/lib/github.server`, `~/lib/sync.server`, and `fetchLatestRelease`
- * from `~/lib/upgrade.server`) with spy-able fns that record any call.
- * `~/lib/github-status.server` and `compareTelarVersion` run for real so
- * the cache-derivation + version-comparison logic is exercised authentically.
+ * Every server-only dependency the loader touches (membership, session,
+ * crypto, db) is mocked, and so are the GitHub-touching modules
+ * (`~/lib/github.server`, `~/lib/sync.server`, and `fetchLatestRelease` from
+ * `~/lib/upgrade.server`), with spies that record any call.
+ * `~/lib/github-status.server` and `compareTelarVersion` run for real, so the
+ * cache derivation and the version comparison are the ones the app uses.
  *
- * Case (a): warm tag cache + warm gh_* cache → loader returns with ZERO
- *   GitHub calls (the load-bearing fast-navigation guarantee), and
- *   `headDiverged` equals `deriveHeadDiverged`.
+ * Case (a): warm tag cache + warm gh_* cache → the loader returns with zero
+ *   GitHub calls, and `headDiverged` equals `deriveHeadDiverged`.
  * Case (b): cold tag cache + /publish + convenor + below-latest version
- *   → exactly one allowed `fetchLatestRelease` and a throw redirect to /upgrade.
+ *   → exactly one allowed `fetchLatestRelease` and a thrown redirect to /upgrade.
+ * Cases (c) to (i): who is redirected and who is not, and what a failed or
+ *   successful latest-tag lookup leaves in `releaseUnknown`.
+ * Cases (j) to (l): a failed check against the local head is `checkFailed`
+ *   and not `headDiverged`, one recorded against an earlier head has lapsed,
+ *   and no recorded head is the first publish.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -411,5 +413,41 @@ describe("/_app loader — request-path GitHub discipline", () => {
     expect(mocks.fetchLatestReleaseMock).toHaveBeenCalledTimes(1);
     expect(data.releaseUnknown).toBe(false);
     expect(data.needsUpgrade).toBe(false);
+  });
+});
+
+describe("/_app loader — the failed check and the first publish, read from the cache", () => {
+  function onProject(overrides: Record<string, unknown>) {
+    rowsByTable = {
+      projects: [PROJECT_ROW(overrides)],
+      project_members: [
+        { userId: 1, role: "convenor", githubId: 1, username: "tester", name: null, welcomedAt: "x", contributions: null, project_id: 1, n: 1 },
+      ],
+      project_config: [{ telar_version: "1.0.0", url: "https://alice.example", baseurl: "/site" }],
+    };
+    mocks.getUserProjectsMock.mockResolvedValue([
+      { id: 1, github_repo_full_name: "alice/site", userRole: "convenor", user_id: 1 },
+    ]);
+  }
+
+  it("(j) a failed check against the local head is checkFailed and not headDiverged", async () => {
+    onProject({ gh_diverged: 2 });
+    const data = await invoke(makeRequest("/dashboard"));
+    expect(data.checkFailed).toBe(true);
+    expect(data.headDiverged).toBe(false);
+    expect(data.firstPublish).toBe(false);
+    expect(noGithubCalls()).toBe(true);
+  });
+
+  it("(k) a failed check recorded against an earlier head has lapsed", async () => {
+    onProject({ gh_diverged: 2, gh_diverged_against_sha: "an-earlier-sha" });
+    expect((await invoke(makeRequest("/dashboard"))).checkFailed).toBe(false);
+  });
+
+  it("(l) no recorded head is the first publish", async () => {
+    onProject({ head_sha: null, gh_diverged: 0, gh_diverged_against_sha: null });
+    const data = await invoke(makeRequest("/dashboard"));
+    expect(data.firstPublish).toBe(true);
+    expect(data.checkFailed).toBe(false);
   });
 });

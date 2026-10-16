@@ -1,5 +1,5 @@
 /**
- * R2-1 — the revert mirror must not take its structure from client data.
+ * The revert mirror must not take its structure from client data.
  *
  * The revert rebuilds a tombstoned Y.Map by mirroring it to plain data and
  * cloning that back. While the mirror signalled "this node was a Y.Array" with
@@ -18,7 +18,7 @@
  *      loud, and still costs the actor a strike — never a silent acceptance of
  *      the deletion.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -105,7 +105,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 // 1. The reported probe
 // ---------------------------------------------------------------------------
 
-describe("R2-1 — a forged mirror sentinel cannot disarm enforcement", () => {
+describe("a forged mirror sentinel cannot disarm enforcement", () => {
   it("reverts the delete and round-trips { __yarray: null } as an opaque value", () => {
     const h = makeHarness();
     seedVictimStory(h, "poison", { __yarray: null });
@@ -130,7 +130,7 @@ describe("R2-1 — a forged mirror sentinel cannot disarm enforcement", () => {
 // 2. Every sentinel, at the top level
 // ---------------------------------------------------------------------------
 
-describe("R2-1 — every mirror sentinel is inert as client data", () => {
+describe("every mirror sentinel is inert as client data", () => {
   const forgeries: Array<[string, unknown]> = [
     ["__yarray null", { __yarray: null }],
     ["__yarray scalar", { __yarray: 7 }],
@@ -162,7 +162,7 @@ describe("R2-1 — every mirror sentinel is inert as client data", () => {
 // 3. Nested inside real structure
 // ---------------------------------------------------------------------------
 
-describe("R2-1 — forgeries nested inside real Y types", () => {
+describe("forgeries nested inside real Y types", () => {
   it("survives a forged sentinel inside a real Y.Array element", () => {
     const h = makeHarness();
     let story!: Y.Map<unknown>;
@@ -246,7 +246,7 @@ describe("R2-1 — forgeries nested inside real Y types", () => {
 // 4. No single value may abort the revert
 // ---------------------------------------------------------------------------
 
-describe("R2-1 — a rebuild failure is contained, loud and counted", () => {
+describe("a rebuild failure is contained, loud and counted", () => {
   it("restores the other entities when one value cannot be rebuilt", () => {
     const h = makeHarness();
     h.seed(() => {

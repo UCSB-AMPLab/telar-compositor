@@ -10,7 +10,7 @@
  * rest of the refresh's diff, `computeFullSyncDiff`, is stood in for, as in
  * tests/github-status-story-files.test.ts.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -414,7 +414,7 @@ describe("with no base, the rendered page files against HEAD's tree", () => {
     const db = makeD1([imported(1, "about", ABOUT), sobre]);
     await refreshGithubStatus(project, "tok", db as never, NOW, LEASE);
     expect(db.sets[0]).toMatchObject({ head_sha: "headSha", gh_diverged: 0 });
-    expect(fileReads).toEqual([`headSha:${PAGES}/sobre.md`]);
+    expect(fileReads).toEqual([`headSha:${PAGES}/about.md`]);
   });
 
   it("does not backfill when the carried file cannot be read", async () => {
@@ -427,7 +427,7 @@ describe("with no base, the rendered page files against HEAD's tree", () => {
   });
 });
 
-describe("a pair of page files the project holds, which the one-language reduction would change", () => {
+describe("a page held in two languages, which is not a change on GitHub", () => {
   const same = { id: 7, github_repo_full_name: "owner/repo", head_sha: "headSha" };
   const apart = { ...same, head_sha: "baseSha" };
   const noBlocks = { frontmatter: null };
@@ -443,52 +443,28 @@ describe("a pair of page files the project holds, which the one-language reducti
     };
   }
 
-  it("reports the pages as changed when GitHub has not moved, from D1's blocks, reading nothing", async () => {
+  it("leaves the site unchanged when GitHub has not moved, reading nothing", async () => {
     repo = await pagesAt({ "about.md": ABOUT, "acerca.md": ACERCA }, ["headSha"]);
     const db = makeD1([imported(1, "about", ABOUT), imported(2, "acerca", ACERCA)]);
-    await refreshGithubStatus(same, "tok", db as never, NOW, LEASE);
-    expect(db.sets[0]).toMatchObject({ gh_diverged: 1, gh_diverged_against_sha: "headSha" });
-    expect(db.sets[0]).not.toHaveProperty("head_sha");
-    expect(fileReads).toEqual([]);
-  });
-
-  it("reads the file of a page whose block D1 does not hold, and reports the pages as changed", async () => {
-    repo = await pagesAt({ "about.md": ABOUT, "acerca.md": ACERCA }, ["headSha"]);
-    const db = makeD1([imported(1, "about", ABOUT, noBlocks), imported(2, "acerca", ACERCA, noBlocks)]);
-    await refreshGithubStatus(same, "tok", db as never, NOW, LEASE);
-    expect(db.sets[0]).toMatchObject({ gh_diverged: 1, gh_diverged_against_sha: "headSha" });
-    expect(fileReads).toContain(`headSha:${PAGES}/acerca.md`);
-  });
-
-  it("reports the pages as changed with no base, instead of backfilling the head over a pair", async () => {
-    repo = await pagesAt({ "about.md": ABOUT, "acerca.md": ACERCA }, ["headSha"]);
-    const db = makeD1([imported(1, "about", ABOUT), imported(2, "acerca", ACERCA)]);
-    await refreshGithubStatus({ ...same, head_sha: null }, "tok", db as never, NOW, LEASE);
-    expect(db.sets[0]).not.toHaveProperty("head_sha");
-    expect(db.sets[0]).toMatchObject({ gh_diverged: 1, gh_diverged_against_sha: null });
-  });
-
-  it("reports the pages as changed when a block it must read from GitHub cannot be read", async () => {
-    repo = await pagesAt({ "about.md": ABOUT, "acerca.md": ACERCA }, ["headSha"]);
-    repo.failing.add(`headSha:${PAGES}/acerca.md`);
-    const db = makeD1([imported(1, "about", ABOUT, noBlocks), imported(2, "acerca", ACERCA, noBlocks)]);
-    await refreshGithubStatus(same, "tok", db as never, NOW, LEASE);
-    expect(db.sets[0]).toMatchObject({ gh_diverged: 1, gh_diverged_against_sha: "headSha" });
-  });
-
-  it("leaves the site unchanged when it holds no pair, as when GitHub has not moved", async () => {
-    repo = await pagesAt({ "about.md": ABOUT }, ["headSha"]);
-    const db = makeD1([imported(1, "about", ABOUT)]);
     await refreshGithubStatus(same, "tok", db as never, NOW, LEASE);
     expect(db.sets[0]).toMatchObject({ gh_diverged: 0, gh_diverged_against_sha: "headSha" });
     expect(fileReads).toEqual([]);
   });
 
-  it("reports the pages as changed when the heads differ and no page file did, without the diff", async () => {
+  it("reads no page file for blocks D1 does not hold, and a file it could not read changes nothing", async () => {
+    repo = await pagesAt({ "about.md": ABOUT, "acerca.md": ACERCA }, ["headSha"]);
+    repo.failing.add(`headSha:${PAGES}/acerca.md`);
+    const db = makeD1([imported(1, "about", ABOUT, noBlocks), imported(2, "acerca", ACERCA, noBlocks)]);
+    await refreshGithubStatus(same, "tok", db as never, NOW, LEASE);
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 0, gh_diverged_against_sha: "headSha" });
+    expect(fileReads).toEqual([]);
+  });
+
+  it("decides the heads apart by the diff, with no page file changed", async () => {
     repo = await pagesAt({ "about.md": ABOUT, "acerca.md": ACERCA }, ["baseSha", "headSha"]);
     const db = makeD1([imported(1, "about", ABOUT), imported(2, "acerca", ACERCA)]);
     await refreshGithubStatus(apart, "tok", db as never, NOW, LEASE);
-    expect(mocks.computeFullSyncDiff).not.toHaveBeenCalled();
-    expect(db.sets[0]).toMatchObject({ gh_diverged: 1, gh_diverged_against_sha: "baseSha" });
+    expect(mocks.computeFullSyncDiff).toHaveBeenCalledOnce();
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 0, head_sha: "headSha" });
   });
 });

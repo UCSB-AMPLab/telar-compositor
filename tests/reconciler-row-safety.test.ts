@@ -4,14 +4,14 @@
  *
  * Two ways the snapshot reconciler reaches a `DELETE` it was never asked for:
  *
- * 1. **Dedupe by key (F1).** Two Y.Maps carrying DISTINCT non-null `_id`s — two
+ * 1. **Dedupe by key.** Two Y.Maps carrying DISTINCT non-null `_id`s — two
  *    live rows — collide on a human key. `pages.slug` and `glossary.term_id`
  *    are rename features, so a collision is reachable by an ordinary,
  *    permitted edit. Deleting the non-keeper drops a live Y.Map out of the
  *    document, and the orphan sweep then deletes its D1 row. A mangled key is
  *    recoverable; a deleted entity is not — so the non-keeper is RE-KEYED.
  *
- * 2. **A failed INSERT (F4).** A Y.Map with `_id: null` whose key already
+ * 2. **A failed INSERT.** A Y.Map with `_id: null` whose key already
  *    belongs to a live D1 row cannot be inserted: the UNIQUE index refuses it.
  *    `insertRow` swallows that (a snapshot must not abort mid-flush) and
  *    returns id 0 — after which the colliding row is still sitting in the
@@ -20,7 +20,7 @@
  * The invariant both halves pin: no document shape a collaborator can author
  * causes another member's persisted row to be deleted.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -47,7 +47,7 @@ const SECRET = "test-session-secret";
 
 // ---------------------------------------------------------------------------
 // A D1 that answers the four entity SELECTs from a seed, records every write,
-// and — this is what the F4 half needs — REFUSES an INSERT whose human key is
+// and — this is what the failed-INSERT half needs — REFUSES an INSERT whose human key is
 // already taken, exactly as the UNIQUE indexes do (stories(project_id,
 // story_id) from migration 0002, project_pages(project_id, slug) from 0021).
 // ---------------------------------------------------------------------------
@@ -249,10 +249,10 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// F1 — a key collision between two LIVE rows is re-keyed, never deleted
+// A key collision between two LIVE rows is re-keyed, never deleted
 // ---------------------------------------------------------------------------
 
-describe("F1 — a key collision between two persisted rows never deletes one", () => {
+describe("a key collision between two persisted rows never deletes one", () => {
   it("pages: renaming a page onto another's slug keeps BOTH rows", async () => {
     // The attack that survives D1's keeper rule. `slug` is a rename
     // feature, so writing the victim's page onto the attacker's slug is a
@@ -340,7 +340,7 @@ describe("F1 — a key collision between two persisted rows never deletes one", 
   });
 });
 
-describe("F1 — the one collision that stays a deletion", () => {
+describe("the one collision that stays a deletion", () => {
   it("an exact-_id duplicate (the same persisted row twice) still collapses", async () => {
     const { doInstance, db, ydoc } = makeDo({
       pages: [{ id: 10, slug: "about" }],
@@ -358,8 +358,8 @@ describe("F1 — the one collision that stays a deletion", () => {
 
   it("an unsaved `_id: null` twin keeps its content under a fresh slug", async () => {
     // An `_id: null` map is unsaved, not disposable — before a project's first
-    // snapshot every map carries one — so it is re-keyed like any other loser
-    // (R2-2). The persisted row keeps the slug, which is what keeps it out of
+    // snapshot every map carries one — so it is re-keyed like any other loser.
+    // The persisted row keeps the slug, which is what keeps it out of
     // the orphan sweep.
     const { doInstance, db, ydoc } = makeDo({
       pages: [{ id: 10, slug: "about" }],
@@ -381,7 +381,7 @@ describe("F1 — the one collision that stays a deletion", () => {
   });
 });
 
-describe("F1 — ordinary editing is untouched", () => {
+describe("ordinary editing is untouched", () => {
   it("a plain rename to a free slug is neither re-keyed nor deleted", async () => {
     const { doInstance, db, ydoc } = makeDo({
       pages: [{ id: 10, slug: "about" }, { id: 20, slug: "contact" }],
@@ -416,10 +416,10 @@ describe("F1 — ordinary editing is untouched", () => {
 });
 
 // ---------------------------------------------------------------------------
-// F4 — a refused INSERT must not turn into a DELETE of the colliding row
+// A refused INSERT must not turn into a DELETE of the colliding row
 // ---------------------------------------------------------------------------
 
-describe("F4 — an INSERT the UNIQUE index refuses never orphans the row it hit", () => {
+describe("an INSERT the UNIQUE index refuses never orphans the row it hit", () => {
   it("stories: the live row survives, and its steps are not cascaded away", async () => {
     // The document has lost the map for row 55 (a Durable Object evicted
     // between the committed INSERT and the blob write comes back from a blob

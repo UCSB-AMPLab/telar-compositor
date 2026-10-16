@@ -42,7 +42,7 @@
  * through a link too, so the tab's text lands in the file the link leads to
  * and is checked under that file's role (`landedTabs`).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { cleanCommitContent, disableGoogleSheetsInConfig, SheetsNotDisableableError, type CommitFile } from "~/lib/commit.server";
@@ -122,8 +122,14 @@ export interface FinalSheet {
   text: string;
 }
 
-/** One line of the repair's report, with the sheet's path. */
-export type SheetReportLine = RepairReportEntry & { file: string };
+/**
+ * One line of the repair's report, with the sheet's path; or, added once the
+ * commit has landed, what the Compositor's glossary did with a definition the
+ * upgrade trims to the site's language (glossary-language-match.server.ts).
+ */
+export type SheetReportLine =
+  | (RepairReportEntry & { file: string })
+  | { kind: "glossary_language_matched" | "glossary_language_edited" | "glossary_language_unconfirmed"; sheet: string; term: string; file: string };
 
 export interface OfferedGroup extends PendingGroup {
   sheet: string;
@@ -209,6 +215,12 @@ export interface SheetStageInput {
   submitted: unknown;
   /** The author's answer to the offer to stop reading Google Sheets, as posted; untrusted. */
   sheetsAnswer?: unknown;
+  /**
+   * The chain's edits of a sheet's own text, applied to a tab written as that
+   * sheet once the site stops reading Google Sheets, since the written tab
+   * replaces the chain's edit of the repository's copy.
+   */
+  editTab?: (path: string, text: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -827,7 +839,7 @@ const PAIRED_NAMES: ReadonlySet<string> = new Set(PAIRED_SHEETS.flat());
  * sync read and the build prefers, and the Spanish-named repository copy it
  * stood in for is deleted.
  */
-function switchedTabs(read: SheetsRead, config: string): SwitchedTabs {
+function switchedTabs(read: SheetsRead, config: string, editTab: (path: string, text: string) => string): SwitchedTabs {
   const dir = `${SPREADSHEETS_DIR}/`;
   const writes = new Map<string, string>();
   for (const [path, tab] of read.landed) {
@@ -841,7 +853,7 @@ function switchedTabs(read: SheetsRead, config: string): SwitchedTabs {
     writes.set(picked === english ? read.landing(english) : english, tab.text);
     if (picked === spanish && read.inRepo(spanish)) deleted.push(spanish);
   }
-  const files = [...writes].map(([path, text]) => ({ path, content: cleanCommitContent(path, text), verbatim: true as const }));
+  const files = [...writes].map(([path, text]) => ({ path, content: cleanCommitContent(path, editTab(path, text)), verbatim: true as const }));
   return { config, writes: files, deleted };
 }
 
@@ -882,6 +894,11 @@ function sheetsAnswerOf(posted: unknown): "off" | "keep" | null {
   return posted === "off" || posted === "keep" ? posted : null;
 }
 
+/** The edit applied to each tab the Google Sheets switch writes: `input`'s, or none. */
+function tabEditorOf(input: SheetStageInput): (path: string, text: string) => string {
+  return input.editTab ?? ((_path, text) => text);
+}
+
 /**
  * Reads, checks and repairs every sheet, replaying a matching challenge's
  * decisions and the round posted with it, for a target release that refuses
@@ -912,7 +929,7 @@ export async function runSheetStage(input: SheetStageInput): Promise<SheetStageR
   }
   const config = sheetsOffConfig(input.chainFiles.get("_config.yml"));
   if (config === null) return { kind: "failed", error: "sheets_switch_unreadable" };
-  const off = switchedTabs(read.read, config);
+  const off = switchedTabs(read.read, config, tabEditorOf(input));
   const after = afterSwitch(input, off);
   const { read: switched } = await readSheets(after, null);
   return settleSheets(switched, after.chainFiles, frame, matched, false, input.submitted, off);

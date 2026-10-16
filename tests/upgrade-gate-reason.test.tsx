@@ -4,22 +4,20 @@
  * there.
  *
  * The Publish gate, the Upload tab's upgrade link and onboarding each send a
- * person here with `?from=`, and the page said nothing about why: it opened on
- * its generic title, with no sentence connecting where they were going to
- * where they are. It now says what the upgrade stands between them and — only
- * while the upgrade is still to be done, since `needsUpgrade` is loader data
- * and the loader is held for the whole flow, so a sentence keyed on it alone
- * would go on asking for an upgrade beside one that had finished.
+ * person here with `?from=`. The page says what the upgrade stands between
+ * them and, but only while the upgrade is still to be done: `needsUpgrade` is
+ * loader data and the loader is held for the whole flow, so a sentence keyed
+ * on it alone would go on asking for an upgrade beside one that had finished.
  *
- * The same value was also the loader's redirect target when the site turned
- * out to be current, passed to `redirect()` as it arrived. That forwards to
- * any origin the query names. The cases at the end send an absolute and a
- * protocol-relative URL and require the person to land on Objects.
+ * The same value is the loader's redirect target when the site is current. A
+ * value that names another origin is not followed: the cases at the end send
+ * an absolute and a protocol-relative URL and require the person to land on
+ * Objects.
  *
  * Driven through the real loader and the real page on React Router's routes
  * stub, on the harness `upgrade-revalidation.test.tsx` established.
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import React from "react";
@@ -100,6 +98,7 @@ vi.mock("~/lib/manifest-runner.server", () => ({
     files,
     deletions: [],
     manualSteps: { en: [], es: [] },
+    languageMatches: [],
   }),
 }));
 vi.mock("~/lib/v130-ingest.server", async () => ({

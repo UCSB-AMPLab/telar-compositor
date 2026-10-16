@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * The editor shows and stores the visitor's view (ruling 17).
+ * The editor shows and stores the visitor's view.
  *
  * `visitorViewCentre` is where the published page puts a stored framing: the
  * image's centre at zoom 1 and below, zoom 1 itself included, and the stored
@@ -14,7 +14,7 @@
  * `helpers/viewport-rig.ts`: here the pan switches it sets and the return to
  * the centre; `capture-overview-gestures.test.ts` drives OSD's own gestures.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";

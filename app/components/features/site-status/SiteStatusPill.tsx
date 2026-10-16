@@ -1,15 +1,16 @@
 /**
  * SiteStatusPill — the global, user-visible Site Status pill. It lives
  * right-aligned in the existing Header on every authenticated route and shows
- * exactly ONE of eight states (persistence-halted > repo-unavailable >
- * publishing > out-of-sync > repo-invitation > unpublished > upgrade > in-sync) via the
+ * exactly ONE of ten states (persistence-halted > repo-unavailable >
+ * publishing > out-of-sync > check-failed > repo-invitation > unpublished >
+ * first-publish > upgrade > in-sync) via the
  * `useSiteStatus()` hook, in that precedence order.
  *
  * Each state renders its LOCKED bg/ink/dot token set; only the `publishing` dot
  * carries the `site-status-pulse` ring keyframe — Tailwind `animate-pulse` is
  * deliberately NOT used (the design pulses the ring shadow, not opacity). Two
  * states carry a trailing action divider: `unpublished` (`Publish →`) and
- * `out-of-sync` (`Review →`); the other four render caption-only.
+ * `out-of-sync` (`Review →`, the convenor's alone); the other eight render caption-only.
  *
  * Geometry is pixel-locked to the source design and applied inline because the
  * values sit off the Tailwind 4px grid: pill padding `4px 11px 4px 9px`, gap
@@ -18,8 +19,8 @@
  *
  * Clicking the pill toggles the shared `StatusPopoverShell` hosting the popover
  * matching the active state. The popover BODY is read from `api.site-status`
- * while the popover is open (only for the three payload-backed states —
- * unpublished / out-of-sync / in-sync) to keep the global pill cheap, and again
+ * while the popover is open (only for the two payload-backed states —
+ * unpublished / in-sync) to keep the global pill cheap, and again
  * after every submission while it stays open. It is a background read
  * (`useBackgroundRead`): a failed read keeps the last body, and the kept body
  * is only ever the current payload's, so one state's body is never handed to
@@ -29,12 +30,12 @@
  * into awareness; upgrade renders from the `_app` loader's version fields.
  *
  * The transient `Saving…` overlay is rendered adjacent to the caption WITHOUT
- * recolouring the base state — it is an overlay, not a seventh state, and never
- * competes in the state precedence.
+ * recoloring the base state — it is an overlay, not an eleventh state, and
+ * never competes in the state precedence.
  *
  * Light mode only; lucide-react icons only; `~/` imports; accepts `className`.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useState } from "react";
@@ -55,13 +56,14 @@ import { OutOfSyncPopover } from "~/components/features/site-status/popovers/Out
 import { PublishingPopover } from "~/components/features/site-status/popovers/PublishingPopover";
 import { UpgradePopover } from "~/components/features/site-status/popovers/UpgradePopover";
 import { RepoInvitationPopover } from "~/components/features/site-status/popovers/RepoInvitationPopover";
+import { CheckFailedPopover } from "~/components/features/site-status/popovers/CheckFailedPopover";
+import { FirstPublishPopover } from "~/components/features/site-status/popovers/FirstPublishPopover";
 import { RepoUnavailablePopover } from "~/components/features/site-status/popovers/RepoUnavailablePopover";
 import { PersistenceHaltedPopover } from "~/components/features/site-status/popovers/PersistenceHaltedPopover";
 import type { OwnRepoAccess } from "~/lib/repo-access";
 import type { PersistenceHaltResult } from "~/hooks/use-persistence-halt";
 import { isPublishingRole } from "~/lib/publishing-roles";
 import type { ChangeSummary } from "~/lib/publish.server";
-import type { FullSyncDiff } from "~/lib/sync.server";
 
 /** Per-state LOCKED token sets. */
 interface StateConfig {
@@ -77,9 +79,9 @@ interface StateConfig {
   actionKey: string | null;
   /**
    * Which api.site-status payload (if any) the matching popover needs on open.
-   * publishing/upgrade are null — they render without a payload fetch.
+   * The other states render without a payload fetch.
    */
-  payload: "in-sync" | "unpublished" | "out-of-sync" | null;
+  payload: "in-sync" | "unpublished" | null;
 }
 
 const STATE_CONFIG: Record<SiteStatusState, StateConfig> = {
@@ -105,7 +107,23 @@ const STATE_CONFIG: Record<SiteStatusState, StateConfig> = {
     dot: "bg-qolle",
     captionKey: "status.out_of_sync",
     actionKey: "status.review_cta",
-    payload: "out-of-sync",
+    payload: null,
+  },
+  "check-failed": {
+    bg: "bg-cream-dark",
+    ink: "text-charcoal",
+    dot: "bg-fg-muted",
+    captionKey: "status.check_failed",
+    actionKey: null,
+    payload: null,
+  },
+  "first-publish": {
+    bg: "bg-anil-pale",
+    ink: "text-anil-ink",
+    dot: "bg-anil-deep",
+    captionKey: "status.first_publish",
+    actionKey: null,
+    payload: null,
   },
   "repo-invitation": {
     bg: "bg-terracotta-pale",
@@ -162,9 +180,9 @@ export interface SiteStatusPillProps {
 
 /**
  * The trailing action label, or null for a caption-only state and for the
- * halted state's restore, which is the convenor's alone, and the upgrade's
- * run, which a publishing role alone can act on — anyone else gets the
- * caption with no action.
+ * halted state's restore and the review of the changes on GitHub, which are
+ * the convenor's alone, and the upgrade's run, which a publishing role alone
+ * can act on — anyone else gets the caption with no action.
  */
 function actionLabelFor(
   cfg: StateConfig,
@@ -173,14 +191,14 @@ function actionLabelFor(
   t: TFunction<"common">,
 ): string | null {
   if (cfg.actionKey === null) return null;
-  if (state === "persistence-halted" && userRole !== "convenor") return null;
+  if ((state === "persistence-halted" || state === "out-of-sync") && userRole !== "convenor") return null;
   if (state === "upgrade" && !isPublishingRole(userRole)) return null;
   return t(cfg.actionKey);
 }
 
 export function SiteStatusPill({ className = "" }: SiteStatusPillProps) {
   const { t } = useTranslation("common");
-  const { state, saving, count, countKnown, latestTag, userRole, needsUpgrade, ownRepoAccess, persistence } =
+  const { state, saving, count, countKnown, latestTag, userRole, needsUpgrade, ownRepoAccess, persistence, recheck, rechecking } =
     useSiteStatus();
   const { publishSha, publishCommitUrl } = useCollaborationContext();
   const app = (useRouteLoaderData("routes/_app") as AppLoaderData | null) ?? null;
@@ -305,6 +323,9 @@ export function SiteStatusPill({ className = "" }: SiteStatusPillProps) {
           repoFullName: app?.repoFullName ?? null,
           ownRepoAccess,
           persistence,
+          recheck,
+          rechecking,
+          closePopover,
         })}
       </StatusPopoverShell>
     </div>
@@ -322,6 +343,10 @@ interface PopoverDeps {
   repoFullName: string | null;
   ownRepoAccess: OwnRepoAccess | null;
   persistence: PersistenceHaltResult;
+  recheck: () => Promise<void>;
+  rechecking: boolean;
+  /** Closes the popover, as the review does when it opens its dialog. */
+  closePopover: () => void;
 }
 
 /**
@@ -375,11 +400,6 @@ function unpublishedSummaryFor(data: unknown): ChangeSummary {
   return (data as ChangeSummary | undefined) ?? EMPTY_SUMMARY;
 }
 
-/** The out-of-sync diff once it has arrived, or the empty shape while it loads. */
-function outOfSyncDiffFor(data: unknown): FullSyncDiff {
-  return (data as FullSyncDiff | undefined) ?? EMPTY_DIFF;
-}
-
 /** The upgrade popover's headline version, or the placeholder while unknown. */
 function upgradeVersionFor(latestTag: string | null): string {
   return latestTag ?? "—";
@@ -393,7 +413,7 @@ function popoverForState(state: SiteStatusState, data: unknown, deps: PopoverDep
     case "unpublished":
       return <UnpublishedPopover summary={unpublishedSummaryFor(data)} />;
     case "out-of-sync":
-      return <OutOfSyncPopover diff={outOfSyncDiffFor(data)} />;
+      return <OutOfSyncPopover onReview={deps.closePopover} />;
     case "publishing":
       return (
         <PublishingPopover
@@ -418,6 +438,10 @@ function popoverForState(state: SiteStatusState, data: unknown, deps: PopoverDep
           userRole={deps.userRole}
         />
       );
+    case "check-failed":
+      return <CheckFailedPopover onTryAgain={() => void deps.recheck()} busy={deps.rechecking} />;
+    case "first-publish":
+      return <FirstPublishPopover />;
     case "repo-invitation":
       return deps.ownRepoAccess ? <RepoInvitationPopover access={deps.ownRepoAccess} /> : null;
     case "persistence-halted":
@@ -428,7 +452,7 @@ function popoverForState(state: SiteStatusState, data: unknown, deps: PopoverDep
 }
 
 /**
- * Renders the popover body matching the active state. For the three
+ * Renders the popover body matching the active state. For the two
  * payload-backed states the payload read arrives via `data`; until an answer for
  * the current payload has arrived (data === undefined) the popovers render
  * their graceful empty / fail-open shapes.
@@ -463,16 +487,4 @@ const EMPTY_SUMMARY: ChangeSummary = {
   navigation: { changed: false },
   objectOrder: { changed: false },
   fileChanges: { addedStoryFiles: [], removedStoryFiles: [] },
-};
-
-/** Empty FullSyncDiff while the out-of-sync diff is still loading. */
-const EMPTY_DIFF: FullSyncDiff = {
-  objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [], reordered: null },
-  stories: { newStories: [], changedStories: [], missingStories: [] },
-  config: { changedFields: [], versionChange: null },
-  glossary: { added: [], removed: [], changed: [] },
-  hasConflicts: false,
-  classification: "two-way",
-  suppressedEditorOnly: 0,
-  unreadableFiles: [],
 };

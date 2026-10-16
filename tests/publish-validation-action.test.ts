@@ -14,11 +14,10 @@
  *
  * The database mock answers by table, keyed on the columns each selection asks
  * for: the action reads objects, stories, steps, layers, pages, glossary terms
- * and config, and a mock
- * that guessed from call order would answer the wrong table the moment a fetch
- * moves.
+ * and config, and a mock that guessed from call order would answer the wrong
+ * table the moment a fetch moves.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -194,6 +193,8 @@ type ValidationResponse = {
   intent?: string;
   validation?: ValidationResult;
   resetFailed?: { page: string };
+  headState?: string;
+  shownHead?: string | null;
 };
 
 async function runValidationAction(): Promise<ValidationResponse> {
@@ -211,6 +212,13 @@ function warningCodes(res: ValidationResponse): string[] {
 /** How many layers queries the action made. */
 function layerQueries(): number {
   return selections.filter((columns) => columns !== undefined && "step_id" in columns).length;
+}
+
+const isNotProjectSheet = (path: unknown) => !/\/(project|proyecto)\.csv$/.test(String(path));
+
+/** The paths read at the validated head, without the project sheet's. */
+function readPathsBesideProjectSheet(): unknown[] {
+  return getFileAtRef.mock.calls.map((call) => (call as unknown[])[3]).filter(isNotProjectSheet);
 }
 
 function blockerCodes(res: ValidationResponse): string[] {
@@ -255,7 +263,8 @@ describe("run-validation — when the build workflow is read", () => {
 
     const res = await runValidationAction();
 
-    expect(getFileAtRef).toHaveBeenCalledTimes(1);
+    // The project sheet is read for the stories-leave-site check, not for the workflow.
+    expect(readPathsBesideProjectSheet()).toEqual(["_config.yml"]);
     expect(getFileAtRef).toHaveBeenCalledWith(
       "install-token",
       "owner",
@@ -272,8 +281,8 @@ describe("run-validation — when the build workflow is read", () => {
 
     await runValidationAction();
 
-    // Two reads: the workflow and _config.yml, both pinned to that commit.
-    expect(getFileAtRef).toHaveBeenCalledTimes(2);
+    // Two reads besides the project sheet: the workflow and _config.yml, both pinned to that commit.
+    expect(readPathsBesideProjectSheet()).toHaveLength(2);
     expect(getFileAtRef).toHaveBeenCalledWith(
       "install-token",
       "owner",
@@ -323,7 +332,7 @@ describe("run-validation — what the read produces", () => {
   });
 
   it("logs the error behind a failed check and does not carry its text to the page", async () => {
-    getRepoHead.mockRejectedValue(new Error("GitHub GraphQL error: 502"));
+    sheetWarningChecksAt.mockRejectedValueOnce(new Error("GitHub GraphQL error: 502"));
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await runValidationAction();
@@ -464,7 +473,7 @@ describe("run-validation — page front matter", () => {
       params: {},
     } as unknown as Parameters<typeof action>[0]);
 
-    expect(doFetch).toHaveBeenCalledTimes(1);
+    expect(doFetch).toHaveBeenCalledTimes(2);
     const request = (doFetch.mock.calls[0] as unknown as [Request])[0];
     expect(new URL(request.url).pathname).toBe("/reset-page-frontmatter");
     expect(new URL(request.url).searchParams.get("slug")).toBe("acerca");
@@ -517,6 +526,94 @@ describe("run-validation — page front matter", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The checks read what the editor holds: the document is written to D1 before
+// the first read, once, and a snapshot that fails is carried to the page.
+// ---------------------------------------------------------------------------
+describe("run-validation — the snapshot before the checks", () => {
+  /** Runs the action against a collaboration object answering `doFetch`; `extra` adds form fields. */
+  async function runWith(doFetch: (...args: unknown[]) => unknown, extra: Record<string, string> = {}) {
+    const context = buildContext() as unknown as { cloudflare: { env: { COLLABORATION: { get: () => unknown } } } };
+    context.cloudflare.env.COLLABORATION.get = () => ({ fetch: doFetch });
+    const form = new FormData();
+    form.set("intent", "run-validation");
+    form.set("siteId", "7");
+    for (const [k, v] of Object.entries(extra)) form.set(k, v);
+    return (await action({
+      request: new Request("https://app/publish", { method: "POST", body: form, headers: { Cookie: "" } }),
+      context,
+      params: {},
+    } as unknown as Parameters<typeof action>[0])) as ValidationResponse & { snapshotOk?: boolean };
+  }
+
+  const pathOf = (call: unknown) => new URL((call as [Request])[0].url).pathname;
+
+  it("waits for the snapshot to finish before the first D1 read", async () => {
+    let finish!: () => void;
+    const answered = new Promise<void>((resolve) => { finish = resolve; });
+    const doFetch = vi.fn(async () => {
+      await answered;
+      return new Response("{}", { status: 200 });
+    });
+
+    const pending = runWith(doFetch);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(doFetch).toHaveBeenCalledTimes(1);
+    expect(selections.length).toBe(0);
+    finish();
+    const res = await pending;
+
+    expect(pathOf(doFetch.mock.calls[0])).toBe("/snapshot");
+    expect(selections.length).toBeGreaterThan(0);
+    expect(res.snapshotOk).toBe(true);
+  });
+
+  it("snapshots after a reset that succeeded, since the reset's own flush reports no dropped row", async () => {
+    const doFetch = vi.fn(async () => Response.json({ reset: 1 }));
+
+    const res = await runWith(doFetch, { resetPageFrontmatter: "acerca" });
+
+    expect(doFetch.mock.calls.map(pathOf)).toEqual(["/reset-page-frontmatter", "/snapshot"]);
+    expect(res.snapshotOk).toBe(true);
+  });
+
+  it("snapshots after a glossary column removal, which writes D1 without a snapshot", async () => {
+    const doFetch = vi.fn(async () => Response.json({ removed: 1 }));
+
+    await runWith(doFetch, { removeTable: "glossary", removeColumn: "notes" });
+
+    expect(doFetch.mock.calls.map(pathOf)).toEqual(["/remove-table-column", "/snapshot"]);
+  });
+
+  it("snapshots when the reset failed", async () => {
+    const doFetch = vi.fn(async (req: unknown) =>
+      new URL((req as Request).url).pathname === "/snapshot"
+        ? new Response("{}", { status: 200 })
+        : new Response("snapshot_blocked", { status: 503 }));
+
+    const res = await runWith(doFetch, { resetPageFrontmatter: "acerca" });
+
+    expect(doFetch.mock.calls.map(pathOf)).toEqual(["/reset-page-frontmatter", "/snapshot"]);
+    expect(res.resetFailed).toEqual({ page: "acerca" });
+  });
+
+  it("still returns the checks, and says so, when the snapshot fails", async () => {
+    const res = await runWith(async () => new Response("no", { status: 503 }));
+
+    expect(res.ok).toBe(true);
+    expect(res.validation).toBeDefined();
+    expect(res.snapshotOk).toBe(false);
+  });
+
+  it("still returns the checks when the collaboration object cannot be reached", async () => {
+    const res = await runWith(async () => { throw new Error("unreachable"); });
+
+    expect(res.ok).toBe(true);
+    expect(res.validation).toBeDefined();
+    expect(res.snapshotOk).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A repeated header the publish writes back under `name_N` is named
 // before the publish, from the sheet read at the commit the stale check
 // compared against. The read is made only for a sheet whose written keys carry
@@ -552,7 +649,7 @@ describe("run-validation — a repeated column the publish renames", () => {
     await runValidationAction();
 
     expect(layerQueries()).toBe(0);
-    expect(readPaths()).toEqual(["_config.yml"]);
+    expect(readPaths().filter(isNotProjectSheet)).toEqual(["_config.yml"]);
   });
 
   it("makes one layers query for the whole site when stories pass the gate", async () => {
@@ -801,5 +898,160 @@ describe("run-validation — a recorded story file changed on GitHub", () => {
 
   it("is silent while the file is the blob read", async () => {
     expect(warningCodes(await withRecord("as read\n"))).not.toContain("story_file_kept_changed");
+  });
+});
+
+describe("run-validation — stories that leave the live site", () => {
+  const PROJECT_CSV = "telar-content/spreadsheets/project.csv";
+
+  /** Answers the repository's project.csv with `content`, any other path as an empty file. */
+  function repositoryLists(content: string) {
+    getFileAtRef.mockImplementation(async (...args: unknown[]) =>
+      args[3] === PROJECT_CSV ? { status: "ok", content } : { status: "ok", content: "" },
+    );
+  }
+
+  const leaving = (res: ValidationResponse) =>
+    (res.validation?.warnings ?? []).find((w) => w.code === "stories_leave_site");
+
+  it("warns, naming the story by its title, when the repository lists a story that is a draft in D1", async () => {
+    tableRows.stories = [
+      { id: 1, story_id: "weavers", title: "The Weavers", private: false, draft: true },
+      { id: 2, story_id: "dyers", title: "The Dyers", private: false, draft: false },
+    ];
+    repositoryLists("order,story_id,title\n1,weavers,The Weavers\n2,dyers,The Dyers\n");
+
+    const res = await runValidationAction();
+
+    expect(leaving(res)?.params).toEqual({ stories: "The Weavers" });
+    expect(blockerCodes(res)).toEqual([]);
+  });
+
+  it("warns, naming the story by its id, when the repository lists a story D1 no longer has", async () => {
+    tableRows.stories = [{ id: 2, story_id: "dyers", title: "The Dyers", private: false, draft: false }];
+    repositoryLists("order,story_id,title\n1,gone,Gone\n2,dyers,The Dyers\n");
+
+    const res = await runValidationAction();
+
+    expect(leaving(res)?.params).toEqual({ stories: "gone" });
+  });
+
+  it("puts the warning before every other suggestion", async () => {
+    tableRows.stories = [
+      { id: 1, story_id: "weavers", title: "The Weavers", private: false, draft: true },
+      { id: 2, story_id: "dyers", title: "The Dyers", private: true, draft: false },
+    ];
+    repositoryLists("order,story_id,title\n1,weavers,The Weavers\n2,dyers,The Dyers\n");
+
+    const codes = (await runValidationAction()).validation?.warnings.map((w) => w.code) ?? [];
+
+    expect(codes.length).toBeGreaterThan(1);
+    expect(codes[0]).toBe("stories_leave_site");
+  });
+
+  it("does not warn when every story the repository lists is written", async () => {
+    tableRows.stories = [
+      { id: 1, story_id: "weavers", title: "The Weavers", private: false, draft: false },
+      { id: 2, story_id: "wip", title: "WIP", private: false, draft: true },
+    ];
+    repositoryLists("order,story_id,title\n1,weavers,The Weavers\n");
+
+    expect(leaving(await runValidationAction())).toBeUndefined();
+  });
+
+  it("compares a repository project.csv with no story_id by the ids the order gives", async () => {
+    tableRows.stories = [{ id: 1, story_id: "story-1", title: "First", private: false, draft: false }];
+    repositoryLists("order,title\n1,First\n2,Second\n");
+
+    const res = await runValidationAction();
+
+    expect(leaving(res)?.params).toEqual({ stories: "story-2" });
+  });
+
+  it("does not warn when the repository has no project.csv", async () => {
+    tableRows.stories = [{ id: 1, story_id: "weavers", title: "The Weavers", private: false, draft: true }];
+    getFileAtRef.mockImplementation(async (...args: unknown[]) =>
+      args[3] === "_config.yml" ? { status: "ok", content: "" } : { status: "absent" },
+    );
+
+    expect(leaving(await runValidationAction())).toBeUndefined();
+  });
+});
+
+describe("run-validation — the page's own check of GitHub", () => {
+  const IMPORTED = "1111111111111111111111111111111111111111";
+  const LATER = "2222222222222222222222222222222222222222";
+
+  /** The project with no head recorded, its import's page files record at `importCommit` when given. */
+  function unpublished(importCommit?: string) {
+    vi.mocked(resolveActiveProjectFromRequest).mockResolvedValueOnce({
+      project: {
+        id: 7, github_repo_full_name: "owner/repo", installation_id: 55, head_sha: null, publish_snapshot: null,
+        page_files_json: importCommit ? JSON.stringify({ commit: importCommit, files: {} }) : null,
+      },
+      userRole: "convenor",
+    } as never);
+  }
+
+  it("answers a head it could not read as unchecked: no change on GitHub, and nothing there read", async () => {
+    getRepoHead.mockRejectedValue(new Error("GitHub GraphQL error: 502"));
+    tableRows.stories = [PRIVATE_STORY];
+
+    const res = await runValidationAction();
+
+    expect(res).toMatchObject({ ok: true, headState: "unchecked", shownHead: null });
+    expect(blockerCodes(res)).not.toContain("stale_head");
+    expect(getFileAtRef).not.toHaveBeenCalled();
+    expect(sheetWarningChecksAt).not.toHaveBeenCalled();
+  });
+
+  it("still runs the checks of the site's own content when GitHub's head could not be read", async () => {
+    getRepoHead.mockRejectedValue(new Error("GitHub GraphQL error: 502"));
+    tableRows.stories = [{ id: 1, story_id: "untitled", title: "", private: false, draft: false }];
+
+    expect(blockerCodes(await runValidationAction())).toEqual(["story_no_title"]);
+  });
+
+  it("answers the recorded head as current", async () => {
+    expect(await runValidationAction()).toMatchObject({ headState: "current", shownHead: "head-sha" });
+  });
+
+  it("blocks a head GitHub moved past the recorded one as stale", async () => {
+    getRepoHead.mockResolvedValue(LATER);
+
+    const res = await runValidationAction();
+
+    expect(res).toMatchObject({ headState: "stale", shownHead: LATER });
+    expect(blockerCodes(res)).toContain("stale_head");
+  });
+
+  it("answers a first publish, with no blocker, while GitHub is at the import's commit", async () => {
+    unpublished(IMPORTED);
+    getRepoHead.mockResolvedValue(IMPORTED);
+
+    const res = await runValidationAction();
+
+    expect(res).toMatchObject({ headState: "first_publish", shownHead: IMPORTED });
+    expect(blockerCodes(res)).not.toContain("stale_head");
+  });
+
+  it("answers a first publish when no import commit is recorded", async () => {
+    unpublished();
+    getRepoHead.mockResolvedValue(LATER);
+
+    const res = await runValidationAction();
+
+    expect(res).toMatchObject({ headState: "first_publish", shownHead: LATER });
+    expect(blockerCodes(res)).not.toContain("stale_head");
+  });
+
+  it("blocks a commit on GitHub since the import as stale, though no head is recorded", async () => {
+    unpublished(IMPORTED);
+    getRepoHead.mockResolvedValue(LATER);
+
+    const res = await runValidationAction();
+
+    expect(res).toMatchObject({ headState: "stale", shownHead: LATER });
+    expect(blockerCodes(res)).toContain("stale_head");
   });
 });

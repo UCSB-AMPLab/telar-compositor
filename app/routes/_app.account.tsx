@@ -22,7 +22,7 @@
  * notifies the project's Durable Object so anyone editing in real time
  * gets dropped cleanly rather than finding out by silent failure.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { tombstoneAccount } from "~/lib/account-tombstone.server";
@@ -145,7 +145,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // with a fallback to the repo name.
   const projectRows = await getUserProjectsWithStats(db, user.id);
   // The card is a list, so children the user holds only an instructor row on
-  // are left out of it (ruling 18). `projectRows` itself is not filtered:
+  // are left out of it. `projectRows` itself is not filtered:
   // the danger-zone derivations below are about what deleting this account
   // would do to other people, and a row hidden from a list is still a row.
   const listedRows = listableProjects(projectRows);
@@ -357,7 +357,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   }
 
   // join-course-staff carries a code rather than a projectId: staff
-  // admission attaches a PERSON to a course (design §89), and which course
+  // admission attaches a PERSON to a course, and which course
   // is the code's answer, not the caller's. Handled before the projectId
   // validation below for that reason.
   //
@@ -367,8 +367,8 @@ export async function action({ request, context }: Route.ActionArgs) {
   // no repair path of its own — the remedy is the same field again, which is
   // what the refusal copy tells the person.
   //
-  // No password gate. The gate is on running a course, never on joining one
-  // (ruling 20), and the code was handed over by somebody who passed it.
+  // No password gate. The gate is on running a course, never on joining one,
+  // and the code was handed over by somebody who passed it.
   if (intent === "join-course-staff") {
     const outcome = await joinCourseAsStaff(db, {
       token: String(formData.get("code") ?? ""),
@@ -387,7 +387,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     // are auto-cascaded below. We filter `projects WHERE user_id = me`
     // to rows where a non-self, non-instructor project_members row
     // exists — instructor rows are staff, not collaborators to protect
-    // from orphaning (design §3), so an uncorrected role-blind check here
+    // from orphaning, so an uncorrected role-blind check here
     // would block a solo student's own account deletion whenever their
     // site carries an instructor row from course enrolment.
     //
@@ -517,8 +517,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       await requireProjectMember(db, projectId, user.id);
 
       // Instructor membership on a child project is tied to the course in
-      // both directions (design §5) — leaving by this door would produce
-      // a state the design declares impossible. Convenor/collaborator
+      // both directions — leaving by this door would produce
+      // a state that cannot exist. Convenor/collaborator
       // rows, and instructor rows on a project with no parent, are never
       // refused; the shared check also gates `remove-member` in
       // _app.dashboard.tsx.

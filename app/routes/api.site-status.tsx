@@ -1,8 +1,8 @@
 /**
  * This file is the read-only resource route backing the Site Status pill's
  * lazy popover payloads. The global pill derives its caption synchronously
- * from the `_app` loader; the heavy popover bodies (change manifest, sync
- * diff, in-sync commit metadata) are too expensive to compute on every
+ * from the `_app` loader; the heavy popover bodies (change manifest and
+ * in-sync commit metadata) are too expensive to compute on every
  * navigation, so they load only when a popover opens — via this loader.
  *
  * It is a resource route (loader only, NO default export) nested under the
@@ -11,19 +11,19 @@
  * way the dashboard / publish routes do. A client-supplied projectId is
  * never trusted — the active project comes from `resolveActiveProject`
  * (which only returns projects the user is a member of) and membership is
- * re-verified with `getUserRole` before any manifest/diff is computed,
+ * re-verified with `getUserRole` before any manifest is computed,
  * guarding against cross-project disclosure.
  *
  * The route is strictly read-only — it wraps the EXISTING server functions
- * (`computeChangeSummary`, `computeFullSyncDiff`) verbatim and performs zero
- * mutations. The `payload` query param is whitelisted against the four allowed
- * values; anything else is a 400. Three values serve lazy popover payloads (`unpublished`,
- * `out-of-sync`, `in-sync`); the fourth (`gh-status`) is the pill's
+ * (`computeChangeSummary`) verbatim and performs zero
+ * mutations. The `payload` query param is whitelisted against the three allowed
+ * values; anything else is a 400. Two values serve lazy popover payloads (`unpublished`,
+ * `in-sync`); the third (`gh-status`) is the pill's
  * out-of-band GitHub refresh poll. On any GitHub error the `in-sync` payload
  * fails open: it returns the stored timestamps without the commit message
  * rather than erroring (mirrors the `_app` loader's fail-open posture).
  *
- * @version v1.5.4-beta
+ * @version v1.5.5-beta
  */
 
 import type { Route } from "./+types/api.site-status";
@@ -48,6 +48,7 @@ import {
   claimRefresh,
   refreshGithubStatus,
   deriveHeadDiverged,
+  deriveCheckFailed,
   getCachedLatestTag,
   type DerivedGithubStatus,
 } from "~/lib/github-status.server";
@@ -60,10 +61,6 @@ import {
   buildEntityHashes,
 } from "~/lib/publish.server";
 import type { PublishSnapshot } from "~/lib/publish.server";
-import { computeFullSyncDiff } from "~/lib/sync.server";
-import { legacyRecordRef } from "~/lib/legacy-object-ids.server";
-import { readSiteTelarVersion } from "~/lib/site-version.server";
-import type { FullSyncDiff } from "~/lib/sync.server";
 
 const GITHUB_API = "https://api.github.com";
 
@@ -125,23 +122,6 @@ function countChangeSummary(summary: ReturnType<typeof computeChangeSummary>): n
 }
 
 /**
- * Fail-open empty diff for the out-of-sync branch when the repo name is
- * malformed or the GitHub diff throws. `satisfies FullSyncDiff` makes
- * this fail to compile if the diff shape gains a required field, so it can't
- * silently drift. The pill's `aggregateSyncDiff` reads all-zero from it.
- */
-const EMPTY_FULL_SYNC_DIFF = {
-  objects: { newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [], reordered: null },
-  stories: { newStories: [], changedStories: [], missingStories: [] },
-  config: { changedFields: [], versionChange: null },
-  glossary: { added: [], removed: [], changed: [] },
-  hasConflicts: false,
-  classification: "two-way",
-  suppressedEditorOnly: 0,
-  unreadableFiles: [],
-} satisfies FullSyncDiff;
-
-/**
  * The byte length of a project's saved Yjs state, or `null` when the row holds
  * no blob or does not exist.
  *
@@ -158,8 +138,8 @@ async function savedStateBytes(env: Env, projectId: number): Promise<number | nu
   return typeof row?.bytes === "number" ? row.bytes : null;
 }
 
-/** The four payloads this route can serve. */
-const ALLOWED_PAYLOADS = ["unpublished", "out-of-sync", "in-sync", "gh-status"] as const;
+/** The three payloads this route can serve. */
+const ALLOWED_PAYLOADS = ["unpublished", "in-sync", "gh-status"] as const;
 type PayloadKind = (typeof ALLOWED_PAYLOADS)[number];
 
 function isAllowedPayload(value: string | null): value is PayloadKind {
@@ -184,7 +164,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   // Resolve the active project from the SESSION — never a client-supplied id.
   // resolveActiveProject only ever returns projects the user is a member of
   // (it reads getUserProjects). We then re-verify membership explicitly with
-  // getUserRole before computing anything, so a manifest/diff can never leak
+  // getUserRole before computing anything, so a manifest can never leak
   // across projects.
   const resolved = await resolveActiveProjectFromRequest(request, env, user.id);
   if (!resolved) {
@@ -204,52 +184,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       // in-place snapshot upgrade.
       const summary = await loadChangeSummary(db, activeProject);
       return Response.json(summary);
-    }
-
-    case "out-of-sync": {
-      // Wrap the EXISTING full-sync diff verbatim and return it raw — the pill
-      // aggregates +/~/- client-side via aggregateSyncDiff. We do NOT
-      // pre-aggregate, and we do NOT replicate the dashboard handler's
-      // "bump head_sha when no changes" write (read-only).
-      // Guard a malformed repo name (older imports / partial onboarding) and
-      // fail open on any diff error rather than 500-ing — the in-sync branch
-      // already does this; the out-of-sync branch must match.
-      if (!activeProject.github_repo_full_name?.includes("/")) {
-        return Response.json(EMPTY_FULL_SYNC_DIFF);
-      }
-      try {
-        // resolveProjectToken hands the installation token only to a
-        // publishing role — a private repo a member is not a GitHub
-        // collaborator on would otherwise fail open to an empty diff for
-        // them alone, hiding real drift. This intent carries no role gate of
-        // its own, so a non-member reads no more than their own GitHub
-        // account already can.
-        const userToken = await decrypt(user.encrypted_access_token, env.ENCRYPTION_KEY);
-        const [owner, repo] = activeProject.github_repo_full_name.split("/");
-        const token = await resolveProjectToken(
-          env.GITHUB_APP_ID,
-          env.GITHUB_PRIVATE_KEY,
-          activeProject.installation_id,
-          userToken,
-          role,
-        );
-        const diff = await computeFullSyncDiff(
-          activeProject.id,
-          token,
-          owner,
-          repo,
-          db,
-          activeProject.head_sha ?? null,
-          {
-            frameworkVersion: await readSiteTelarVersion(db, activeProject.id),
-            legacyRef: activeProject.legacy_ids_repaired_at == null ? legacyRecordRef(activeProject) : undefined,
-          },
-        );
-        return Response.json(diff);
-      } catch {
-        // Network/decrypt/diff failure — degrade to an empty diff (no nag).
-        return Response.json(EMPTY_FULL_SYNC_DIFF);
-      }
     }
 
     case "in-sync": {
@@ -277,7 +211,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       }
 
       try {
-        // Same rule as out-of-sync: resolveProjectToken hands the
+        // resolveProjectToken hands the
         // installation token only to a publishing role — a private repo the
         // collaborator cannot read would otherwise silently drop the commit
         // message for them alone; an instructor or non-member here still
@@ -352,8 +286,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         proj = projRows[0];
         // Not bound to the page's site: these cache columns describe the
         // session's site, and what is written is true of it whichever tab asked.
-        if (proj && isStale(proj.gh_checked_at, now)) {
-          const claimed = await claimRefresh(db, proj.id, now);
+        // `force=1` is the pill's Try again: the check runs although the last one
+        // is within the TTL, through a claim of zero TTL so it is still taken
+        // by one caller at a time.
+        const force = url.searchParams.get("force") === "1";
+        if (proj && (force || isStale(proj.gh_checked_at, now))) {
+          const claimed = await claimRefresh(db, proj.id, now, force ? 0 : undefined);
           if (claimed) {
             const token = await resolveProjectToken(
               env.GITHUB_APP_ID,
@@ -404,6 +342,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         return Response.json({
           repoUnavailable: proj?.gh_repo_available === 0,
           headDiverged: proj ? deriveHeadDiverged(proj, proj.head_sha ?? null) : false,
+          checkFailed: proj ? deriveCheckFailed(proj, proj.head_sha ?? null) : false,
+          firstPublish: proj ? (proj.head_sha ?? null) === null : false,
           needsUpgrade: cmp.needsUpgrade,
           isBelowMinimum: cmp.isBelowMinimum,
           latestTelarTag: tag,
@@ -419,6 +359,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
         return Response.json({
           repoUnavailable: proj?.gh_repo_available === 0,
           headDiverged: proj ? deriveHeadDiverged(proj, proj.head_sha ?? null) : false,
+          checkFailed: proj ? deriveCheckFailed(proj, proj.head_sha ?? null) : false,
+          firstPublish: proj ? (proj.head_sha ?? null) === null : false,
           needsUpgrade: false,
           isBelowMinimum: false,
           latestTelarTag: null,

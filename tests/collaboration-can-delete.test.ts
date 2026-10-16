@@ -33,7 +33,7 @@
  * required. This mirrors the harness pattern in
  * tests/snapshot-insert-delete.test.ts.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -720,8 +720,8 @@ describe("makeViolationCounter — sliding-window semantics", () => {
 //
 // `objects.course_project_id` marks an object preloaded from a course. While
 // the marker is set nobody may delete the object: not a collaborator, not an
-// instructor, not the convenor. The rule is marker-based and role-independent
-// (design §6). These tests exercise the pass through the full handler, so a
+// instructor, not the convenor. The rule is marker-based and role-independent.
+// These tests exercise the pass through the full handler, so a
 // convenor pass only reaches the marker check if all three convenor
 // short-circuits (snapshot capture, handler return, extract) let it through.
 // ---------------------------------------------------------------------------
@@ -1220,7 +1220,7 @@ describe("canDelete handler — course-marker protection", () => {
   });
 
   it("reverts a collaborator repointing a course item's image", () => {
-    // The whole point of the ruling: no delete is involved, so none of the
+    // The point is that no delete is involved, so none of the
     // delete gates see anything. Left alone, that child site serves an image
     // the course never published while still presenting it as the course's.
     const h = makeHarness();
@@ -1651,7 +1651,7 @@ describe("canDelete handler — strip and delete inside one transaction", () => 
 // ---------------------------------------------------------------------------
 
 describe("canDelete handler — replacement removal by durable identity", () => {
-  it("R2: removes a replacement that changes _temp_id but keeps _id and object_id", () => {
+  it("removes a replacement that changes _temp_id but keeps _id and object_id", () => {
     const h = makeHarness();
     const convenor = fakeSocket(1, "convenor");
     h.sockets.push(convenor);

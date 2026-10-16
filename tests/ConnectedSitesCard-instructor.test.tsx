@@ -3,14 +3,14 @@
  * ConnectedSitesCard's instructor handling: the role badge renders
  * "Docente"/"Instructor" rather than falling through to the collaborator
  * label, and a leave attempt refused because the row is an instructor on a
- * course-enrolled child project (design §5) surfaces its own explanatory
+ * course-enrolled child project surfaces its own explanatory
  * toast (`leave_refused_instructor`) instead of the generic failure copy.
  *
  * react-router's `useFetcher` is mocked per-call — ProjectRow constructs
  * three fetchers in a fixed order (delete, ws-count, leave), so the
  * leave-fetcher's return is queued third.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

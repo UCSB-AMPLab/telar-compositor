@@ -1,12 +1,9 @@
 /**
  * The role matrix for publish, image upload, and upgrade.
  *
- * Before this change all three commit under the acting user's own GitHub
- * token, which only a convenor's token can write with — so a convenor-only
- * gate and a token that would fail at GitHub were two independent guards.
- * After this change the three actions commit under the GitHub App
- * installation token, which every project has regardless of who acts, so
- * the membership gate is the only guard left standing.
+ * All three actions commit under the GitHub App installation token, which
+ * every project has regardless of who acts, so the membership gate is the
+ * only guard on who may publish, upload an image or upgrade.
  *
  * This file pins that gate as an explicit membership test of
  * `{convenor, collaborator, instructor}` — never `role !== null` — against
@@ -41,7 +38,7 @@
  * credential (upgrade's rebuild) is pinned again, against a fuller
  * harness, in tests/upgrade.action.test.ts.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -504,6 +501,7 @@ vi.mock("~/lib/iiif.server", () => ({ fetchAndParseManifest: vi.fn() }));
 vi.mock("~/lib/github-status.server", async (orig) => ({
   headAdvancedFrom: ((await orig()) as typeof import("~/lib/github-status.server")).headAdvancedFrom,
   objectsReadAdvancedFrom: ((await orig()) as typeof import("~/lib/github-status.server")).objectsReadAdvancedFrom,
+  importCommitOf: ((await orig()) as typeof import("~/lib/github-status.server")).importCommitOf,
   bumpProjectHeadFrom: vi.fn(async () => true),
   bumpObjectsReadFrom: vi.fn(async () => true),
   getCachedLatestTag: vi.fn(async () => null),

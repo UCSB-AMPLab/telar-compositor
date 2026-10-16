@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 /**
- * Both sync dialogs show the warnings the check found in the repository's
- * sheets, above the changes: the objects page's dialog, and the
- * full sync dialog on its conflict and diffReady steps. A check with nothing
- * to apply still shows them, since what they describe is lost at the next
+ * The sync dialog shows the warnings the check found in the repository's
+ * sheets, above the changes, on its diffReady step. A check with nothing to
+ * apply still shows them, since what they describe is lost at the next
  * publish whether or not anything is synced.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -31,7 +30,6 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
 import { SyncConfirmModal } from "~/components/features/dashboard/SyncConfirmModal";
 
 const WARNINGS: SheetWarning[] = [
@@ -69,38 +67,11 @@ beforeEach(() => {
   fetcherData.current = undefined;
 });
 
-describe("the objects page's sync dialog", () => {
-  function renderDialog(diff: SyncDiff) {
-    render(
-      <SyncDiffDialog open onClose={() => {}} diffData={diff} onApply={() => {}} isComputing={false} isApplying={false} />,
-    );
-  }
-
-  it("shows the check's warnings", () => {
-    renderDialog(objectsDiff({ warnings: WARNINGS, newObjects: [{ object_id: "obj-001", title: "First" } as SyncDiff["newObjects"][number]] }));
-    expect(shownWarnings()).toEqual([
-      'sheet_warnings.ragged_row.named {"row":"obj-002","sheet":"objects.csv"}',
-      "sheet_warnings.tree_truncated",
-    ]);
-  });
-
-  it("shows them when there is nothing to apply", () => {
-    renderDialog(objectsDiff({ warnings: WARNINGS }));
-    expect(shownWarnings()).toHaveLength(2);
-  });
-
-  it("shows nothing for a check without warnings", () => {
-    renderDialog(objectsDiff());
-    expect(shownWarnings()).toEqual([]);
-  });
-});
-
 describe("the full sync dialog", () => {
   function renderWithDiff(diff: FullSyncDiff, unpublishedCount = 0) {
-    const view = render(<SyncConfirmModal open unpublishedCount={unpublishedCount} onClose={() => {}} />);
-    fireEvent.click(screen.getByText("sync_modal.check_changes"));
+    const view = render(<SyncConfirmModal open onClose={() => {}} />);
     fetcherData.current = { ok: true, intent: "compute-full-sync-diff", diff };
-    view.rerender(<SyncConfirmModal open unpublishedCount={unpublishedCount} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
   }
 
   it("shows the check's warnings on the diffReady step", () => {
@@ -111,7 +82,7 @@ describe("the full sync dialog", () => {
     ]);
   });
 
-  it("shows them on the conflict step", () => {
+  it("shows them above a two-way check's list, which no warning step precedes", () => {
     renderWithDiff(
       fullDiff({
         warnings: WARNINGS,
@@ -120,7 +91,8 @@ describe("the full sync dialog", () => {
       }),
       2,
     );
-    expect(screen.getByText("sync_modal.sync_anyway")).toBeTruthy();
+    expect(screen.queryByText("sync_modal.sync_anyway")).toBeNull();
+    expect(screen.getByTestId("sync-item-setting:title")).toBeTruthy();
     expect(shownWarnings()).toHaveLength(2);
   });
 

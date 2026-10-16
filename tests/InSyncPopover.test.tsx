@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 /**
  * Pins the `InSyncPopover` body — the affirmative "nothing to do" state of the
- * Site Status pill. Asserts the three locked rows (last-published,
- * commit, synced-from-repo), the ok icon swatch tokens, the `View published
+ * Site Status pill. Asserts the two rows (commit, synced-from-repo; the time
+ * of the last publish is not shown), the ok icon swatch tokens, the `View published
  * site` ghost button, and graceful fail-open when the commit message is absent.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -57,14 +57,22 @@ describe("InSyncPopover", () => {
     expect(screen.getByText("Everything is in sync")).toBeTruthy();
   });
 
-  it("renders three rows: last published, commit, synced from repo", () => {
+  it("renders two rows: commit, synced from repo", () => {
     const { container } = renderPopover({
       payload: fullPayload,
       pagesUrl: "https://example.org",
     });
-    expect(container.textContent).toContain("Last published");
     expect(container.textContent).toContain("commit");
     expect(container.textContent).toContain("Synced from repo");
+  });
+
+  it("shows no publish date: the time of the last publish is in the payload and not on the page", () => {
+    const { container } = renderPopover({
+      payload: { ...fullPayload, last_published_at: "2026-03-03T10:00:00Z" },
+      pagesUrl: "https://example.org",
+    });
+    expect(container.textContent).not.toContain("Last published");
+    expect(container.textContent).not.toContain("Mar");
   });
 
   it("renders the short commit sha and message", () => {
@@ -103,8 +111,7 @@ describe("InSyncPopover", () => {
       payload: { ...fullPayload, commitMessage: null },
       pagesUrl: "https://example.org",
     });
-    // still shows the timestamp rows
-    expect(container.textContent).toContain("Last published");
+    // still shows the sync row
     expect(container.textContent).toContain("Synced from repo");
   });
 

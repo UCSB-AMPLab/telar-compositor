@@ -44,7 +44,7 @@
     "unpublished_one": "{{n}} cambio sin publicar",
     "unpublished_other": "{{n}} cambios sin publicar",
     "publish_cta": "Publicar",
-    "out_of_sync": "GitHub ha cambiado",
+    "out_of_sync": "Cambios en GitHub",
     "review_cta": "Revisar",
     "publishing": "Publicando…",
     "upgrade": "Telar {{version}} disponible",
@@ -53,19 +53,21 @@
     "repo_unavailable": "Sin acceso al repositorio",
     "halted": "No se está guardando",
     "halted_action": "Restaurar",
-    "repo_invitation": "Invitación al repositorio"
+    "repo_invitation": "Invitación al repositorio",
+    "first_publish": "Aún no se ha publicado desde el Compositor",
+    "check_failed": "No se pudo revisar GitHub"
   },
   "untitled": "Sin título",
   "a11y": {
     "notifications": "Notificaciones",
     "close_notification": "Cerrar notificación",
     "main_navigation": "Navegación principal",
-    "edit_slug": "Editar el identificador de la URL",
     "onboarding_progress": "Progreso de la configuración inicial",
     "import_progress": "Progreso de la importación",
     "activity_rail": "Panel de actividad y recuperación"
   },
   "cancel": "Cancelar",
+  "change_id": "Cambiar ID",
   "close": "Cerrar",
   "sign_out": "Cerrar sesión",
   "no_image": "Sin imagen",
