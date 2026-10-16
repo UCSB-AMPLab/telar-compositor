@@ -3,18 +3,23 @@
  * prepare's question and the lease it ends, the signed challenge the picker
  * posts back, the push that voids it, the repaired sheet in the commit, and
  * the recorded head the upgrade leaves alone when the author chose between
- * columns that both held values, on the full and on the partial path.
+ * columns that both held values, on the full and on the partial path, and
+ * a glossary definition the chain trims to the site's language, in the
+ * committed sheet, in a tab written as the sheet, and in what the commit
+ * sends to the Compositor's glossary, with what the glossary answers carried
+ * to the done screen or beside a refused workflow commit.
  *
  * Signing and hashing are real here, as in
  * upgrade-prepared-state-signing.test.ts: the challenge's verification is
  * under test.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Manifest } from "~/lib/manifest-schema.server";
 import type { FileAtRef, TreeEntry } from "~/lib/github.server";
+import LANGUAGE_MATCH from "./fixtures/csv-language-match-op.json";
 
 const DIR = "telar-content/spreadsheets";
 /** An answer of 19 lines, one over the budget: 19 words of 52 characters. */
@@ -130,12 +135,20 @@ vi.mock("~/lib/github-status.server", async (orig) => {
   };
 });
 
+vi.mock("~/lib/glossary-language-match.server", async (orig) => ({
+  ...((await orig()) as typeof import("~/lib/glossary-language-match.server")),
+  matchGlossaryDefinitionsInDocument: vi.fn(async (_db: unknown, _env: unknown, _id: number, matches: Array<{ termId: string }>) =>
+    matches.map((match) => ({ match, outcome: "applied" })),
+  ),
+}));
+
 import { action } from "~/routes/_app.upgrade";
 import { computeUpgradeDiff, fetchLatestRelease, loadManifestChain } from "~/lib/upgrade.server";
 import { commitFilesToRepo } from "~/lib/commit.server";
 import { bumpProjectHeadFrom } from "~/lib/github-status.server";
 import { controlFreezeLease, controlFreezeLeaseNamingHolder } from "~/lib/freeze-lease.server";
 import { listDirectoryEntries } from "~/lib/github.server";
+import { matchGlossaryDefinitionsInDocument } from "~/lib/glossary-language-match.server";
 
 const CHAIN: Manifest[] = [
   { schema_version: 1, from_version: "1.7.0", to_version: "1.8.0", description: "none", operations: [], manual_steps: { en: [], es: [] } },
@@ -553,6 +566,197 @@ describe("a site that reads Google Sheets", () => {
       site.config = `${CONFIG}google_sheets: {enabled: "True", published_url: "${PUB}"}\n`;
       expect(await answerOffer(await prepareSheets(), "off")).toMatchObject({ ok: false, error: "sheets_switch_unreadable" });
       expect(commitFilesToRepo).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("a glossary definition the chain changes", () => {
+  const GLOSSARY = `${DIR}/glossary.csv`;
+  const RELEASED = LANGUAGE_MATCH.cases[1];
+  const glossary = (definition: string, newline = "\n") =>
+    ["term_id,title,definition", "id_término,titulo,definición", `telar,Telar,"${definition.replace(/"/g, '""').replace(/\n/g, newline)}"`, ""].join(newline);
+
+  beforeEach(() => {
+    site.version = "1.8.1";
+    site.files = { [GLOSSARY]: glossary(RELEASED.equals) };
+    vi.mocked(fetchLatestRelease).mockResolvedValue({ tagName: "v1.8.2", body: "", publishedAt: "2026-10-01T00:00:00Z" } as never);
+    vi.mocked(loadManifestChain).mockResolvedValue([
+      { schema_version: 1, from_version: "1.8.1", to_version: "1.8.2", description: "none", operations: [LANGUAGE_MATCH as Manifest["operations"][number]], manual_steps: { en: [], es: [] } },
+    ]);
+  });
+
+  async function commitGlossary(): Promise<{ res: Answer; written: string | undefined }> {
+    const ready = await prepareSheets();
+    expect(ready.answer).toBe("ready");
+    const res = await commitSheets(ready);
+    const additions = vi.mocked(commitFilesToRepo).mock.calls[0][4];
+    return { res, written: additions.find((a) => a.path === GLOSSARY)?.content };
+  }
+
+  /** The matches the commit sent to the Compositor's glossary. */
+  const sentMatches = () => vi.mocked(matchGlossaryDefinitionsInDocument).mock.calls.map((call) => call[3]);
+  const matchFor = (lang: "en" | "es") => ({
+    file: GLOSSARY,
+    termId: "telar",
+    cases: LANGUAGE_MATCH.cases.map((c) => ({ equals: c.equals, value: c.values[lang] })),
+  });
+
+  it("commits the paragraph in the site's language, records the commit as synced, and then applies the rule to the Compositor's glossary", async () => {
+    const { res, written } = await commitGlossary();
+    expect(written).toBe(glossary(RELEASED.values.en));
+    expect(res).toMatchObject({ ok: true, advancesHead: true });
+    expect(bumpProjectHeadFrom).toHaveBeenCalledWith(expect.anything(), 1, "head-1", "new-head");
+    expect(sentMatches()).toEqual([[matchFor("en")]]);
+    expect(vi.mocked(commitFilesToRepo).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(matchGlossaryDefinitionsInDocument).mock.invocationCallOrder[0],
+    );
+    expect(res.sheetReport).toEqual([{ kind: "glossary_language_matched", sheet: "glossary.csv", term: "telar", file: GLOSSARY }]);
+  });
+
+  it("writes the Spanish paragraph on a Spanish site, and sends the Spanish one to the glossary", async () => {
+    site.config = CONFIG.replace('"en"', '"es"');
+    const { written } = await commitGlossary();
+    expect(written).toBe(glossary(RELEASED.values.es));
+    expect(sentMatches()).toEqual([[matchFor("es")]]);
+  });
+
+  it("reads telar_language ES as Spanish, as the framework lowercases it", async () => {
+    site.config = CONFIG.replace('"en"', '"ES"');
+    const { written } = await commitGlossary();
+    expect(written).toBe(glossary(RELEASED.values.es));
+    expect(sentMatches()).toEqual([[matchFor("es")]]);
+  });
+
+  it("writes the English paragraph where telar_language names neither language, as the framework does", async () => {
+    site.config = CONFIG.replace('"en"', '"fr"');
+    const { written } = await commitGlossary();
+    expect(written).toBe(glossary(RELEASED.values.en));
+  });
+
+  it("leaves the author's own definition in the file, and still applies the rule to the glossary, which holds its own text", async () => {
+    site.files = { [GLOSSARY]: glossary("Our own words.") };
+    vi.mocked(matchGlossaryDefinitionsInDocument).mockImplementationOnce(async (_db, _env, _id, matches) =>
+      matches.map((m) => ({ match: m, outcome: "kept" as const })),
+    );
+    const { res, written } = await commitGlossary();
+    expect(written).toBe(glossary("Our own words."));
+    expect(sentMatches()).toEqual([[matchFor("en")]]);
+    expect(res.sheetReport).toEqual([]);
+  });
+
+  it("names a definition the glossary could not confirm, and leaves the commit for the sync to offer", async () => {
+    vi.mocked(matchGlossaryDefinitionsInDocument).mockImplementationOnce(async (_db, _env, _id, matches) =>
+      matches.map((m) => ({ match: m, outcome: "unconfirmed" as const })),
+    );
+    const { res } = await commitGlossary();
+    expect(res.sheetReport).toEqual([{ kind: "glossary_language_unconfirmed", sheet: "glossary.csv", term: "telar", file: GLOSSARY }]);
+    expect(res.advancesHead).toBe(false);
+    expect(bumpProjectHeadFrom).not.toHaveBeenCalled();
+  });
+
+  it("names a definition the author edited during the upgrade, and records the commit as synced", async () => {
+    vi.mocked(matchGlossaryDefinitionsInDocument).mockImplementationOnce(async (_db, _env, _id, matches) =>
+      matches.map((m) => ({ match: m, outcome: "edited" as const })),
+    );
+    const { res } = await commitGlossary();
+    expect(res.sheetReport).toEqual([{ kind: "glossary_language_edited", sheet: "glossary.csv", term: "telar", file: GLOSSARY }]);
+    expect(res).toMatchObject({ ok: true, advancesHead: true });
+    expect(bumpProjectHeadFrom).toHaveBeenCalledWith(expect.anything(), 1, "head-1", "new-head");
+  });
+
+  describe("on the partial path, where the workflow commit is refused after the glossary landed", () => {
+    beforeEach(() => {
+      vi.mocked(computeUpgradeDiff).mockResolvedValue(upgradeDiffFor(true) as never);
+      vi.mocked(commitFilesToRepo)
+        .mockResolvedValueOnce({ newHeadSha: "content-head" })
+        .mockRejectedValueOnce(new Error("Resource not accessible by integration"));
+    });
+
+    it("carries the unconfirmed definition beside the refusal, and does not record the content as synced", async () => {
+      vi.mocked(matchGlossaryDefinitionsInDocument).mockImplementationOnce(async (_db, _env, _id, matches) =>
+        matches.map((m) => ({ match: m, outcome: "unconfirmed" as const })),
+      );
+      const ready = await prepareSheets();
+      const res = await commitSheets(ready);
+      expect(res).toMatchObject({ ok: false, error: "insufficient_permissions", advancesHead: false });
+      expect(res.sheetReport).toEqual([{ kind: "glossary_language_unconfirmed", sheet: "glossary.csv", term: "telar", file: GLOSSARY }]);
+      expect(bumpProjectHeadFrom).not.toHaveBeenCalled();
+    });
+
+    it("carries the trimmed definition beside the refusal, and records the content as synced", async () => {
+      const res = await commitSheets(await prepareSheets());
+      expect(res).toMatchObject({ ok: false, error: "insufficient_permissions", advancesHead: true });
+      expect(res.sheetReport).toEqual([{ kind: "glossary_language_matched", sheet: "glossary.csv", term: "telar", file: GLOSSARY }]);
+      expect(bumpProjectHeadFrom).toHaveBeenCalledWith(expect.anything(), 1, "head-1", "content-head");
+    });
+  });
+
+  it("sends nothing to the glossary for a chain without the operation", async () => {
+    vi.mocked(loadManifestChain).mockResolvedValue([{ ...CHAIN[0], from_version: "1.8.1", to_version: "1.8.2" }]);
+    const ready = await prepareSheets();
+    expect(ready.prepared).not.toHaveProperty("glossaryMatches");
+    await commitSheets(ready);
+    expect(sentMatches()).toEqual([[]]);
+  });
+
+  describe("on a site that stops reading Google Sheets in the upgrade", () => {
+    const PUB = "https://docs.google.com/spreadsheets/d/e/PUB/pubhtml";
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("commits the glossary tab with the paragraph in the site's language", async () => {
+      site.config = `${CONFIG}google_sheets:\n  enabled: true\n  published_url: "${PUB}"\n`;
+      site.files = { [GLOSSARY]: glossary(RELEASED.equals), [`${DIR}/my-story.csv`]: "step,answer\n1,Old.\n" };
+      const tabs: Record<string, [string, string]> = {
+        "1": ["glossary", glossary(RELEASED.equals, "\r\n")],
+        "2": ["my-story", "step,answer,note,Note\n1,From the tab.,,x\n"],
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url === PUB) return new Response(Object.entries(tabs).map(([gid, [name]]) => `items.push({name: "${name}", gid: "${gid}"});`).join(""));
+          const tab = tabs[new URL(url).searchParams.get("gid") as string];
+          return tab === undefined ? new Response("", { status: 404 }) : new Response(tab[1]);
+        }),
+      );
+      const asked = await prepareSheets();
+      expect(asked.answer).toBe("needs_sheets_decision");
+      const ready = await prepareSheets({ challenge: JSON.stringify(asked.challenge), sheets: "off" });
+      expect(ready).toMatchObject({ ok: true, answer: "ready", prepared: { sheetsOff: { written: expect.arrayContaining([GLOSSARY]) } } });
+      await commitSheets(ready);
+      const additions = vi.mocked(commitFilesToRepo).mock.calls[0][4];
+      const written = additions.find((a) => a.path === GLOSSARY)?.content ?? "";
+      expect(written).toContain(RELEASED.values.en.split("\n")[0]);
+      expect(written).not.toContain(RELEASED.values.es.split("\n")[0]);
+      expect(sentMatches()).toEqual([[matchFor("en")]]);
+    });
+
+    it("commits a glossary tab that opens with a byte order mark with the paragraph in the site's language", async () => {
+      site.config = `${CONFIG}google_sheets:\n  enabled: true\n  published_url: "${PUB}"\n`;
+      site.files = { [GLOSSARY]: glossary(RELEASED.equals), [`${DIR}/my-story.csv`]: "step,answer\n1,Old.\n" };
+      const tabs: Record<string, [string, string]> = {
+        "1": ["glossary", `\uFEFF${glossary(RELEASED.equals, "\r\n")}`],
+        "2": ["my-story", "step,answer,note,Note\n1,From the tab.,,x\n"],
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url === PUB) return new Response(Object.entries(tabs).map(([gid, [name]]) => `items.push({name: "${name}", gid: "${gid}"});`).join(""));
+          const tab = tabs[new URL(url).searchParams.get("gid") as string];
+          return tab === undefined ? new Response("", { status: 404 }) : new Response(tab[1]);
+        }),
+      );
+      const asked = await prepareSheets();
+      expect(asked.answer).toBe("needs_sheets_decision");
+      const ready = await prepareSheets({ challenge: JSON.stringify(asked.challenge), sheets: "off" });
+      expect(ready).toMatchObject({ ok: true, answer: "ready", prepared: { sheetsOff: { written: expect.arrayContaining([GLOSSARY]) } } });
+      await commitSheets(ready);
+      const additions = vi.mocked(commitFilesToRepo).mock.calls[0][4];
+      const written = additions.find((a) => a.path === GLOSSARY)?.content ?? "";
+      expect(written).toContain(RELEASED.values.en.split("\n")[0]);
+      expect(written).not.toContain(RELEASED.values.es.split("\n")[0]);
     });
   });
 });

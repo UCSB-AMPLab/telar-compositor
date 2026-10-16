@@ -19,10 +19,11 @@
  * different hash and fails verification. The installation id is never part of
  * either payload: the server derives it from the resolved project.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import type { CommitFile } from "~/lib/commit.server";
+import type { GlossaryDefinitionMatch } from "~/lib/glossary-language-match.server";
 import type { Language, ManualStep } from "~/lib/manifest-schema.server";
 import { sha256Hex } from "~/lib/story-canonical";
 import type { UpgradeAnswer } from "~/lib/upgrade-answers.server";
@@ -70,6 +71,12 @@ export interface PreparedUpgradeContent {
   readsGoogleSheetsAfter: boolean;
   /** The steps whose answers the upgraded site publishes differently, for the confirmation and the done screen. */
   answers: UpgradeAnswer[];
+  /**
+   * The glossary definitions the commit applies the chain's
+   * csv_language_match to in the Compositor's document once it lands.
+   * Absent from the hash when absent from the object.
+   */
+  glossaryMatches?: GlossaryDefinitionMatch[];
   /**
    * The freeze lease this upgrade holds, when it holds one. Signed with the
    * rest, so the commit renews and ends the lease its own prepare started.

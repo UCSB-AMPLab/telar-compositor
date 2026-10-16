@@ -30,7 +30,7 @@
  * alphabetically, so they will be present even in a truncated tree. Revisit
  * if truncation is ever detected in practice.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { githubHeaders, getRepoTree, getFileContent, getFileBytesAtRef } from "~/lib/github.server";
@@ -1273,6 +1273,7 @@ const REFERENCED_FILES: {
   regex_replace: (op) => [...PROJECT_SHEETS, ...literalGlobPaths(op.file_glob)],
   yaml_list_add: (op) => [op.file],
   create_directory: () => [],
+  csv_language_match: (op) => [op.file],
 };
 
 function filesReferencedBy(op: Operation): readonly string[] {

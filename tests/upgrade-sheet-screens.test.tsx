@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /**
  * The upgrade's sheet screens: the column picker, the
- * repair report the confirmation and the done screen share, and the line
- * that sends the author to the sync when the upgrade did not record itself
- * as synced.
+ * repair report the confirmation and the done screen share, with the lines
+ * for the Compositor's glossary the done screen adds to it, and the line
+ * that opens the review of the changes on GitHub when the upgrade did not
+ * record itself as synced.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -23,6 +24,7 @@ vi.mock("react-router", () => ({
 import { UpgradeColumnPicker } from "~/components/features/upgrade/UpgradeColumnPicker";
 import { UpgradeSheetReport, hasSheetReportLines } from "~/components/features/upgrade/UpgradeSheetReport";
 import { UpgradeSyncNeeded } from "~/components/features/upgrade/UpgradeSyncNeeded";
+import { SyncReviewContext, type SyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 import type { OfferedGroup, SheetReportLine } from "~/lib/upgrade-sheets.server";
 
 const FILE = "telar-content/spreadsheets/my-story.csv";
@@ -104,6 +106,8 @@ describe("UpgradeSheetReport", () => {
     [{ kind: "marked", sheet: "s.csv", column: "note", position: 0, markedAs: "#note", chosen: false, heldValues: false, file: FILE } as SheetReportLine, "repairMarked"],
     [{ kind: "marked", sheet: "s.csv", column: "note", position: 0, markedAs: "#note", chosen: true, heldValues: true, file: FILE } as SheetReportLine, "repairMarkedChosen"],
     [{ kind: "unreadable", sheet: "s.csv", error: "x", file: FILE } as SheetReportLine, "repairUnreadable"],
+    [{ kind: "glossary_language_matched", sheet: "glossary.csv", term: "telar", file: FILE } as SheetReportLine, "glossaryLanguageMatched"],
+    [{ kind: "glossary_language_unconfirmed", sheet: "glossary.csv", term: "telar", file: FILE } as SheetReportLine, "glossaryLanguageUnconfirmed"],
   ])("writes one line for each change (%#)", (line, key) => {
     render(<UpgradeSheetReport lines={[line]} />);
     expect(screen.getByText("sheetReportHeading")).toBeTruthy();
@@ -119,9 +123,26 @@ describe("UpgradeSheetReport", () => {
 });
 
 describe("UpgradeSyncNeeded", () => {
-  it("sends the author to the sync, and says why", () => {
-    render(<UpgradeSyncNeeded />);
+  function renderAs(review: SyncReview) {
+    return render(
+      <SyncReviewContext.Provider value={review}>
+        <UpgradeSyncNeeded />
+      </SyncReviewContext.Provider>,
+    );
+  }
+
+  it("opens the review in place for the convenor, and says why", () => {
+    const openReview = vi.fn();
+    const { container } = renderAs({ openReview, canReview: true, coordinatorName: "Ana Pérez" });
     expect(screen.getByText("syncNeeded")).toBeTruthy();
-    expect(screen.getByText("syncNeededLink").closest("a")?.getAttribute("href")).toBe("/objects?sync=1");
+    fireEvent.click(screen.getByRole("button", { name: "syncNeededLink" }));
+    expect(openReview).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("tells anyone else who chooses, with no button", () => {
+    renderAs({ openReview: vi.fn(), canReview: false, coordinatorName: "Ana Pérez" });
+    expect(screen.getByText(/^reviewByCoordinator/)).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

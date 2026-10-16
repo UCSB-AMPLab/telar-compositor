@@ -14,7 +14,7 @@
  * exercises the actual signing and verification code with nothing else to
  * fail on.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -116,6 +116,7 @@ vi.mock("~/lib/manifest-runner.server", () => ({
     files,
     deletions: [],
     manualSteps: { en: [{ description: "Re-apply your language packs", audience: "all", kind: "action" }], es: [] },
+    languageMatches: [],
   }),
 }));
 

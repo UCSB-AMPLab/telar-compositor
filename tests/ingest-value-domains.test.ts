@@ -21,7 +21,7 @@
  * that rendered the value would be the very operation this boundary exists to
  * prevent.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -851,6 +851,26 @@ const CASES: DomainCase[] = [
     arm: "glossaryUpdate", field: "definition", found: "plain-array",
     stated: glossaryUpdate({ definition: "Definición nueva" }),
     planted: glossaryUpdate({ definition: plantedArray() }),
+    plantedRenderings: renderingsOf(plantedArray()),
+    assertAccepted: ({ ydoc }) => {
+      expect(String(glossaryByKey(ydoc, "encomienda").get("definition"))).toBe("Definición nueva");
+    },
+  },
+  {
+    name: "glossary.update seen definition",
+    arm: "glossaryUpdate", field: "seen.definition", found: "plain-object",
+    stated: glossaryUpdate({ definition: "Definición nueva", seen: { definition: "Definición original" } }),
+    planted: glossaryUpdate({ definition: "Definición nueva", seen: { definition: plantedObject() } }),
+    plantedRenderings: renderingsOf(plantedObject()),
+    assertAccepted: ({ ydoc }) => {
+      expect(String(glossaryByKey(ydoc, "encomienda").get("definition"))).toBe("Definición nueva");
+    },
+  },
+  {
+    name: "glossary.update the seen map itself",
+    arm: "glossaryUpdate", field: "seen", found: "plain-array",
+    stated: glossaryUpdate({ definition: "Definición nueva", seen: { definition: "Definición original" } }),
+    planted: glossaryUpdate({ definition: "Definición nueva", seen: plantedArray() }),
     plantedRenderings: renderingsOf(plantedArray()),
     assertAccepted: ({ ydoc }) => {
       expect(String(glossaryByKey(ydoc, "encomienda").get("definition"))).toBe("Definición nueva");

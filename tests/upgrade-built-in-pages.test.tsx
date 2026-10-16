@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * An upgrade delivers the framework's frontmatter to the built-in pages
- *, end to end.
+ * An upgrade delivers the framework's frontmatter to the built-in pages, end
+ * to end.
  *
  * The merge has its own suite; this one is about the wiring. It drives an
  * upgrade through the real loader and action on React Router's routes stub,
@@ -9,7 +9,7 @@
  * whose glossary page predates `title_key`, and reads back what was
  * committed: the page with the key added and the author's body intact.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import React from "react";
@@ -99,6 +99,7 @@ vi.mock("~/lib/manifest-runner.server", () => ({
     files,
     deletions: [],
     manualSteps: { en: [], es: [] },
+    languageMatches: [],
   }),
 }));
 vi.mock("~/lib/v130-ingest.server", async () => ({

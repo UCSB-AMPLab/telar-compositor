@@ -1,19 +1,19 @@
 /**
  * Manifest schema — types and validator for the migration manifest DSL.
  *
- * The DSL describes
- * user-content transforms applied during a Telar framework upgrade. This file
- * defines the TypeScript shape of a manifest and a runtime validator that
- * rejects malformed manifests before any operation is applied.
+ * The DSL describes user-content transforms applied during a Telar framework
+ * upgrade. This file defines the TypeScript shape of a manifest and a runtime
+ * validator that rejects malformed manifests before any operation is applied.
  *
  * Design notes:
  *   - Pure validation: no I/O, no side effects. Throws ManifestValidationError
  *     on invalid input with a JSON-pointer-style path.
- *   - Allowlist-based: the 10 operation types are exhaustively matched;
+ *   - Allowlist-based: the 11 operation types are exhaustively matched;
  *     unknown types fail validation.
  *   - The paths an operation may write by name — a `regex_replace` match, a
- *     `yaml_list_add` file — are held to one scope allowlist, defined here so
- *     the validator and the runner apply the same one.
+ *     `yaml_list_add` or `csv_language_match` file — are held to one scope
+ *     allowlist, defined here so the validator and the runner apply the same
+ *     one.
  *   - Bilingual fields ({ en, es }) resolved via resolveBilingual helper.
  *   - A manual step's `audience` is the one field that is *not*
  *     allowlist-based: any string is accepted (see StepAudience below). A
@@ -21,7 +21,7 @@
  *     must not be able to reject itself out of the only route that would
  *     fix it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 // ---------------------------------------------------------------------------
@@ -102,7 +102,8 @@ export type Operation =
   | GitignoreAddOp
   | RegexReplaceOp
   | YamlListAddOp
-  | CreateDirectoryOp;
+  | CreateDirectoryOp
+  | CsvLanguageMatchOp;
 
 export interface ConfigAddFieldOp {
   type: "config_add_field";
@@ -173,6 +174,25 @@ export interface YamlListAddOp {
 export interface CreateDirectoryOp {
   type: "create_directory";
   path: string;
+}
+
+/**
+ * One cell of a sheet, in the row whose `key_column` holds `key`, replaced by
+ * a case's text in the site's language when it holds that case's `equals`
+ * (see csv-language-match.server.ts).
+ */
+export interface CsvLanguageMatchOp {
+  type: "csv_language_match";
+  file: string;
+  key_column: string;
+  key: string;
+  column: string;
+  cases: LanguageMatchCase[];
+}
+
+export interface LanguageMatchCase {
+  equals: string;
+  values: Partial<Record<Language, string>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +535,34 @@ function validateYamlListAdd(
   return op as unknown as YamlListAddOp;
 }
 
+function validateLanguageMatchCase(value: unknown, path: string): void {
+  const entry = requireObject(value, path);
+  requireString(requireField(entry, "equals", path), `${path}/equals`);
+  const values = requireObject(requireField(entry, "values", path), `${path}/values`);
+  for (const lang of ["en", "es"] as const) {
+    if (lang in values) requireString(values[lang], `${path}/values/${lang}`);
+  }
+}
+
+function validateCsvLanguageMatch(
+  op: Record<string, unknown>,
+  path: string,
+): CsvLanguageMatchOp {
+  const file = requireString(requireField(op, "file", path), `${path}/file`);
+  if (!isPathInScope(file)) {
+    throw new ManifestValidationError(`File outside the scope allowlist: ${file}`, `${path}/file`);
+  }
+  requireString(requireField(op, "key_column", path), `${path}/key_column`);
+  requireString(requireField(op, "key", path), `${path}/key`);
+  requireString(requireField(op, "column", path), `${path}/column`);
+  const cases = requireArray(requireField(op, "cases", path), `${path}/cases`);
+  if (cases.length === 0) {
+    throw new ManifestValidationError("Expected at least one case", `${path}/cases`);
+  }
+  cases.forEach((entry, i) => validateLanguageMatchCase(entry, `${path}/cases/${i}`));
+  return op as unknown as CsvLanguageMatchOp;
+}
+
 function validateCreateDirectory(
   op: Record<string, unknown>,
   path: string,
@@ -537,6 +585,7 @@ const OPERATION_VALIDATORS: Readonly<
   regex_replace: validateRegexReplace,
   yaml_list_add: validateYamlListAdd,
   create_directory: validateCreateDirectory,
+  csv_language_match: validateCsvLanguageMatch,
 };
 
 // ---------------------------------------------------------------------------
