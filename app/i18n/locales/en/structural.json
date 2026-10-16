@@ -20,9 +20,9 @@
   "tooltip_cannot_delete": "Only the creator or convenor can delete this",
   "undo": "Undo",
   "redo": "Redo",
-  "validation_pending": "Validating…",
-  "validation_error": "Invalid IIIF manifest",
-  "validation_valid": "Valid",
+  "validation_pending": "Checking the IIIF manifest…",
+  "validation_error": "The IIIF manifest couldn't be loaded, or what loaded isn't a IIIF manifest. Open the object and check its Source URL.",
+  "validation_valid": "The IIIF manifest loaded.",
   "type_to_confirm_label": "Type <0>{{value}}</0> to confirm.",
   "type_to_confirm_aria": "Type {{value}} to confirm"
 }

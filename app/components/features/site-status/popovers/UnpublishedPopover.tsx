@@ -14,7 +14,7 @@
  * client bundle. The popover is a pure renderer — the pill fetches the summary
  * on open and passes it down.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { Link } from "react-router";
@@ -57,15 +57,15 @@ interface ManifestSection {
 }
 
 /**
- * Formats an ISO timestamp into a short label; degrades to em-dash. Locale is
+ * Formats an ISO timestamp into a short label, or null when it is not a time. Locale is
  * passed explicitly so the date matches the UI language; timezone stays local
  * (this shows a time of day). Client-only — the pill fetches the summary on
  * open, so this never participates in SSR hydration.
  */
-function fmtTime(iso: string | null | undefined, locale: string): string {
-  if (!iso) return "—";
+function fmtTime(iso: string | null | undefined, locale: string): string | null {
+  if (!iso) return null;
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString(locale, {
     month: "short",
     day: "numeric",
@@ -205,6 +205,8 @@ export function UnpublishedPopover({ summary, lastPublishedAt, className = "" }:
   const title =
     total === 1 ? t("unpublished.title_one") : t("unpublished.title_other", { n: total });
 
+  const publishedTime = fmtTime(lastPublishedAt, i18n.language);
+
   return (
     <div className={className}>
       {/* Head */}
@@ -213,7 +215,9 @@ export function UnpublishedPopover({ summary, lastPublishedAt, className = "" }:
           {title}
         </h3>
         <p className="font-body text-fg-muted" style={{ fontSize: "12px", marginTop: "2px" }}>
-          {t("unpublished.since", { time: fmtTime(lastPublishedAt, i18n.language) })}
+          {!lastPublishedAt
+            ? t("unpublished.never_published")
+            : publishedTime !== null && t("unpublished.since", { time: publishedTime })}
         </p>
       </div>
 

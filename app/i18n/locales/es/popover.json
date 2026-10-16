@@ -10,6 +10,7 @@
     "title_one": "1 cambio sin publicar",
     "title_other": "{{n}} cambios sin publicar",
     "since": "Desde la última publicación, {{time}}",
+    "never_published": "El sitio aún no se ha publicado desde el Compositor.",
     "section": {
       "stories": "Historias",
       "objects": "Objetos",
