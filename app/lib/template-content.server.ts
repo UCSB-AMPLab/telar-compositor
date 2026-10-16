@@ -76,7 +76,7 @@ export const TEMPLATE_PAGE_SLUGS: readonly string[] = ["about", "acerca"];
 /**
  * SHA-256 of every about-page body the template has shipped, normalised.
  *
- * Hashes rather than literals because the bodies run to 2.6KB each and five of
+ * Hashes rather than literals because the bodies run to 2.6KB each and eight of
  * them would bury everything else in this file. Each is labelled with where it
  * came from, and the two that the compositor still holds verbatim
  * (`V121_BODIES.about`, `ACERCA_MD_FULL`) are checked against these values in
@@ -84,6 +84,9 @@ export const TEMPLATE_PAGE_SLUGS: readonly string[] = ["about", "acerca"];
  * literal it was taken from.
  */
 const TEMPLATE_PAGE_BODY_HASHES: ReadonlyMap<string, string> = new Map([
+  ["1b0c568f3d4401cbbd3ba61e55c6ea521d128f450f428beb1b11eca5d680252a", "about.md — v0.6.0"],
+  ["32055b94f37a955a6a4e8ca0028fbe07eff427b855c176ea2f759e9f4efe5b3e", "about.md — v0.9.0"],
+  ["67d759fbf3a795c23a7c70dbb1bb4355ccb3b6e235a189401fbfd26dd561f536", "about.md — v0.9.1"],
   ["f8c6d222658abeb6f0f1b962e3b8cd609b2ca631b3d62c6b90abdaaa7f6b5b7d", "about.md — v1.2.1 (V121_BODIES.about)"],
   ["df4d8e3ae236fb8fd20155a057ec5776a25f59b394287f206cfa4fa928ff3cb3", "about.md — v1.3.0 (V130_BODIES.about)"],
   ["28c509e7b701b5b7d732226b290299463e9d38a4f0d67ee5093165c958ab78c5", "about.md — v1.4.0 to v1.8.1 (OpenSeadragon replaces Tify)"],
