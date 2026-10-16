@@ -118,6 +118,8 @@
     "answer_format_rule": "horizontal rules",
     "about_page_template": "Your {{title}} page still has the text every new Telar site starts with, which describes Telar rather than your project. You might like to make it your own.",
     "about_page_template_link": "Edit the {{title}} page",
+    "about_page_template_unimported": "Your {{title}} page still has the text every new Telar site starts with, which describes Telar rather than your project. It isn't in the Compositor yet: import it on Home and Pages, then make it your own.",
+    "about_page_template_unimported_link": "Open Home and Pages",
     "page_no_title": "A page has no title — open Pages to give it a title, or delete it.",
     "page_frontmatter_unwritable": "The title of page \"{{page}}\" is written in a form the Compositor can't change without touching the rest of the settings block it sits in. To publish, keep only the title in the block, which removes the page's other settings, or edit the page's file on GitHub.",
     "page_frontmatter_reset": "Keep only the title",

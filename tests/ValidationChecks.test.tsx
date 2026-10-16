@@ -120,6 +120,17 @@ describe("suggestions", () => {
     expect(screen.queryByText("checks.blockers_heading")).toBeNull();
   });
 
+  it("links an unimported page to the pages screen without a page to open", () => {
+    renderChecks({
+      blockers: [],
+      warnings: [],
+      suggestions: [{ ...SUGGESTION, code: "about_page_template_unimported", message: "about_page_template_unimported" }],
+    });
+    const link = screen.getByRole("link", { name: "checks.about_page_template_unimported_link" });
+    expect(link.getAttribute("href")).toBe("/pages");
+    expect(screen.getByText("checks.about_page_template_unimported")).toBeTruthy();
+  });
+
   it("renders nothing for an empty list", () => {
     renderChecks({ blockers: [], warnings: [], suggestions: [] });
     expect(screen.queryByRole("link", { name: "checks.about_page_template_link" })).toBeNull();
