@@ -803,7 +803,11 @@ export function ValidationChecks({
               <div>
                 <p className="font-body text-sm text-charcoal">{checkMessage(t, suggestion)}</p>
                 <Link
-                  to={`/pages?page=${encodeURIComponent(suggestion.entityId ?? "")}`}
+                  to={
+                    suggestion.code === "about_page_template_unimported"
+                      ? "/pages"
+                      : `/pages?page=${encodeURIComponent(suggestion.entityId ?? "")}`
+                  }
                   className="mt-1 inline-block font-body text-sm text-charcoal underline hover:text-charcoal/70"
                 >
                   {checkMessage(t, { ...suggestion, code: `${suggestion.code}_link` })}

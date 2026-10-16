@@ -214,7 +214,10 @@ function layerQueries(): number {
   return selections.filter((columns) => columns !== undefined && "step_id" in columns).length;
 }
 
-const isNotProjectSheet = (path: unknown) => !/\/(project|proyecto)\.csv$/.test(String(path));
+// The project sheet, and the About pages the suggestion reads while the
+// project holds none, are read for their own checks, not the ones counted here.
+const isNotProjectSheet = (path: unknown) =>
+  !/\/(project|proyecto)\.csv$/.test(String(path)) && !/texts\/pages\/(about|acerca)\.md$/.test(String(path));
 
 /** The paths read at the validated head, without the project sheet's. */
 function readPathsBesideProjectSheet(): unknown[] {

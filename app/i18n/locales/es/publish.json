@@ -118,6 +118,8 @@
     "answer_format_rule": "líneas divisorias",
     "about_page_template": "Tu página {{title}} todavía tiene el texto con el que empiezan todos los sitios nuevos de Telar: habla de Telar y no de tu proyecto. Cuando quieras, reescríbela para que hable del tuyo.",
     "about_page_template_link": "Editar la página {{title}}",
+    "about_page_template_unimported": "Tu página {{title}} todavía tiene el texto con el que empiezan todos los sitios nuevos de Telar: habla de Telar y no de tu proyecto. Aún no está en el Compositor: impórtala en la pestaña Inicio y páginas y luego reescríbela para que hable de tu proyecto.",
+    "about_page_template_unimported_link": "Abrir Inicio y páginas",
     "page_no_title": "Una página no tiene título — abre Páginas para ponerle un título, o elimínala.",
     "page_frontmatter_unwritable": "El título de la página \"{{page}}\" está escrito de una forma que el Compositor no puede cambiar sin tocar el resto del bloque de ajustes en el que está. Para publicar, conserva en el bloque solo el título, lo que quita los demás ajustes de la página, o edita el archivo de la página en GitHub.",
     "page_frontmatter_reset": "Conservar solo el título",

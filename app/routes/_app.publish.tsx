@@ -147,7 +147,7 @@ import { settingsChangeI18nKey, SETTINGS_CHANGE_FALLBACK_KEY } from "~/lib/setti
 import { Button } from "~/components/ui/Button";
 import { DocsLink } from "~/components/ui/DocsLink";
 import { ChangeSummary as ChangeSummaryComponent } from "~/components/features/publish/ChangeSummary";
-import { aboutPageSuggestions } from "~/lib/about-page-suggestion.server";
+import { aboutPageSuggestions, knownPageSlugs } from "~/lib/about-page-suggestion.server";
 import { ChecksMayBeBehindNotice } from "~/components/features/publish/ChecksMayBeBehindNotice";
 import { ValidationChecks, ValidationWarnings } from "~/components/features/publish/ValidationChecks";
 import type {
@@ -1457,6 +1457,12 @@ export async function action({ request, context }: Route.ActionArgs) {
         validation.suggestions = await aboutPageSuggestions(
           pageRows.map((row) => ({ ...row, body: bodyOf.get(row.id) ?? null })),
           configRow[0]?.lang,
+          currentRepoHead === null
+            ? null
+            : {
+                knownSlugs: knownPageSlugs(activeProject.page_files_json, activeProject.publish_snapshot),
+                readFile: (path) => getFileAtRef(projectToken, owner, repo, path, currentRepoHead),
+              },
         );
         // What the page shows of GitHub: the state, and the head it read, which
         // a first publish sends back as the head it was shown.
