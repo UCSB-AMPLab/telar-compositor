@@ -20,9 +20,9 @@
   "tooltip_cannot_delete": "Solo quien lo creó o el coordinador/a puede eliminar esto",
   "undo": "Deshacer",
   "redo": "Rehacer",
-  "validation_pending": "Validando…",
-  "validation_error": "Manifiesto IIIF no válido",
-  "validation_valid": "Válido",
+  "validation_pending": "Revisando el manifiesto IIIF…",
+  "validation_error": "No se pudo cargar el manifiesto IIIF, o lo que llegó no es un manifiesto IIIF. Abre el objeto y revisa el campo «URL de la fuente».",
+  "validation_valid": "Se cargó el manifiesto IIIF.",
   "type_to_confirm_label": "Escribe <0>{{value}}</0> para confirmar.",
   "type_to_confirm_aria": "Escribe {{value}} para confirmar"
 }

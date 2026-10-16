@@ -10,6 +10,7 @@
     "title_one": "1 unpublished change",
     "title_other": "{{n}} unpublished changes",
     "since": "Since last published, {{time}}",
+    "never_published": "The site hasn't been published from the Compositor yet.",
     "section": {
       "stories": "Stories",
       "objects": "Objects",

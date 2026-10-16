@@ -8,7 +8,7 @@
  * one-click commit). The displayed count derives from the SAME ChangeSummary
  * (single source of truth).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -32,6 +32,7 @@ vi.mock("react-i18next", () => ({
         "unpublished.title_one": "1 unpublished change",
         "unpublished.title_other": "{{n}} unpublished changes",
         "unpublished.since": "Since last published, {{time}}",
+        "unpublished.never_published": "The site hasn't been published from the Compositor yet.",
         "unpublished.section.stories": "Stories",
         "unpublished.section.objects": "Objects",
         "unpublished.section.glossary": "Glossary",
@@ -103,6 +104,24 @@ describe("UnpublishedPopover", () => {
     expect(container.textContent).toContain("Order of objects");
     // 2 stories + the order of objects
     expect(container.textContent).toContain("3 unpublished changes");
+  });
+
+  it("says the site has not been published from the Compositor when no publish is recorded", () => {
+    const { container } = renderPopover({ summary, lastPublishedAt: null });
+    expect(container.textContent).toContain("The site hasn't been published from the Compositor yet.");
+    expect(container.textContent).not.toContain("Since last published");
+  });
+
+  it("gives the time of the last publish when one is recorded", () => {
+    const { container } = renderPopover({ summary, lastPublishedAt: "2026-10-01T15:30:00Z" });
+    expect(container.textContent).toContain("Since last published, ");
+    expect(container.textContent).not.toContain("hasn't been published");
+  });
+
+  it("leaves the line out when the recorded time cannot be read", () => {
+    const { container } = renderPopover({ summary, lastPublishedAt: "not a date" });
+    expect(container.textContent).not.toContain("Since last published");
+    expect(container.textContent).not.toContain("hasn't been published");
   });
 
   it("renders the pluralised title from the ChangeSummary total", () => {

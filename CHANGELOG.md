@@ -28,6 +28,8 @@ A redesigned check against GitHub, fields that show they can be edited and prote
 - **The glossary definition of "telar"** — Telar shipped the definition of the term `telar` in English and Spanish, one after the other. When you upgrade Telar from the Compositor and that definition is unchanged, only the paragraph in your site's language is kept, on GitHub and in the Compositor. If someone edits it while the upgrade is running, their version is kept.
 - **Checks that missed your latest edits** — Choosing Check again on the Publish page now takes in what you last wrote in the editor. If that could not be saved first, the page says so.
 - **Messages that claimed what had not been checked** — The Publish page lists only the checks it ran; the Upgrade Telar page says what an upgrade can change and how its build ended, and no longer tells a site already on the latest release that it was just upgraded; onboarding no longer finishes when it could not check your settings; and the object delete dialog says what each choice does.
+- **Sites never published from the Compositor** — The unpublished-changes window, opened from the status at the top of the page, now says the site hasn't been published from the Compositor yet, instead of showing a dash where the date would be.
+- **Checking an object's IIIF manifest** — On the Objects page, the line under a newly added IIIF object says whether its manifest loaded. If it couldn't be loaded, or what loaded isn't a manifest, it tells you to open the object and check its Source URL.
 
 ## v1.5.4-beta (2026-10-11)
 
