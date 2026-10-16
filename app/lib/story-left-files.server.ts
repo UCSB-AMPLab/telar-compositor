@@ -12,13 +12,13 @@
  * through it; the names that stay protective are resolved against the files
  * after the publish.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import type { CommitFile } from "~/lib/commit.server";
 import { getFileAtRef, getSubtreeOids, listSubtreeEntries } from "~/lib/github.server";
 import { listStorySheets } from "~/lib/publish.server";
-import { namedLayerFiles, resolveLayerPath } from "~/lib/story-content.server";
+import { namedLayerFiles, resolveLayerPath } from "~/lib/story-layer-references.server";
 import { SPREADSHEETS_DIR, STORY_TEXTS_DIR } from "~/lib/story-files.server";
 import type { CommitFiles } from "~/lib/story-files.server";
 

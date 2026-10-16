@@ -1,16 +1,15 @@
 /**
  * A sheet the sync cannot read is refused, never read as a missing sheet.
- * The dashboard's check and apply and the objects page's check go
- * through their actions, so the refusal is checked as the page receives it:
- * `{ error: "sheet_unreadable", sheet }`, naming the file, with nothing
- * written. The sync and its parses run for real; GitHub, D1 and the
+ * The dashboard's check and apply go through their actions, so the refusal
+ * is checked as the page receives it: `{ error: "sheet_unreadable", sheet }`,
+ * naming the file, with nothing written. The sync and its parses run for real; GitHub, D1 and the
  * collaboration object are faked, and each read at GitHub answers from the
  * case's files by ref and path.
  *
  * A failed read of the base the check compares against refuses too, unless
  * the base commit does not exist, where the check is two-way.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -96,7 +95,6 @@ vi.mock("~/lib/commit.server", () => ({ commitFilesToRepo: vi.fn(async () => und
 vi.mock("~/lib/activity.server", () => ({ recordActivity: vi.fn(async () => undefined) }));
 
 import { action } from "~/routes/_app.dashboard";
-import { action as objectsAction } from "~/routes/_app.objects";
 import { resolveActiveProject } from "~/lib/membership.server";
 import { commitExists, getFileAtRef } from "~/lib/github.server";
 import { computeGlossarySyncDiff } from "~/lib/sync.server";
@@ -211,16 +209,6 @@ describe("the check refuses a sheet it cannot read at HEAD", () => {
     expect(await check()).toMatchObject({ ok: true, intent: "compute-full-sync-diff" });
   });
 
-  it("the objects page's check refuses objects.csv the same way", async () => {
-    repo.failing.add(`${HEAD}:${SHEETS}/objects.csv`);
-    const { context } = buildContext();
-    const result = await objectsAction({
-      request: buildRequest("https://compositor.telar.org/objects", { intent: "compute-sync-diff" }),
-      context,
-      params: {},
-    } as never);
-    expect(result).toEqual({ ok: false, intent: "compute-sync-diff", error: "sheet_unreadable", sheet: "objects.csv" });
-  });
 });
 
 describe("the new-story warning pass", () => {

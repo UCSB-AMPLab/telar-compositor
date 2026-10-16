@@ -503,11 +503,11 @@ describe("a read that fails holds the check rather than reading as no change", (
     await commit("head", { "about.md": editedBody(ABOUT, "Edited on GitHub.") });
   };
 
-  it("the file at HEAD", async () => {
+  it("the file at HEAD, a request cause naming the file and the page", async () => {
     await changed();
     repo.failing.add(`head:${PAGES}/about.md`);
     const check = await checkPageContent(input([imported(1, "about", ABOUT)]));
-    expect(check.conclusive).toBe(false);
+    expect(check).toMatchObject({ conclusive: false, cause: "request", paths: [`${PAGES}/about.md`], pageIds: [1] });
   });
 
   it("the file at the base", async () => {
@@ -525,16 +525,25 @@ describe("a read that fails holds the check rather than reading as no change", (
     expect((await checkPageContent(input([page]))).conclusive).toBe(false);
   });
 
-  it("a listing that comes back truncated", async () => {
+  it("a listing that comes back truncated, a structural cause naming the folder", async () => {
     await changed();
     repo.listings[repo.commits.head!].truncated = true;
-    expect((await checkPageContent(input([imported(1, "about", ABOUT)]))).conclusive).toBe(false);
+    const check = await checkPageContent(input([imported(1, "about", ABOUT)]));
+    expect(check).toMatchObject({ conclusive: false, cause: "structure", paths: [PAGES] });
   });
 
-  it("a base that does not resolve", async () => {
+  it("a base that does not resolve: read at HEAD alone, any difference a conflict", async () => {
     await changed();
     delete repo.commits.base;
-    expect((await checkPageContent(input([imported(1, "about", ABOUT)]))).conclusive).toBe(false);
+    const check = conclusive(await checkPageContent(input([imported(1, "about", ABOUT)])));
+    expect(check.baseUnresolved).toBe(true);
+    expect(check.changes).toMatchObject([{ pageId: 1, kind: "conflict", acceptByDefault: false }]);
+  });
+
+  it("a HEAD that does not resolve, with the base: a request cause", async () => {
+    await changed();
+    delete repo.commits.head;
+    expect(await checkPageContent(input([imported(1, "about", ABOUT)]))).toMatchObject({ conclusive: false, cause: "request" });
   });
 });
 
@@ -659,7 +668,7 @@ describe("hasDivergentChanges counts the pages", () => {
   });
 
   it("an inconclusive page check is divergent", () => {
-    expect(hasDivergentChanges(diff({ conclusive: false, reason: "the page tree came back truncated" }))).toBe(true);
+    expect(hasDivergentChanges(diff({ conclusive: false, reason: "the page tree came back truncated", cause: "structure" }))).toBe(true);
   });
 
   it("a page file on one side only, or a page GitHub added, is divergent", () => {

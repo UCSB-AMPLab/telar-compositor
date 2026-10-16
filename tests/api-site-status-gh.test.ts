@@ -1,16 +1,21 @@
 /**
- * Tests for the `gh-status` payload added to the api.site-status resource
- * route (Task 6 — Navigation Performance plan).
+ * The `gh-status` payload of the api.site-status resource route.
  *
- * Strategy: mock all heavy server deps and invoke the loader directly with a
- * minimal Request + RouterContext stub. Assert the four key branches:
+ * The loader runs directly with its heavy server dependencies mocked and a
+ * minimal Request + RouterContext stub. The groups:
  *   (A) stale cache + claim won  → refreshGithubStatus IS called; derived values returned.
  *   (B) fresh cache              → refreshGithubStatus NOT called; cached values returned.
  *   (C) stale cache + claim lost → refreshGithubStatus NOT called; cached values returned.
  *   (D) decrypt / D1 error       → fail-open 200 with cache-derived values (no 500).
  *   (E) unpublishedCount         → real content-diff count included in gh-status response.
+ *   (F) the team page's access read is requested on every poll, and the
+ *       answer is the same when that refresh throws.
+ *   (H) the caller's own repository access comes from D1, with no GitHub reading.
+ *   (I) the failed check and the first publish are carried from the cache
+ *       row; force=1 (Try again) refreshes through a claim of zero TTL and
+ *       still gives way to another caller's claim.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -33,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   claimRefresh: vi.fn(),
   refreshGithubStatus: vi.fn(),
   deriveHeadDiverged: vi.fn(),
+  deriveCheckFailed: vi.fn(),
   getCachedLatestTag: vi.fn(),
   // upgrade.server
   compareTelarVersion: vi.fn(),
@@ -61,6 +67,7 @@ vi.mock("~/lib/github-status.server", () => ({
   claimRefresh: mocks.claimRefresh,
   refreshGithubStatus: mocks.refreshGithubStatus,
   deriveHeadDiverged: mocks.deriveHeadDiverged,
+  deriveCheckFailed: mocks.deriveCheckFailed,
   getCachedLatestTag: mocks.getCachedLatestTag,
 }));
 vi.mock("~/lib/team-access.server", () => ({
@@ -247,6 +254,7 @@ beforeEach(() => {
   mocks.getCachedLatestTag.mockResolvedValue("v1.4.0");
   mocks.compareTelarVersion.mockReturnValue({ needsUpgrade: true, isBelowMinimum: false });
   mocks.deriveHeadDiverged.mockReturnValue(false);
+  mocks.deriveCheckFailed.mockReturnValue(false);
   // Default: loadChangeSummary resolves with 0 changes (empty summary).
   // The 5 DB selects it fires (stories, objects, pages, glossary, project_config)
   // consume the FIRST 5 entries of makeContext queues — existing tests must
@@ -282,6 +290,49 @@ describe("api.site-status — gh-status payload", () => {
       const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [CONFIG_ROW]));
       const res = await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never) as Response;
       expect(((await res.json()) as { ownRepoAccess?: unknown }).ownRepoAccess).toBeNull();
+    });
+  });
+
+  describe("(I) the failed check, the first publish, and Try again", () => {
+    it("carries the failed state and no recorded head from the cache row", async () => {
+      mocks.isStale.mockReturnValue(false);
+      mocks.deriveCheckFailed.mockReturnValue(true);
+      const ctx = makeContext(ghQueue([{ ...BASE_PROJECT_ROW, head_sha: null }], [CONFIG_ROW]));
+      const res = await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never) as Response;
+      const body = (await res.json()) as { checkFailed: boolean; firstPublish: boolean; headDiverged: boolean };
+      expect(body).toMatchObject({ checkFailed: true, firstPublish: true, headDiverged: false });
+      expect(mocks.deriveCheckFailed).toHaveBeenCalledWith(expect.objectContaining({ head_sha: null }), null);
+    });
+
+    it("a project with a recorded head is not on its first publish", async () => {
+      mocks.isStale.mockReturnValue(false);
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [CONFIG_ROW]));
+      const res = await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never) as Response;
+      expect(((await res.json()) as { firstPublish: boolean }).firstPublish).toBe(false);
+    });
+
+    it("force=1 refreshes although the cache is fresh, through a claim of zero TTL", async () => {
+      mocks.isStale.mockReturnValue(false);
+      mocks.claimRefresh.mockResolvedValue(true);
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status&force=1"), context: ctx as never, params: {} } as never);
+      expect(mocks.claimRefresh).toHaveBeenCalledWith(expect.anything(), 7, expect.any(Number), 0);
+      expect(mocks.refreshGithubStatus).toHaveBeenCalledOnce();
+    });
+
+    it("force=1 still gives way to another caller's claim", async () => {
+      mocks.isStale.mockReturnValue(false);
+      mocks.claimRefresh.mockResolvedValue(false);
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status&force=1"), context: ctx as never, params: {} } as never);
+      expect(mocks.refreshGithubStatus).not.toHaveBeenCalled();
+    });
+
+    it("without force, a fresh cache is not refreshed", async () => {
+      mocks.isStale.mockReturnValue(false);
+      const ctx = makeContext(ghQueue([BASE_PROJECT_ROW], [CONFIG_ROW]));
+      await loader({ request: makeRequest("gh-status"), context: ctx as never, params: {} } as never);
+      expect(mocks.claimRefresh).not.toHaveBeenCalled();
     });
   });
 

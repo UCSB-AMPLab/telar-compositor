@@ -1,7 +1,8 @@
 /**
  * This file powers the Sync flow — the page where a project owner
- * reconciles whatever lives in D1 with whatever currently sits in the
- * GitHub repo's CSV files (`objects.csv`, story CSVs, `_config.yml`).
+ * reconciles whatever lives in D1 with whatever sits in the GitHub
+ * repo: `objects.csv`, the story CSVs and their layer files, the page
+ * files, the glossary and `_config.yml`.
  *
  * Sync answers two questions side by side. What's in the repo but not
  * in D1, and what's in D1 but not in the repo? Same question for
@@ -9,14 +10,13 @@
  * side wins. That is the three-way diff this module computes — repo,
  * D1, and the user's choices on top.
  *
- * `computeSyncDiff` and `applySyncChanges` cover objects only — the
- * original scope. `computeFullSyncDiff` and `applyFullSyncChanges`
- * extend the same model across stories and config, returning a richer
- * payload but routing per-field choices through the same apply path.
- * Both diff functions also flag images sitting in the repo's
- * `objects/` directory that no CSV row references — the user can
- * register them in one click rather than chasing dangling files
- * manually.
+ * `computeSyncDiff` covers objects only, and `computeFullSyncDiff`
+ * extends the same model across stories, pages, terms and config;
+ * `applyFullSyncChanges` applies the author's choices over all of them.
+ * The objects diff also lists images sitting in the repo's
+ * `telar-content/objects/` folder that no CSV row references and the
+ * review's base did not hold, each of which the author can add as an
+ * object.
  *
  * Diff results include story-usage hints. When an object is missing
  * from the repo but still referenced by a step, the `missingObjects`
@@ -24,13 +24,13 @@
  * it, so the user can see what would break if they accept the
  * deletion.
  *
- * Everything here is pure in the sense that callers supply the
- * database handle and GitHub token — the module never reaches for
- * environment, headers, or session state on its own. The route
- * actions (currently in `_app.dashboard.tsx`) do the I/O
- * orchestration; this module does the comparison.
+ * Callers supply the database handle, the GitHub token and, for the
+ * apply, the collaboration binding; the module never reaches for
+ * headers or session state on its own. The route actions in
+ * `_app.dashboard.tsx` handle the request and the session; this module
+ * does the comparison and the apply.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 
 import { eq, and } from "drizzle-orm";
@@ -38,7 +38,6 @@ import { objects, steps, stories, project_config, project_pages, glossary_terms,
 import { getFileAtRef, getRepoTree, getRepoHead, commitExists } from "~/lib/github.server";
 import type { TreeEntry } from "~/lib/github.server";
 import { holdOperationLease } from "~/lib/operation-lease.server";
-import { toIngestInserts } from "~/lib/register-objects.server";
 import {
   parseTelarCsv, mapObjectsCsv, mapProjectCsv, mapStoryCsv, readOncePerName, resolveLayerFileReferences,
   KNOWN_GLOSSARY_KEYS, checkGlossaryColumns,
@@ -59,7 +58,6 @@ import {
 import { repoVersionToFollow } from "~/lib/repo-version-follow";
 import { normalizeVersionTag } from "~/lib/version";
 import {
-  configFrameworkVersion,
   configSiteBase,
   repeatedIdIssues,
   sharedSiteIdIssues,
@@ -103,13 +101,14 @@ import { makeInternalMarkerHeaders } from "~/lib/internal-marker.server";
 import type { getDb } from "~/lib/db.server";
 import { checkStoryContent, readStoriesForAccept, storyTreesInconclusive } from "~/lib/story-content.server";
 import type { StoryContentCheck } from "~/lib/story-content.server";
+import type { TreesInconclusive } from "~/lib/story-files.server";
 import { readPagesForAccept } from "~/lib/page-content.server";
 import {
-  acceptedPageFilesRecord, checkPageFiles, loadPageCheckScope, pageFileArms, pageFileTakes, pagesBaseOf, reviewedAdditionNames, withReducedHeldPages,
+  acceptedPageFilesRecord, checkPageFiles, loadPageCheckScope, pageFileArms, pageFileTakes, pagesBaseOf, reviewedAdditionNames,
 } from "~/lib/page-files-check.server";
 import type { PageFileTake } from "~/lib/page-files-check.server";
 import type { PageFilesRecord } from "~/lib/page-files-record";
-import type { PageContentCheck } from "~/lib/page-content.server";
+import type { PageContentCheck, PageContentInconclusive } from "~/lib/page-content.server";
 import type { StoryLayerRow, StoryStepRow } from "~/lib/publish.server";
 import type { IngestObjectInsert, IngestPageInsert } from "../../workers/collaboration";
 import type { IngestPageReplaceContent } from "../../workers/page-replace-content";
@@ -118,9 +117,10 @@ import { issuesFor } from "~/lib/sheet-warnings";
 import { ownValue } from "~/components/features/dashboard/sync-changes";
 import type { SheetWarning } from "~/lib/sheet-warnings";
 import {
-  appendWarnings, configSheets, headHasGlossaryCsv, listTabsOnce, markSheetsEffects, pushUnreadable, unreadableFileName, unreadableNames,
-  withoutSheetsSupplied,
+  appendWarnings, configSheets, headHasGlossaryCsv, listTabsOnce, markSheetsEffects, pushUnreadable, unreadableFileName, unreadableItems,
+  unreadableNames, withoutSheetsSupplied,
 } from "~/lib/unreadable-characters.server";
+import type { UnreadableFileItem } from "~/lib/unreadable-characters.server";
 import { SheetUnreadableError } from "~/lib/unreadable-file.server";
 import { recordStorySheetReads, storySheetPath } from "~/lib/story-source-path.server";
 import { recordStoryFileReads, storyFileRead, type OwedStoryFile } from "~/lib/story-files-to-delete.server";
@@ -400,8 +400,8 @@ export function termFieldsFedBy(collided: ReadonlySet<string>): Set<GlossarySync
  * prevents an empty repo cell from wiping an IIIF-enriched D1 value, so
  * including them reconciles genuine repo edits without the historical
  * "IIIF-wipe on sync" risk. The truly internal `image_available` (probe-derived,
- * never published) stays out. The guard holds at the apply seam too: both apply
- * paths (applySyncChanges, resolveFullSyncPayload) default an unlisted field to
+ * never published) stays out. The guard holds at the apply seam too: the apply
+ * (resolveFullSyncPayload) defaults an unlisted field to
  * "d1" — leave D1 alone — so a field the diff never surfaced (guard-suppressed
  * enrichment, or an editor-only edit) is never written through with a repo cell.
  */
@@ -510,7 +510,11 @@ export interface SyncDiff {
   missingObjects: MissingObject[];
   /** The objects sheet's file name at the head read: objects.csv, or objetos.csv where the site holds that one. */
   objectsSheet?: string;
-  /** Image files in objects/ that aren't in objects.csv or D1 */
+  /**
+   * Image files in objects/ that aren't in objects.csv or D1, and that the
+   * base the check names (`imageBaseRef`) did not hold: one the author left
+   * out at an earlier sync is not offered again.
+   */
   unregisteredFiles: UnregisteredFile[];
   /**
    * GitHub's order of the rows both sides hold, where it is not D1's
@@ -558,17 +562,8 @@ export interface SyncDiff {
    * diff built by hand.
    */
   headingFiles?: string[];
-  /**
-   * The commit the sheet and the tree were read at. The objects page's apply
-   * carries it back and applies only while it is still GitHub's head.
-   */
+  /** The commit the sheet and the tree were read at. */
   headSha?: string;
-  /**
-   * The objects page's check only: the `objects_read_sha` it was compared
-   * against as it stands after the check, null for none. The apply carries it
-   * back and applies only while it is still the record.
-   */
-  baseSha?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -714,7 +709,7 @@ export interface SyncChanges {
    * The D1 id of each changed object as the author was shown it, by object_id.
    * An update is applied only to that row: an object deleted and re-created
    * under the same key since the check is not the one the author reviewed.
-   * Neither apply updates anything for an entry without one.
+   * The apply updates nothing for an entry without one.
    */
   changedDocIds?: Record<string, number>;
   /** Per-object, per-field choices: "repo" | "d1" */
@@ -725,23 +720,15 @@ export interface SyncChanges {
    * The D1 id of each removed object as the author was shown it, by object_id.
    * A removal is applied only to that row: an object deleted and re-created
    * under the same key since the check is not the one the author chose to
-   * remove. The objects page's apply removes nothing for an entry without one.
+   * remove. The apply removes nothing for an entry without one.
    */
   removedDocIds?: Record<string, number>;
-  /** object_ids to register from unregistered image files in objects/ */
+  /**
+   * The ids of the image files with no object the author chose to add
+   * (`SyncDiff.unregisteredFiles`), each the file's stem. The apply registers
+   * only those that name such a file at the head it reads.
+   */
   unregisteredObjectIds: string[];
-  /**
-   * The commit the check the author reviewed was read at (`SyncDiff.headSha`).
-   * The objects page's apply refuses without it and reads at it; the full
-   * sync's objects arm is read at the full check's own head instead.
-   */
-  headSha?: string;
-  /**
-   * The `objects_read_sha` the check the author reviewed was compared against
-   * (`SyncDiff.baseSha`), null for none. The objects page's apply refuses
-   * without it, and when the record is no longer it.
-   */
-  baseSha?: string | null;
   /**
    * The Compositor's value of each field taken from GitHub, as the check the
    * author reviewed read it (`ChangedObject.d1Values`), by object_id. The
@@ -822,13 +809,20 @@ export async function computeSyncDiff(
    * nothing is paired, and every id difference is an ordinary change.
    */
   legacyRef?: string | null,
+  /**
+   * The commit the review compares against, whose objects folder is listed
+   * when there is an image file with no row: a file it held is not offered.
+   * Absent or null, every such file is.
+   */
+  imageBaseRef?: string | null,
 ): Promise<SyncDiff> {
   // Three-way vs two-way is decided by the caller and threaded in as the base
   // objects.csv CONTENT, not a ref: `undefined` means two-way (no base); a
   // string or `null` means three-way, where `null` is an empty base
   // (objects.csv legitimately absent at the base commit). computeFullSyncDiff
   // fetches every base file once and decides the mode for all sub-domains
-  // together; the objects page reads objects.csv alone (`objectsBaseAt`).
+  // together, except that the objects are compared against objects.csv at
+  // `objects_read_sha` where that is not the base (`objectsBaseAt`).
   const threeWay = baseObjectsContent !== undefined;
   const baseSheet = threeWay ? readBaseSheet(baseObjectsContent ?? null, objectsSheet()) : null;
   const baseUnknown = baseRowsUnknown(baseSheet, "object_id");
@@ -1149,19 +1143,19 @@ export async function computeSyncDiff(
     [...repoRowsAsWritten.map((r) => r.object_id), ...d1Map.keys()],
     frameworkVersion,
   );
-  const unregisteredFiles: UnregisteredFile[] = [];
+  const unregisteredAtHead: UnregisteredFile[] = [];
   for (const entry of tree) {
-    if (entry.type !== "blob") continue;
-    const parts = entry.path.split("/");
-    if (parts.length !== 3 || parts[0] !== "telar-content" || parts[1] !== "objects") continue;
+    const fileName = objectsFolderFileName(entry);
+    if (fileName === null) continue;
     // A file with an empty stem (`.jpg`) is offered as nothing: no row can
     // take an empty id.
-    const objectId = tileableStem(parts[2], frameworkVersion);
+    const objectId = tileableStem(fileName, frameworkVersion);
     if (!objectId) continue;
     if (!registeredStems.has(objectId)) {
-      unregisteredFiles.push({ object_id: objectId, filename: parts[2] });
+      unregisteredAtHead.push({ object_id: objectId, filename: fileName });
     }
   }
+  const unregisteredFiles = await absentAtBase(unregisteredAtHead, { token, owner, repo }, imageBaseRef);
 
   return {
     newObjects,
@@ -1180,6 +1174,32 @@ export async function computeSyncDiff(
   };
 }
 
+/** The name of a file directly in telar-content/objects, else null. */
+function objectsFolderFileName(entry: TreeEntry): string | null {
+  if (entry.type !== "blob") return null;
+  const parts = entry.path.split("/");
+  return parts.length === 3 && parts[0] === "telar-content" && parts[1] === "objects" ? parts[2] : null;
+}
+
+/**
+ * The image files with no row that `baseRef`'s objects folder did not hold,
+ * by file name: a file present there was offered at an earlier sync and left
+ * out, and the review does not offer it again. With no base, all of them. The
+ * folder is listed only when there is a file to judge; a listing GitHub
+ * answers truncated leaves out what it does not name, so such a file is
+ * offered again. A listing that fails throws, and the check fails with it.
+ */
+async function absentAtBase(
+  files: UnregisteredFile[],
+  access: { token: string; owner: string; repo: string },
+  baseRef: string | null | undefined,
+): Promise<UnregisteredFile[]> {
+  if (!baseRef || files.length === 0) return files;
+  const { tree } = await getRepoTree(access.token, access.owner, access.repo, baseRef);
+  const atBase = new Set(tree.flatMap((entry) => objectsFolderFileName(entry) ?? []));
+  return files.filter((file) => !atBase.has(file.filename));
+}
+
 /**
  * The objects sheet's name when its read at the head was lossy, else none;
  * the sheet is named in `warnings` too when they are collected.
@@ -1191,7 +1211,7 @@ function objectsUnreadable(path: string, lossy: boolean, warnings: SheetWarning[
 }
 
 // ---------------------------------------------------------------------------
-// applySyncChanges
+// Pending objects, pending operations and the shared object helpers
 // ---------------------------------------------------------------------------
 
 /** A pending object row that has not yet been inserted into D1. */
@@ -1214,94 +1234,6 @@ export interface PendingObject {
   extra_columns?: string | null;
   image_available: boolean;
   origin?: string;
-}
-
-/**
- * An objects apply refused before it took the lease or read anything, because
- * the check it carries names no full commit SHA (an older page), or its commit
- * is not GitHub's head. The objects apply does not check the base the check
- * compared against, so the check's commit is the only identity it has; the
- * author checks again.
- */
-export class ObjectsSyncStale extends Error {
-  constructor() {
-    super("sync-apply refused: the check's commit is not GitHub's head");
-    this.name = "ObjectsSyncStale";
-  }
-}
-
-/**
- * The commit the check was read at, while it is still GitHub's head. The value
- * arrives from the client, so only a full commit SHA, exactly 40 lowercase hex
- * characters, is taken; anything else, or a head that has moved, throws
- * `ObjectsSyncStale`.
- */
-async function currentCheckedHead(
-  changes: SyncChanges,
-  token: string,
-  owner: string,
-  repo: string,
-): Promise<string> {
-  const headSha: unknown = changes.headSha;
-  if (typeof headSha !== "string" || !/^[0-9a-f]{40}$/.test(headSha)) throw new ObjectsSyncStale();
-  if ((await getRepoHead(token, owner, repo, "main")) !== headSha) throw new ObjectsSyncStale();
-  return headSha;
-}
-
-/**
- * Applies the author's selected objects sync changes, holding the `objects`
- * lease: the accepted field changes and the removals through the collaboration
- * object in one ingest, `missing_from_repo` in D1, the accepted new rows
- * registered through the collaboration object with `userId` as their actor, and
- * image files with no row returned as pending for the objects commit. See
- * `applyUnderLease`.
- *
- * Only the commit the author reviewed is applied: a check that is not
- * GitHub's head now is refused before the lease (`ObjectsSyncStale`), and
- * every read of the apply is at that commit, so a commit that lands after the
- * comparison is not read.
- *
- * A field taken from GitHub with no value the check read (`fieldsSeen`), as a
- * page loaded before the collaboration object compared them sends, is refused
- * before the lease (`SyncBaseStale`): the author checks again.
- *
- * Under the lease, once the apply has landed everything it was sent, the
- * project's objects_read_sha advances to the commit applied, compare-and-set
- * from the base the check was compared against (`readRecorded`), before the
- * lease is released: the next apply to take the lease finds it moved.
- *
- * Returns the count of changes applied. Throws, claiming nothing, when the
- * check is not current, the lease is held elsewhere, objects.csv cannot be
- * read, or the ingest fails.
- */
-export async function applySyncChanges(
-  projectId: number,
-  changes: SyncChanges,
-  token: string,
-  owner: string,
-  repo: string,
-  db: ReturnType<typeof getDb>,
-  env: FullSyncEnv,
-  userId: number,
-): Promise<ObjectsSyncApplied> {
-  refuseUnseenGitHubFields(changes);
-  const headSha = await currentCheckedHead(changes, token, owner, repo);
-  // Under the objects lease, as every objects write through the document is:
-  // no publish serialises objects.csv from D1 while this apply is changing it.
-  const held = await holdOperationLease(
-    env as unknown as Env, projectId, userId, "objects",
-    async (landed) => {
-      await finishPendingObjectOps(env, db, projectId, { token, owner, repo }, { head: headSha, stale: () => new ObjectsSyncStale() });
-      const result = await applyUnderLease(
-        projectId, changes, headSha, token, owner, repo, db, env, userId,
-      );
-      const readRecorded = await recordAppliedRead(db, projectId, changes, headSha, result);
-      landed();
-      return readRecorded === undefined ? result : { ...result, readRecorded };
-    },
-  );
-  if (held.refused) throw new Error("sync-apply refused: another operation holds the lease");
-  return held.value;
 }
 
 /**
@@ -1378,344 +1310,12 @@ function refuseUnseenGitHubFields(changes: SyncChanges): void {
 }
 
 /**
- * Advance objects_read_sha to `headSha`, compare-and-set from the check's base,
- * for an apply that landed everything it was sent: true when it moved, false
- * when another writer moved it first or the write failed. Undefined, nothing
- * written, for an apply that left something GitHub's commit holds (an update
- * not applied to the row reviewed, or a new row not added), which the next
- * check offers again, and for a caller that names no base.
- */
-async function recordAppliedRead(
-  db: ReturnType<typeof getDb>,
-  projectId: number,
-  changes: SyncChanges,
-  headSha: string,
-  applied: ObjectsSyncApplied,
-): Promise<boolean | undefined> {
-  if (changes.baseSha === undefined || applied.updateSkipped || applied.notAdded.length > 0) return undefined;
-  // Imported here: github-status.server imports this module.
-  const { bumpObjectsReadFrom } = await import("~/lib/github-status.server");
-  try {
-    return await bumpObjectsReadFrom(db, projectId, changes.baseSha, headSha);
-  } catch (err) {
-    console.error("sync-apply: objects_read_sha write failed", err);
-    return false;
-  }
-}
-
-/**
- * Apply GitHub's object order at `head`: "Use Compositor version" records
- * `head` as read, and the order has no Compositor side to keep. Reads
- * objects.csv strictly at `head`, compares it with D1 (`objectOrderChange`),
- * and sends one ingest under the objects lease, as every objects write through
- * the document is, holding `objects.order` and the rename-only updates that
- * give each row D1 holds under a stripped id GitHub's spelling
- * (`legacyStrippedIds`, judged against `legacyPairingRef`): recording `head`
- * with such a row left would have the next publish write D1's spelling over
- * GitHub's. Sends nothing where there is neither.
- *
- * Answers `superseded` when a row the order or a respelling names has been
- * re-created since, and the caller then records nothing; and `legacyUnjudged`
- * when a GitHub id is padded and the commit legacy pairing is judged against
- * could not be read, so the caller does not mark the ids repaired. `record`,
- * the caller's record of `head`, runs under the same lease once the ingest
- * superseded nothing, since a sync apply records what it applied under that
- * lease and the two move the same columns; `recorded` is what it answered,
- * false when it did not run, and absent without one. Throws
- * `SyncBaseStale`, writing nothing, when head_sha is no longer `base`, before
- * the lease or under it immediately before the ingest; throws
- * when objects.csv cannot be read, the lease is held elsewhere, or the ingest
- * fails.
- */
-export async function applyGitHubObjectOrder(
-  projectId: number,
-  access: { token: string; owner: string; repo: string },
-  head: string,
-  /** The head_sha the check was computed against, null for none. */
-  base: string | null,
-  db: ReturnType<typeof getDb>,
-  env: FullSyncEnv,
-  userId: number,
-  record?: () => Promise<boolean>,
-): Promise<{ superseded: boolean; recorded?: boolean; legacyUnjudged?: true }> {
-  // Before the lease and before anything is read or written, as the full sync
-  // refuses a moved base: GitHub's order at `head` is the order of the check
-  // computed against `base`, and a head another writer recorded since is not
-  // the one this choice was made over.
-  await refuseMovedBase(db, projectId, base);
-  const held = await holdOperationLease(
-    env as unknown as Env, projectId, userId, "objects",
-    async (landed) => {
-      const { csvContent, path: objectsPath } = await readObjectsAtHead(access.token, access.owner, access.repo, head);
-      const repoRowsAsWritten = csvContent
-        ? mapObjectsCsv(readRepoSheet(csvContent, objectsSheet(fileNameOf(objectsPath)), null), projectId)
-        : [];
-      const d1Objects = await db.select().from(objects).where(eq(objects.project_id, projectId));
-      const legacy = await applyLegacyEvidence(db, projectId, access, repoRowsAsWritten);
-      const { mapped: repoRows, renames } = pairLegacyObjectIds([], repoRowsAsWritten, d1Objects, legacy.recordedIds);
-      const update = withGitHubSpelling([], renames);
-      const order = underSentSpelling(objectOrderChange(repoRows, d1Objects)?.order ?? [], update);
-      // Again under the lease, immediately before the ingest, as both sync
-      // applies check theirs: a head recorded between the check above and
-      // the lease is refused with nothing written.
-      await refuseMovedBase(db, projectId, base);
-      const answer = await ingestObjectChanges(env, projectId, { update, insert: [], remove: [], order });
-      landed();
-      const superseded = answer.superseded.length > 0;
-      return {
-        superseded,
-        ...(record ? { recorded: !superseded && await record() } : {}),
-        ...(legacy.unjudged ? { legacyUnjudged: true as const } : {}),
-      };
-    },
-  );
-  if (held.refused) throw new Error("object order refused: another operation holds the lease");
-  return held.value;
-}
-
-/** Throws `SyncBaseStale` when the project's `record` (head_sha unless named) is not `base`. */
-async function refuseMovedBase(
-  db: ReturnType<typeof getDb>,
-  projectId: number,
-  base: string | null,
-  record: "head_sha" | "objects_read_sha" = "head_sha",
-): Promise<void> {
-  const { projects } = await import("~/db/schema");
-  const [recorded] = await db
-    .select({ head_sha: projects.head_sha, objects_read_sha: projects.objects_read_sha })
-    .from(projects)
-    .where(eq(projects.id, projectId));
-  if ((recorded?.[record] ?? null) !== base) throw new SyncBaseStale();
-}
-
-/**
- * Refuses the objects page's apply, with `SyncBaseStale`, unless the project's
- * objects_read_sha is still the base its check was compared against
- * (`SyncChanges.baseSha`): the check's defaults were chosen against that base,
- * as the full sync's were against head_sha, which it refuses the same way. The
- * value arrives from the client, so a check that names no base (an older
- * page), or names anything but null or a string, is refused too; a string
- * passes only by equalling the record. The caller runs this before
- * `applySyncChanges`, which writes nothing before it.
- */
-export async function refuseMovedObjectsBase(
-  db: ReturnType<typeof getDb>,
-  projectId: number,
-  changes: SyncChanges,
-): Promise<void> {
-  const base: unknown = changes.baseSha;
-  if (base !== null && typeof base !== "string") throw new SyncBaseStale();
-  await refuseMovedBase(db, projectId, base, "objects_read_sha");
-}
-
-/**
- * What the objects page's apply did. `appliedCount` counts the updates the
- * document applied and the removals sent. `updateSkipped` is true when the
- * apply was held back whole, writing nothing, for objects edited in the
- * Compositor since the check, a field changed or the row re-created
- * (`changedSinceReview` names them): GitHub's
- * change is then not read, and the caller does not record the commit as read.
- * An update to an object the document no longer holds at all is not counted
- * and does not set it: the object was deleted in the Compositor, and the next
- * check reads its absence as the author's own.
- *
- * `notAdded` names the accepted new rows the registration did not add to D1:
- * all of them when it failed, else those it answered as failed or already
- * present. The caller does not record the commit as read while any is named,
- * and they are not pending: the objects commit's unread check would refuse the
- * commit that registered them, so the next check offers them again instead.
- */
-export interface ObjectsSyncApplied {
-  appliedCount: number;
-  pendingObjects: PendingObject[];
-  updateSkipped: boolean;
-  notAdded: string[];
-  /** Objects with a field the collaboration object left, edited in the Compositor since the check. */
-  changedSinceReview?: string[];
-  /**
-   * Whether objects_read_sha advanced to the commit applied (`recordAppliedRead`):
-   * false when another writer had moved it. Absent when the apply did not try.
-   */
-  readRecorded?: boolean;
-}
-
-/**
- * The apply, holding the lease.
- *
- * The accepted field changes, the removals and GitHub's order of the rows both
- * sides hold (`objectOrderChange`, sent whatever the author ticked) go to the
- * collaboration object in one ingest, and its snapshot writes them to D1. Written to D1 directly,
- * a document still holding the old values writes them back on its next
- * snapshot, and a removal the page did not get to apply is re-inserted.
- * Updates name the D1 id the author was shown (`changedDocIds`), and are sent
- * only while D1 holds that key with that id; the document applies each only to
- * the object holding both, and answers the others as skipped. Removals name
- * the D1 id the author was shown (`removedDocIds`), and are sent only while
- * D1's row for that key still has it: an object deleted and
- * re-created under the same key since the check is not the one the author
- * chose to remove, and an entry with no id removes nothing. They are sent only
- * for objects still absent from the sheet read here, and never for a course
- * item, which belongs to the course and is absent from objects.csv until the
- * group's first publish.
- *
- * `missing_from_repo`, which only D1 holds, is written directly once the
- * ingest has answered. A failed ingest throws before it, so a failed apply
- * claims nothing.
- *
- * The accepted new rows with a row at `headSha` are then registered through
- * the collaboration object, as the objects commit registers its own, with the
- * author as actor and the repo as origin, each placed where GitHub's file has
- * it (`githubSheet`): the caller records `headSha` as
- * read, which says D1 holds every row of its objects.csv. Image files with no
- * row are returned as pending, since giving them one needs a commit.
- *
- * The same ingest carries `image_available` recomputed against the tree read
- * here (`recomputedImages`), whatever the author selected; `appliedCount`
- * leaves it out, since the author was shown no such change.
- */
-async function applyUnderLease(
-  projectId: number,
-  changes: SyncChanges,
-  headSha: string,
-  token: string,
-  owner: string,
-  repo: string,
-  db: ReturnType<typeof getDb>,
-  env: FullSyncEnv,
-  userId: number,
-): Promise<ObjectsSyncApplied> {
-  const { newObjectIds, changedObjectIds, fieldChoices, removedObjectIds, unregisteredObjectIds } = changes;
-  const { csvContent, tree, truncated, path: objectsPath } = await readObjectsAtHead(token, owner, repo, headSha);
-
-  const d1Objects = await db
-    .select()
-    .from(objects)
-    .where(eq(objects.project_id, projectId));
-
-  const parsedAsWritten = csvContent ? readRepoSheet(csvContent, objectsSheet(fileNameOf(objectsPath)), null) : [];
-  const { parsed: parsedRows, mapped: repoRows, renames } = pairLegacyObjectIds(
-    parsedAsWritten,
-    csvContent ? mapObjectsCsv(parsedAsWritten, projectId) : [],
-    d1Objects,
-    (await applyLegacyEvidence(db, projectId, { token, owner, repo }, parsedAsWritten)).recordedIds,
-  );
-  const repoMap = new Map(repoRows.map((r) => [r.object_id as string, r]));
-  const rawAltById = new Map(parsedRows.map((r) => [r.object_id ?? "", r.alt_text ?? ""]));
-
-  const newRows = newObjectIds.flatMap((objectId) => {
-    const repoRow = repoMap.get(objectId);
-    return repoRow ? [pendingFromRepoRow(objectId, repoRow)] : [];
-  });
-  const pendingObjects = (unregisteredObjectIds ?? []).map((objectId) =>
-    pendingFromImageFile(objectId),
-  );
-
-  // Accepted field changes, to the row the author reviewed. Default "d1" means
-  // "leave D1 alone": a field absent from the choices map is not written
-  // through. Writing the repo cell for every unlisted field would revert
-  // unpublished editor edits and wipe IIIF-enriched columns whose repo cell is
-  // blank.
-  const notSent: string[] = [];
-  const reviewedUpdates = changedObjectIds.flatMap((objectId) => {
-    const repoRow = repoMap.get(objectId);
-    if (!repoRow) return [];
-    const row = reviewedObjectRow(d1Objects, objectId, changes.changedDocIds);
-    if (!row) {
-      notSent.push(objectId);
-      return [];
-    }
-    const choices = ownValue(fieldChoices, objectId) ?? {};
-    const fields: Partial<Record<SyncField, string | boolean | null>> = {};
-    for (const field of SYNC_FIELDS) {
-      if ((choices[field] ?? "d1") === "repo") {
-        fields[field] = acceptedObjectValue(field, repoRow, rawAltById.get(objectId));
-      }
-    }
-    return [{ objectId, docId: row.id, fields, ...seenFieldsOf(changes, objectId, fields) }];
-  });
-  // Recomputed whatever the author selected; left out of what the apply counts.
-  const [config] = await db.select().from(project_config).where(eq(project_config.project_id, projectId)).limit(1);
-  const d1Version = configFrameworkVersion(config);
-  const reviewedAndRespelled = withGitHubSpelling(reviewedUpdates, renames);
-  const recomputed = await recomputedImages(config, d1Objects, reviewedAndRespelled, { tree, truncated }, () =>
-    siteVersionAtRef({ d1: d1Version }, token, owner, repo, headSha).catch(() => d1Version));
-  const update = withRecomputedImages(reviewedAndRespelled, recomputed);
-
-  // By the row's identity: D1 has no unique index on (project_id, object_id),
-  // so the row the author was shown is found by key AND id, whatever other
-  // rows share the key.
-  const remove = removedObjectIds.flatMap((objectId) => {
-    const docId = ownValue(changes.removedDocIds ?? {}, objectId);
-    const d1Obj = d1Objects.find((o) => o.object_id === objectId && o.id === docId);
-    if (!d1Obj || d1Obj.course_project_id != null || repoMap.has(objectId)) return [];
-    return [{ objectId, docId: d1Obj.id }];
-  });
-
-  // GitHub's order is applied whatever the author ticked: the Compositor
-  // cannot reorder objects, so there is no order of theirs to keep.
-  const order = underSentSpelling(objectOrderChange(repoRows, d1Objects)?.order ?? [], update);
-  // Under the lease and before the first write, the base the caller checked
-  // before taking it (`refuseMovedObjectsBase`) is checked again: an apply
-  // that landed in between has moved it.
-  if (changes.baseSha !== undefined) await refuseMovedBase(db, projectId, changes.baseSha, "objects_read_sha");
-  // An update whose row was re-created in the Compositor since the check
-  // holds the whole apply back, as the collaboration object holds it back for
-  // a row it finds re-created (`recreatedSinceReview`).
-  const recreated = recreatedSinceReview(changes, notSent);
-  if (recreated.length > 0) return objectsApplyHeldFor(recreated);
-  // The accepted new rows travel in the same ingest, where GitHub's sheet has
-  // them, so they land with the updates or not at all.
-  const sheet = underSentSpelling(githubSheet(repoRows, d1Objects), update);
-  const insert = toIngestInserts(inSheetOrder(newRows, sheet), userId).map(
-    (entry): IngestObjectInsert => ({ ...entry, origin: "repo" }),
-  );
-  const answer = await ingestObjectChanges(env, projectId, { update, insert, remove, order, sheet });
-  const heldBack = heldBackObjectsApply(answer);
-  if (heldBack) return heldBack;
-  const skippedUpdates = reviewedUpdates.filter((u) => answer.skipped.includes(u.objectId)).length;
-
-  await writeMissingFromRepo(db, projectId, d1Objects, repoMap, new Set(remove.map((r) => r.docId)));
-  const notAdded = settleSyncInserts(insert, answer);
-  return {
-    appliedCount: reviewedUpdates.length - skippedUpdates + remove.length,
-    pendingObjects,
-    // Anything the document could not take held the whole ingest back above.
-    updateSkipped: false,
-    notAdded,
-    changedSinceReview: answer.changedSinceReview,
-  };
-}
-
-/**
- * The objects apply's answer when the collaboration object held its ingest
- * back, having written nothing, or null when it did not
- * (`objectsApplyHeldFor`). An answer naming an object without saying it held
- * back is taken as held back too: the record must not move over it, and
- * nothing more is written. A hold naming no object throws `SyncBaseStale`.
- */
-function heldBackObjectsApply(answer: ObjectsIngestAnswer): ObjectsSyncApplied | null {
-  const named = objectsEditedSinceReview(answer);
-  if (!answer.heldBack && named.length === 0) return null;
-  if (named.length === 0) throw new SyncBaseStale();
-  return objectsApplyHeldFor(named);
-}
-
-/**
  * The objects an ingest answered edited in the Compositor since the check: a
  * field changed (`changedSinceReview`), the row re-created (`superseded`), or
  * a new row's key taken (`insertsSkipped`).
  */
 function objectsEditedSinceReview(answer: ObjectsIngestAnswer): string[] {
   return [...new Set([...answer.changedSinceReview, ...answer.superseded, ...answer.insertsSkipped])];
-}
-
-/**
- * The objects apply's answer for an apply held back for `objectIds`, edited in
- * the Compositor since the check: nothing applied, nothing registered, and the
- * record kept, so the next check offers GitHub's changes against them.
- */
-function objectsApplyHeldFor(objectIds: string[]): ObjectsSyncApplied {
-  return { appliedCount: 0, pendingObjects: [], updateSkipped: true, notAdded: [], changedSinceReview: objectIds };
 }
 
 /**
@@ -1731,20 +1331,6 @@ function recreatedSinceReview(changes: SyncChanges, notSent: readonly string[]):
 }
 
 /**
- * The accepted new rows an objects ingest that was not held back did not add
- * to D1, by object_id: those D1 refused after the document took them, found
- * only once the write is made, and any the ingest's boundary refused, which
- * `entriesRefusal` refuses whole before here. Each entry carries the repo as
- * its origin, so a row that lands at a later snapshot has it too.
- */
-function settleSyncInserts(insert: IngestObjectInsert[], answer: ObjectsIngestAnswer): string[] {
-  return [
-    ...answer.insertsFailed,
-    ...answer.insertsRefusedAt.flatMap((position) => insert[position]?.object_id ?? []),
-  ];
-}
-
-/**
  * The D1 row an accepted object update names: the one holding `objectId` with
  * the id the author was shown in `docIds`. None when that row no longer holds
  * the key, or when the choice names no id. D1 has no unique index on
@@ -1757,60 +1343,6 @@ function reviewedObjectRow<T extends { id: number; object_id: string }>(
 ): T | undefined {
   const docId = ownValue(docIds ?? {}, objectId);
   return docId === undefined ? undefined : d1Objects.find((o) => o.object_id === objectId && o.id === docId);
-}
-
-/**
- * One repo row as a pending object, with the repo as its origin. It is not
- * ready: the Objects page marks it (`probe-tiles`).
- */
-function pendingFromRepoRow(
-  objectId: string,
-  repoRow: Record<string, unknown>,
-): PendingObject {
-  return {
-    object_id: objectId,
-    title: (repoRow.title as string | null) ?? null,
-    featured: Boolean(repoRow.featured),
-    creator: (repoRow.creator as string | null) ?? null,
-    description: (repoRow.description as string | null) ?? null,
-    source_url: (repoRow.source_url as string | null) ?? null,
-    period: (repoRow.period as string | null) ?? null,
-    year: (repoRow.year as string | null) ?? null,
-    object_type: (repoRow.object_type as string | null) ?? null,
-    subjects: (repoRow.subjects as string | null) ?? null,
-    source: (repoRow.source as string | null) ?? null,
-    credit: (repoRow.credit as string | null) ?? null,
-    thumbnail: (repoRow.thumbnail as string | null) ?? null,
-    alt_text: (repoRow.alt_text as string | null) ?? null,
-    dimensions: (repoRow.dimensions as string | null) ?? null,
-    extra_columns: (repoRow.extra_columns as string | null) ?? null,
-    image_available: false,
-    origin: "repo",
-  };
-}
-
-/**
- * An image file in the repository with no row, as a pending object under the
- * file's stem, not yet ready: the Objects page marks it (`probe-tiles`).
- */
-function pendingFromImageFile(objectId: string): PendingObject {
-  return {
-    object_id: objectId,
-    title: null,
-    featured: false,
-    creator: null,
-    description: null,
-    source_url: null,
-    period: null,
-    year: null,
-    object_type: null,
-    subjects: null,
-    source: null,
-    credit: null,
-    thumbnail: null,
-    image_available: false,
-    origin: "repo",
-  };
 }
 
 /**
@@ -2116,35 +1648,6 @@ interface ObjectsIngestAnswer {
 }
 
 /**
- * Send one objects ingest, all or nothing (`allOrNothing`), and answer the
- * object_ids of the updates the document skipped, and of the updates and order
- * entries it skipped because another object holds the key (`superseded`). An
- * arm with nothing in it sends nothing. A non-200 answer throws.
- */
-async function ingestObjectChanges(
-  env: FullSyncEnv,
-  projectId: number,
-  arm: {
-    update: SyncIngestPayload["objects"]["update"];
-    insert: IngestObjectInsert[];
-    remove: Array<{ objectId: string; docId: number }>;
-    order: Array<{ objectId: string; docId: number }>;
-    /** GitHub's sheet, which places the inserts; sent only with them. */
-    sheet?: SheetEntry[];
-  },
-): Promise<ObjectsIngestAnswer> {
-  if ([arm.update, arm.insert, arm.remove, arm.order].every((entries) => entries.length === 0)) {
-    return objectChangesAnswer({});
-  }
-  const { order, sheet, ...rest } = arm;
-  const objectsArm = { ...rest, ...(order.length > 0 ? { order } : {}), ...(arm.insert.length > 0 ? { sheet } : {}) };
-  const answer = await postObjectsIngest(env, projectId, objectsArm);
-  const refusal = entriesRefusal(answer);
-  if (refusal) throw refusal;
-  return objectChangesAnswer(answer);
-}
-
-/**
  * The refusal for an ingest that names entries it cannot store: refused as
  * malformed at its boundary, or an insert over D1's row size. Under
  * `allOrNothing` the collaboration object holds the ingest back for them,
@@ -2158,21 +1661,6 @@ function entriesRefusal(answer: IngestSyncAnswer): SyncEntriesRefused | null {
   const oversized = ingestList(answer.oversized, "objectInsert");
   if (Object.keys(refused).length === 0 && oversized.length === 0) return null;
   return new SyncEntriesRefused(refused, oversized);
-}
-
-/** Post one ingest holding only an objects arm, and answer its body. A non-200 answer throws. */
-async function postObjectsIngest(env: FullSyncEnv, projectId: number, objectsArm: object): Promise<IngestSyncAnswer> {
-  const headers = await makeInternalMarkerHeaders(projectId, env.SESSION_SECRET, "ingest-sync");
-  const stub = env.COLLABORATION.get(env.COLLABORATION.idFromName(String(projectId)));
-  const res = await stub.fetch(
-    new Request("https://internal/ingest-sync", {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ objects: objectsArm, allOrNothing: true }),
-    }),
-  );
-  if (!res.ok) throw new Error(`ingest-sync failed: DO returned ${res.status}`);
-  return (await res.json().catch(() => ({}))) as IngestSyncAnswer;
 }
 
 /**
@@ -2217,33 +1705,6 @@ function seenFieldsOf(
     Object.keys(fields).filter((field) => Object.hasOwn(shown, field)).map((field) => [field, shown[field]]),
   );
   return Object.keys(seen).length > 0 ? { seen } : {};
-}
-
-/**
- * `missing_from_repo`, which only D1 holds, decided and written per row: set
- * for a row whose key is absent from the repo and which was not removed (a
- * compositor-origin row is not a repo object and is never flagged), cleared
- * for one whose key is present again. Per row id rather than per key, since
- * two rows can share a key and each has its own origin.
- */
-async function writeMissingFromRepo(
-  db: ReturnType<typeof getDb>,
-  projectId: number,
-  d1Objects: Array<typeof objects.$inferSelect>,
-  repoMap: Map<string, Record<string, unknown>>,
-  removedRowIds: Set<number>,
-): Promise<void> {
-  const now = new Date().toISOString();
-  for (const row of d1Objects) {
-    const present = repoMap.has(row.object_id);
-    const flag = !present && !removedRowIds.has(row.id) && row.origin !== "compositor";
-    const clear = present && Boolean(row.missing_from_repo);
-    if (!flag && !clear) continue;
-    await db
-      .update(objects)
-      .set({ missing_from_repo: flag, updated_at: now })
-      .where(and(eq(objects.project_id, projectId), eq(objects.id, row.id)));
-  }
 }
 
 // ===========================================================================
@@ -2359,7 +1820,13 @@ export interface StorySyncChangedItem {
 export interface StorySyncDiff {
   newStories: StorySyncItem[];
   changedStories: StorySyncChangedItem[];
-  missingStories: Array<{ story_id: string; title: string | null }>;
+  /**
+   * Stories D1 holds that GitHub's project.csv does not: deleted on GitHub,
+   * each with its D1 row id, which an apply that deletes it here too names
+   * (`FullSyncChanges.stories.remove`). `editedInCompositor`, three-way only:
+   * its row moved off the base here too, or the base cannot place it.
+   */
+  missingStories: Array<{ story_id: string; title: string | null; dbId: number; editedInCompositor?: boolean }>;
   /**
    * The stories whose step or layer files differ (checkStoryContent), or why
    * the trees could not settle it. Absent from a diff built without the
@@ -2409,8 +1876,15 @@ export interface GlossarySyncDiff {
      */
     deletedInCompositor?: boolean;
   }>;
-  /** Terms in D1 that are not in the repo CSV */
-  removed: Array<{ term_id: string; title: string; dbId: number }>;
+  /**
+   * Terms in D1 that are not in the repo CSV, each with its D1 row id, which
+   * an apply that deletes it here too names (`FullSyncChanges.glossary.remove`).
+   * `held`: a term whose id publishes none that glossary.csv holds unchanged,
+   * which every apply removes (`removeHeld`). `editedInCompositor`,
+   * three-way only: its row moved off the base here too, or the base cannot
+   * place it.
+   */
+  removed: Array<{ term_id: string; title: string; dbId: number; held?: true; editedInCompositor?: boolean }>;
   /** Terms in both but with a differing title, definition, or related_terms */
   changed: Array<{
     term_id: string;
@@ -2463,9 +1937,7 @@ export interface FullSyncDiff {
    * that both the repo and the editor moved off the base to different values,
    * or an object/term the editor deleted while GitHub edited it. Always false
    * in two-way fallback mode (no base to classify against). The modal reads it
-   * to decide whether to render the conflicts block; `aggregateSyncDiff`
-   * deliberately ignores it, so wiring it truthfully changes no diff-chip
-   * count (see site-status-diff.ts and its pin test).
+   * to decide whether to render the conflicts block.
    */
   hasConflicts: boolean;
   /**
@@ -2495,11 +1967,20 @@ export interface FullSyncDiff {
    */
   projectId?: number;
   /**
-   * The head_sha this diff was computed against, null when there was none.
-   * A choice made over it holds only while head_sha is still this commit: a
-   * head recorded since makes the diff describe something no longer there.
+   * The commit this diff was computed against, null when there was none: the
+   * recorded head_sha, or while none is recorded the commit the import read
+   * (`importCommitOf`). A choice made over it holds only while that is still
+   * so: a head recorded since makes the diff describe something no longer
+   * there.
    */
   baseSha?: string | null;
+  /**
+   * The project's `objects_read_sha` as the check loaded it, when the caller
+   * passed it (`computeFullSyncDiff`'s `objectsReadSha`): the objects were
+   * compared against it where it is not `baseSha`. An apply holds only while
+   * the record is still this, and advances it to the head it records.
+   */
+  objectsReadSha?: string | null;
   /**
    * What the reads of the repository at `headSha` found wrong: every sheet,
    * the step files the story check read, and the tree. Nothing read at the
@@ -2515,6 +1996,13 @@ export interface FullSyncDiff {
    * record the head, and the author's sync names the file.
    */
   unreadableFiles: string[];
+  /**
+   * `unreadableFiles` as the review lists them (`UnreadableFileItem`): each
+   * with the stories whose step or layer file it is, what the site does with
+   * it, and whether it is a notice with no choice. Absent from a diff built
+   * by hand.
+   */
+  unreadable?: UnreadableFileItem[];
   /**
    * The objects, project and glossary sheets, by file name, whose misread
    * headings at the head differ from the base's. A heading-only edit leaves D1
@@ -2600,6 +2088,12 @@ function fileCheckConflicts(check: { conclusive: true; changes: ReadonlyArray<{ 
   return check.conclusive && check.changes.some((c) => c.kind === "conflict");
 }
 
+/** A row deleted on GitHub that the author deleted here too: its key, and the D1 row id it was shown with. */
+export interface RowRemoval {
+  id: string;
+  dbId: number;
+}
+
 export interface FullSyncChanges {
   objects: SyncChanges;
   /**
@@ -2617,6 +2111,12 @@ export interface FullSyncChanges {
      * story when its live content no longer hashes to it.
      */
     contentExpected?: Record<string, string>;
+    /**
+     * Stories deleted on GitHub the author deleted here too
+     * (`StorySyncDiff.missingStories`), each by key and the D1 row id it was
+     * shown with: the apply removes only a row holding both.
+     */
+    remove?: RowRemoval[];
   };
   /** config field keys where user accepted repo changes */
   config: { accept: string[]; reject: string[] };
@@ -2624,6 +2124,8 @@ export interface FullSyncChanges {
   glossary: {
     accept: string[]; reject: string[]; insertNew: string[];
     fieldChoices?: Record<string, Record<string, "repo" | "d1">>;
+    /** Terms deleted on GitHub the author deleted here too (`GlossarySyncDiff.removed`), as for stories. */
+    remove?: RowRemoval[];
   };
   /**
    * The HEAD commit the check read. Every read of the accept is at this
@@ -2634,10 +2136,18 @@ export interface FullSyncChanges {
   /**
    * The project and the base of the check the dialog showed
    * (`FullSyncDiff.projectId`, `.baseSha`). The apply is refused unless the
-   * project is the one it runs for and head_sha is still the base.
+   * project is the one it runs for and head_sha is still the base, or, with
+   * no head recorded, the base is still the commit the import read.
    */
   projectId?: number;
   baseSha?: string | null;
+  /**
+   * The `objects_read_sha` the check the dialog showed loaded
+   * (`FullSyncDiff.objectsReadSha`). The apply is refused unless the record
+   * is still it, and advances it from it. Absent, the record is advanced only
+   * where it is the base.
+   */
+  objectsReadSha?: string | null;
   /**
    * True when the check the dialog showed read the story files to a
    * conclusion (`stories.content.conclusive`), so the stories it listed are
@@ -2668,6 +2178,24 @@ export interface FullSyncChanges {
    * changes there are. Anything but `true`, absence included, keeps head_sha.
    */
   pageContentChecked?: boolean;
+  /**
+   * The files whose check did not conclude that the author chose to keep the
+   * Compositor's version of: the next publish replaces them on GitHub. Taken
+   * only where the accept's own reading at the same head fails to conclude
+   * for a structural cause (`InconclusiveCause`); for a request cause, or a
+   * reading that concludes at this head, head_sha is kept as without it.
+   */
+  keepUnreadFiles?: Array<"stories" | "pages">;
+}
+
+/** The checks the author kept the Compositor's version over (`keepUnreadFiles`), validated; absent is none. */
+export function keptUnreadFiles(changes: FullSyncChanges): Set<"stories" | "pages"> {
+  const raw: unknown = changes.keepUnreadFiles;
+  if (raw === undefined) return new Set();
+  if (!Array.isArray(raw) || !raw.every((k) => k === "stories" || k === "pages")) {
+    throw new Error("apply-full-sync refused: keepUnreadFiles names no file check");
+  }
+  return new Set(raw);
 }
 
 /**
@@ -2862,6 +2390,8 @@ export interface SyncIngestPayload {
       storyId: string; expected: string;
       steps: SyncIngestStep[]; layers: SyncIngestLayer[];
     }>;
+    /** By D1 id: the story the author chose to delete here too, and no other under its key. */
+    remove?: Array<{ storyId: string; docId: number }>;
   };
   objects: {
     /**
@@ -2894,6 +2424,8 @@ export interface SyncIngestPayload {
      * only while it still has those values.
      */
     removeHeld?: HeldTermRemoval[];
+    /** By D1 id: the term the author chose to delete here too, and no other under its key. */
+    remove?: Array<{ termId: string; docId: number }>;
   };
   /**
    * Accepted pages: each page's content replaced, if unchanged since
@@ -3234,6 +2766,20 @@ function withStoryTitles(
   return { ...check, changes: check.changes.map((change) => ({ ...change, title: titleOf(change.story_id) ?? null })) };
 }
 
+/** A D1 story row as the diff compares it. */
+function d1StoryItemOf(d1Row: typeof stories.$inferSelect): StorySyncItem {
+  return {
+    story_id: d1Row.story_id,
+    title: d1Row.title ?? null,
+    subtitle: d1Row.subtitle ?? null,
+    byline: d1Row.byline ?? null,
+    order: d1Row.order ?? 0,
+    isPrivate: d1Row.private ?? false,
+    showSections: d1Row.show_sections ?? false,
+    extraColumns: d1Row.extra_columns ?? "",
+  };
+}
+
 /**
  * Computes a full three-way diff for objects, stories, and config between
  * D1 and the repo.
@@ -3266,6 +2812,14 @@ export async function computeFullSyncDiff(
     collectWarnings?: boolean; headRef?: string; frameworkVersion?: string | null;
     /** The commit legacy pairing is judged against (`computeSyncDiff`'s `legacyRef`); absent pairs nothing. */
     legacyRef?: string | null;
+    /**
+     * The project's `objects_read_sha` as the caller loaded it, the commit
+     * whose object rows D1 accounts for. Where it is not `baseRef`, the
+     * objects are compared against it (`objectsBaseAt`), and the diff carries
+     * it (`objectsReadSha`) for the apply to hold and advance. Absent, the
+     * objects are compared against `baseRef` like everything else.
+     */
+    objectsReadSha?: string | null;
   } = {},
 ): Promise<FullSyncDiff> {
   const collectWarnings = options.collectWarnings === true;
@@ -3309,10 +2863,19 @@ export async function computeFullSyncDiff(
   const siteVersion = siteVersionFrom(configYmlContent, options.frameworkVersion ?? null);
 
   // 1. Delegate objects diff. Thread the base objects.csv CONTENT: undefined in
-  //    two-way, string|null (null = empty base) in three-way.
+  //    two-way, string|null (null = empty base) in three-way. Where the
+  //    commit whose object rows D1 accounts for is not the base, an objects
+  //    commit moved it on its own or a head write left it behind, and the
+  //    objects are compared against it instead. Image files are judged
+  //    against the review's base, which an apply records.
+  const objectsRead = options.objectsReadSha;
+  const objectsAgainstRecord = objectsRead !== undefined && objectsRead !== (baseRef ?? null);
+  const objectsBase = objectsAgainstRecord
+    ? await objectsBaseAt(token, owner, repo, objectsRead)
+    : threeWay ? baseObjectsCsv : undefined;
   const objectsDiff = await computeSyncDiff(
-    projectId, token, owner, repo, db, threeWay ? baseObjectsCsv : undefined, head, collectWarnings,
-    { atRef: siteVersion }, options.legacyRef,
+    projectId, token, owner, repo, db, objectsBase, head, collectWarnings,
+    { atRef: siteVersion }, options.legacyRef, threeWay ? baseRef : null,
   );
   suppressedEditorOnly += objectsDiff.suppressedEditorOnly ?? 0;
 
@@ -3344,7 +2907,7 @@ export async function computeFullSyncDiff(
   // 4. Compute story diffs (row grain — accept/reject is whole-story).
   const newStories: StorySyncItem[] = [];
   const changedStories: StorySyncChangedItem[] = [];
-  const missingStories: Array<{ story_id: string; title: string | null }> = [];
+  const missingStories: StorySyncDiff["missingStories"] = [];
 
   for (const [storyId, repoRow] of repoStoryMap.entries()) {
     if (!d1StoryMap.has(storyId)) {
@@ -3370,16 +2933,7 @@ export async function computeFullSyncDiff(
     }
 
     const d1Row = d1StoryMap.get(storyId)!;
-    const d1Item: StorySyncItem = {
-      story_id: storyId,
-      title: d1Row.title ?? null,
-      subtitle: d1Row.subtitle ?? null,
-      byline: d1Row.byline ?? null,
-      order: d1Row.order ?? 0,
-      isPrivate: d1Row.private ?? false,
-      showSections: d1Row.show_sections ?? false,
-      extraColumns: d1Row.extra_columns ?? "",
-    };
+    const d1Item = d1StoryItemOf(d1Row);
 
     const baseItem = threeWay ? baseStoryMap.get(storyId) : undefined;
     const fieldStr = (row: StorySyncItem) => (f: keyof StorySyncItem) => storyFieldStr(row, f);
@@ -3430,10 +2984,19 @@ export async function computeFullSyncDiff(
       suppressedEditorOnly++;
       continue;
     }
-    missingStories.push({ story_id: storyId, title: d1Row.title ?? null });
+    // As for an object: a row the editor moved off the base is a
+    // deleted-there/edited-here conflict, and so is any row a base that cannot
+    // be read by id cannot place.
+    const baseItem = threeWay && !projectBaseUnknown ? baseStoryMap.get(storyId) : undefined;
+    const editedInCompositor = threeWay && (projectBaseUnknown || (baseItem !== undefined && storyRowChanged(d1StoryItemOf(d1Row), baseItem)));
+    missingStories.push({
+      story_id: storyId, title: d1Row.title ?? null, dbId: d1Row.id,
+      ...(editedInCompositor ? { editedInCompositor: true } : {}),
+    });
   }
 
   // 4b. The stories' step and layer files, pinned to the same HEAD.
+  const lossyStories = new Map<string, Set<string>>();
   const checked = await storyContentOf({
     token, owner, repo, db, head,
     base: baseRef ?? null,
@@ -3443,6 +3006,7 @@ export async function computeFullSyncDiff(
       : [],
     headRowIds: new Set(repoStoryMap.keys()),
     warnings: warnings ?? undefined,
+    lossyStories,
   });
   const content = withRowDefaults(
     withStoryTitles(checked, (id) => d1StoryMap.get(id)?.title ?? repoStoryMap.get(id)?.title),
@@ -3560,7 +3124,7 @@ export async function computeFullSyncDiff(
   //    which the story check does not compare: their step files read for
   //    warnings only, after every other read of the check.
   if (warnings) {
-    appendWarnings(warnings, await newStoryWarnings(token, owner, repo, head, newStories.map((s) => s.story_id)));
+    appendWarnings(warnings, await newStoryWarnings(token, owner, repo, head, newStories.map((s) => s.story_id), lossyStories));
   }
 
   const listTabs = listTabsOnce();
@@ -3599,8 +3163,10 @@ export async function computeFullSyncDiff(
     headSha: head,
     projectId,
     baseSha: baseRef ?? null,
+    ...(objectsRead !== undefined ? { objectsReadSha: objectsRead } : {}),
     ...(warnings ? { warnings } : {}),
     unreadableFiles,
+    unreadable: unreadableItems(unreadableFiles, [...(warnings ?? []), ...unreadable], lossyStories),
     headingFiles,
   };
 }
@@ -3660,13 +3226,13 @@ async function readBaseFiles(
 }
 
 /**
- * The base of the objects page's three-way check (`computeSyncDiff`'s
- * `baseObjectsContent`): objects.csv at `ref`, the commit whose objects.csv D1
- * last accounted for (`projects.objects_read_sha`), read strictly as the full
- * sync reads its base. Null when that commit holds no objects.csv, an empty
- * base. Undefined, no base and a two-way check, when there is no record, or
- * when GitHub does not hold the commit or cannot say whether it does. A failed
- * read of a commit GitHub holds refuses the check.
+ * The objects base of a sync check whose `objects_read_sha` is not its base
+ * (`computeSyncDiff`'s `baseObjectsContent`): objects.csv at `ref`, the commit
+ * whose objects.csv D1 last accounted for, read strictly as the full sync
+ * reads its base. Null when that commit holds no objects.csv, an empty base.
+ * Undefined, no base and a two-way objects comparison, when there is no
+ * record, or when GitHub does not hold the commit or cannot say whether it
+ * does. A failed read of a commit GitHub holds refuses the check.
  */
 export async function objectsBaseAt(
   token: string,
@@ -3718,6 +3284,7 @@ async function storyContentOf(args: {
   deletedHere: string[];
   headRowIds: ReadonlySet<string>;
   warnings: SheetWarning[] | undefined;
+  lossyStories: Map<string, Set<string>>;
 }): Promise<StoryContentCheck> {
   const { db } = args;
   try {
@@ -3730,6 +3297,7 @@ async function storyContentOf(args: {
       deletedHere: args.deletedHere,
       headRowIds: args.headRowIds,
       warnings: args.warnings,
+      lossyStories: args.lossyStories,
       d1: args.d1Stories.map((story) => ({
         story_id: story.story_id,
         loadRows: async () => {
@@ -3743,7 +3311,7 @@ async function storyContentOf(args: {
       })),
     });
   } catch (err) {
-    return { conclusive: false, reason: `the story files could not be checked: ${(err as Error).message}` };
+    return { conclusive: false, reason: `the story files could not be checked: ${(err as Error).message}`, cause: "request" };
   }
 }
 
@@ -3777,7 +3345,7 @@ async function pageContentOf(args: {
       { warnings: args.warnings ?? undefined, unreadable: args.unreadable },
     );
   } catch (err) {
-    return { conclusive: false, reason: `the page files could not be checked: ${(err as Error).message}` };
+    return { conclusive: false, reason: `the page files could not be checked: ${(err as Error).message}`, cause: "request" };
   }
 }
 
@@ -4028,7 +3596,7 @@ export async function computeGlossarySyncDiff(
   // the file holds its values, and the framework never published it. Listed
   // by row, since such ids can repeat.
   const held = heldTermsTheRepoHolds(d1Terms, repoGlossaryRows);
-  removed.push(...held.map((t) => ({ term_id: t.term_id, title: t.title ?? "", dbId: t.id })));
+  removed.push(...held.map((t) => ({ term_id: t.term_id, title: t.title ?? "", dbId: t.id, held: true as const })));
   for (const [termId, d1Term] of d1TermMap.entries()) {
     if (repoTermMap.has(termId)) continue;
     // In D1, not in repo. Three-way: absent from the base too → editor-created,
@@ -4037,7 +3605,12 @@ export async function computeGlossarySyncDiff(
       suppressedEditorOnly++;
       continue;
     }
-    removed.push({ term_id: termId, title: d1Term.title ?? "", dbId: d1Term.id });
+    // As for an object: a term the editor moved off the base is a
+    // deleted-there/edited-here conflict, and so is any term a base that
+    // cannot be read by id cannot place.
+    const baseTerm = threeWay && !glossaryBaseUnknown ? baseTermMap.get(termId) : undefined;
+    const editedInCompositor = threeWay && (glossaryBaseUnknown || (baseTerm !== undefined && termRowChanged(d1TermRowOf(d1Term), baseTerm)));
+    removed.push({ term_id: termId, title: d1Term.title ?? "", dbId: d1Term.id, ...(editedInCompositor ? { editedInCompositor: true } : {}) });
   }
 
   return {
@@ -4137,6 +3710,9 @@ const NEW_STORY_READS_AT_ONCE = 4;
  *
  * A read that throws keeps what it raised before it threw. A refused sheet is
  * the accept's to refuse, so the check says nothing more of it.
+ *
+ * `lossyStories` receives, for each file read lossily, by the name its
+ * warning gives it, the new stories whose file it is.
  */
 async function newStoryWarnings(
   token: string,
@@ -4144,14 +3720,22 @@ async function newStoryWarnings(
   repo: string,
   head: string,
   storyIds: readonly string[],
+  lossyStories?: Map<string, Set<string>>,
 ): Promise<SheetWarning[]> {
   const perStory: SheetWarning[][] = storyIds.map(() => []);
   let next = 0;
   // A layer file several new stories name is read once, and named once.
   const layerFound: SheetWarning[] = [];
-  const readLayer = readOncePerName((filename: string) =>
+  const read = readOncePerName((filename: string) =>
     contentAtRef(token, owner, repo, `telar-content/texts/stories/${filename}`, head, layerFound),
   );
+  // The stories that name each layer file, by the name its warning would give it.
+  const namedBy = new Map<string, Set<string>>();
+  const readLayerFor = (storyId: string) => (filename: string) => {
+    const file = unreadableFileName(`telar-content/texts/stories/${filename}`);
+    namedBy.set(file, (namedBy.get(file) ?? new Set<string>()).add(storyId));
+    return read(filename);
+  };
   const readNext = async (): Promise<void> => {
     while (next < storyIds.length) {
       const index = next++;
@@ -4161,7 +3745,7 @@ async function newStoryWarnings(
         const csv = await contentAtRef(token, owner, repo, `telar-content/spreadsheets/${storyId}.csv`, head, found);
         const rows = readRepoSheet(csv, storySheet(storyId), found);
         if (csv) mapStoryCsv(rows, 0, issuesFor(storySheet(storyId).fileName, found));
-        await resolveLayerFileReferences(rows, readLayer);
+        await resolveLayerFileReferences(rows, readLayerFor(storyId));
       } catch {
         // What the read raised before it threw stays in `found`.
       }
@@ -4170,6 +3754,17 @@ async function newStoryWarnings(
   await Promise.all(
     Array.from({ length: Math.min(NEW_STORY_READS_AT_ONCE, storyIds.length) }, readNext),
   );
+  if (lossyStories) {
+    const tag = (file: string, ids: Iterable<string>) => {
+      const into = lossyStories.get(file) ?? new Set<string>();
+      for (const id of ids) into.add(id);
+      lossyStories.set(file, into);
+    };
+    storyIds.forEach((id, i) => {
+      for (const file of unreadableNames(perStory[i])) tag(file, [id]);
+    });
+    for (const file of unreadableNames(layerFound)) tag(file, namedBy.get(file) ?? []);
+  }
   return [...perStory.flat(), ...layerFound];
 }
 
@@ -4314,11 +3909,12 @@ interface AcceptedPageFiles {
 /**
  * The page-file arms of an accept, added to the payload from its own check
  * at the pages base and the pinned head (`checkPageFiles`): every addition,
- * each file the author chose to follow GitHub on (`pageFileArms`), and the
- * held pages the one-language reduction removes (`withReducedHeldPages`). A
- * choice the check does not list is a page changed since the check. Null when
- * the check does not conclude: no arm is added and head_sha is held; a choice
- * that cannot then be honoured refuses the accept.
+ * and each file the author chose to follow GitHub on (`pageFileArms`). A
+ * choice the check does not list is a page changed since the check. The
+ * check itself when it does not conclude: no arm is added, and head_sha is
+ * held unless the author kept the Compositor's version over a structural
+ * cause (`headHeldForFiles`); a choice that cannot then be honoured refuses
+ * the accept.
  */
 async function addPageFileArms(
   projectId: number,
@@ -4328,22 +3924,20 @@ async function addPageFileArms(
   access: { token: string; owner: string; repo: string },
   base: string | null,
   head: string,
-): Promise<AcceptedPageFiles | null> {
+): Promise<AcceptedPageFiles | PageContentInconclusive> {
   const takes = pageFileTakes(changes.pages?.takeFiles);
   const scope = await loadPageCheckScope(db, projectId);
   const check = await checkPageFiles(access, scope, pagesBaseOf(base, scope.record), head);
   if (!check.conclusive) {
     if (takes.length > 0) throw new Error(`apply-full-sync refused: the page files could not be read: ${check.reason}`);
-    return null;
+    return check;
   }
   const arms = await pageFileArms(access, check, takes, reviewedAdditionNames(changes.pages?.addFiles), head);
   if (arms.stale.length > 0) throw new PageContentNotApplied(arms.stale, []);
   if (arms.unnamed) throw new SyncBaseStale();
-  const held = withReducedHeldPages(check, payload.pages?.replaceContent ?? [], arms.remove);
-  if (held.replaceContent.length > 0) payload.pages = { ...payload.pages, replaceContent: held.replaceContent };
   if (arms.insert.length > 0) payload.pages = { ...payload.pages, insert: arms.insert };
-  if (held.remove.length > 0) payload.pages = { ...payload.pages, remove: held.remove };
-  return { record: held.record, inserted: arms.insert };
+  if (arms.remove.length > 0) payload.pages = { ...payload.pages, remove: arms.remove };
+  return { record: check.record!, inserted: arms.insert };
 }
 
 /**
@@ -4365,6 +3959,48 @@ function addGitHubObjectOrder(
   const sheet = githubSheet(repoRows, d1Objects);
   payload.objects.sheet = sheet;
   payload.objects.insert.push(...inSheetOrder(repoInserts, sheet));
+}
+
+/**
+ * The image files the author chose to add as objects, each as a new row under
+ * the file's stem, not ready (`image_available: false`): the Objects page
+ * marks it (`probe-tiles`). The ids arrive from the client, so only a stem of
+ * an image file at the head read (`stems`) that names no row there or in D1
+ * (`held`) is taken, once; the others are left, as an accepted new row with no
+ * row at the head is.
+ */
+function imageFileInserts(
+  chosen: unknown,
+  stems: ReadonlySet<string>,
+  held: readonly string[],
+  actorUserId: number,
+): IngestObjectInsert[] {
+  if (!Array.isArray(chosen)) return [];
+  const taken = new Set(held);
+  const inserts: IngestObjectInsert[] = [];
+  for (const objectId of chosen) {
+    if (typeof objectId !== "string" || !stems.has(objectId) || taken.has(objectId)) continue;
+    taken.add(objectId);
+    inserts.push({
+      object_id: objectId,
+      title: null,
+      featured: false,
+      creator: null,
+      description: null,
+      source_url: null,
+      period: null,
+      year: null,
+      object_type: null,
+      subjects: null,
+      source: null,
+      credit: null,
+      thumbnail: null,
+      image_available: false,
+      created_by: actorUserId,
+      origin: "repo",
+    });
+  }
+  return inserts;
 }
 
 export async function resolveFullSyncPayload(
@@ -4420,7 +4056,8 @@ export async function resolveFullSyncPayload(
   // side map computeSyncDiff diffs against — not the enriched row's fallback.
   const rawAltById = new Map(parsedObjRows.map((r) => [r.object_id ?? "", r.alt_text ?? ""]));
 
-  // Object inserts (new CSV rows + unregistered image files).
+  // Object inserts: the new CSV rows here, the image files with no row once
+  // the site's version is read (`imageFileInserts`).
   //
   // Each insert carries `origin: "repo"`. A row whose D1 INSERT fails at the
   // flush stays in the document and lands at a later snapshot, which reads its
@@ -4459,28 +4096,6 @@ export async function resolveFullSyncPayload(
     });
   }
   addGitHubObjectOrder(payload, repoInserts, repoObjRows, d1Objects);
-  const fileInserts: IngestObjectInsert[] = [];
-  for (const objectId of objectChanges.unregisteredObjectIds ?? []) {
-    fileInserts.push({
-      object_id: objectId,
-      title: null,
-      featured: false,
-      creator: null,
-      description: null,
-      source_url: null,
-      period: null,
-      year: null,
-      object_type: null,
-      subjects: null,
-      source: null,
-      credit: null,
-      thumbnail: null,
-      image_available: false,
-      created_by: actorUserId,
-      origin: "repo",
-    });
-  }
-  payload.objects.insert.push(...fileInserts);
 
   // Object updates, to the row the author reviewed (see fullSyncObjectUpdates).
   const { update: objectUpdates, notSent: updatesNotSent } = fullSyncObjectUpdates(
@@ -4605,6 +4220,16 @@ export async function resolveFullSyncPayload(
     if (extraColumns !== null) residue.storyD1Insert.push({ storyId, extraColumns });
   }
 
+  // Stories deleted on GitHub the author deleted here too, each sent only for
+  // a row holding the key and the D1 id the author was shown, and never for a
+  // story back in the project.csv read here.
+  const storyRemovals = rowRemovalsOf(storyChanges.remove, "stories");
+  if (storyRemovals.length > 0) {
+    const held = await db.select({ id: stories.id, story_id: stories.story_id }).from(stories).where(eq(stories.project_id, projectId));
+    const removable = removableRows(storyRemovals, held.map((r) => ({ id: r.id, key: r.story_id })), repoStoryMap);
+    if (removable.length > 0) payload.stories.remove = removable.map(({ id, dbId }) => ({ storyId: id, docId: dbId }));
+  }
+
   // Accepted content, read at the same commit as everything above. The row
   // fields of a story accepted with its content travel in the same ingest,
   // and the collaboration object applies both or neither.
@@ -4664,9 +4289,27 @@ export async function resolveFullSyncPayload(
     siteConfig, d1Objects, reviewedObjectUpdates, { tree: objectsTree, truncated: objectsTreeTruncated },
     async () => siteVersionFrom(configYmlContent, d1TelarVersion),
   ));
+  payload.objects.insert.push(...imageFileInserts(
+    objectChanges.unregisteredObjectIds,
+    tileableStems(objectsTree, siteVersionFrom(configYmlContent, d1TelarVersion)),
+    [...repoObjMap.keys(), ...d1Objects.map((o) => o.object_id)],
+    actorUserId,
+  ));
 
   // --- Glossary (glossary.csv) --------------------------------------------
   Object.assign(payload.glossary, await heldTermRemoval(db, projectId, atHead));
+  const termRemovals = rowRemovalsOf(glossaryChanges.remove, "glossary");
+  if (termRemovals.length > 0) {
+    // As for stories: by key and D1 id, and never a term back in glossary.csv.
+    const glossaryRead = await readSiteSheet("glossary", atHead);
+    const repoTermIds = new Set(
+      publishedRowPerTermId(readRepoSheet(glossaryRead.content, glossarySheet(glossaryRead.name), null)).map((r) => r.term_id as string),
+    );
+    const held = await db.select({ id: glossary_terms.id, term_id: glossary_terms.term_id }).from(glossary_terms)
+      .where(eq(glossary_terms.project_id, projectId));
+    const removable = removableRows(termRemovals, held.filter((t) => !isHeldTermId(t.term_id)).map((t) => ({ id: t.id, key: t.term_id })), repoTermIds);
+    if (removable.length > 0) payload.glossary.remove = removable.map(({ id, dbId }) => ({ termId: id, docId: dbId }));
+  }
   if (glossaryChanges.insertNew.length > 0 || glossaryChanges.accept.length > 0) {
     const { content: glossaryCsvContent, name: glossaryFileName } = await readSiteSheet("glossary", atHead);
     const repoTerms = readRepoSheet(glossaryCsvContent, glossarySheet(glossaryFileName), null);
@@ -4705,6 +4348,36 @@ export async function resolveFullSyncPayload(
   }
 
   return { payload, residue, updatesNotSent };
+}
+
+/**
+ * The removals an apply's changes name for `arm`, validated: each an object
+ * with a non-empty string key and a positive integer D1 id. They arrive from
+ * the client, so anything else refuses the apply; absent is none.
+ */
+function rowRemovalsOf(raw: unknown, arm: "stories" | "glossary"): RowRemoval[] {
+  if (raw === undefined) return [];
+  const valid = (entry: unknown): entry is RowRemoval => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const { id, dbId } = entry as { id?: unknown; dbId?: unknown };
+    return typeof id === "string" && id !== "" && typeof dbId === "number" && Number.isSafeInteger(dbId) && dbId > 0;
+  };
+  if (!Array.isArray(raw) || !raw.every(valid)) throw new Error(`apply-full-sync refused: ${arm}.remove is malformed`);
+  return raw;
+}
+
+/**
+ * The removals a row D1 holds answers, by key and id both, whose key the
+ * repository read at the head does not hold: a row re-created since the check
+ * is not the one the author chose, and a row back on GitHub is no longer
+ * deleted there.
+ */
+function removableRows(
+  removals: readonly RowRemoval[],
+  held: ReadonlyArray<{ id: number; key: string }>,
+  inRepo: { has(key: string): boolean },
+): RowRemoval[] {
+  return removals.filter((r) => !inRepo.has(r.id) && held.some((row) => row.id === r.dbId && row.key === r.id));
 }
 
 /**
@@ -4772,35 +4445,79 @@ export async function applyFullSyncChanges(
   refuseUnseenGitHubFields(changes.objects);
   refuseRowsWithoutChoices(changes);
   // The check applies only to the project it was computed for, and only while
-  // head_sha is still the base it was computed against: otherwise what it
-  // listed as GitHub's changes is not what lies between the recorded head and
-  // its HEAD. Refused before the lease and before anything is read or written.
-  // The base is also what the story trees are read from and what head_sha
-  // advances from, compare-and-set, which covers a head another writer records
-  // after this read ("Use Compositor version" refuses a moved base the same
-  // way before its lease, and records compare-and-set after its order ingest).
+  // head_sha is still the base it was computed against, or, with no head
+  // recorded, the base is still the commit the import read
+  // (`refuseUnlessReviewBase`): otherwise what it listed as GitHub's changes
+  // is not what lies between that commit and its HEAD. Refused before the
+  // lease and before anything is read or written. The base is also what the
+  // story trees are read from, and head_sha advances from what the base stood
+  // for, compare-and-set, which covers a head another writer records
+  // after this read.
   const base = changes.baseSha;
   if (changes.projectId !== projectId || base === undefined) throw new SyncBaseStale();
-  if (base !== null && !/^[0-9a-f]{40}$/.test(base)) throw new SyncBaseStale();
-  const { projects } = await import("~/db/schema");
-  const [recordedRow] = await db
-    .select({ head_sha: projects.head_sha })
-    .from(projects)
-    .where(eq(projects.id, projectId));
-  if ((recordedRow?.head_sha ?? null) !== base) throw new SyncBaseStale();
+  if (base !== null && !isFullSha(base)) throw new SyncBaseStale();
+  const review = { base, objectsRead: reviewedObjectsRead(changes) };
+  await refuseUnlessReviewBase(db, projectId, review);
   // The whole apply under the objects lease: it removes and registers objects
   // through the document, and no publish may serialise objects.csv from D1
   // while it does. A refused lease fails the apply as any other failure.
   const held = await holdOperationLease(
     env as unknown as Env, projectId, actorUserId, "objects",
     async (landed) => {
-      const result = await applyFullSyncUnderLease(projectId, changes, token, owner, repo, db, actorUserId, env, base);
+      const result = await applyFullSyncUnderLease(projectId, changes, token, owner, repo, db, actorUserId, env, review);
       landed();
       return result;
     },
   );
   if (held.refused) throw new Error("apply-full-sync refused: another operation holds the lease");
   return held.value;
+}
+
+/** Whether a value from the client is a full commit SHA: exactly 40 lowercase hex characters. */
+function isFullSha(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
+}
+
+/**
+ * The `objects_read_sha` the check the dialog showed loaded
+ * (`FullSyncChanges.objectsReadSha`): undefined when none came, else null or
+ * a string, which holds only while it equals the record
+ * (`refuseUnlessReviewBase`). It arrives from the client, so anything else is
+ * refused as stale.
+ */
+function reviewedObjectsRead(changes: FullSyncChanges): string | null | undefined {
+  const value: unknown = changes.objectsReadSha;
+  if (value !== undefined && value !== null && typeof value !== "string") throw new SyncBaseStale();
+  return value;
+}
+
+/** The commits an accept was reviewed against: its base, and the objects record it loaded where it carries one. */
+interface ReviewBase {
+  base: string | null;
+  objectsRead: string | null | undefined;
+}
+
+/**
+ * The head_sha an accept advances from, while the project still stands where
+ * the check found it; throws `SyncBaseStale` otherwise. The base holds while
+ * head_sha is it, or, with no head recorded, while it is the commit the import
+ * read (`importCommitOf`), from which the head then advances over no head. The
+ * objects record, where the check carried it, holds while `objects_read_sha`
+ * is still it.
+ */
+async function refuseUnlessReviewBase(db: ReturnType<typeof getDb>, projectId: number, review: ReviewBase): Promise<string | null> {
+  const { projects } = await import("~/db/schema");
+  // Imported here: github-status.server imports this module.
+  const { importCommitOf } = await import("~/lib/github-status.server");
+  const [row] = await db
+    .select({ head_sha: projects.head_sha, page_files_json: projects.page_files_json, objects_read_sha: projects.objects_read_sha })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  const head = row?.head_sha ?? null;
+  const fromImport = head === null && review.base !== null && importCommitOf({ head_sha: null, page_files_json: row?.page_files_json ?? null }) === review.base;
+  if (head !== review.base && !fromImport) throw new SyncBaseStale();
+  if (review.objectsRead !== undefined && (row?.objects_read_sha ?? null) !== review.objectsRead) throw new SyncBaseStale();
+  return head;
 }
 
 /**
@@ -4883,8 +4600,7 @@ function pageArmNotApplied(
  * arm the answer reports in `failed`, or null: object rows first, as
  * `ObjectsNotAdded`; the other arms as `InsertsNotAdded`. Found only by the
  * write, so the rest of the ingest has landed; the accept stops before
- * head_sha moves, as the objects page's apply keeps objects_read_sha for a row
- * it did not add.
+ * head_sha moves.
  */
 function insertsNotAdded(answer: IngestSyncAnswer): ObjectsNotAdded | InsertsNotAdded | null {
   const objectIds = ingestList(answer.failed, "objectInsert");
@@ -4995,13 +4711,15 @@ async function applyFullSyncUnderLease(
   db: ReturnType<typeof getDb>,
   actorUserId: number,
   env: FullSyncEnv,
-  base: string | null,
+  review: ReviewBase,
 ): Promise<FullSyncApplied> {
+  const { base } = review;
   // 1. Resolve the typed payload + D1-only residue from the repo files, all
   //    read at one commit: the check's HEAD, or HEAD resolved once here. That
   //    commit is the one head_sha records; a commit landing after it is not
   //    read, so it is not recorded as synced.
   const head = checkedHeadSha(changes) ?? (await getRepoHead(token, owner, repo));
+  const kept = keptUnreadFiles(changes);
   await finishPendingObjectOps(env, db, projectId, { token, owner, repo }, { head, stale: () => new SyncBaseStale() });
   const { payload, residue, updatesNotSent } = await resolveFullSyncPayload(
     projectId, changes, token, owner, repo, db, actorUserId, head,
@@ -5009,7 +4727,7 @@ async function applyFullSyncUnderLease(
   const pageFiles = await addPageFileArms(projectId, payload, changes, db, { token, owner, repo }, base, head);
   // Under the lease and before the first write, the base checked before
   // taking it is checked again: an apply that landed in between has moved it.
-  await refuseMovedBase(db, projectId, base);
+  const headFrom = await refuseUnlessReviewBase(db, projectId, review);
   // An update whose row was re-created in the Compositor since the check
   // holds the whole accept back, as the collaboration object holds it back for
   // a row it finds re-created (`allOrNothing`).
@@ -5125,18 +4843,24 @@ async function applyFullSyncUnderLease(
   //      the dialog saw and not what the trees hold: the story trees, and the
   //      accept's own page-file check (`addPageFileArms`), which reads the
   //      pages folder whether or not the project holds a page.
-  //    It advances compare-and-set from the check's base, so a head another
-  //    writer recorded meanwhile is kept, and the answer then names no commit
-  //    as synced.
-  const held = await headHeldForFiles(projectId, changes, { token, owner, repo }, base, head, pageFiles);
+  //    It advances compare-and-set from the head the check's base stood for
+  //    (none, over the import's commit), so a head another writer recorded
+  //    meanwhile is kept, and the answer then names no commit as synced.
+  //    objects_read_sha advances with it from the record the check loaded,
+  //    else from the base: the objects were compared against that record.
+  //    Files the author kept the Compositor's version of (`keepUnreadFiles`)
+  //    count as read where they fail to conclude for a structural cause.
+  const held = await headHeldForFiles(projectId, changes, { token, owner, repo }, base, head, pageFiles, kept);
   if (held) return held;
   // The record goes in the same compare-and-set as the head, built from the
-  // accept's check and the ingest's receipts, never from a read of D1 after it.
-  const recordJson = acceptedRecordJson(pageFiles!, ingestBody);
+  // accept's check and the ingest's receipts, never from a read of D1 after it;
+  // over page files kept unread, the record is carried unchanged.
+  const recordJson = "record" in pageFiles ? acceptedRecordJson(pageFiles, ingestBody) : undefined;
   // Imported here: github-status.server imports this module.
   const { bumpProjectHeadFrom } = await import("~/lib/github-status.server");
   const recorded = await bumpProjectHeadFrom(
-    db, projectId, base, head, Date.parse(now), { last_synced_at: now, page_files_json: recordJson },
+    db, projectId, headFrom, head, Date.parse(now), { last_synced_at: now, ...(recordJson !== undefined ? { page_files_json: recordJson } : {}) },
+    review.objectsRead !== undefined ? review.objectsRead : base,
   );
 
   return { newHeadSha: recorded ? head : null, storyFilesInconclusive: false, pageFilesInconclusive: false };
@@ -5147,6 +4871,12 @@ async function applyFullSyncUnderLease(
  * (step 6 of `applyFullSyncUnderLease`), or null when neither holds it. The
  * page files hold it unless the check the dialog showed concluded them and
  * the accept's own check (`addPageFileArms`) did too.
+ *
+ * Either is released by `kept` (`keepUnreadFiles`) only where the reading at
+ * this same head fails to conclude for a structural cause: the story trees
+ * read again (`storyFilesUnread`), the page files by the accept's own check.
+ * Keeping the Compositor's version over a request cause would acknowledge a
+ * change nobody read, so it holds the head as before.
  */
 async function headHeldForFiles(
   projectId: number,
@@ -5154,34 +4884,40 @@ async function headHeldForFiles(
   access: { token: string; owner: string; repo: string },
   base: string | null,
   head: string,
-  pageFiles: AcceptedPageFiles | null,
+  pageFiles: AcceptedPageFiles | PageContentInconclusive,
+  kept: ReadonlySet<"stories" | "pages">,
 ): Promise<FullSyncApplied | null> {
-  const storyFilesInconclusive =
-    changes.storyContentChecked !== true || (await storyFilesUnread(projectId, access, base, head));
-  const pageFilesInconclusive = changes.pageContentChecked !== true || pageFiles === null;
+  const storyFilesInconclusive = changes.storyContentChecked === true
+    ? (await storyFilesUnread(projectId, access, base, head)) !== null
+    : !(kept.has("stories") && (await storyFilesUnread(projectId, access, base, head))?.cause === "structure");
+  const pagesUnread = "record" in pageFiles ? null : pageFiles;
+  const pageFilesInconclusive = changes.pageContentChecked === true
+    ? pagesUnread !== null
+    : !(kept.has("pages") && pagesUnread?.cause === "structure");
   if (pageFilesInconclusive) console.warn(`[full-sync] project ${projectId}: head_sha kept, page files not concluded`);
   if (!storyFilesInconclusive && !pageFilesInconclusive) return null;
   return { newHeadSha: null, storyFilesInconclusive, pageFilesInconclusive };
 }
 
 /**
- * Whether the story subtrees from `base` (the check's base) to `head` fail to
- * conclude, as the check's tree reading
- * decides it; with no base, at `head` alone. A read that throws counts as not
- * concluded.
+ * Why the story subtrees from `base` (the check's base) to `head` fail to
+ * conclude, as the check's tree reading decides it, or null when they
+ * conclude; with no base, or a base GitHub no longer holds, at `head` alone.
+ * A read that throws is a request cause.
  */
 async function storyFilesUnread(
   projectId: number,
   access: { token: string; owner: string; repo: string },
   base: string | null,
   head: string,
-): Promise<boolean> {
+): Promise<TreesInconclusive | null> {
   try {
-    const reason = await storyTreesInconclusive(access, base, head);
-    if (reason === null) return false;
-    console.warn(`[full-sync] project ${projectId}: head_sha kept, story files not concluded: ${reason}`);
+    const unread = await storyTreesInconclusive(access, base, head);
+    if (unread === null) return null;
+    console.warn(`[full-sync] project ${projectId}: story files not concluded (${unread.cause}): ${unread.reason}`);
+    return unread;
   } catch (err) {
-    console.warn(`[full-sync] project ${projectId}: head_sha kept, story trees not read`, err);
+    console.warn(`[full-sync] project ${projectId}: story trees not read`, err);
+    return { reason: `the story trees could not be read: ${(err as Error).message}`, cause: "request" };
   }
-  return true;
 }

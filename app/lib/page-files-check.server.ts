@@ -1,26 +1,26 @@
 /**
  * The page-file check as the sync runs it: what it loads beside
  * D1's pages, what it adds to `checkPageContent`'s readings, and what an
- * accept and Keep my version make of them.
+ * accept makes of them.
  *
  * The check loads the page files record and, while there is none, the last
- * publish's `page_slugs` (R9). Its base is `head_sha`, or while that is null
- * the record's `commit` (R6).
+ * publish's `page_slugs`. Its base is `head_sha`, or while that is null the
+ * record's `commit` (`pagesBaseOf`).
  *
  * An added page gets the menu entry GitHub's `_data/navigation.yml` gives it
  * (`menuEntryForAddedPage`), read strictly at the check's HEAD and only when
  * a page is added; a read that fails makes the check inconclusive. A page
  * GitHub deleted is named with whether a saved entry names it.
  *
- * The pages are reduced to one file per page (`reducedCheck`): a site is in
- * one language, so a file the site's language does not serve is never a page,
- * whether GitHub added it or the project already holds it.
+ * Every file is read as a page of its own. A page held in two languages
+ * (`localized_for`) is not a change on GitHub: the publish page asks which
+ * to keep (`page-language-choice.server.ts`).
  *
  * An accept takes its additions from its own run of the check at the pinned
  * head, never from the client; the client names only the files it chose to
  * follow GitHub on, each with the hash it reviewed.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -28,14 +28,8 @@ import { project_config, project_pages, projects } from "~/db/schema";
 import type { getDb } from "~/lib/db.server";
 import { getFileAtRef } from "~/lib/github.server";
 import { menuEntryForAddedPage, parseGithubMenu } from "~/lib/github-menu.server";
-import {
-  PAGE_TEXTS_DIR, checkPageContent, heldPageFileName, pageEditedSinceBase, pageFileChange, pageFileReader, pageFolderFiles, readPagesForAccept,
-} from "~/lib/page-content.server";
-import type { PageAddition, PageCheckD1Page, PageContentChange, PageContentCheck, PageFileChange, ReducedHeldPage } from "~/lib/page-content.server";
-import { capturedFrontmatter } from "~/lib/page-frontmatter.server";
-import type { FileAtRef } from "~/lib/github.server";
-import { pageContentAsLoaded, pageRawHash } from "~/lib/page-canonical";
-import { ownPageFrontmatter, readBlock, reducePageFiles } from "~/lib/one-language-pages";
+import { checkPageContent, readPagesForAccept } from "~/lib/page-content.server";
+import type { PageAddition, PageCheckD1Page, PageContentCheck, PageFileChange } from "~/lib/page-content.server";
 import { parsePageFilesRecord, serialisePageFilesRecord } from "~/lib/page-files-record";
 import type { PageFilesRecord } from "~/lib/page-files-record";
 import type { SheetWarning } from "~/lib/sheet-warnings";
@@ -44,7 +38,6 @@ import type { NavItemLike } from "~/lib/yjs-helpers";
 import type { IngestPageInsert } from "../../workers/collaboration";
 import type { IngestMenuAnchor } from "../../workers/page-menu-entries";
 import type { IngestPageRemove } from "../../workers/page-remove-rename";
-import type { IngestPageReplaceContent } from "../../workers/page-replace-content";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -134,135 +127,6 @@ async function additionsWithMenu(
 /** The kinds whose GitHub side is the page's removal. */
 const REMOVAL_KINDS = new Set<PageFileChange["kind"]>(["deleted", "deleted-conflict", "deleted-renamed-here", "not-on-github"]);
 
-/** A file the sync's reduction reads: a held page's, or one GitHub added. */
-interface SyncPageFile {
-  name: string;
-  frontmatter: string;
-  body: string;
-  page?: PageCheckD1Page;
-  addition?: PageAddition;
-}
-
-/**
- * A held page's block for the reduction: D1's, else the block of its file at
- * HEAD, since a page imported before blocks were stored holds none.
- */
-async function heldBlock(read: () => Promise<(path: string) => Promise<FileAtRef>>, page: PageCheckD1Page, name: string): Promise<string> {
-  if (typeof page.frontmatter === "string") return page.frontmatter;
-  const file = await (await read())(`${PAGE_TEXTS_DIR}/${name}`);
-  if (file.status === "error") throw new Error(`${PAGE_TEXTS_DIR}/${name} could not be read`);
-  return file.status === "ok" ? capturedFrontmatter(file.content) : "";
-}
-
-/** A reader of the pages folder at `head`, which lists the folder when first asked. */
-function lazyHeadReader(access: RepoAccess, head: string): () => Promise<(path: string) => Promise<FileAtRef>> {
-  let reader: ((path: string) => Promise<FileAtRef>) | null = null;
-  return async () => {
-    if (reader) return reader;
-    const folder = await pageFolderFiles(access, head);
-    if (typeof folder === "string") throw new Error(folder);
-    return (reader = pageFileReader(access, head, folder));
-  };
-}
-
-/** The held pages but those in `gone`, as the reduction reads them. */
-async function heldSyncFiles(headReader: () => Promise<(path: string) => Promise<FileAtRef>>, d1: readonly PageCheckD1Page[], gone: ReadonlySet<number>): Promise<SyncPageFile[]> {
-  const held: SyncPageFile[] = [];
-  for (const page of d1) {
-    const name = heldPageFileName(page);
-    if (name !== null && !gone.has(page.id)) held.push({ name, frontmatter: await heldBlock(headReader, page, name), body: "", page });
-  }
-  return held;
-}
-
-/** The held pages whose file the check does not find removed, and the added files, as the reduction reads them. */
-async function syncPageFiles(access: RepoAccess, head: string, check: ConclusiveCheck, d1: readonly PageCheckD1Page[]): Promise<SyncPageFile[]> {
-  const gone = new Set((check.files ?? []).filter((c) => REMOVAL_KINDS.has(c.kind)).map((c) => c.pageId));
-  const held = await heldSyncFiles(lazyHeadReader(access, head), d1, gone);
-  const added = (check.additions ?? []).map((addition) => ({ name: addition.name, frontmatter: addition.frontmatter ?? "", body: "", addition }));
-  return [...held, ...added];
-}
-
-/**
- * Whether the pages the project holds include a pair the reduction would
- * change, from D1's blocks alone; GitHub is read only for a page whose block
- * D1 does not hold.
- */
-export async function holdsReducedPair(access: RepoAccess, head: string, d1: readonly PageCheckD1Page[], siteLanguage: unknown): Promise<boolean> {
-  const held = await heldSyncFiles(lazyHeadReader(access, head), d1, new Set());
-  return reducePageFiles(held, siteLanguage).removed.length > 0;
-}
-
-/** The change a held page takes from the file served at its address: that file's text by default, the author's when the page was edited here. */
-async function servedChange(held: SyncPageFile & { page: PageCheckD1Page }, from: SyncPageFile, edited: (f: SyncPageFile) => Promise<boolean>): Promise<PageContentChange> {
-  const page = held.page;
-  const conflict = await edited(held);
-  const kind = conflict ? "conflict" : "github-only";
-  return {
-    pageId: page.id, slug: from.name.slice(0, -".md".length), title: page.title, kind, acceptByDefault: !conflict,
-    expected: await pageRawHash(pageContentAsLoaded(page)), takesLanguageFrom: from.name,
-  };
-}
-
-/** An added page as the accept reads it: from the file served at its address. */
-function servedAddition(addition: PageAddition, source: SyncPageFile, fromSlug: string): PageAddition {
-  if (source.addition === addition) return addition;
-  return { ...addition, title: source.addition?.title ?? source.page!.title, readFrom: fromSlug };
-}
-
-/** The file of the page a removed file is the other language's version of: the one it is served at, else the one it names. */
-function stayingFile(removed: SyncPageFile, kept: readonly { file: SyncPageFile; source: SyncPageFile }[]): string {
-  const served = kept.find((k) => k.source === removed);
-  if (served) return served.file.name;
-  const reading = readBlock(removed.frontmatter);
-  return reading.kind === "localized" ? reading.localizedFor.text : removed.name;
-}
-
-/** A removed held page as `ReducedHeldPage` carries it. */
-async function reducedHeldPage(f: SyncPageFile & { page: PageCheckD1Page }, servedAt: number | undefined): Promise<ReducedHeldPage> {
-  const { pageId, slug, expected } = await pageFileChange(f.page, f.name, "deleted");
-  const text = { title: f.page.title, body: f.page.body ?? "", frontmatter: ownPageFrontmatter(f.frontmatter) };
-  return { name: f.name, remove: { pageId, slug, expected }, text, ...(servedAt === undefined ? {} : { servedAt }) };
-}
-
-/**
- * The check reduced to one file per page (`reducePageFiles`), over the held
- * pages and the files GitHub added. An added file the reduction removes is
- * not offered. A held page it removes is carried in `reduced`. One the site's
- * language serves at a held page's address has no card: that page takes its
- * text, marked with the file (`takesLanguageFrom`), by default unless the
- * page was edited here. Any other is offered as a removal that names the page
- * that stays (`otherLanguageOf`), removed by default unless it was edited
- * here since the base. For a page GitHub added, the added page is read from
- * the file served at its address. Every removed file stays in the record with
- * no page, so the next publish deletes it.
- */
-async function reducedCheck(access: RepoAccess, base: string | null, head: string, check: ConclusiveCheck, scope: PageCheckScope): Promise<ConclusiveCheck> {
-  const { kept, removed } = reducePageFiles(await syncPageFiles(access, head, check, scope.d1), scope.siteLanguage);
-  const edited = async (f: SyncPageFile) => !!f.page && (await pageEditedSinceBase(access, base, f.page, f.name));
-  const removedPages = removed.flatMap((f) => (f.page ? [f.page] : []));
-  const record = { ...check.record!, files: { ...check.record!.files, ...Object.fromEntries(removed.map((f) => [f.name, null])) } };
-  const files = [...(check.files ?? [])];
-  const reduced: ReducedHeldPage[] = [];
-  for (const f of removed) {
-    if (!f.page) continue;
-    const servedAt = kept.find((k) => k.source === f)?.file.page?.id;
-    reduced.push(await reducedHeldPage({ ...f, page: f.page }, servedAt));
-    if (servedAt !== undefined) continue;
-    files.push({ ...(await pageFileChange(f.page, f.name, (await edited(f)) ? "deleted-conflict" : "deleted")), otherLanguageOf: stayingFile(f, kept) });
-  }
-  let changes = check.changes.filter((c) => !removedPages.some((p) => p.id === c.pageId));
-  const additions: PageAddition[] = [];
-  for (const { file, source } of kept) {
-    const fromSlug = source.name.slice(0, -".md".length);
-    if (file.addition) additions.push(servedAddition(file.addition, source, fromSlug));
-    if (!file.page || source === file) continue;
-    const change = await servedChange({ ...file, page: file.page }, source, edited);
-    changes = [...changes.filter((c) => c.pageId !== change.pageId), change];
-  }
-  return { ...check, changes, files, additions, record, ...(reduced.length > 0 ? { reduced } : {}) };
-}
-
 /** A removal named with whether a saved entry names its page. */
 function withMenuEntry(change: PageFileChange, scope: PageCheckScope): PageFileChange {
   if (!REMOVAL_KINDS.has(change.kind)) return change;
@@ -273,7 +137,9 @@ function withMenuEntry(change: PageFileChange, scope: PageCheckScope): PageFileC
 /**
  * The page-file check at `base` and `head` over `scope`, its additions and
  * removals named for the dialog. A failure of the check itself, the menu read
- * included, is an answer it could not reach, never an empty one.
+ * included, is an answer it could not reach, never an empty one, and its
+ * cause is a request's: only the folder's own structure (`checkPageContent`)
+ * is a structural cause.
  */
 export async function checkPageFiles(
   access: RepoAccess,
@@ -287,36 +153,14 @@ export async function checkPageFiles(
       ...access, base, head, d1: scope.d1, record: scope.record, publishedSlugs: scope.publishedSlugs, ...sinks,
     });
     if (!check.conclusive) return check;
-    const reduced = await reducedCheck(access, base, head, check, scope);
-    const additions = await additionsWithMenu(access, head, scope, reduced.additions ?? []);
-    if (additions === null) return { conclusive: false, reason: `${NAVIGATION_PATH} could not be read at ${head}` };
-    const files = (reduced.files ?? []).map((c) => withMenuEntry(c, scope));
-    return { ...reduced, files, additions };
+    const additions = await additionsWithMenu(access, head, scope, check.additions ?? []);
+    if (additions === null) {
+      return { conclusive: false, reason: `${NAVIGATION_PATH} could not be read at ${head}`, cause: "request", paths: [NAVIGATION_PATH] };
+    }
+    const files = (check.files ?? []).map((c) => withMenuEntry(c, scope));
+    return { ...check, files, additions };
   } catch (err) {
-    return { conclusive: false, reason: `the page files could not be checked: ${(err as Error).message}` };
-  }
-}
-
-/**
- * The record Keep my version writes with `shown`, as stored text: the check's
- * record with nothing applied, every addition with no page (R5), so the next
- * publish deletes it. Undefined when the check does not conclude or cannot
- * run: the record is then carried unchanged.
- */
-export async function keptPageFilesRecordJson(
-  db: Db,
-  projectId: number,
-  access: RepoAccess,
-  base: string | null,
-  shown: string,
-): Promise<string | undefined> {
-  try {
-    const scope = await loadPageCheckScope(db, projectId);
-    const check = await checkPageFiles(access, scope, pagesBaseOf(base, scope.record), shown);
-    return check.conclusive && check.record ? serialisePageFilesRecord(check.record) : undefined;
-  } catch (err) {
-    console.warn(`[accept-divergence] project ${projectId}: page files record carried unchanged`, err);
-    return undefined;
+    return { conclusive: false, reason: `the page files could not be checked: ${(err as Error).message}`, cause: "request" };
   }
 }
 
@@ -400,36 +244,14 @@ export async function pageFileArms(
   stale.push(...added.stale);
   if (stale.length > 0 || added.unnamed) return { insert: [], remove: [], stale, unnamed: added.unnamed };
   const additions = check.additions ?? [];
-  const content = await readPagesForAccept(access, head, [...additions.map((a) => a.readFrom ?? a.slug), ...restored]);
+  const content = await readPagesForAccept(access, head, [...additions.map((a) => a.slug), ...restored]);
   const insert = [
     ...additions.map((a): IngestPageInsert => ({
-      slug: a.slug, ...content.get(a.readFrom ?? a.slug)!, created_by: null, ...(a.menu ? { menu: a.menu } : {}),
+      slug: a.slug, ...content.get(a.slug)!, created_by: null, ...(a.menu ? { menu: a.menu } : {}),
     })),
     ...restored.map((slug): IngestPageInsert => ({ slug, ...content.get(slug)!, created_by: null })),
   ];
   return { insert, remove, stale, unnamed: false };
-}
-
-/**
- * The page arms and record of an accept once the held pages the reduction
- * removes (`reduced`) are applied to them. One the site's language serves is
- * removed whichever way its page's decision went, and that page, where its
- * text is accepted, takes the Compositor's copy of it. Any other the author
- * did not choose to remove becomes a page of its own: its text replaced
- * without its language lines, and its file mapped to it in the record.
- */
-export function withReducedHeldPages(
-  check: ConclusiveCheck,
-  accepted: readonly IngestPageReplaceContent[],
-  removed: readonly IngestPageRemove[],
-): { replaceContent: IngestPageReplaceContent[]; remove: IngestPageRemove[]; record: PageFilesRecord } {
-  const reduced = check.reduced ?? [];
-  const served = reduced.filter((r) => r.servedAt !== undefined);
-  const own = reduced.filter((r) => r.servedAt === undefined && !removed.some((x) => x.pageId === r.remove.pageId));
-  const replaceContent = accepted.map((e) => ({ ...e, ...served.find((r) => r.servedAt === e.pageId)?.text }));
-  replaceContent.push(...own.map((r) => ({ pageId: r.remove.pageId, expected: r.remove.expected, ...r.text })));
-  const files = { ...check.record!.files, ...Object.fromEntries(own.map((r) => [r.name, r.remove.pageId])) };
-  return { replaceContent, remove: [...removed, ...served.map((r) => r.remove)], record: { ...check.record!, files } };
 }
 
 /**

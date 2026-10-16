@@ -20,7 +20,7 @@
  * The change check for page files (`checkPageContent`) and the accept's read
  * of GitHub's version (`readPagesForAccept`) are below the compare form.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { cleanCommitContent } from "~/lib/commit.server";
@@ -31,10 +31,9 @@ import { parsePageMarkdown } from "~/lib/import.server";
 import { pageContentAsLoaded, pageRawHash } from "~/lib/page-canonical";
 import type { PageContent } from "~/lib/page-canonical";
 import { capturedFrontmatter } from "~/lib/page-frontmatter.server";
-import { ownPageFrontmatter } from "~/lib/one-language-pages";
 import { UnwritablePageFrontmatterError, carriedPageFile, pageRowsToCommitFiles } from "~/lib/publish.server";
-import { readBlobAt, readBlobText } from "~/lib/story-files.server";
-import type { RepoAccess } from "~/lib/story-files.server";
+import { isInconclusive, readBlobAt, readBlobText, treesUnanswered } from "~/lib/story-files.server";
+import type { InconclusiveCause, RepoAccess, TreesInconclusive } from "~/lib/story-files.server";
 import { SheetUnreadableError } from "~/lib/unreadable-file.server";
 import type { SheetWarning } from "~/lib/sheet-warnings";
 import { pushUnreadable } from "~/lib/unreadable-characters.server";
@@ -154,8 +153,6 @@ export interface PageContentChange {
   expected: string;
   /** Set when the base has no file at the page's slug: added on both sides. */
   addedBoth?: true;
-  /** The file the site's language serves at the page's address, when the page takes its text. */
-  takesLanguageFrom?: string;
 }
 
 /**
@@ -184,8 +181,6 @@ export interface PageFileChange {
   expected: string;
   /** Whether a saved menu entry names the page, which a removal drops. */
   inMenu?: boolean;
-  /** Set when the removal is the one-language reduction's: the file of the page that stays. */
-  otherLanguageOf?: string;
 }
 
 /** A page file GitHub added, taken by every accept (R2, R6, R7). */
@@ -196,23 +191,8 @@ export interface PageAddition {
   title: string;
   /** The menu entry GitHub's menu gives it, or null (E). */
   menu?: IngestPageMenuEntry | null;
-  /** The slug of the file the site's language serves at its address, when that is another file. */
-  readFrom?: string;
   /** The file's block as parsed; the check's own, never sent to the dialog. */
   frontmatter?: string | null;
-}
-
-/**
- * A held page the one-language reduction removes: its removal, and its text as
- * a page of its own (the Compositor's title and body, its block without the
- * language lines). `servedAt` names the page the site's language serves it
- * at. The check's own, never the dialog's choice.
- */
-export interface ReducedHeldPage {
-  name: string;
-  remove: { pageId: number; slug: string; expected: string };
-  text: AcceptedPageContent;
-  servedAt?: number;
 }
 
 /**
@@ -221,13 +201,27 @@ export interface ReducedHeldPage {
  * nothing applied (`record`: every addition with no page, R5); or why the
  * files could not be read to a conclusion, in which case the site stays
  * divergent and nothing of it is offered.
+ *
+ * A check that concludes with `baseUnresolved` read HEAD alone, because its
+ * base is no longer a commit GitHub holds (a force-push). One that does not
+ * conclude carries its `cause` (`InconclusiveCause`), and where known the
+ * repository paths and the pages it covers; none named covers them all.
  */
 export type PageContentCheck =
   | {
       conclusive: true; changes: PageContentChange[]; suppressedEditorOnly: number;
-      files?: PageFileChange[]; additions?: PageAddition[]; record?: PageFilesRecord; reduced?: ReducedHeldPage[];
+      files?: PageFileChange[]; additions?: PageAddition[]; record?: PageFilesRecord;
+      baseUnresolved?: true;
     }
-  | { conclusive: false; reason: string };
+  | PageContentInconclusive;
+
+export interface PageContentInconclusive {
+  conclusive: false;
+  reason: string;
+  cause: InconclusiveCause;
+  paths?: string[];
+  pageIds?: number[];
+}
 
 export interface PageCheckInput extends RepoAccess {
   /** The recorded base commit, or null when the site has none. */
@@ -268,14 +262,18 @@ export function heldPageFileName(page: { slug: string | null }): string | null {
 /**
  * The pages folder at each commit, as blob SHAs by path relative to it, or
  * why it cannot be trusted: a commit that does not resolve or a malformed
- * answer, anything but a tree at the path, or a listing `listSubtreeEntries`
- * does not accept (truncated, or holding a symlink or a submodule anywhere
- * below). A folder absent at a commit that resolves is empty there.
+ * answer (a request cause), anything but a tree at the path, or a listing
+ * `listSubtreeEntries` does not accept (truncated, or holding a symlink or a
+ * submodule anywhere below; a structural cause). A folder absent at a commit
+ * that resolves is empty there.
  */
-async function pageTrees(access: RepoAccess, commits: readonly string[]): Promise<Map<string, Map<string, string>> | string> {
+async function pageTrees(
+  access: RepoAccess,
+  commits: readonly string[],
+): Promise<Map<string, Map<string, string>> | TreesInconclusive> {
   const { token, owner, repo } = access;
   const trees = await getSubtreeOids(token, owner, repo, commits, [PAGE_TEXTS_DIR]);
-  if (!trees.ok) return `the page trees came back ${trees.reason}`;
+  if (!trees.ok) return treesUnanswered("page", trees.reason);
   const out = new Map<string, Map<string, string>>();
   for (const commit of commits) {
     const at = trees.at(commit, PAGE_TEXTS_DIR);
@@ -283,9 +281,9 @@ async function pageTrees(access: RepoAccess, commits: readonly string[]): Promis
       out.set(commit, new Map());
       continue;
     }
-    if (at.kind !== "tree") return `${PAGE_TEXTS_DIR} is not a tree at ${commit}`;
+    if (at.kind !== "tree") return { reason: `${PAGE_TEXTS_DIR} is not a tree at ${commit}`, cause: "structure", paths: [PAGE_TEXTS_DIR] };
     const listing = await listSubtreeEntries(token, owner, repo, at.oid);
-    if (listing === null) return `${PAGE_TEXTS_DIR} could not be listed completely`;
+    if (listing === null) return { reason: `${PAGE_TEXTS_DIR} could not be listed completely`, cause: "structure", paths: [PAGE_TEXTS_DIR] };
     out.set(commit, listing.files);
   }
   return out;
@@ -297,7 +295,24 @@ async function pageTrees(access: RepoAccess, commits: readonly string[]): Promis
  */
 export async function pageFolderFiles(access: RepoAccess, commit: string): Promise<Map<string, string> | string> {
   const trees = await pageTrees(access, [commit]);
-  return typeof trees === "string" ? trees : (trees.get(commit) ?? new Map());
+  return isInconclusive(trees) ? trees.reason : (trees.get(commit) ?? new Map());
+}
+
+/**
+ * The pages folder at `base` and `head`, with the base the reading kept: null
+ * when there is none, or when the base no longer resolves and `head` alone
+ * does, so the check runs at the head.
+ */
+async function checkedPageTrees(
+  access: RepoAccess,
+  base: string | null,
+  head: string,
+): Promise<{ trees: Map<string, Map<string, string>>; base: string | null } | TreesInconclusive> {
+  const trees = await pageTrees(access, base ? [base, head] : [head]);
+  if (!isInconclusive(trees)) return { trees, base };
+  if (!base || !trees.unresolved) return trees;
+  const atHead = await pageTrees(access, [head]);
+  return isInconclusive(atHead) ? atHead : { trees: atHead, base: null };
 }
 
 /**
@@ -348,9 +363,9 @@ function reportingReader(
   };
 }
 
-/** A read the check needs failed: the check is inconclusive, never "no change". */
+/** A read the check needs failed: the check is inconclusive, never "no change", for a request cause. */
 class PageReadFailed extends Error {
-  constructor(path: string, commit: string) {
+  constructor(readonly path: string, commit: string, readonly pageId?: number) {
     super(`${path} could not be read at ${commit}`);
     this.name = "PageReadFailed";
   }
@@ -373,10 +388,10 @@ async function pageFilesAt(
   const read = reportingReader(pageFileReader(access, commit, files), page, warnings);
   const path = `${PAGE_TEXTS_DIR}/${name}`;
   const own = await read(path);
-  if (own.status !== "ok") throw new PageReadFailed(path, commit);
+  if (own.status !== "ok") throw new PageReadFailed(path, commit, page.id);
   if (page.frontmatter !== null) return { file: own.content, carried: own.content };
   const carried = await carriedPageFile(page, read);
-  if (!carried.ok) throw new PageReadFailed(carried.path, commit);
+  if (!carried.ok) throw new PageReadFailed(carried.path, commit, page.id);
   return { file: own.content, carried: carried.content };
 }
 
@@ -615,10 +630,13 @@ function heldByName(d1: readonly PageCheckD1Page[]): Map<string, PageCheckD1Page
  * read once per blob SHA and kept for later checks (`readBlobText`). A project
  * holding no page still reads the folder: a page GitHub added matters there.
  */
-export async function checkPageContent(input: PageCheckInput): Promise<PageContentCheck> {
-  const held = heldByName(input.d1);
-  const trees = await pageTrees(input, input.base ? [input.base, input.head] : [input.head]);
-  if (typeof trees === "string") return { conclusive: false, reason: trees };
+export async function checkPageContent(given: PageCheckInput): Promise<PageContentCheck> {
+  const held = heldByName(given.d1);
+  const read = await checkedPageTrees(given, given.base, given.head);
+  if (isInconclusive(read)) return { conclusive: false, ...read };
+  const { trees } = read;
+  const baseUnresolved = given.base !== null && read.base === null;
+  const input = baseUnresolved ? { ...given, base: null } : given;
   const scope: FileScope = {
     input,
     headFiles: trees.get(input.head)!,
@@ -629,10 +647,19 @@ export async function checkPageContent(input: PageCheckInput): Promise<PageConte
   try {
     const { changes, suppressedEditorOnly } = await heldContentChanges(input, trees, held);
     const { suppressed, ...files } = await readFileNames(scope, held);
-    return { conclusive: true, changes, suppressedEditorOnly: suppressedEditorOnly + suppressed, ...files };
+    return {
+      conclusive: true, changes, suppressedEditorOnly: suppressedEditorOnly + suppressed, ...files,
+      ...(baseUnresolved ? { baseUnresolved: true as const } : {}),
+    };
   } catch (err) {
-    if (err instanceof PageReadFailed || err instanceof UnwritablePageFrontmatterError) {
-      return { conclusive: false, reason: err.message };
+    if (err instanceof PageReadFailed) {
+      return { conclusive: false, reason: err.message, cause: "request", paths: [err.path], ...(err.pageId !== undefined ? { pageIds: [err.pageId] } : {}) };
+    }
+    // No publish could write the page, so keeping the Compositor's version
+    // would not replace GitHub's file: never a structural cause.
+    if (err instanceof UnwritablePageFrontmatterError) {
+      const page = given.d1.find((p) => (p.slug ?? "").trim() === err.slug);
+      return { conclusive: false, reason: err.message, cause: "request", ...(page ? { pageIds: [page.id] } : {}) };
     }
     throw err;
   }
@@ -644,9 +671,10 @@ export type AcceptedPageContent = PageContent & { body: string; frontmatter: str
 /**
  * The accepted pages' content at `head`, by slug, parsed as the import
  * parses a page file (`parsePageMarkdown`, the byte-order mark dropped as the
- * import's read drops it), a block naming another page by `localized_for`
- * taken without its language lines (`ownPageFrontmatter`). The comparison
- * stays whole-file; this parse is only what the accept stores.
+ * import's read drops it), its front matter whole: a page naming another by
+ * `localized_for` keeps its language lines, so the publish page can ask which
+ * version of the pair to keep. The comparison stays whole-file; this parse is
+ * only what the accept stores.
  *
  * Read strictly, through the check's own readers, so the file imported is the
  * file the check compared: the pages folder listed at `head`, each file by
@@ -661,7 +689,7 @@ export async function readPagesForAccept(
   const out = new Map<string, AcceptedPageContent>();
   if (slugs.length === 0) return out;
   const trees = await pageTrees(access, [head]);
-  if (typeof trees === "string") throw new Error(`the accepted pages could not be read: ${trees}`);
+  if (isInconclusive(trees)) throw new Error(`the accepted pages could not be read: ${trees.reason}`);
   const files = trees.get(head)!;
   for (const slug of slugs) {
     const path = `${PAGE_TEXTS_DIR}/${slug}.md`;
@@ -669,7 +697,7 @@ export async function readPagesForAccept(
     if (sha === undefined) throw new Error(`${path} is not in the commit the check read`);
     const text = await readBlobText(access, head, path, sha);
     const page = parsePageMarkdown(text.replace(LEADING_BOM, ""), slug);
-    out.set(slug, { ...page, frontmatter: ownPageFrontmatter(page.frontmatter) });
+    out.set(slug, page);
   }
   return out;
 }

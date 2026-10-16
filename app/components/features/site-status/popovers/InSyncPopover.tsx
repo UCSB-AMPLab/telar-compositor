@@ -1,19 +1,20 @@
 /**
  * InSyncPopover — the affirmative "nothing to do" body of the Site Status pill.
- * Renders three rows sourced from the `in-sync` payload of `api.site-status`
- * (last published, commit sha + message, synced from repo) and a ghost
- * `View published site` button.
+ * Renders rows sourced from the `in-sync` payload of `api.site-status` — the
+ * commit sha + message, when the site last synced from the repo, and the
+ * saved state's size once it passes 1 MiB — and a ghost `View published site`
+ * button.
  *
  * Fail-open: the commit message is fetched lazily by the resource route and
  * may be null on any GitHub error — when absent, the commit row degrades to just
- * the short SHA (no `— {msg}` tail) and the timestamp rows still render.
+ * the short SHA (no `— {msg}` tail) and the sync row still renders.
  *
  * The payload is passed in as a prop (the pill fetches it on open and hands it
  * down) so this component stays a pure renderer — testable with a fixture, no
  * fetcher in the render path. Tokens are pixel-locked to the design system's
- * colour contract (ok swatch = chilca-pale / chilca-deep).
+ * color contract (ok swatch = chilca-pale / chilca-deep).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { Globe, ArrowUpRight, Check, Database, GitCommit, RefreshCw } from "lucide-react";
@@ -116,9 +117,8 @@ export function InSyncPopover({ payload, pagesUrl, className = "" }: InSyncPopov
         </h3>
       </div>
 
-      {/* Body: three rows */}
+      {/* Body: the commit and sync rows */}
       <div className="flex flex-col" style={{ padding: "12px 18px 14px", gap: "10px" }}>
-        <Row icon={Check} label={t("in_sync.published", { time: fmtTime(payload.last_published_at, i18n.language) })} />
         <Row icon={GitCommit} label={commitLabel} mono />
         <Row icon={RefreshCw} label={t("in_sync.synced", { time: fmtTime(payload.last_synced_at, i18n.language) })} />
         {payload.blobBytes !== null && payload.blobBytes > SIZE_ROW_ABOVE && (

@@ -1,7 +1,7 @@
 /**
  * A sync apply does not overwrite a change made after its check.
  *
- * Both applies check the base again under the operation lease, before their
+ * The apply checks the base again under the operation lease, before its
  * first write: an apply that landed between the first check and the lease
  * has moved it, and the apply is refused with nothing written. And each field
  * taken from GitHub carries the Compositor's value the check read (`seen`):
@@ -9,7 +9,7 @@
  * object as changed since the review, and the apply keeps its record, so the
  * next check offers the field again.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -46,7 +46,6 @@ vi.mock("~/lib/freeze-lease.server", () => ({
 
 import {
   applyFullSyncChanges,
-  applySyncChanges,
   ObjectsChangedSinceReview,
   StoryContentNotApplied,
   SyncBaseStale,
@@ -87,15 +86,13 @@ function sinceReviewChanges(overrides: Partial<SyncChanges> = {}): SyncChanges {
     changedDocIds: { o1: 1 },
     removedObjectIds: [],
     unregisteredObjectIds: [],
-    headSha: HEAD,
-    baseSha: BASE,
     ...overrides,
   };
 }
 
 function sinceReviewFullChanges(objects: Partial<SyncChanges> = {}): FullSyncChanges {
   return {
-    objects: sinceReviewChanges({ baseSha: undefined, ...objects }),
+    objects: sinceReviewChanges(objects),
     stories: { accept: [], reject: [], insertNew: [] },
     config: { accept: [], reject: [] },
     glossary: { accept: [], reject: [], insertNew: [] },
@@ -203,16 +200,6 @@ afterEach(() => {
 });
 
 describe("the base, checked again under the lease", () => {
-  it("refuses the objects page's apply, writing nothing, when objects_read_sha moved before the lease", async () => {
-    moveOnLease("objects_read_sha");
-    const { env, bodies } = recordingCollaboration();
-
-    await expect(applySyncChanges(PROJECT_ID, sinceReviewChanges(), "t", "o", "r", db, env, USER))
-      .rejects.toBeInstanceOf(SyncBaseStale);
-    expect(bodies).toEqual([]);
-    expect(sinceReviewD1Title()).toBe(SEEN_TITLE);
-    expect(sinceReviewHeads().objects_read_sha).toBe(MOVED);
-  });
 
   it("refuses the full sync's apply, writing nothing, when head_sha moved before the lease", async () => {
     moveOnLease("head_sha");
@@ -230,13 +217,6 @@ describe("the base, checked again under the lease", () => {
 });
 
 describe("a field taken from GitHub with no value the check read", () => {
-  it("refuses the objects page's apply before the lease, writing nothing", async () => {
-    const { env, bodies } = recordingCollaboration();
-    await expect(applySyncChanges(PROJECT_ID, sinceReviewChanges({ fieldsSeen: undefined }), "t", "o", "r", db, env, USER))
-      .rejects.toBeInstanceOf(SyncBaseStale);
-    expect(bodies).toEqual([]);
-    expect(controlFreezeLease).not.toHaveBeenCalled();
-  });
 
   it("refuses the full sync's apply before the lease, writing nothing", async () => {
     const { env, bodies } = recordingCollaboration();
@@ -248,67 +228,7 @@ describe("a field taken from GitHub with no value the check read", () => {
   });
 });
 
-describe("the record of what the objects apply read", () => {
-  it("moves before the lease is released, so the next apply to take it finds it moved", async () => {
-    let recordAtRelease: string | null = null;
-    vi.mocked(controlFreezeLease).mockImplementation(async (_env, _project, _user, op) => {
-      if ((op as { op: string }).op === "end") recordAtRelease = sinceReviewHeads().objects_read_sha;
-      return "applied";
-    });
-    const { env } = recordingCollaboration();
-
-    const first = await applySyncChanges(PROJECT_ID, sinceReviewChanges(), "t", "o", "r", db, env, USER);
-    expect(first.readRecorded).toBe(true);
-    expect(recordAtRelease).toBe(HEAD);
-
-    await expect(applySyncChanges(PROJECT_ID, sinceReviewChanges(), "t", "o", "r", db, env, USER))
-      .rejects.toBeInstanceOf(SyncBaseStale);
-  });
-
-  it("answers that it was not recorded when another writer moved it first", async () => {
-    const { env } = recordingCollaboration();
-    // A writer outside the lease moves the record once the apply has passed
-    // its check under the lease: here, when the ingest is sent.
-    const moving = {
-      ...env,
-      COLLABORATION: {
-        idFromName: (n: string) => n,
-        get: () => ({
-          fetch: async () => {
-            memory.raw.prepare("UPDATE projects SET objects_read_sha = ? WHERE id = ?").run(MOVED, PROJECT_ID);
-            return Response.json({ applied: {} });
-          },
-        }),
-      },
-    } as unknown as Env;
-
-    const res = await applySyncChanges(PROJECT_ID, sinceReviewChanges(), "t", "o", "r", db, moving, USER);
-    expect(res.readRecorded).toBe(false);
-    expect(sinceReviewHeads().objects_read_sha).toBe(MOVED);
-  });
-});
-
 describe("a field edited in the Compositor after the check", () => {
-  it("the objects page's apply leaves it, answers the object, and does not count the update as applied", async () => {
-    const { ydoc, env } = await loadSinceReviewDo();
-    setSinceReviewDocTitle(ydoc, "Edited here");
-
-    const res = await applySyncChanges(PROJECT_ID, sinceReviewChanges(), "t", "o", "r", db, env, USER);
-
-    expect(sinceReviewDocTitle(ydoc)).toBe("Edited here");
-    expect(res.changedSinceReview).toEqual(["o1"]);
-    expect(res.updateSkipped).toBe(true);
-  });
-
-  it("the objects page's apply takes GitHub's value while the field is as the check read it", async () => {
-    const { ydoc, env } = await loadSinceReviewDo();
-
-    const res = await applySyncChanges(PROJECT_ID, sinceReviewChanges(), "t", "o", "r", db, env, USER);
-
-    expect(sinceReviewDocTitle(ydoc)).toBe("Repo title");
-    expect(res.changedSinceReview).toEqual([]);
-    expect(res.updateSkipped).toBe(false);
-  });
 
   it("the full sync's apply leaves it, keeps head_sha, and answers the object", async () => {
     const { ydoc, env } = await loadSinceReviewDo();
@@ -400,20 +320,6 @@ describe("an apply that cannot take everything it was sent", () => {
     }, null);
     return loaded;
   }
-
-  it("the objects page's apply writes no field when one changed since the check, and keeps its record", async () => {
-    serveTitleAndCreator();
-    const { ydoc, env } = await loadHeldDo();
-    setSinceReviewDocTitle(ydoc, "Edited here");
-
-    const res = await applySyncChanges(PROJECT_ID, sinceReviewChanges(bothFields), "t", "o", "r", db, env, USER);
-
-    expect(res.changedSinceReview).toEqual(["o1"]);
-    expect(res.appliedCount).toBe(0);
-    expect(sinceReviewDocTitle(ydoc)).toBe("Edited here");
-    expect(heldDocCreator(ydoc)).toBe(SEEN_CREATOR);
-    expect(sinceReviewHeads().objects_read_sha).toBe(BASE);
-  });
 
   it("the full sync's apply writes nothing, in any domain, when an object's field changed since the check", async () => {
     serveTitleAndCreator();

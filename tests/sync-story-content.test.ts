@@ -1,14 +1,19 @@
 /**
  * The change check for step and layer files:
  * which stories are read, how each is classified, and that every read of one
- * check is at one commit and strict.
+ * check is at one commit and strict. It also pins what the check does when it
+ * cannot conclude (a truncated listing or a symlink is a structural cause, a
+ * failed read or an unresolved HEAD a request cause, and a base that no
+ * longer resolves leaves HEAD read alone), the resolution of layer
+ * references, the per-isolate cache, the warnings raised from HEAD's step
+ * files, and the files read lossily at HEAD, which are named with their story.
  *
  * `checkStoryContent` runs against the real `github.server` module and a
  * stubbed `fetch` holding two commits' files, so each read is counted at the
  * network. The pinning of the rest of `computeFullSyncDiff` is checked with
  * its readers stood in for, recording the ref of every read.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -498,6 +503,25 @@ describe("classification", () => {
     expect(change).toMatchObject({ kind: "steps-deleted", acceptByDefault: false });
   });
 
+  it("a step CSV deleted on GitHub in a story the Compositor edited since the base: a conflict, with no default", async () => {
+    const files = demoFiles();
+    delete files[`${SHEETS}/${STORY}.csv`];
+    await commit("head", files);
+    d1 = await d1WithAnswer("Why was this map drawn?", "Edited in the Compositor");
+    const [change] = conclusive(await checkStoryContent(input())).changes;
+    expect(change).toMatchObject({ kind: "conflict", acceptByDefault: false });
+    expect(change.summary.headSteps).toBeNull();
+  });
+
+  it("with no base, a step CSV absent at HEAD while its row remains stays steps deleted", async () => {
+    const files = demoFiles();
+    delete files[`${SHEETS}/${STORY}.csv`];
+    await commit("head", files);
+    d1 = await d1WithAnswer("Why was this map drawn?", "Edited in the Compositor");
+    const [change] = conclusive(await checkStoryContent(input({ base: null }))).changes;
+    expect(change).toMatchObject({ kind: "steps-deleted", acceptByDefault: false });
+  });
+
   it("a step CSV deleted together with its project.csv row is left to the row diff", async () => {
     const files = demoFiles();
     delete files[`${SHEETS}/${STORY}.csv`];
@@ -733,21 +757,55 @@ describe("the per-isolate cache", () => {
 // ---------------------------------------------------------------------------
 
 describe("a tree the check cannot conclude from", () => {
-  it("reports a truncated listing, and the diff stays divergent", async () => {
+  it("reports a truncated listing as a structural cause naming the folder, and the diff stays divergent", async () => {
     await commit("head", demoFiles());
     const headTexts = repo.commits.head.texts!;
     repo.listings[`${headTexts}-t`] = { ...repo.listings[headTexts], truncated: true };
     repo.commits.head = { ...repo.commits.head, texts: `${headTexts}-t` };
     const check = await checkStoryContent(input());
-    expect(check.conclusive).toBe(false);
+    expect(check).toMatchObject({ conclusive: false, cause: "structure", paths: [TEXTS] });
     expect(hasDivergentChanges(diffWith(check))).toBe(true);
   });
 
-  it("reports a base that no longer resolves", async () => {
+  it("reports a symlink in a listing as a structural cause", async () => {
+    await commit("head", demoFiles());
+    const headTexts = repo.commits.head.texts!;
+    const listing = repo.listings[headTexts];
+    repo.listings[`${headTexts}-l`] = { ...listing, tree: [...listing.tree, { path: "link.md", sha: "abc", type: "blob", mode: "120000" }] };
+    repo.commits.head = { ...repo.commits.head, texts: `${headTexts}-l` };
+    expect(await checkStoryContent(input())).toMatchObject({ conclusive: false, cause: "structure", paths: [TEXTS] });
+  });
+
+  it("reports a failed step CSV read as a request cause, naming the file and the story", async () => {
+    const files = demoFiles();
+    files[`${SHEETS}/${STORY}.csv`] = editAnswer(storyCsv(published), "Why was this map drawn?", "Edited on GitHub");
+    await commit("head", files);
+    repo.failing.add(`head:${SHEETS}/${STORY}.csv`);
+    expect(await checkStoryContent(input())).toMatchObject({
+      conclusive: false, cause: "request", paths: [`${SHEETS}/${STORY}.csv`], storyIds: [STORY],
+    });
+  });
+
+  it("reads HEAD alone when the base no longer resolves, a difference then a change with no default", async () => {
+    const files = demoFiles();
+    files[`${SHEETS}/${STORY}.csv`] = editAnswer(storyCsv(published), "Why was this map drawn?", "Edited on GitHub");
+    await commit("head", files);
+    delete repo.commits.base;
+    const check = conclusive(await checkStoryContent(input()));
+    expect(check.baseUnresolved).toBe(true);
+    expect(check.changes).toMatchObject([{ story_id: STORY, kind: "conflict", acceptByDefault: false }]);
+  });
+
+  it("reads nothing as changed at HEAD alone when HEAD holds what D1 does", async () => {
     await commit("head", demoFiles());
     delete repo.commits.base;
-    const check = await checkStoryContent(input());
-    expect(check.conclusive).toBe(false);
+    expect(conclusive(await checkStoryContent(input())).changes).toEqual([]);
+  });
+
+  it("reports a HEAD that does not resolve as a request cause", async () => {
+    await commit("head", demoFiles());
+    delete repo.commits.head;
+    expect(await checkStoryContent(input())).toMatchObject({ conclusive: false, cause: "request" });
   });
 
   it("compatibility: an empty conclusive check leaves the diff not divergent", () => {
@@ -870,6 +928,31 @@ describe("a step or layer file read lossily at HEAD", () => {
     expect(unreadable(warnings)).toEqual([
       { code: "unreadable_characters", file: path, effect: "name_shown", repair: "publish" },
     ]);
+  });
+
+  it("tags a lossy step CSV and layer file read at HEAD with the story, whether or not warnings are collected", async () => {
+    const files = demoFiles();
+    const csvPath = `${SHEETS}/${STORY}.csv`;
+    const layerPath = `${TEXTS}/${LAYER}`;
+    files[csvPath] = editAnswer(storyCsv(published), "Why was this map drawn?", `Why was this map drawn${R}`);
+    files[layerPath] = published[layerPath] + `\n\nA sentence${R} added on GitHub.`;
+    await commitLossy("head", files, [csvPath, layerPath]);
+    const lossyStories = new Map<string, Set<string>>();
+    await checkStoryContent(input({ lossyStories }));
+    expect(lossyStories).toEqual(new Map([[`${STORY}.csv`, new Set([STORY])], [layerPath, new Set([STORY])]]));
+  });
+
+  it("tags nothing read lossily only at the base", async () => {
+    const path = `${SHEETS}/${STORY}.csv`;
+    const baseFiles = demoFiles();
+    baseFiles[path] = editAnswer(storyCsv(published), "Why was this map drawn?", `Why was this map drawn${R}`);
+    await commitLossy("base", baseFiles, [path]);
+    const headFiles = demoFiles();
+    headFiles[path] = editAnswer(storyCsv(published), "Why was this map drawn?", "Why was this map made?");
+    await commit("head", headFiles);
+    const lossyStories = new Map<string, Set<string>>();
+    await checkStoryContent(input({ lossyStories }));
+    expect(lossyStories.size).toBe(0);
   });
 
   it("does not name a file lossy only at the base", async () => {

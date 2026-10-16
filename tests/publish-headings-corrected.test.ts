@@ -4,7 +4,7 @@
  * kept only for a publish that does correct some. This also pins that such a
  * publish, with D1 unchanged, writes the fixed column names.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -18,6 +18,7 @@ vi.mock("~/lib/github.server", async (orig) => {
   return {
     ...actual,
     getSubtreeOids: vi.fn(async () => ({ ok: true, at: () => ({ kind: "absent" }) })),
+    listDirectoryEntries: vi.fn(async () => []),
     getFileAtRef: vi.fn(async (_t: string, _o: string, _r: string, path: string) =>
       path === "telar-content/spreadsheets/objects.csv"
         ? { status: "ok", content: read.objects }

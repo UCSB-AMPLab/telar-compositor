@@ -9,7 +9,7 @@
  *
  * Every path is driven through the real parse, with only GitHub and D1 faked.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -30,10 +30,8 @@ vi.mock("~/lib/github.server", () => ({
 
 import * as githubServer from "~/lib/github.server";
 import { strictReadsFromFileContent } from "./helpers/strict-sheet-read";
-import { syncIngestRecorder } from "./helpers/sync-ingest-recorder";
 import {
   computeSyncDiff,
-  applySyncChanges,
   computeFullSyncDiff,
   computeGlossarySyncDiff,
   resolveFullSyncPayload,
@@ -49,8 +47,6 @@ import { probeSequentialMockDb } from "./sync-probe-fixtures";
 import {
   buildThreeWayChanges,
   emptySelections,
-  objectFieldChoiceOf,
-  rowChoiceOf,
 } from "~/components/features/dashboard/sync-changes";
 
 const SHEETS = "telar-content/spreadsheets";
@@ -167,7 +163,7 @@ beforeEach(() => {
   serveBase({});
 });
 
-describe("the objects page's sync", () => {
+describe("the objects diff", () => {
   it("computeSyncDiff refuses objects.csv, naming the sheet and both columns", async () => {
     serveRepo({ [`${SHEETS}/objects.csv`]: OBJECTS_BOTH });
     const { db, writes } = recordingDb();
@@ -175,29 +171,6 @@ describe("the objects page's sync", () => {
     expect(err.sheet).toBe("objects.csv");
     expect(err.canonicalName).toBe("medium_genre");
     expect(err.headers).toEqual(["medium", "object_type"]);
-    expect(writes).toEqual([]);
-  });
-
-  it("applySyncChanges names objetos.csv where that is the site's file", async () => {
-    serveRepo({ [`${SHEETS}/objetos.csv`]: OBJECTS_BOTH });
-    const { db, writes } = recordingDb();
-    const checkedHead = "f".repeat(40);
-    vi.mocked(githubServer.getRepoHead).mockResolvedValue(checkedHead);
-    const changes = { ...NO_OBJECT_CHANGES, headSha: checkedHead };
-    const err = await refusalFrom(applySyncChanges(1, changes, "t", "o", "r", db, syncIngestRecorder().env, 1));
-    expect(err.sheet).toBe("objetos.csv");
-    expect(writes).toEqual([]);
-  });
-
-  it("applySyncChanges refuses objects.csv and writes nothing", async () => {
-    serveRepo({ [`${SHEETS}/objects.csv`]: OBJECTS_BOTH });
-    const { db, writes } = recordingDb();
-    // A check read at GitHub's head, so the apply reaches the sheet.
-    const checkedHead = "f".repeat(40);
-    vi.mocked(githubServer.getRepoHead).mockResolvedValue(checkedHead);
-    const changes = { ...NO_OBJECT_CHANGES, headSha: checkedHead };
-    const err = await refusalFrom(applySyncChanges(1, changes, "t", "o", "r", db, syncIngestRecorder().env, 1));
-    expect(err.sheet).toBe("objects.csv");
     expect(writes).toEqual([]);
   });
 
@@ -377,7 +350,6 @@ describe("a base whose colliding columns both hold values", () => {
     const [changed] = diff.changedObjects;
     expect(changed).toMatchObject({ conflictFields: ["object_type"], repoDefaultFields: ["object_type"] });
     expect(changed.repoValues.object_type).toBe(repoValue);
-    expect(objectFieldChoiceOf(changed, "object_type", emptySelections())).toBe("repo");
     // What an untouched modal posts: GitHub's value for that field alone.
     const posted = buildThreeWayChanges(fullDiff({ objects: diff }), emptySelections());
     expect(posted.objects.fieldChoices).toEqual({ "obj-001": { object_type: "repo" } });
@@ -431,8 +403,6 @@ describe("a base whose colliding columns both hold values", () => {
     expect(row).toMatchObject({ story_id: "story-one", conflict: true });
     expect(row.repoByDefault ?? false).toBe(repoByDefault);
     expect(row.repoValues.subtitle).toBe(repoSubtitle);
-    const choice = repoByDefault ? "repo" : "d1";
-    expect(rowChoiceOf(emptySelections().storyChoices, "story-one", row.repoByDefault)).toBe(choice);
     const posted = buildThreeWayChanges(fullDiff({ stories: diff.stories }), emptySelections());
     expect(posted.stories.accept).toEqual(repoByDefault ? ["story-one"] : []);
     expect(posted.stories.reject).toEqual(repoByDefault ? [] : ["story-one"]);
@@ -475,8 +445,6 @@ describe("a base whose colliding columns both hold values", () => {
     const [term] = diff.changed;
     expect(term).toMatchObject({ term_id: "loom", conflict: true, repoDefinition });
     expect(term.repoByDefault ?? false).toBe(repoByDefault);
-    const choice = repoByDefault ? "repo" : "d1";
-    expect(rowChoiceOf(emptySelections().glossaryChangedChoices, "loom", term.repoByDefault)).toBe(choice);
     const posted = buildThreeWayChanges(fullDiff({ glossary: diff }), emptySelections());
     expect(posted.glossary.accept).toEqual(repoByDefault ? ["loom"] : []);
     expect(posted.glossary.reject).toEqual(repoByDefault ? [] : ["loom"]);

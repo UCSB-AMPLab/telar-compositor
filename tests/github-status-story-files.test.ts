@@ -9,11 +9,15 @@
  * stubbed `fetch`, which fails any Contents or blob request, so the absence of
  * file reads is checked at the network, not inferred from which helpers ran.
  *
- * The file reads the refresh already made before this change, those of
- * `computeFullSyncDiff` for objects, project, config and glossary, are
- * outside it: that module is stood in for here.
+ * The file reads that `computeFullSyncDiff` makes for objects, project,
+ * config and glossary are outside this file: that module is stood in for
+ * here.
  *
- * @version v1.5.0-beta
+ * With no head recorded, the commit the import read (the page files record's)
+ * is the base: GitHub still there is no change, and GitHub moved from it is
+ * judged as from a recorded head.
+ *
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -679,5 +683,88 @@ describe("with no base, the rendered story files against HEAD's tree", () => {
     await refreshGithubStatus(project, "tok", db as never, NOW, LEASE);
     expect(db.sets[0]).not.toHaveProperty("head_sha");
     expect(db.sets[0]).toMatchObject({ gh_diverged: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// With no head, and the import's commit recorded
+// ---------------------------------------------------------------------------
+
+describe("with no head recorded, the import's commit as the base", () => {
+  /** The project with no head, its import's page files record at `commit`. */
+  function importedAt(commit: string) {
+    return { ...baseProject, head_sha: null, page_files_json: JSON.stringify({ commit, files: {} }) };
+  }
+
+  it("is no change while GitHub is at the import's commit, though the files are not what a publish writes", async () => {
+    const story = await demoStory();
+    repo = headWith([]);
+    const db = makeD1(story);
+    await refreshGithubStatus(importedAt("headSha"), "tok", db as never, NOW, LEASE);
+    expect(db.sets).toHaveLength(1);
+    expect(db.sets[0]).not.toHaveProperty("head_sha");
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 0, gh_diverged_against_sha: null, gh_remote_head_sha: "headSha" });
+    expect(deriveHeadDiverged(db.sets[0] as never, null)).toBe(false);
+  });
+
+  it("backfills the head while GitHub is at the import's commit and holds what a publish writes", async () => {
+    const story = await demoStory();
+    const files = await renderStoryFiles(story.story.story_id, story.stepRows, story.layerRows);
+    repo = headWith(gitHashes(files));
+    const db = makeD1(story);
+    await refreshGithubStatus(importedAt("headSha"), "tok", db as never, NOW, LEASE);
+    expect(db.sets[0]).toMatchObject({ head_sha: "headSha", head_sha_from: null, gh_diverged: 0 });
+  });
+
+  /** GitHub moved from the import's commit, `baseSha`, to `headSha`, with the story's CSV at `headBlob` there. */
+  function movedSinceImport(headBlob: string): Repo {
+    const tree = (sheet: string) => [blob("project.csv", "p1"), blob("allegorical-woman.csv", sheet)];
+    return {
+      head: "headSha",
+      subtrees: {
+        [`baseSha:${SHEETS}`]: "sheetsBase",
+        [`headSha:${SHEETS}`]: headBlob === "s1" ? "sheetsBase" : "sheetsHead",
+        [`baseSha:${TEXTS}`]: "textsBase",
+        [`headSha:${TEXTS}`]: "textsBase",
+      },
+      listings: {
+        sheetsBase: { truncated: false, tree: tree("s1") },
+        sheetsHead: { truncated: false, tree: tree(headBlob) },
+        textsBase: { truncated: false, tree: [blob("allegorical-woman-a.md", "l1")] },
+      },
+    };
+  }
+
+  it("is a change on GitHub, with no head recorded, when a story's file changed since the import", async () => {
+    repo = movedSinceImport("s2");
+    const db = makeD1(await demoStory());
+    await refreshGithubStatus(importedAt("baseSha"), "tok", db as never, NOW, LEASE);
+    expect(db.sets[0]).not.toHaveProperty("head_sha");
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 1, gh_diverged_against_sha: null, gh_remote_head_sha: "headSha" });
+    expect(deriveHeadDiverged(db.sets[0] as never, null)).toBe(true);
+  });
+
+  it("is a change on GitHub when the diff from the import's commit finds one", async () => {
+    repo = movedSinceImport("s1");
+    mocks.hasDivergentChanges.mockReturnValue(true);
+    const db = makeD1(await demoStory());
+    await refreshGithubStatus(importedAt("baseSha"), "tok", db as never, NOW, LEASE);
+    expect((mocks.computeFullSyncDiff.mock.calls[0] as unknown[])[5]).toBe("baseSha");
+    expect(db.sets[0]).not.toHaveProperty("head_sha");
+    expect(db.sets[0]).toMatchObject({ gh_diverged: 1, gh_diverged_against_sha: null });
+  });
+
+  it("records the head from none, and the objects.csv read from the import's commit, when nothing changed", async () => {
+    repo = movedSinceImport("s1");
+    const db = makeD1(await demoStory());
+    await refreshGithubStatus(importedAt("baseSha"), "tok", db as never, NOW, LEASE);
+    expect(db.sets[0]).toMatchObject({
+      head_sha: "headSha",
+      head_sha_from: null,
+      objects_read_sha: "headSha",
+      objects_read_sha_while_head: null,
+      objects_read_sha_from: "baseSha",
+      gh_diverged: 0,
+    });
   });
 });

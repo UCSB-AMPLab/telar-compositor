@@ -9,7 +9,7 @@
  * tiles and offered the file as a new object `map`. A step naming `map` shows
  * object `map.jpg` on the site, so it is one of that object's uses.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -43,15 +43,13 @@ vi.mock("~/lib/freeze-lease.server", () => ({
 }));
 
 import {
-  applySyncChanges,
   computeFullSyncDiff,
   computeSyncDiff,
   resolveFullSyncPayload,
-  type SyncChanges,
 } from "~/lib/sync.server";
 import type { FullSyncChanges } from "~/lib/sync.server";
 import { getFileAtRef, getRepoHead, getRepoTree } from "~/lib/github.server";
-import { PROJECT_ID, SECRET, seedProject } from "./helpers/collaboration-fixture";
+import { PROJECT_ID, seedProject } from "./helpers/collaboration-fixture";
 
 const HEAD = "c".repeat(40);
 const OBJECTS_CSV = "telar-content/spreadsheets/objects.csv";
@@ -84,31 +82,8 @@ function addStep(id: number, objectId: string): void {
   );
 }
 
-/** The rows each ingest the stand-in object was sent inserts, in order. */
-let sentInserts: Array<Array<{ object_id: string; image_available: boolean }>> = [];
-
-const standInEnv = {
-  SESSION_SECRET: SECRET,
-  COLLABORATION: {
-    idFromName: (n: string) => n,
-    get: () => ({
-      fetch: async (request: Request) => {
-        const body = (await request.json()) as { objects?: { insert?: Array<{ object_id: string; image_available: boolean }> } };
-        sentInserts.push(body.objects?.insert ?? []);
-        return Response.json({ applied: {} });
-      },
-    }),
-  },
-} as unknown as Env;
-
-/** The rows the objects apply's ingest registered, as the last ingest sent them. */
-function registeredRows(): Array<{ object_id: string; image_available: boolean }> {
-  return sentInserts.at(-1) ?? [];
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
-  sentInserts = [];
   vi.spyOn(console, "warn").mockImplementation(() => {});
   memory = createMemoryD1();
   seedProject(memory, "text");
@@ -197,9 +172,6 @@ describe("the image files the syncs read, by the site's version", () => {
       glossary: { accept: [], reject: [], insertNew: [] },
     } as unknown as FullSyncChanges;
   }
-  function objectsChanges(newObjectIds: string[], unregisteredObjectIds: string[] = []): SyncChanges {
-    return { newObjectIds, changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds, headSha: HEAD };
-  }
   const configAt = (version: string) => `title: T\ntelar:\n  version: ${version}\n`;
 
   async function objectsCheck(version: string) {
@@ -216,21 +188,15 @@ describe("the image files the syncs read, by the site's version", () => {
     const { payload } = await resolveFullSyncPayload(PROJECT_ID, fullChanges(ids, unregistered), "tok", "owner", "repo", db, 1, HEAD);
     return payload.objects.insert.map((o) => [o.object_id, o.image_available]);
   }
-  async function registeredBy(ids: string[]) {
-    sentInserts = [];
-    await applySyncChanges(PROJECT_ID, objectsChanges(ids), "tok", "owner", "repo", db, standInEnv, 1);
-    return registeredRows().map((r) => [r.object_id, r.image_available]);
-  }
 
   beforeEach(() => {
     files[OBJECTS_CSV] = "object_id,title\nmap,Map\n";
   });
 
-  it("marks no new row ready from a file the tiler would find, at either sync's check and apply", async () => {
+  it("marks no new row ready from a file the tiler would find, at the objects check and the full sync's check and apply", async () => {
     for (const [file, version] of [["map.gif", "1.8.0"], ["map.heic", "1.7.0"], ["map.jpg", "1.7.0"]]) {
       treeFiles = [`telar-content/objects/${file}`];
       expect(await objectsCheck(version)).toEqual([["map", false]]);
-      expect(await registeredBy(["map"])).toEqual([["map", false]]);
       expect(await fullCheck(version)).toEqual([["map", false]]);
       expect(await fullApply(version, ["map"])).toEqual([["map", false]]);
     }
@@ -264,21 +230,6 @@ describe("the image files the syncs read, by the site's version", () => {
 // the row's image under the site id it gives that stem, and only for a site id
 // it accepts. The row is not ready either way until its tiles answer on the site.
 describe("a row made from an unregistered file", () => {
-  it("is not ready, whatever the tiler would find for it, at the objects sync's apply", async () => {
-    files[OBJECTS_CSV] = "object_id,title\n";
-    treeFiles = ["telar-content/objects/map.jpg.png", "telar-content/objects/my map.jpg", "telar-content/objects/plan.png"];
-    const diff = await computeSyncDiff(PROJECT_ID, "tok", "owner", "repo", db, undefined, HEAD, true, { d1: "1.7.0" });
-    expect(diff.unregisteredFiles.map((f) => f.object_id).sort()).toEqual(["map.jpg", "my map", "plan"]);
-
-    const applied = await applySyncChanges(
-      PROJECT_ID,
-      { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: ["map.jpg", "my map", "plan"], headSha: HEAD },
-      "tok", "owner", "repo", db, standInEnv, 1,
-    );
-    expect(applied.pendingObjects.map((o) => [o.object_id, o.image_available])).toEqual([
-      ["map.jpg", false], ["my map", false], ["plan", false],
-    ]);
-  });
 
   it("is not ready, whatever the tiler would find for it, at the full sync's apply", async () => {
     files[OBJECTS_CSV] = "object_id,title\n";
@@ -296,24 +247,6 @@ describe("a row made from an unregistered file", () => {
     expect(payload.objects.insert.map((o) => [o.object_id, o.image_available])).toEqual([
       ["map.jpg", false], ["my map", false], ["plan", false],
     ]);
-  });
-});
-
-describe("the objects sync apply", () => {
-  it("registers a new row map.jpg not ready, though the file map.jpg is its image", async () => {
-    const changes: SyncChanges = {
-      newObjectIds: ["map.jpg"],
-      changedObjectIds: [],
-      fieldChoices: {},
-      removedObjectIds: [],
-      unregisteredObjectIds: [],
-      headSha: HEAD,
-    };
-
-    await applySyncChanges(PROJECT_ID, changes, "tok", "owner", "repo", db, standInEnv, 1);
-
-    const rows = registeredRows();
-    expect(rows.map((r) => [r.object_id, r.image_available])).toEqual([["map.jpg", false]]);
   });
 });
 
@@ -455,21 +388,6 @@ describe("the objects tab's sync on a site whose repository is ahead of D1", () 
     expect(diff.unregisteredFiles).toEqual([]);
   });
 
-  it("registers a row map.heic not ready, though map.jpg is its file on the repository's 1.8.0", async () => {
-    const changes: SyncChanges = {
-      newObjectIds: ["map.heic"],
-      changedObjectIds: [],
-      fieldChoices: {},
-      removedObjectIds: [],
-      unregisteredObjectIds: [],
-      headSha: HEAD,
-    };
-
-    await applySyncChanges(PROJECT_ID, changes, "tok", "owner", "repo", db, standInEnv, 1);
-
-    const rows = registeredRows();
-    expect(rows.map((r) => [r.object_id, r.image_available])).toEqual([["map.heic", false]]);
-  });
 });
 
 // The tiler builds nothing for a site id outside `_SAFE_OBJECT_ID`
@@ -483,16 +401,6 @@ describe("a row whose site id the tiler refuses", () => {
   it("is not tiled by the objects sync check", async () => {
     const diff = await computeSyncDiff(PROJECT_ID, "tok", "owner", "repo", db, undefined, HEAD, true, { d1: "1.7.0" });
     expect(diff.newObjects.map((o) => [o.object_id, o.image_available])).toEqual([["map.jpg.png", false]]);
-  });
-
-  it("is not registered as tiled by the objects sync apply", async () => {
-    await applySyncChanges(
-      PROJECT_ID,
-      { newObjectIds: ["map.jpg.png"], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: HEAD },
-      "tok", "owner", "repo", db, standInEnv, 1,
-    );
-    const rows = registeredRows();
-    expect(rows.map((r) => r.image_available)).toEqual([false]);
   });
 
   it("is not inserted as tiled by the full sync", async () => {

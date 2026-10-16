@@ -1,9 +1,11 @@
 /**
  * ObjectsEmptyState — empty state for the Objects list view.
  *
- * Shows a Package icon in a anil circle, a heading, a description,
- * and two CTA buttons: "Sync from repo" (outline) and "Add IIIF object"
- * (anil pill).
+ * Shows a Package icon in an anil circle, a heading, a description, and an
+ * "Add IIIF object" button (anil pill). Until the shared document has synced,
+ * an empty list means the objects have not loaded, so a loading line takes
+ * the place of the invitation to add; `ObjectsLoadingNote` says why the
+ * loader's list is read-only until then.
  */
 
 import { Package } from "lucide-react";
@@ -11,11 +13,10 @@ import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
 
 interface ObjectsEmptyStateProps {
-  onSync: () => void;
   onAddIiif: () => void;
   /**
    * The shared document has not synced yet, so an empty list means "not loaded",
-   * not "no objects". The invitations to sync or add are withheld.
+   * not "no objects". The invitation to add is withheld.
    */
   awaitingSync?: boolean;
 }
@@ -31,7 +32,7 @@ export function ObjectsLoadingNote({ awaiting }: { awaiting: boolean }) {
   );
 }
 
-export function ObjectsEmptyState({ onSync, onAddIiif, awaitingSync = false }: ObjectsEmptyStateProps) {
+export function ObjectsEmptyState({ onAddIiif, awaitingSync = false }: ObjectsEmptyStateProps) {
   const { t } = useTranslation("objects");
   const { t: tCommon } = useTranslation("common");
 
@@ -57,13 +58,6 @@ export function ObjectsEmptyState({ onSync, onAddIiif, awaitingSync = false }: O
         {t("empty_description")}
       </p>
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={onSync}
-          className="inline-flex items-center justify-center border border-charcoal text-charcoal font-heading font-semibold text-sm uppercase tracking-wider rounded-full px-5 py-2 hover:bg-gray-50 transition-colors"
-        >
-          {t("empty_sync_button")}
-        </button>
         <button
           type="button"
           onClick={onAddIiif}

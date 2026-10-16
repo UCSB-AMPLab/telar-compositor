@@ -8,15 +8,15 @@
  * and the build refuses. So the assembly re-runs the check on what it read,
  * and refuses the publish with nothing written (`StoryColumnsBlockedError`).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getFileAtRef, getSubtreeOids, listSubtreeEntries } = vi.hoisted(() => ({
+const { getFileAtRef, getSubtreeOids, listDirectoryEntries } = vi.hoisted(() => ({
   getFileAtRef: vi.fn(),
   getSubtreeOids: vi.fn(),
-  listSubtreeEntries: vi.fn(),
+  listDirectoryEntries: vi.fn(),
 }));
 
 vi.mock("~/lib/db.server", async () => {
@@ -25,7 +25,7 @@ vi.mock("~/lib/db.server", async () => {
 });
 vi.mock("~/lib/github.server", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
-  return { ...actual, getFileAtRef, getSubtreeOids, listSubtreeEntries, getFileContent: vi.fn(async () => null) };
+  return { ...actual, getFileAtRef, getSubtreeOids, listDirectoryEntries, getFileContent: vi.fn(async () => null) };
 });
 
 import { StoryColumnsBlockedError, buildPublishFileSet } from "~/lib/publish.server";
@@ -65,6 +65,7 @@ function panelOn(stepId: number): D1LayerRow {
 beforeEach(async () => {
   vi.clearAllMocks();
   getSubtreeOids.mockResolvedValue({ ok: true, at: () => ({ kind: "absent" }) });
+  listDirectoryEntries.mockResolvedValue([]);
   getFileAtRef.mockResolvedValue({ status: "absent" });
   story = await storyWithCollidingStep();
 });

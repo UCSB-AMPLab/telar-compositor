@@ -1,21 +1,23 @@
 /**
  * What a publish reads of the step CSVs on GitHub before it rewrites them.
  *
- * The spreadsheets subtree is listed once at the publish ref. A story whose
- * file's blob is the blob of the plain render holds nothing the render does
- * not, so it is not read; any other is read strictly at the ref and rendered
- * in its own layout. A listing or a read that fails refuses the publish, naming
- * the story, because a file that cannot be read is never overwritten.
+ * The spreadsheets folder is listed once at the publish ref, without
+ * recursion. A story whose file's blob is the blob of the plain render holds
+ * nothing the render does not, so it is not read; any other is read strictly
+ * at the ref and rendered in its own layout. A listing or a read that fails
+ * refuses the publish, naming the story, because a file that cannot be read is
+ * never overwritten; so does a story's own CSV that is not a regular file. What
+ * else the folder holds that is not a regular file refuses nothing.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { getFileAtRef, getSubtreeOids, listSubtreeEntries } = vi.hoisted(() => ({
+const { getFileAtRef, getSubtreeOids, listDirectoryEntries } = vi.hoisted(() => ({
   getFileAtRef: vi.fn(),
   getSubtreeOids: vi.fn(),
-  listSubtreeEntries: vi.fn(),
+  listDirectoryEntries: vi.fn(),
 }));
 
 vi.mock("~/lib/db.server", async () => {
@@ -24,7 +26,7 @@ vi.mock("~/lib/db.server", async () => {
 });
 vi.mock("~/lib/github.server", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
-  return { ...actual, getFileAtRef, getSubtreeOids, listSubtreeEntries, getFileContent: vi.fn(async () => null) };
+  return { ...actual, getFileAtRef, getSubtreeOids, listDirectoryEntries, getFileContent: vi.fn(async () => null) };
 });
 
 import { UnreadablePublishFileError, buildPublishFileSet, renderStoryFiles } from "~/lib/publish.server";
@@ -36,7 +38,6 @@ import { serveStory } from "./story-canonical-fakedb";
 const SHEETS = "telar-content/spreadsheets";
 const SLUG = "historia";
 const PATH = `${SHEETS}/${SLUG}.csv`;
-const TREE_OID = "tree-oid";
 
 /** The author's file: a comment row and a column order of its own. */
 const AUTHOR_FILE = "step,question,answer,object\n#,the heading,the text,the object\n1,Q,A,obj-1\n";
@@ -48,12 +49,14 @@ async function plainCsv(): Promise<string> {
   return files.find((f) => f.path === PATH)!.content;
 }
 
-/** The subtree listed with `historia.csv` at `sha`, or without it when `sha` is undefined. */
-function listed(sha: string | undefined) {
-  getSubtreeOids.mockResolvedValue({ ok: true, at: () => ({ kind: "tree", oid: TREE_OID }) });
-  const files = new Map<string, string>();
-  if (sha !== undefined) files.set(`${SLUG}.csv`, sha);
-  listSubtreeEntries.mockResolvedValue({ files, dirs: new Set() });
+/** A regular file in the folder, as the listing gives it. */
+function file(name: string, sha: string) {
+  return { path: `${SHEETS}/${name}`, mode: "100644", type: "blob", sha };
+}
+
+/** The folder listed with `historia.csv` at `sha`, or without it when `sha` is undefined, beside `others`. */
+function listed(sha: string | undefined, others: unknown[] = [file("objects.csv", "objects-blob")]) {
+  listDirectoryEntries.mockResolvedValue([...(sha === undefined ? [] : [file(`${SLUG}.csv`, sha)]), ...others]);
 }
 
 function storyReads() {
@@ -106,45 +109,72 @@ describe("a story whose file differs from the plain render", () => {
     expect(lines[2]).toBe("#,the heading,the text,the object");
   });
 
-  it("lists the spreadsheets subtree once, at the publish ref", async () => {
+  it("lists the spreadsheets folder once, at the publish ref", async () => {
     listed("some-other-blob");
 
     await publishedCsv();
 
-    expect(getSubtreeOids).toHaveBeenCalledTimes(1);
-    expect(getSubtreeOids.mock.calls[0][3]).toEqual([STORY_ONLY_PUBLISH.ref]);
-    expect(getSubtreeOids.mock.calls[0][4]).toEqual([SHEETS]);
-    expect(listSubtreeEntries).toHaveBeenCalledWith("tok", "owner", "repo", TREE_OID);
+    expect(listDirectoryEntries).toHaveBeenCalledTimes(1);
+    expect(listDirectoryEntries).toHaveBeenCalledWith("tok", "owner", "repo", STORY_ONLY_PUBLISH.ref, SHEETS);
+  });
+});
+
+describe("a spreadsheets folder holding what is not a regular file", () => {
+  it("publishes when a symbolic link, a submodule and a subfolder there are not a story's own CSV", async () => {
+    listed("some-other-blob", [
+      { path: `${SHEETS}/elsewhere.csv`, mode: "120000", type: "blob", sha: "link-blob" },
+      { path: `${SHEETS}/vendor`, mode: "160000", type: "commit", sha: "submodule-commit" },
+      { path: `${SHEETS}/old`, mode: "040000", type: "tree", sha: "old-tree" },
+    ]);
+
+    const csv = await publishedCsv();
+
+    expect(csv.split("\n")[2]).toBe("#,the heading,the text,the object");
+  });
+
+  it("is refused, naming the story's CSV, when that CSV is a symbolic link", async () => {
+    listed(undefined, [{ path: PATH, mode: "120000", type: "blob", sha: "link-blob" }]);
+
+    await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toMatchObject({ file: "stories", path: PATH });
+    expect(storyReads()).toHaveLength(0);
+  });
+
+  it("is refused, naming the story's CSV, when a folder stands at its path", async () => {
+    listed(undefined, [{ path: PATH, mode: "040000", type: "tree", sha: "a-tree" }]);
+
+    await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toMatchObject({ file: "stories", path: PATH });
   });
 });
 
 describe("a publish whose story files cannot be read", () => {
-  it("is refused when the subtree cannot be resolved", async () => {
-    getSubtreeOids.mockResolvedValue({ ok: false, reason: "malformed" });
+  it("is refused when the request for the listing fails", async () => {
+    listDirectoryEntries.mockRejectedValue(new Error("GitHub API error listing telar-content/spreadsheets: 502"));
 
     await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toMatchObject({
       name: "UnreadablePublishFileError",
       file: "stories",
+      path: SHEETS,
     });
   });
 
-  it("is refused when the request for the subtree fails", async () => {
-    getSubtreeOids.mockRejectedValue(new Error("GitHub GraphQL error: 502"));
-
-    await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toMatchObject({ file: "stories", path: SHEETS });
-  });
-
-  it("is refused when the subtree cannot be listed completely", async () => {
-    getSubtreeOids.mockResolvedValue({ ok: true, at: () => ({ kind: "tree", oid: TREE_OID }) });
-    listSubtreeEntries.mockResolvedValue(null);
+  it("is refused when the folder cannot be listed completely", async () => {
+    listDirectoryEntries.mockRejectedValue(new Error(`the listing of ${SHEETS} is incomplete`));
 
     await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toBeInstanceOf(UnreadablePublishFileError);
   });
 
   it("is refused when the spreadsheets path is not a directory", async () => {
+    listDirectoryEntries.mockResolvedValue([]);
     getSubtreeOids.mockResolvedValue({ ok: true, at: () => ({ kind: "other", type: "Blob" }) });
 
-    await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toBeInstanceOf(UnreadablePublishFileError);
+    await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toMatchObject({ file: "stories", path: SHEETS });
+  });
+
+  it("is refused when an empty listing cannot be told from a path that is not a directory", async () => {
+    listDirectoryEntries.mockResolvedValue([]);
+    getSubtreeOids.mockRejectedValue(new Error("GitHub GraphQL error: 502"));
+
+    await expect(buildPublishFileSet({ ...STORY_ONLY_PUBLISH })).rejects.toMatchObject({ file: "stories", path: SHEETS });
   });
 
   it("is refused, naming the story, when its file cannot be read", async () => {
@@ -167,12 +197,22 @@ describe("a publish whose story files cannot be read", () => {
   });
 });
 
+describe("a site with no spreadsheets folder", () => {
+  it("publishes the plain render", async () => {
+    listDirectoryEntries.mockResolvedValue([]);
+    getSubtreeOids.mockResolvedValue({ ok: true, at: () => ({ kind: "absent" }) });
+
+    expect(await publishedCsv()).toBe(await plainCsv());
+  });
+});
+
 describe("a publish with no stories", () => {
   it("lists nothing", async () => {
     serveStory(null);
 
     await buildPublishFileSet({ ...STORY_ONLY_PUBLISH });
 
+    expect(listDirectoryEntries).not.toHaveBeenCalled();
     expect(getSubtreeOids).not.toHaveBeenCalled();
   });
 });

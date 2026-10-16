@@ -6,11 +6,10 @@
  * that comparison is only sound if D1's side is rendered byte for byte as a
  * publish would write it. So the step CSV and the layer files are rendered by
  * one function that `buildPublishFileSet` also calls, and this file pins both:
- * the publish's story files for every fixture against a golden captured from
- * the publish before the function was factored out, and the function's output
- * against what the commit primitive would send.
+ * the publish's story files for every fixture against a stored golden, and
+ * the function's output against what the commit primitive would send.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -26,6 +25,8 @@ vi.mock("~/lib/github.server", async (orig) => {
     getFileAtRef: vi.fn(async () => ({ status: "absent" })),
     getFileContent: vi.fn(async () => null),
     getSubtreeOids: vi.fn(async () => ({ ok: true, at: () => ({ kind: "absent" }) })),
+    // The publish lists the spreadsheets folder on its own; here it holds no story sheets.
+    listDirectoryEntries: vi.fn(async () => []),
   };
 });
 

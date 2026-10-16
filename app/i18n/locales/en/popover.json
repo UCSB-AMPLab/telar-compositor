@@ -1,7 +1,6 @@
 {
   "in_sync": {
     "title": "Everything is in sync",
-    "published": "Last published {{time}}",
     "commit": "commit {{sha}}",
     "synced": "Synced from repo {{time}}",
     "view_site": "View published site",
@@ -26,16 +25,22 @@
     "review": "Review all changes",
     "publish": "Publish"
   },
+  "check_failed": {
+    "title": "Couldn't check GitHub",
+    "body": "The Compositor couldn't reach your repository just now, so it can't tell whether anyone has committed to it since your last publish. You can keep editing.",
+    "publish_line": "Publishing waits until the Compositor can check GitHub.",
+    "try_again": "Try again"
+  },
+  "first_publish": {
+    "title": "Not yet published from the Compositor",
+    "body": "Your first publish from the Compositor writes your site's files in its own layout. Nothing in them is lost."
+  },
   "out_of_sync": {
-    "title": "GitHub has changed",
-    "body": "Someone edited the repository directly. Review what changed before publishing.",
-    "diff_label": "What changed",
-    "added": "{{n}} added",
-    "changed": "{{n}} changed",
-    "removed": "{{n}} removed",
-    "keep_mine": "Keep my version",
+    "title": "Changes on GitHub",
+    "body": "Someone committed to your repository after your last publish. Choose what to keep before you publish again.",
     "review": "Review changes",
-    "accept_divergence_stale": "GitHub changed while you were reviewing the differences, so we didn't save your choice. Review the changes again to see the latest."
+    "collab_body": "Someone committed to the repository after the last publish. {{name}}, who coordinates this site, chooses which versions to keep. You can keep editing; publishing waits until then.",
+    "collab_body_unnamed": "Someone committed to the repository after the last publish. The person who coordinates this site chooses which versions to keep. You can keep editing; publishing waits until then."
   },
   "publishing": {
     "title": "Publishing… {{step}} of {{total}}",

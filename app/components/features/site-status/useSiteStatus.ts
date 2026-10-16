@@ -7,7 +7,7 @@
  *   - in-flight save fetchers via useFetchers() matched against ALL_SAVE_INTENTS
  *
  * Precedence: persistence-halted > repo-unavailable > publishing > out-of-sync >
- * repo-invitation > unpublished > upgrade > in-sync. The halted state is the one input that is not
+ * check-failed > repo-invitation > unpublished > first-publish > upgrade > in-sync. The halted state is the one input that is not
  * cheap and not already available: it comes from usePersistenceHalt, which asks
  * the object only after a continuous disconnection, never on navigation.
  * Saving is an OVERLAY on the active base state, never a competitor in the
@@ -18,13 +18,13 @@
  * result OVER the loader's cached gh_* values so the pill stays current
  * between navigations (the loader only reads the cache, instant).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useFetchers, useRouteLoaderData } from "react-router";
 import { useCollaborationContext } from "~/hooks/use-collaboration";
-import { useSharedGithubStatus } from "~/components/features/site-status/SiteStatusProvider";
+import { useSharedGithubStatus, useGithubRecheck } from "~/components/features/site-status/SiteStatusProvider";
 import {
   usePersistenceHalt,
   type PersistenceHaltResult,
@@ -40,7 +40,9 @@ export type SiteStatusState =
   | "repo-unavailable"
   | "publishing"
   | "out-of-sync"
+  | "check-failed"
   | "repo-invitation"
+  | "first-publish"
   | "unpublished"
   | "upgrade"
   | "in-sync";
@@ -62,6 +64,10 @@ export interface DeriveStateInput {
    */
   isBuilding?: boolean;
   headDiverged?: boolean;
+  /** The last check of GitHub did not conclude, so whether it changed is unknown. */
+  checkFailed?: boolean;
+  /** No head is recorded: the site has not been published from the Compositor. */
+  firstPublish?: boolean;
   /** The member's own repository invitation is open or has lapsed. */
   invitationOpen?: boolean;
   unpublishedCount?: number;
@@ -70,7 +76,8 @@ export interface DeriveStateInput {
 
 /**
  * Pure precedence: persistence-halted (dominant) > repo-unavailable >
- * publishing > out-of-sync > repo-invitation > unpublished > upgrade > in-sync. Saving is handled
+ * publishing > out-of-sync > check-failed > repo-invitation > unpublished >
+ * first-publish > upgrade > in-sync. Saving is handled
  * separately as an overlay. The "publishing" branch covers both the commit phase
  * (isPublishing) and the subsequent build phase (isBuilding).
  */
@@ -79,8 +86,10 @@ export function deriveState(input: DeriveStateInput): SiteStatusState {
   if (input.repoUnavailable) return "repo-unavailable";
   if (input.isPublishing || input.isBuilding) return "publishing";
   if (input.headDiverged) return "out-of-sync";
+  if (input.checkFailed) return "check-failed";
   if (input.invitationOpen) return "repo-invitation";
   if ((input.unpublishedCount ?? 0) > 0) return "unpublished";
+  if (input.firstPublish) return "first-publish";
   if (input.needsUpgrade) return "upgrade";
   return "in-sync";
 }
@@ -89,6 +98,8 @@ interface AppLoaderData {
   activeProjectId?: number | null;
   repoUnavailable?: boolean;
   headDiverged?: boolean;
+  checkFailed?: boolean;
+  firstPublish?: boolean;
   needsUpgrade?: boolean;
   unpublishedCount?: number;
   latestTelarTag?: string | null;
@@ -118,6 +129,10 @@ export interface SiteStatusResult {
    * clock, one read policy and one outcome rather than running two of each.
    */
   persistence: PersistenceHaltResult;
+  /** Asks GitHub again now, past the refresh window, and updates the state from the answer. */
+  recheck: () => Promise<void>;
+  /** A recheck is in flight. */
+  rechecking: boolean;
 }
 
 /** The project id `usePersistenceHalt` reads for, from the loader's cache. */
@@ -133,6 +148,7 @@ export function useSiteStatus(): SiteStatusResult {
   // merges OVER loader cached values (GitHub status AND the real content-diff
   // count — see the merge below).
   const live = useSharedGithubStatus();
+  const { recheck, rechecking } = useGithubRecheck();
   const persistence = usePersistenceHalt(activeProjectIdOf(app));
 
   const isSaving = fetchers.some(
@@ -177,6 +193,8 @@ export function useSiteStatus(): SiteStatusResult {
     isPublishing,
     isBuilding,
     headDiverged: live?.headDiverged ?? app?.headDiverged ?? false,
+    checkFailed: live?.checkFailed ?? app?.checkFailed ?? false,
+    firstPublish: live?.firstPublish ?? app?.firstPublish ?? false,
     invitationOpen: ownRepoAccess?.stage === "pending" || ownRepoAccess?.stage === "lapsed",
     unpublishedCount: live?.unpublishedCount ?? app?.unpublishedCount ?? 0,
     needsUpgrade: live?.needsUpgrade ?? app?.needsUpgrade ?? false,
@@ -192,5 +210,7 @@ export function useSiteStatus(): SiteStatusResult {
     needsUpgrade: live?.needsUpgrade ?? app?.needsUpgrade ?? false,
     ownRepoAccess,
     persistence,
+    recheck,
+    rechecking,
   };
 }

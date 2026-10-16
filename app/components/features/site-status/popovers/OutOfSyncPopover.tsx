@@ -1,160 +1,61 @@
 /**
- * OutOfSyncPopover — the divergence body of the Site Status pill. Renders three
- * diff chips (+ added / ~ changed / – removed) whose counts come from
- * `aggregateSyncDiff(FullSyncDiff)`, a `Review changes` anil primary action (the
- * recommended path — deep-links to the SyncConfirmModal `?sync=1` flow on the
- * Objects page), and a `Keep my version` ghost button.
+ * OutOfSyncPopover — the divergence body of the Site Status pill: someone
+ * committed to the repository after the last publish. It says so and offers
+ * one action, "Review changes", which opens the review dialog the app layout
+ * mounts (`useSyncReview().openReview`) on the page the author is on.
  *
- * `Keep my version` reuses the EXISTING `accept-divergence` intent on the
- * dashboard action (requireOwner-gated server-side) via a POST fetcher exactly
- * as SyncConfirmModal does — it introduces NO new intent and NO D1 write. It
- * posts the identity of the diff it is showing (`keepMineFields`): the
- * project it is of, the base it was computed against, and `headSha`, the
- * commit whose differences the author is keeping their version over. A diff that names none, or a head that moved
- * since, is answered `accept_divergence_stale`, and the popover says so above
- * its existing way to review the changes.
+ * Only the convenor can apply a review (the /dashboard action's
+ * `requireOwner`). Everyone else, collaborators and instructors alike, is
+ * shown the state and the name of the person who chooses, with no button.
  *
- * Both actions surface only for convenors — out-of-sync renders only for
- * convenors today (mirrors `SyncBanner`), and the server gate is authoritative.
- * The chip palette deliberately DIFFERS from the pill: added is chilca (not the
- * pill's qolle), per the design system's colour contract.
- *
- * `FullSyncDiff` is imported type-only so no `.server` runtime reaches the
- * client bundle.
- *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
-import { Link } from "react-router";
-import { useSiteFetcher } from "~/lib/page-site";
-import { ArrowUpRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { FullSyncDiff } from "~/lib/sync.server";
-import { aggregateSyncDiff } from "~/components/features/site-status/site-status-diff";
-import { keepMineFields } from "~/components/features/dashboard/sync-changes";
+import { coordinatorLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 
 export interface OutOfSyncPopoverProps {
-  diff: FullSyncDiff;
-  /**
-   * Deep-link target that opens the SyncConfirmModal Review flow on the
-   * Objects page (the `?sync=1` path — see _app.objects.tsx). Defaults to
-   * the Objects-page sync trigger.
-   */
-  reviewTo?: string;
+  /** Called after the review opens, so the pill can close its popover. */
+  onReview?: () => void;
   className?: string;
 }
 
-export function OutOfSyncPopover({
-  diff,
-  reviewTo = "/objects?sync=1",
-  className = "",
-}: OutOfSyncPopoverProps) {
+export function OutOfSyncPopover({ onReview, className = "" }: OutOfSyncPopoverProps) {
   const { t } = useTranslation("popover");
-  // Reuse the existing accept-divergence intent — NOT a new one. Posts to the
-  // dashboard action exactly like SyncConfirmModal's applyFetcher.
-  const acceptFetcher = useSiteFetcher();
+  const { openReview, canReview, coordinatorName } = useSyncReview();
+  const [collabKey, collabValues] = coordinatorLine("out_of_sync.collab_body", "out_of_sync.collab_body_unnamed", coordinatorName);
 
-  const { added, changed, removed } = aggregateSyncDiff(diff);
-
-  function handleKeepMine() {
-    // The pill is global (mounted in the Header on every authenticated route),
-    // but only the dashboard action handles `accept-divergence`. Target it
-    // explicitly so the intent always reaches its handler — a bare POST would
-    // hit the current route's action and 400/no-op everywhere but /dashboard.
-    // The dashboard action resolves the active project from the session and
-    // refuses the write unless the page's site is that one.
-    acceptFetcher.submit(
-      keepMineFields(diff),
-      { method: "post", action: "/dashboard" },
-    );
+  function handleReview() {
+    openReview();
+    onReview?.();
   }
-
-  const acceptData = acceptFetcher.data as { ok?: boolean; error?: string } | undefined;
-  const acceptStale = acceptData?.ok === false && acceptData.error === "accept_divergence_stale";
 
   return (
     <div className={className}>
-      {/* Head */}
-      <div className="border-b border-border" style={{ padding: "14px 18px 12px" }}>
+      <div className={canReview ? "border-b border-border" : ""} style={{ padding: "14px 18px 12px" }}>
         <h3 className="font-heading font-bold text-charcoal" style={{ fontSize: "14px", letterSpacing: "-0.005em" }}>
           {t("out_of_sync.title")}
         </h3>
         <p className="font-body text-fg-muted" style={{ fontSize: "12px", marginTop: "2px", lineHeight: 1.45 }}>
-          {t("out_of_sync.body")}
+          {canReview ? t("out_of_sync.body") : t(collabKey, collabValues)}
         </p>
-        {acceptStale && (
-          <p
-            role="status"
-            className="font-body text-charcoal bg-amber-50 border border-amber-200"
-            style={{ fontSize: "12px", marginTop: "8px", lineHeight: 1.45, padding: "6px 10px", borderRadius: "0.375rem" }}
+      </div>
+
+      {canReview && (
+        <div
+          className="bg-cream flex items-center justify-end"
+          style={{ padding: "11px 14px 12px", gap: "8px" }}
+        >
+          <button
+            type="button"
+            onClick={handleReview}
+            className="font-heading font-semibold inline-flex items-center bg-anil text-charcoal hover:bg-anil-hover transition-colors"
+            style={{ fontSize: "11px", letterSpacing: "0.04em", textTransform: "uppercase", padding: "6px 14px", borderRadius: "9999px" }}
           >
-            {t("out_of_sync.accept_divergence_stale")}
-          </p>
-        )}
-      </div>
-
-      {/* Body: What-changed label + three diff chips */}
-      <div style={{ padding: "12px 18px 14px" }}>
-        <p
-          className="font-heading font-semibold text-charcoal uppercase"
-          style={{ fontSize: "11px", letterSpacing: "0.04em", marginBottom: "8px" }}
-        >
-          {t("out_of_sync.diff_label")}
-        </p>
-        <div className="flex flex-wrap" style={{ gap: "8px" }}>
-          <DiffChip
-            tokens="bg-chilca-pale text-chilca-deep"
-            symbol="+"
-            label={t("out_of_sync.added", { n: added })}
-          />
-          <DiffChip
-            tokens="bg-qolle-pale text-qolle-deep"
-            symbol="~"
-            label={t("out_of_sync.changed", { n: changed })}
-          />
-          <DiffChip
-            tokens="bg-terracotta-pale text-terracotta"
-            symbol="–"
-            label={t("out_of_sync.removed", { n: removed })}
-          />
+            {t("out_of_sync.review")}
+          </button>
         </div>
-      </div>
-
-      {/* Footer: ghost Keep-my-version (left) + anil Review-changes (right) */}
-      <div
-        className="border-t border-border bg-cream flex items-center justify-end"
-        style={{ padding: "11px 14px 12px", gap: "8px" }}
-      >
-        <button
-          type="button"
-          onClick={handleKeepMine}
-          disabled={acceptFetcher.state !== "idle"}
-          className="font-heading font-semibold bg-surface border border-border text-charcoal hover:bg-cream transition-colors disabled:opacity-60"
-          style={{ fontSize: "11px", letterSpacing: "0.04em", textTransform: "uppercase", padding: "6px 14px", borderRadius: "0.375rem" }}
-        >
-          {t("out_of_sync.keep_mine")}
-        </button>
-        <Link
-          to={reviewTo}
-          className="font-heading font-semibold inline-flex items-center gap-1.5 bg-anil text-charcoal hover:bg-anil-hover transition-colors"
-          style={{ fontSize: "11px", letterSpacing: "0.04em", textTransform: "uppercase", padding: "6px 14px", borderRadius: "9999px" }}
-        >
-          {t("out_of_sync.review")}
-          <ArrowUpRight className="w-3.5 h-3.5" aria-hidden="true" />
-        </Link>
-      </div>
+      )}
     </div>
-  );
-}
-
-function DiffChip({ tokens, symbol, label }: { tokens: string; symbol: string; label: string }) {
-  return (
-    <span
-      className={`font-heading font-semibold inline-flex items-center gap-1 uppercase ${tokens}`}
-      style={{ fontSize: "11px", letterSpacing: "0.03em", padding: "4px 10px", borderRadius: "9999px" }}
-    >
-      <span aria-hidden="true">{symbol}</span>
-      {label}
-    </span>
   );
 }

@@ -5,10 +5,14 @@
  * derived state. The pure precedence (deriveState) is tested separately in
  * useSiteStatus.test.ts; these tests focus only on the live-over-loader merge.
  *
- * Three cases:
+ * Cases:
  *  (a) poll undefined → loader values win → "in-sync"
  *  (b) poll headDiverged:true → overrides loader's false → "out-of-sync"
  *  (c) poll repoUnavailable:true → overrides loader's false → "repo-unavailable"
+ *  (d) poll needsUpgrade:true → overrides loader's false → "upgrade"
+ *  (e) poll latestTelarTag → overrides loader's latestTelarTag → latestTag is the poll value
+ *
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -66,7 +70,7 @@ describe("useSiteStatus — live-over-loader merge", () => {
 
   it("(b) poll headDiverged:true overrides loader's false → state is 'out-of-sync'", () => {
     mockPollData = {
-      headDiverged: true,
+      headDiverged: true, checkFailed: false, firstPublish: false,
       repoUnavailable: false,
       needsUpgrade: false,
       isBelowMinimum: false,
@@ -79,7 +83,7 @@ describe("useSiteStatus — live-over-loader merge", () => {
   it("(c) poll repoUnavailable:true overrides loader's false → state is 'repo-unavailable'", () => {
     mockPollData = {
       repoUnavailable: true,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: false,
       isBelowMinimum: false,
       latestTelarTag: null,
@@ -97,7 +101,7 @@ describe("useSiteStatus — live-over-loader merge", () => {
     };
     mockPollData = {
       repoUnavailable: false,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: true,
       isBelowMinimum: false,
       latestTelarTag: "v9.9.9",
@@ -116,7 +120,7 @@ describe("useSiteStatus — live-over-loader merge", () => {
     };
     mockPollData = {
       repoUnavailable: false,
-      headDiverged: false,
+      headDiverged: false, checkFailed: false, firstPublish: false,
       needsUpgrade: false,
       isBelowMinimum: false,
       latestTelarTag: "v9.9.9",

@@ -10,7 +10,7 @@
  * import reads, and so warns about, a root copy only when it is the story's
  * source, which is when the publish deletes it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -160,6 +160,29 @@ describe("importRepo records the path each story's steps were read from", () => 
     delete files[`${SHEETS}/story-one.csv`];
     await importNow();
     expect(sourcePaths()).toEqual({ "story-one": null });
+  });
+});
+
+describe("importRepo reads a project.csv with no story_id by order", () => {
+  it("imports both stories under story-<order>, titled from project.csv, with no orphans", async () => {
+    files[`${SHEETS}/project.csv`] =
+      "order,title,subtitle,byline,private,show_sections\n1,First,,,,\n2,Second,,,,\n";
+    delete files[`${SHEETS}/story-one.csv`];
+    delete files[`${SHEETS}/old-story.csv`];
+    delete files[".compositor-ignored"];
+    files[`${SHEETS}/story-1.csv`] = STORY_CSV;
+    files[`${SHEETS}/story-2.csv`] = STORY_CSV;
+
+    const result = await importNow();
+
+    const rows = memory.raw
+      .prepare("SELECT story_id, title, draft FROM stories ORDER BY story_id")
+      .all() as Array<{ story_id: string; title: string; draft: number | null }>;
+    expect(rows).toEqual([
+      { story_id: "story-1", title: "First", draft: 0 },
+      { story_id: "story-2", title: "Second", draft: 0 },
+    ]);
+    expect(result.orphanStoryIds).toEqual([]);
   });
 });
 

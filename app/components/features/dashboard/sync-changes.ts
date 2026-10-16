@@ -1,43 +1,45 @@
 /**
- * What the sync dialog sends for the author's choices: the three-way
- * selections, the two payload builders (`buildAllOrNothingChanges` for a
- * two-way diff, `buildThreeWayChanges` for a three-way one), and the story
- * and page content choices both fold in; and what the dialog shows of the
- * story and page checks. Pure; the modal (SyncConfirmModal) renders the
- * choices and submits what these build.
+ * What the sync dialog sends for the author's choices: the selections, the
+ * two payload builders (`buildAllOrNothingChanges` for a two-way diff,
+ * `buildThreeWayChanges` for a three-way one), and the story and page content
+ * choices both fold in; and what the dialog shows of the story and page
+ * checks. Pure; the review dialog (SyncConfirmModal) lists the changes as
+ * items (`sync-items.ts`), sets a choice for every one of them, and submits
+ * what these build.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import type { ChangedObject, FullSyncDiff, FullSyncChanges, SyncField } from "~/lib/sync.server";
 import type { StoryContentChange } from "~/lib/story-content.server";
 import type { PageAddition, PageContentChange, PageFileChange } from "~/lib/page-content.server";
 
-/** A per-conflict choice: keep GitHub's value ("repo") or the editor's ("d1"). */
+/** A per-change choice: GitHub's version ("repo") or the Compositor's ("d1"). */
 export type ConflictChoice = "repo" | "d1";
 
 /**
- * The user's conflict resolutions, gathered by the three-way diffReady step.
- * Every record defaults to keep-mine when a key is absent, so an untouched
- * modal applies exactly the "Keep my version" product ruling, except where the
- * diff marks GitHub's value the default (`objectFieldChoiceOf`, `rowChoiceOf`).
+ * The author's choices, by change. A key absent from a record is a change
+ * with no choice, which each builder fills with its own fallback; the review
+ * dialog never submits one (`choicesForApply`, sync-items.ts).
  */
 export interface ThreeWaySelections {
-  /** objectId -> field -> choice (only conflict fields are tracked). */
+  /** objectId -> field -> choice; a field choice overrides the object's own. */
   objectFieldChoices: Record<string, Record<string, ConflictChoice>>;
-  /** deleted-here objectId -> true when the user chose Restore. */
+  /** changed objectId -> the object's one choice, covering every field GitHub changed. */
+  objectChoices?: Record<string, ConflictChoice>;
+  /** new objectId -> true to add it (restore one deleted here), false to leave it out. */
   objectRestore: Record<string, boolean>;
-  /** deleted-in-repo/edited-here objectId -> true when the user chose Delete. */
+  /** missing objectId -> true to delete it here too, false to keep it. */
   objectDelete: Record<string, boolean>;
-  /** conflict story_id -> choice. */
+  /** changed story_id -> the row's one choice, covering every field GitHub changed. */
   storyChoices: Record<string, ConflictChoice>;
-  /** deleted-here (repo edited, editor deleted) story_id -> true on Restore. */
+  /** new story_id -> true to add it (restore one deleted here), false to leave it out. */
   storyRestore: Record<string, boolean>;
-  /** conflict config key -> choice. */
+  /** changed config key -> choice. */
   configChoices: Record<string, ConflictChoice>;
-  /** conflict changed term_id -> choice. */
+  /** changed term_id -> the term's one choice, covering every field GitHub changed. */
   glossaryChangedChoices: Record<string, ConflictChoice>;
-  /** deleted-here term_id -> true when the user chose Restore. */
+  /** new term_id -> true to add it (restore one deleted here), false to leave it out. */
   glossaryRestore: Record<string, boolean>;
   /**
    * story_id -> the story's one choice when its content changed: "repo" takes
@@ -57,11 +59,28 @@ export interface ThreeWaySelections {
    * own default (`pageFileChoiceOf`).
    */
   pageFileChoices?: Record<string, ConflictChoice>;
+  /** story_id deleted on GitHub -> true to delete it here too, false to keep it. Absent, kept. */
+  storyDelete?: Record<string, boolean>;
+  /** term_id deleted on GitHub -> true to delete it here too, false to keep it. Absent, kept. */
+  glossaryDelete?: Record<string, boolean>;
+  /**
+   * Image file name with no object -> true to add it as an object, false to
+   * leave it out (`SyncDiff.unregisteredFiles`). Absent, added.
+   */
+  imageAdd?: Record<string, boolean>;
+  /**
+   * "stories" or "pages", for a file check that did not conclude for a
+   * structural cause -> "d1" to keep the Compositor's version of those files
+   * (`FullSyncChanges.keepUnreadFiles`). Absent, the check's files are not
+   * recorded as read.
+   */
+  keepUnread?: Record<string, ConflictChoice>;
 }
 
 export function emptySelections(): ThreeWaySelections {
   return {
     objectFieldChoices: {},
+    objectChoices: {},
     objectRestore: {},
     objectDelete: {},
     storyChoices: {},
@@ -72,20 +91,16 @@ export function emptySelections(): ThreeWaySelections {
     storyContentChoices: {},
     pageContentChoices: {},
     pageFileChoices: {},
+    storyDelete: {},
+    glossaryDelete: {},
+    imageAdd: {},
+    keepUnread: {},
   };
 }
 
 /**
- * An object conflict field's choice: the author's, else GitHub's for a field
- * the base could not place (`repoDefaultFields`), else keep-mine.
- */
-export function objectFieldChoiceOf(o: ChangedObject, field: SyncField, sel: ThreeWaySelections): ConflictChoice {
-  return ownValue(sel.objectFieldChoices, o.object_id)?.[field] ?? threeWayFieldDefault(o, field);
-}
-
-/**
- * The default for a changed object field of a three-way check, which both
- * sync dialogs apply: GitHub's value for a field only GitHub moved, and for a
+ * The default for a changed object field of a three-way check, which the
+ * payload builder applies: GitHub's value for a field only GitHub moved, and for a
  * conflict the base could not place (`repoDefaultFields`); the editor's for
  * any other conflict.
  */
@@ -95,14 +110,6 @@ export function threeWayFieldDefault(
 ): ConflictChoice {
   if (!o.conflictFields.includes(field)) return "repo";
   return o.repoDefaultFields?.includes(field) ? "repo" : "d1";
-}
-
-/**
- * A story, config or glossary row conflict's choice: the author's, else
- * GitHub's for a row the diff defaults to it (`repoByDefault`), else keep-mine.
- */
-export function rowChoiceOf(map: Record<string, ConflictChoice>, id: string, repoByDefault?: boolean): ConflictChoice {
-  return ownValue(map, id) ?? (repoByDefault ? "repo" : "d1");
 }
 
 /**
@@ -135,12 +142,39 @@ export function contentInconclusive(diff: FullSyncDiff): boolean {
   return diff.stories.content !== undefined && !diff.stories.content.conclusive;
 }
 
+/** The file checks of `diff` that did not conclude, by name, with their cause. */
+export function unreadChecks(diff: FullSyncDiff): Array<{ check: "stories" | "pages"; cause: "structure" | "request"; reason: string; ids?: Array<string | number> }> {
+  const out: ReturnType<typeof unreadChecks> = [];
+  const story = diff.stories.content;
+  if (story && !story.conclusive) out.push({ check: "stories", cause: story.cause ?? "request", reason: story.reason, ...(story.storyIds ? { ids: story.storyIds } : {}) });
+  const pages = diff.pages;
+  if (pages && !pages.conclusive) out.push({ check: "pages", cause: pages.cause ?? "request", reason: pages.reason, ...(pages.pageIds ? { ids: pages.pageIds } : {}) });
+  return out;
+}
+
+/** The checks that did not conclude for a request cause: the dialog says so, and offers to check again. */
+export function requestUnread(diff: FullSyncDiff | null): { stories: boolean; pages: boolean } {
+  const checks = diff ? unreadChecks(diff).filter((c) => c.cause === "request") : [];
+  return { stories: checks.some((c) => c.check === "stories"), pages: checks.some((c) => c.check === "pages") };
+}
+
+/**
+ * True when the check read the stories or pages at the head alone, because
+ * its base is no longer a commit GitHub holds: nothing then tells which side
+ * made a change, as in a two-way diff.
+ */
+export function baseUnresolvedOf(diff: FullSyncDiff): boolean {
+  const story = diff.stories.content;
+  const pages = diff.pages;
+  return (story?.conclusive === true && story.baseUnresolved === true) || (pages?.conclusive === true && pages.baseUnresolved === true);
+}
+
 /**
  * Whether GitHub's version of the story can be taken: not for a story Telar
  * cannot read, and not without the hash of the version the author reviewed,
  * which the accept needs to refuse a story edited since.
  */
-function contentTakeable(change: StoryContentChange): boolean {
+export function contentTakeable(change: StoryContentChange): boolean {
   return change.kind !== "unreadable" && change.expected !== null;
 }
 
@@ -194,6 +228,7 @@ function withStoryContent(diff: FullSyncDiff, sel: ThreeWaySelections, changes: 
     // The check's identity: the apply is refused unless it still holds.
     ...(diff.projectId !== undefined ? { projectId: diff.projectId } : {}),
     ...(diff.baseSha !== undefined ? { baseSha: diff.baseSha } : {}),
+    ...(diff.objectsReadSha !== undefined ? { objectsReadSha: diff.objectsReadSha } : {}),
     ...(diff.stories.content?.conclusive === true ? { storyContentChecked: true } : {}),
   };
 }
@@ -259,21 +294,9 @@ function withPageContent(diff: FullSyncDiff, sel: ThreeWaySelections, changes: F
 }
 
 /**
- * What Keep my version posts for `diff`: the diff's own identity, so the
- * choice is bound to the diff the author reviewed and not to anything read
- * when they click. The project, the base it was computed against ("" for
- * none) and its HEAD; a field the diff lacks is left out, and the action
- * answers that as stale.
+ * Whether the check found anything for the dialog to offer or apply: a change
+ * listed, files it could not read, GitHub's object order or GitHub's Telar version.
  */
-export function keepMineFields(diff: FullSyncDiff): Record<string, string> {
-  return {
-    intent: "accept-divergence",
-    ...(diff.projectId !== undefined ? { projectId: String(diff.projectId) } : {}),
-    ...(diff.baseSha !== undefined ? { baseSha: diff.baseSha ?? "" } : {}),
-    ...(diff.headSha ? { headSha: diff.headSha } : {}),
-  };
-}
-
 export function hasDiffChanges(diff: FullSyncDiff): boolean {
   const lists = [
     listedContentChanges(diff),
@@ -283,6 +306,7 @@ export function hasDiffChanges(diff: FullSyncDiff): boolean {
     diff.objects.newObjects,
     diff.objects.changedObjects,
     diff.objects.missingObjects,
+    diff.objects.unregisteredFiles,
     diff.stories.newStories,
     diff.stories.changedStories,
     diff.stories.missingStories,
@@ -292,11 +316,12 @@ export function hasDiffChanges(diff: FullSyncDiff): boolean {
     diff.glossary.removed,
   ];
   const unread = [contentInconclusive(diff), pagesInconclusive(diff)];
-  return unread.includes(true) || diff.objects.reordered != null || lists.some((list) => list.length > 0);
+  return unread.includes(true) || diff.objects.reordered != null || diff.config.versionChange != null
+    || lists.some((list) => list.length > 0);
 }
 
 // ---------------------------------------------------------------------------
-// Helper: build all-or-nothing FullSyncChanges from a FullSyncDiff (two-way)
+// The payload builders
 // ---------------------------------------------------------------------------
 
 /** The names of objects `ids` as the check showed them, quoted; the id for one it did not list. */
@@ -348,20 +373,43 @@ function docIdsOf(shown: Array<{ object_id: string; dbId: number }>): Record<str
 }
 
 /**
- * The per-field choices of changed stories or terms, by id: GitHub's value
- * for a field only GitHub moved, the row's one choice for a conflicting
- * field, as for an object's fields (`buildThreeWayChanges`). Built from
+ * What a builder takes for a change the author made no choice on. Three-way
+ * (`buildThreeWayChanges`): GitHub's side of a change GitHub alone made, and
+ * of a conflict the diff marks GitHub's (`repoDefaultFields`,
+ * `repoByDefault`); the Compositor's side of any other change both made.
+ * Two-way (`buildAllOrNothingChanges`): GitHub's side of everything. Either
+ * way, a story or term deleted on GitHub is kept, and a file check that did
+ * not conclude is not kept over: both happen only on the author's choice.
+ */
+type Fallback = "three-way" | "two-way";
+
+/**
+ * A changed row's per-field choices: the row's own choice over every field
+ * GitHub changed when the author made one; else, three-way, the fallback
+ * choice for its conflicting fields and GitHub's for the rest, and two-way,
+ * GitHub's for all.
+ */
+function rowChoicesOf(
+  row: { changedFields: readonly string[]; conflictFields: readonly string[]; repoByDefault?: boolean },
+  chosen: ConflictChoice | undefined,
+  fallback: Fallback,
+): Record<string, ConflictChoice> {
+  const conflictChoice: ConflictChoice = fallback === "two-way" || row.repoByDefault ? "repo" : "d1";
+  return Object.fromEntries(
+    row.changedFields.map((f) => [f, chosen ?? (row.conflictFields.includes(f) ? conflictChoice : "repo")]),
+  );
+}
+
+/**
+ * The per-field choices of changed stories or terms, by id. Built from
  * entries, so every id, a `__proto__` included, is an own property of it.
  */
 function rowFieldChoices(
-  rows: Array<[string, { changedFields: readonly string[]; conflictFields: readonly string[] }, ConflictChoice]>,
+  rows: ReadonlyArray<{ id: string; row: Parameters<typeof rowChoicesOf>[0] }>,
+  choices: Record<string, ConflictChoice>,
+  fallback: Fallback,
 ): Record<string, Record<string, ConflictChoice>> {
-  return Object.fromEntries(
-    rows.map(([id, row, choice]) => [
-      id,
-      Object.fromEntries(row.changedFields.map((f) => [f, row.conflictFields.includes(f) ? choice : "repo"])),
-    ]),
-  );
+  return Object.fromEntries(rows.map(({ id, row }) => [id, rowChoicesOf(row, ownValue(choices, id), fallback)]));
 }
 
 /** The ids with a field taken from GitHub (accepted), and the rest (rejected). */
@@ -371,41 +419,117 @@ function splitByRepoField(fieldChoices: Record<string, Record<string, ConflictCh
   return [ids.filter(taken), ids.filter((id) => !taken(id))];
 }
 
-export function buildAllOrNothingChanges(diff: FullSyncDiff, sel: ThreeWaySelections): FullSyncChanges {
-  const fieldChoices: Record<string, Record<string, ConflictChoice>> = Object.fromEntries(
-    diff.objects.changedObjects.map((o) => [
-      o.object_id,
-      Object.fromEntries(o.changedFields.map((f) => [f, "repo" as const])),
-    ])
+/**
+ * Whether a change on one side only is taken: the author's yes or no, else
+ * the fallback, which three-way leaves out a change the Compositor made too
+ * (`bothSides`).
+ */
+function takenOf(record: Record<string, boolean>, id: string, bothSides: boolean | undefined, fallback: Fallback): boolean {
+  return ownValue(record, id) ?? (fallback === "two-way" || !bothSides);
+}
+
+/**
+ * A changed object's per-field choices: a field's own choice, else the
+ * object's one choice, else the fallback (`threeWayFieldDefault` three-way,
+ * GitHub's two-way).
+ */
+function objectChoicesOf(o: ChangedObject, sel: ThreeWaySelections, fallback: Fallback): Record<string, ConflictChoice> {
+  const fieldSel = ownValue(sel.objectFieldChoices, o.object_id) ?? {};
+  const objectChoice = ownValue(sel.objectChoices ?? {}, o.object_id);
+  return Object.fromEntries(
+    o.changedFields.map((f) => [
+      f,
+      ownValue(fieldSel, f) ?? objectChoice ?? (fallback === "two-way" ? "repo" : threeWayFieldDefault(o, f)),
+    ]),
   );
+}
+
+/** The payload for the author's choices, with `fallback` for a change they made none on. */
+function buildChanges(diff: FullSyncDiff, sel: ThreeWaySelections, fallback: Fallback): FullSyncChanges {
+  // --- objects ---
+  const newObjectIds = diff.objects.newObjects
+    .filter((o) => takenOf(sel.objectRestore, o.object_id, o.deletedInCompositor, fallback))
+    .map((o) => o.object_id);
+  // Built from entries, so every object id, a `__proto__` included, is an own
+  // property of it.
+  const fieldChoices: Record<string, Record<string, ConflictChoice>> = Object.fromEntries(
+    diff.objects.changedObjects.map((o) => [o.object_id, objectChoicesOf(o, sel, fallback)]),
+  );
+  // A removal not taken leaves the row, which the residue flags missing_from_repo.
+  const removedObjects = diff.objects.missingObjects.filter((o) =>
+    takenOf(sel.objectDelete, o.object_id, o.editedInCompositor, fallback),
+  );
+  // An image file with no object is added unless the author leaves it out;
+  // files sharing a stem add one object.
+  const imageIds = [...new Set(
+    diff.objects.unregisteredFiles.filter((f) => ownValue(sel.imageAdd ?? {}, f.filename) !== false).map((f) => f.object_id),
+  )];
+
+  // --- stories ---
+  const storyFieldChoices = rowFieldChoices(
+    diff.stories.changedStories.map((s) => ({ id: s.story_id, row: s })), sel.storyChoices, fallback,
+  );
+  const [storyAccept, storyReject] = splitByRepoField(storyFieldChoices);
+  const storyInsertNew = diff.stories.newStories
+    .filter((s) => takenOf(sel.storyRestore, s.story_id, s.deletedInCompositor, fallback))
+    .map((s) => s.story_id);
+
+  // --- config ---
+  const configTaken = (c: FullSyncDiff["config"]["changedFields"][number]) =>
+    (ownValue(sel.configChoices, c.key) ?? (fallback === "two-way" || !c.conflict ? "repo" : "d1")) === "repo";
+  const configAccept = diff.config.changedFields.filter(configTaken).map((c) => c.key);
+  const configReject = diff.config.changedFields.filter((c) => !configTaken(c)).map((c) => c.key);
+
+  // --- glossary ---
+  const glossFieldChoices = rowFieldChoices(
+    diff.glossary.changed.map((t) => ({ id: t.term_id, row: t })), sel.glossaryChangedChoices, fallback,
+  );
+  const [glossAccept, glossReject] = splitByRepoField(glossFieldChoices);
+  const glossInsertNew = diff.glossary.added
+    .filter((t) => takenOf(sel.glossaryRestore, t.term_id, t.deletedInCompositor, fallback))
+    .map((t) => t.term_id);
+
+  // --- rows deleted on GitHub: deleted here only when the author chose it ---
+  const chosenRemovals = (rows: ReadonlyArray<{ id: string; dbId: number; held?: true }>, chosen: Record<string, boolean> | undefined) =>
+    rows.filter((r) => !r.held && ownValue(chosen ?? {}, r.id) === true).map(({ id, dbId }) => ({ id, dbId }));
+  const storyRemove = chosenRemovals(diff.stories.missingStories.map((s) => ({ id: s.story_id, dbId: s.dbId })), sel.storyDelete);
+  const glossRemove = chosenRemovals(diff.glossary.removed.map((t) => ({ id: t.term_id, dbId: t.dbId, ...(t.held ? { held: t.held } : {}) })), sel.glossaryDelete);
+
+  // --- file checks that did not conclude for a structural cause ---
+  const keepUnreadFiles = unreadChecks(diff)
+    .filter((c) => c.cause === "structure" && ownValue(sel.keepUnread ?? {}, c.check) === "d1")
+    .map((c) => c.check);
+
   return withPageContent(diff, sel, withStoryContent(diff, sel, {
     objects: {
-      newObjectIds: diff.objects.newObjects.map((o) => o.object_id),
+      newObjectIds,
       changedObjectIds: diff.objects.changedObjects.map((o) => o.object_id),
       changedDocIds: docIdsOf(diff.objects.changedObjects),
       fieldChoices,
       fieldsSeen: fieldsSeenFor(diff.objects.changedObjects, fieldChoices),
-      removedObjectIds: diff.objects.missingObjects.map((o) => o.object_id),
-      removedDocIds: docIdsOf(diff.objects.missingObjects),
-      unregisteredObjectIds: [],
+      removedObjectIds: removedObjects.map((o) => o.object_id),
+      removedDocIds: docIdsOf(removedObjects),
+      unregisteredObjectIds: imageIds,
     },
     stories: {
-      accept: diff.stories.changedStories.map((s) => s.story_id),
-      reject: [],
-      insertNew: diff.stories.newStories.map((s) => s.story_id),
-      fieldChoices: rowFieldChoices(diff.stories.changedStories.map((s) => [s.story_id, s, "repo"])),
+      accept: storyAccept, reject: storyReject, insertNew: storyInsertNew, fieldChoices: storyFieldChoices,
+      ...(storyRemove.length > 0 ? { remove: storyRemove } : {}),
     },
-    config: {
-      accept: diff.config.changedFields.map((c) => c.key),
-      reject: [],
-    },
+    config: { accept: configAccept, reject: configReject },
     glossary: {
-      accept: diff.glossary.changed.map((t) => t.term_id),
-      reject: [],
-      insertNew: diff.glossary.added.map((t) => t.term_id),
-      fieldChoices: rowFieldChoices(diff.glossary.changed.map((t) => [t.term_id, t, "repo"])),
+      accept: glossAccept, reject: glossReject, insertNew: glossInsertNew, fieldChoices: glossFieldChoices,
+      ...(glossRemove.length > 0 ? { remove: glossRemove } : {}),
     },
+    ...(keepUnreadFiles.length > 0 ? { keepUnreadFiles } : {}),
   }));
+}
+
+/**
+ * The payload for a two-way diff: every change the author made a choice on
+ * as they chose, and GitHub's side of any other.
+ */
+export function buildAllOrNothingChanges(diff: FullSyncDiff, sel: ThreeWaySelections): FullSyncChanges {
+  return buildChanges(diff, sel, "two-way");
 }
 
 // ---------------------------------------------------------------------------
@@ -413,129 +537,30 @@ export function buildAllOrNothingChanges(diff: FullSyncDiff, sel: ThreeWaySelect
 // ---------------------------------------------------------------------------
 
 /**
- * Maps the diff plus the user's conflict resolutions onto the existing
- * FullSyncChanges contract. Pure — exported for unit testing.
+ * Maps the diff plus the author's choices onto the FullSyncChanges contract.
+ * Pure — exported for unit testing.
  *
- * Rules:
- *   - Repo-only changes (no conflict) are pre-accepted.
- *   - Object conflict fields: keep-mine -> "d1" choice, use-repo -> "repo";
- *     untouched, the field's default (`objectFieldChoiceOf`).
- *     Non-conflict fields of a partly-conflicted object stay "repo".
- *   - Story and glossary rows: per field as objects are (`rowFieldChoices`),
- *     the row's one choice covering its conflicting fields; a row with no
- *     field taken from GitHub is rejected.
- *   - Config conflict keys: keep-mine -> reject, use-repo -> accept.
- *   - Deleted-here objects/terms: Restore -> included in newObjectIds /
- *     insertNew; Keep-deleted -> omitted (the default).
+ * Rules, for a change the author made a choice on:
+ *   - A changed object, story or term: the one choice covers every field
+ *     GitHub changed; an object's field choice overrides it for that field.
+ *     A story or term with no field taken from GitHub is rejected.
+ *   - A config key: GitHub's -> accept, the Compositor's -> reject.
+ *   - A new object, story or term: added (restored) when taken.
+ *   - A missing object, story or term: removed when taken; kept otherwise.
+ *   - An image file with no object: added as one unless left out.
+ *   - A file check that did not conclude for a structural cause: the
+ *     Compositor's version kept (`keepUnreadFiles`) when chosen.
  *   - A story whose content changed: its one choice decides its content and
  *     its row together (`withStoryContent`).
  *   - A page whose file changed: its choice decides whether GitHub's version
  *     is taken (`withPageContent`).
+ * A change with no choice takes the three-way fallback (`Fallback`).
  */
 export function buildThreeWayChanges(
   diff: FullSyncDiff,
   sel: ThreeWaySelections,
 ): FullSyncChanges {
-
-  // --- objects ---
-  const newObjectIds = [
-    ...diff.objects.newObjects.filter((o) => !o.deletedInCompositor).map((o) => o.object_id),
-    ...diff.objects.newObjects
-      .filter((o) => o.deletedInCompositor && ownValue(sel.objectRestore, o.object_id) === true)
-      .map((o) => o.object_id),
-  ];
-  const changedObjectIds = diff.objects.changedObjects.map((o) => o.object_id);
-  // Built from entries, so every object id, a `__proto__` included, is an own
-  // property of it.
-  const fieldChoices: Record<string, Record<string, ConflictChoice>> = Object.fromEntries(
-    diff.objects.changedObjects.map((o) => {
-      const conflictSet = new Set<string>(o.conflictFields);
-      return [
-        o.object_id,
-        Object.fromEntries(o.changedFields.map((f) => [f, conflictSet.has(f) ? objectFieldChoiceOf(o, f, sel) : "repo"])),
-      ];
-    }),
-  );
-  // Unflagged missing objects are pre-accepted for removal; a deleted-in-repo/
-  // edited-here object is removed only when the user explicitly chose Delete
-  // (default keep-mine leaves it out, so the residue re-flags missing_from_repo).
-  const removedObjects = [
-    ...diff.objects.missingObjects.filter((o) => !o.editedInCompositor),
-    ...diff.objects.missingObjects.filter((o) => o.editedInCompositor && ownValue(sel.objectDelete, o.object_id) === true),
-  ];
-  const removedObjectIds = removedObjects.map((o) => o.object_id);
-
-  // --- stories ---
-  const storyFieldChoices = rowFieldChoices(
-    diff.stories.changedStories.map((s) => [s.story_id, s, rowChoiceOf(sel.storyChoices, s.story_id, s.repoByDefault)]),
-  );
-  const [storyAccept, storyReject] = splitByRepoField(storyFieldChoices);
-
-  // --- config ---
-  const configAccept: string[] = [];
-  const configReject: string[] = [];
-  for (const c of diff.config.changedFields) {
-    if (!c.conflict) {
-      configAccept.push(c.key);
-    } else if (rowChoiceOf(sel.configChoices, c.key) === "repo") {
-      configAccept.push(c.key);
-    } else {
-      configReject.push(c.key);
-    }
-  }
-
-  // --- glossary ---
-  const glossFieldChoices = rowFieldChoices(
-    diff.glossary.changed.map((t) => [t.term_id, t, rowChoiceOf(sel.glossaryChangedChoices, t.term_id, t.repoByDefault)]),
-  );
-  const [glossAccept, glossReject] = splitByRepoField(glossFieldChoices);
-  const glossInsertNew = [
-    ...diff.glossary.added.filter((t) => !t.deletedInCompositor).map((t) => t.term_id),
-    ...diff.glossary.added
-      .filter((t) => t.deletedInCompositor && ownValue(sel.glossaryRestore, t.term_id) === true)
-      .map((t) => t.term_id),
-  ];
-
-  // Genuine new stories insert; a deleted-here (repo edited, editor deleted)
-  // story inserts only when the user chose Restore (default keep-deleted).
-  const storyInsertNew = [
-    ...diff.stories.newStories.filter((s) => !s.deletedInCompositor).map((s) => s.story_id),
-    ...diff.stories.newStories
-      .filter((s) => s.deletedInCompositor && ownValue(sel.storyRestore, s.story_id) === true)
-      .map((s) => s.story_id),
-  ];
-
-  return withPageContent(diff, sel, withStoryContent(diff, sel, {
-    objects: {
-      newObjectIds,
-      changedObjectIds,
-      changedDocIds: docIdsOf(diff.objects.changedObjects),
-      fieldChoices,
-      fieldsSeen: fieldsSeenFor(diff.objects.changedObjects, fieldChoices),
-      removedObjectIds,
-      removedDocIds: docIdsOf(removedObjects),
-      unregisteredObjectIds: [],
-    },
-    stories: { accept: storyAccept, reject: storyReject, insertNew: storyInsertNew, fieldChoices: storyFieldChoices },
-    config: { accept: configAccept, reject: configReject },
-    glossary: { accept: glossAccept, reject: glossReject, insertNew: glossInsertNew, fieldChoices: glossFieldChoices },
-  }));
-}
-
-/** True when the three-way diff carries at least one conflict to resolve. */
-export function hasConflictItems(diff: FullSyncDiff): boolean {
-  return (
-    diff.objects.changedObjects.some((o) => o.conflictFields.length > 0) ||
-    diff.objects.newObjects.some((o) => o.deletedInCompositor) ||
-    diff.objects.missingObjects.some((o) => o.editedInCompositor) ||
-    diff.stories.changedStories.some(
-      (s) => s.conflict && !listedContentChanges(diff).some((c) => c.story_id === s.story_id),
-    ) ||
-    diff.stories.newStories.some((s) => s.deletedInCompositor) ||
-    diff.config.changedFields.some((c) => c.conflict) ||
-    diff.glossary.changed.some((t) => t.conflict) ||
-    diff.glossary.added.some((t) => t.deletedInCompositor)
-  );
+  return buildChanges(diff, sel, "three-way");
 }
 
 // ---------------------------------------------------------------------------
@@ -568,15 +593,13 @@ export function successKey(storyFilesUnread: boolean, pageFilesUnread: boolean):
  * The notes `ApplyNotes` shows, in order: with nothing to apply and every
  * file read, that nothing needs doing; otherwise, when there is something to
  * apply, that applying it leaves the site out of sync for each set of files
- * unread, then what keeping the Compositor's version does.
+ * unread.
  */
 export function applyNoteKeys(anythingToApply: boolean, storyFilesUnread: boolean, pageFilesUnread: boolean): string[] {
   if (!anythingToApply && !storyFilesUnread && !pageFilesUnread) return ["sync_modal.no_changes_body"];
-  const unreadNotes = anythingToApply
-    ? [
-        ...(storyFilesUnread ? ["sync_modal.content_inconclusive_apply_note"] : []),
-        ...(pageFilesUnread ? ["sync_modal.pages_inconclusive_apply_note"] : []),
-      ]
-    : [];
-  return [...unreadNotes, "sync_modal.use_compositor_helper"];
+  if (!anythingToApply) return [];
+  return [
+    ...(storyFilesUnread ? ["sync_modal.content_inconclusive_apply_note"] : []),
+    ...(pageFilesUnread ? ["sync_modal.pages_inconclusive_apply_note"] : []),
+  ];
 }

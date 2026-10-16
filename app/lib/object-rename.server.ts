@@ -34,8 +34,8 @@
  *
  * Where it has none, nothing of the rename is committed: it runs in the
  * document alone under a record written committed, unless files under the old ID's
- * stems sit in the repository with no row, which the objects sync registers
- * first (`rename_unregistered_files`).
+ * stems sit in the repository with no row, which the full sync's review
+ * registers first (`rename_unregistered_files`).
  *
  * On a site that reads Google Sheets the build would overwrite the renamed
  * rows, so the rename goes ahead only when the author switches Sheets off:
@@ -54,7 +54,7 @@
  *
  * Answers are codes and params; the page words them.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { and, eq } from "drizzle-orm";
@@ -420,7 +420,7 @@ interface RecordedRun {
 /**
  * A rename with no row for the object in objects.csv: no cache and no build;
  * the document half alone. Files under the old ID's stems with no row refuse:
- * the objects sync registers them first. With nothing to commit, the record
+ * the full sync's review registers them first. With nothing to commit, the record
  * is written committed, as `removeThroughCommittedRecord` writes one. On a
  * site reading Google Sheets, whose next build would bring the old ID back
  * from the sheet, `sheetsOff` is `_config.yml` with Sheets switched off,

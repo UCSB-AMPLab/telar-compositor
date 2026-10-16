@@ -6,18 +6,15 @@
  * routine full sync offers to delete the entire course collection, and a
  * convenor editing objects.csv on GitHub can remove any course item silently.
  *
- * Two delete paths, both pinned here:
- *   - `applySyncChanges` sends accepted removals through the document, by D1
- *     id, as `objects.remove`.
- *   - `resolveFullSyncPayload` routes them through the document as
- *     `objects.remove`, by D1 id, where the snapshot's orphan-delete drops
- *     the row.
+ * The delete path, pinned here: `resolveFullSyncPayload` routes accepted
+ * removals through the document as `objects.remove`, by D1 id, where the
+ * snapshot's orphan-delete drops the row.
  *
  * Also pinned, because the design leans on it rather than re-implementing it:
  * `origin: "compositor"` already keeps a preloaded object out of the
  * missing-from-repo flag.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -52,8 +49,7 @@ vi.mock("~/lib/github.server", () => {
 });
 
 import * as githubServer from "~/lib/github.server";
-import { syncIngestRecorder } from "./helpers/sync-ingest-recorder";
-import { applySyncChanges, resolveFullSyncPayload } from "~/lib/sync.server";
+import { resolveFullSyncPayload } from "~/lib/sync.server";
 import type { MockDb } from "./sync-probe-fixtures";
 
 const PROJECT_ID = 42;
@@ -157,69 +153,6 @@ beforeEach(() => {
   vi.mocked(githubServer.getFileContent).mockResolvedValue(EMPTY_OBJECTS_CSV);
   vi.mocked(githubServer.getRepoTree).mockResolvedValue({ tree: [], sha: "abc" } as never);
   vi.mocked(githubServer.getRepoHead).mockResolvedValue(CHECKED_HEAD);
-});
-
-// ---------------------------------------------------------------------------
-// applySyncChanges — the document-routed remove
-// ---------------------------------------------------------------------------
-
-describe("applySyncChanges — removed objects", () => {
-  // Each removal names the D1 id the author was shown, as the dialog submits it.
-  const removal = (removedDocIds: Record<string, number>) => ({
-    newObjectIds: [],
-    changedObjectIds: [],
-    fieldChoices: {},
-    removedObjectIds: Object.keys(removedDocIds),
-    removedDocIds,
-    unregisteredObjectIds: [],
-    headSha: CHECKED_HEAD,
-  });
-
-  it("removes an ordinary site object through the document, by its D1 id, and deletes nothing in D1", async () => {
-    const tracked = deleteTrackingDb([[d1Object({ object_id: "obj-plain" })]]);
-    const ingest = syncIngestRecorder();
-
-    const result = await applySyncChanges(
-      PROJECT_ID, removal({ "obj-plain": 1 }), TOKEN, OWNER, REPO, tracked.db, ingest.env, EXEMPTION_ACTOR_ID,
-    );
-
-    expect(tracked.deletes).toBe(0);
-    expect(result.appliedCount).toBe(1);
-    expect(ingest.objectsArm()?.remove).toEqual([{ objectId: "obj-plain", docId: 1 }]);
-  });
-
-  it("refuses to remove a course item, however the removal was accepted", async () => {
-    const tracked = deleteTrackingDb([
-      [d1Object({ object_id: "obj-course", course_project_id: COURSE_ID, origin: "compositor" })],
-    ]);
-    const ingest = syncIngestRecorder();
-
-    const result = await applySyncChanges(
-      PROJECT_ID, removal({ "obj-course": 1 }), TOKEN, OWNER, REPO, tracked.db, ingest.env, EXEMPTION_ACTOR_ID,
-    );
-
-    // Neither half: no D1 delete, and no removal sent through the document,
-    // where the snapshot's orphan sweep would take the row anyway.
-    expect(tracked.deletes).toBe(0);
-    expect(result.appliedCount).toBe(0);
-    expect(ingest.bodies).toEqual([]);
-  });
-
-  it("exempts only the course item when a mixed batch is accepted", async () => {
-    const tracked = deleteTrackingDb([
-      [
-        d1Object({ id: 1, object_id: "obj-plain" }),
-        d1Object({ id: 2, object_id: "obj-course", course_project_id: COURSE_ID, origin: "compositor" }),
-      ],
-    ]);
-    const ingest = syncIngestRecorder();
-
-    await applySyncChanges(
-      PROJECT_ID, removal({ "obj-plain": 1, "obj-course": 2 }), TOKEN, OWNER, REPO, tracked.db, ingest.env, EXEMPTION_ACTOR_ID,
-    );
-
-    expect(ingest.objectsArm()?.remove).toEqual([{ objectId: "obj-plain", docId: 1 }]);
-  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,30 +1,24 @@
 // @vitest-environment jsdom
 /**
- * The two screens that list the steps using an object read the same sentence.
+ * The steps using an object, as the object detail page lists them.
  *
- * The object detail page and the objects-tab sync dialog answer the same
- * question — which steps depend on this object — and an author moving between
- * them is looking at one fact. One key (`used_in_step`) and one fallback for an
- * untitled story (`untitled_story`) are what keep that true; two copies of the
- * formatting drift apart silently, because each screen's own tests pass either
- * way.
- *
- * So this renders both, over the same usage refs and the same catalogue, and
- * compares the text. A divergence in wording, in punctuation, or in what an
- * untitled story is called fails here and nowhere else.
+ * The page answers which steps depend on this object with one key
+ * (`used_in_step`) and one fallback for an untitled story (`untitled_story`).
+ * This renders it over usage refs and the real catalogue, and compares the
+ * text: a change in wording, in punctuation, or in what an untitled story is
+ * called fails here.
  *
  * The object page pulls its server modules in at module scope, which is what
  * the block of `vi.mock` calls below is for; none of them is what the
  * assertions are about.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 import React from "react";
 import * as Y from "yjs";
-import type { SyncDiff } from "~/lib/sync.server";
 
 vi.mock("react-i18next", async () => {
   const { catalogueT } = await import("./helpers/catalogue-translator");
@@ -86,13 +80,12 @@ vi.mock("~/lib/github-app.server", () => ({ getInstallationToken: vi.fn() }));
 vi.mock("~/lib/object-repo-delete.server", () => ({ deleteObjectFromRepository: vi.fn() }));
 
 import ObjectDetailPage from "~/routes/_app.objects.$objectId";
-import { SyncDiffDialog } from "~/components/features/objects/SyncDiffDialog";
 
 afterEach(cleanup);
 
 type StoryUse = { storyTitle: string | null; stepNumber: number };
 
-/** The same two refs both screens are given, one of them untitled. */
+/** Two refs, one of them untitled. */
 const USED_BY: StoryUse[] = [
   { storyTitle: "El río Magdalena", stepNumber: 4 },
   { storyTitle: null, stepNumber: 1 },
@@ -137,48 +130,14 @@ function objectPageEntries(usedInStories: StoryUse[]): (string | null)[] {
   return Array.from(container.querySelectorAll("li")).map((li) => li.textContent);
 }
 
-/** The sync dialog's list entries, for an object missing from the repo. */
-function syncDialogEntries(usedByStories: StoryUse[]): (string | null)[] {
-  const diffData: SyncDiff = {
-    newObjects: [],
-    changedObjects: [],
-    missingObjects: [
-      { object_id: "mapa-de-santafe", dbId: 2, title: "Mapa de Santafé", usedByStories },
-    ],
-    unregisteredFiles: [], reordered: null,
-  };
-  const { baseElement: container } = render(
-    <SyncDiffDialog
-      open
-      onClose={() => {}}
-      diffData={diffData}
-      onApply={() => {}}
-      isComputing={false}
-      isApplying={false}
-    />,
-  );
-  return Array.from(container.querySelectorAll("li")).map((li) => li.textContent);
-}
-
-describe("used_in_step — one wording across both screens", () => {
-  it("renders the same entries on the object page and in the sync dialog", () => {
-    const fromPage = objectPageEntries(USED_BY);
-    cleanup();
-    const fromDialog = syncDialogEntries(USED_BY);
-
-    expect(fromPage).toEqual(["El río Magdalena — step 4", "Untitled story — step 1"]);
-    expect(fromDialog).toEqual(fromPage);
+describe("used_in_step on the object page", () => {
+  it("renders each step using the object", () => {
+    expect(objectPageEntries(USED_BY)).toEqual(["El río Magdalena — step 4", "Untitled story — step 1"]);
   });
 
-  it("gives an untitled story the story fallback, not the generic one, on both", () => {
-    const untitled = [{ storyTitle: null, stepNumber: 1 }];
-    const fromPage = objectPageEntries(untitled);
-    cleanup();
-    const fromDialog = syncDialogEntries(untitled);
-
+  it("gives an untitled story the story fallback, not the generic one", () => {
     // `common:untitled` renders "Untitled", which is also what an object and a
     // page are called; the entry has to say which kind of thing is untitled.
-    expect(fromPage).toEqual(["Untitled story — step 1"]);
-    expect(fromDialog).toEqual(fromPage);
+    expect(objectPageEntries([{ storyTitle: null, stepNumber: 1 }])).toEqual(["Untitled story — step 1"]);
   });
 });

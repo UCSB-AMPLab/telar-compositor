@@ -7,10 +7,15 @@
  * loaded, before the forced snapshot and before anything is finished or
  * written; an edit that landed after the page's own check would otherwise be
  * overwritten. Its final write records the new commit compare-and-set from
- * `publishSha`, so a head another writer recorded during the publish is kept,
- * and the publish still reports its commit.
+ * the head it loaded, so a head another writer recorded during the publish is
+ * kept, and the publish still reports its commit.
  *
- * @version v1.5.0-beta
+ * With no head recorded, the first publish lands only on the head the page's
+ * check showed (`shownHead`), and only while that head is still the commit the
+ * import read; its record compares-and-sets from no head, and the record of
+ * the objects.csv read moves to its commit from the one loaded.
+ *
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,6 +24,10 @@ import { guardedOnHead, readableHeadWrite } from "./helpers/head-write";
 const state = vi.hoisted(() => ({
   /** The project as the route loaded it. */
   loadedHead: null as string | null,
+  /** The loaded project's page files record, whose commit is the import's while no head is recorded. */
+  loadedPageFiles: null as string | null,
+  /** The loaded project's record of the objects.csv read. */
+  loadedObjectsRead: null as string | null,
   /** Every projects-row `set` payload, readable. */
   projectWrites: [] as Record<string, unknown>[],
   /** The project row as D1 holds it, for the columns these writes touch. */
@@ -78,6 +87,8 @@ vi.mock("~/lib/membership.server", () => ({
       installation_id: 55,
       publish_snapshot: null,
       head_sha: state.loadedHead,
+      page_files_json: state.loadedPageFiles,
+      objects_read_sha: state.loadedObjectsRead,
     },
     userRole: "convenor",
   })),
@@ -145,10 +156,11 @@ function buildContext() {
   } as unknown as Parameters<typeof action>[0]["context"];
 }
 
-async function runPublish() {
+async function runPublish(shownHead?: string) {
   const form = new FormData();
   form.set("intent", "publish");
   form.set("commitMessage", "Publish site");
+  if (shownHead !== undefined) form.set("shownHead", shownHead);
   // The mocked active project's id, string-compared by `resolvePageProject`.
   form.set("siteId", "7");
   return (await action({
@@ -163,6 +175,8 @@ beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   state.loadedHead = RECORDED;
+  state.loadedPageFiles = null;
+  state.loadedObjectsRead = RECORDED;
   state.projectWrites.length = 0;
   state.row.head_sha = RECORDED;
   state.row.published_sha = null;
@@ -260,5 +274,72 @@ describe("a publish on the recorded head", () => {
     // What the publish committed is recorded either way.
     expect(state.row.published_sha).toBe("new-sha");
     expect(typeof state.projectWrites[0].publish_snapshot).toBe("string");
+  });
+});
+
+describe("a first publish, with no head recorded", () => {
+  const IMPORTED = "3333333333333333333333333333333333333333";
+
+  beforeEach(() => {
+    state.loadedHead = null;
+    state.row.head_sha = null;
+    state.loadedPageFiles = JSON.stringify({ commit: IMPORTED, files: {} });
+    state.loadedObjectsRead = IMPORTED;
+    getRepoHead.mockResolvedValue(IMPORTED);
+  });
+
+  it("commits on the head the page showed while it is the import's commit", async () => {
+    expect(await runPublish(IMPORTED)).toMatchObject({ ok: true, intent: "publish", newHeadSha: "new-sha" });
+    expect((commitFilesToRepo.mock.calls[0] as unknown[])[9]).toBe(IMPORTED);
+  });
+
+  it("records its commit compare-and-set from no head, and the row takes it", async () => {
+    await runPublish(IMPORTED);
+    expect(state.projectWrites[0]).toMatchObject({ head_sha: "new-sha", head_sha_from: null });
+    expect(state.row.head_sha).toBe("new-sha");
+  });
+
+  it("moves the record of the objects.csv read to its commit from the record loaded", async () => {
+    await runPublish(IMPORTED);
+    expect(state.projectWrites[0]).toMatchObject({
+      objects_read_sha: "new-sha",
+      objects_read_sha_while_head: null,
+      objects_read_sha_from: IMPORTED,
+    });
+  });
+
+  it("moves the record of an import that read no objects.csv too", async () => {
+    state.loadedObjectsRead = null;
+    await runPublish(IMPORTED);
+    expect(state.projectWrites[0]).toMatchObject({ objects_read_sha: "new-sha", objects_read_sha_from: null });
+  });
+
+  it("records the page files with its commit from no head", async () => {
+    await runPublish(IMPORTED);
+    expect(state.projectWrites[0]).toMatchObject({ page_files_json_while_head: null });
+  });
+
+  it("refuses stale_head when the page showed no head", async () => {
+    expect(await runPublish()).toEqual({ ok: false, intent: "publish", error: "stale_head", projectId: 7 });
+    expect(commitFilesToRepo).not.toHaveBeenCalled();
+  });
+
+  it("refuses stale_head when GitHub moved after the page's check", async () => {
+    getRepoHead.mockResolvedValue(AHEAD);
+    expect(await runPublish(IMPORTED)).toEqual({ ok: false, intent: "publish", error: "stale_head", projectId: 7 });
+    expect(snapshotFetch).not.toHaveBeenCalled();
+    expect(state.projectWrites).toEqual([]);
+  });
+
+  it("refuses stale_head on a commit since the import, though the page sent that commit", async () => {
+    getRepoHead.mockResolvedValue(AHEAD);
+    expect(await runPublish(AHEAD)).toEqual({ ok: false, intent: "publish", error: "stale_head", projectId: 7 });
+    expect(commitFilesToRepo).not.toHaveBeenCalled();
+  });
+
+  it("commits on the head the page showed when the import recorded no commit", async () => {
+    state.loadedPageFiles = null;
+    getRepoHead.mockResolvedValue(AHEAD);
+    expect(await runPublish(AHEAD)).toMatchObject({ ok: true, newHeadSha: "new-sha" });
   });
 });

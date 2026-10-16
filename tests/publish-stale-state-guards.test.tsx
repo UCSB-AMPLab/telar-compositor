@@ -29,12 +29,13 @@
  * is followed here as well, by a poll of the page's own that touches neither the
  * publish flow's build tracking nor the awareness the pill reads.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
+import { SyncReviewContext } from "~/components/features/dashboard/SyncReviewProvider";
 import { deriveWorkflowRepairBuild } from "~/lib/workflow-repair-build";
 import {
   getLastPublishFailure,
@@ -86,7 +87,8 @@ function submittedIntents(): string[] {
 // `[publishData, t]` and sets state from a fresh object, so a `t` that changed
 // identity per render would spin that effect for as long as a commit result
 // stands.
-const stableT = (key: string) => key;
+const stableT = (key: string, values?: Record<string, unknown>) =>
+  values && Object.keys(values).length > 0 ? `${key} ${JSON.stringify(values)}` : key;
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: stableT }),
 }));
@@ -220,11 +222,17 @@ function makeLoaderData(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function renderPublish(loaderData: Record<string, unknown>) {
+async function renderPublish(
+  loaderData: Record<string, unknown>,
+  review?: { canReview: boolean; coordinatorName: string | null },
+) {
   const mod = (await import("~/routes/_app.publish")) as unknown as {
     default: React.ComponentType<{ loaderData: unknown }>;
   };
-  return render(<mod.default loaderData={loaderData as never} />);
+  // Only a test that asks who is reading gets the provider: a test that
+  // re-renders the bare page would otherwise remount it.
+  const page = <mod.default loaderData={loaderData as never} />;
+  return render(review ? <SyncReviewContext.Provider value={{ ...review, openReview: () => {} }}>{page}</SyncReviewContext.Provider> : page);
 }
 
 /**
@@ -356,6 +364,30 @@ describe("Publish page — a publish that failed before reaching GitHub", () => 
     await renderPublish(makeLoaderData({ snapshotOk: true }));
 
     expect(getLastPublishFailure(1)).toBeNull();
+  });
+
+  it("tells the convenor to review the changes on GitHub when the repository changed during the publish", async () => {
+    publishFetcher().data = { ok: false, intent: "publish", error: "stale_head", projectId: 1 };
+
+    await renderPublish(makeLoaderData({ snapshotOk: true }), { canReview: true, coordinatorName: "Ana" });
+
+    expect(screen.getByText("build.stale_head_error")).toBeTruthy();
+  });
+
+  it("tells a collaborator who reviews them, by name", async () => {
+    publishFetcher().data = { ok: false, intent: "publish", error: "stale_head", projectId: 1 };
+
+    await renderPublish(makeLoaderData({ snapshotOk: true }), { canReview: false, coordinatorName: "Ana" });
+
+    expect(screen.getByText('build.stale_head_error_collab {"name":"Ana"}')).toBeTruthy();
+  });
+
+  it("tells a collaborator who reviews them without a name when none is stored", async () => {
+    publishFetcher().data = { ok: false, intent: "publish", error: "stale_head", projectId: 1 };
+
+    await renderPublish(makeLoaderData({ snapshotOk: true }), { canReview: false, coordinatorName: null });
+
+    expect(screen.getByText("build.stale_head_error_collab_unnamed")).toBeTruthy();
   });
 
   it("still falls back to the build copy for a code it does not know", async () => {

@@ -4,14 +4,14 @@
  * An object insert D1 would refuse for a cause the payload shows (a row over
  * D1's row size), and an entry the ingest's boundary refuses as malformed,
  * hold the whole all-or-nothing ingest back before anything is written, and
- * neither apply moves its record. An insert D1 refuses only at the flush has
- * landed beside the rest of the ingest: neither apply then records the commit,
- * and both name the row as not added.
+ * the apply does not move its record. An insert D1 refuses only at the flush
+ * has landed beside the rest of the ingest: the apply then does not record
+ * the commit, and names the row as not added.
  *
- * These run the real applies against the real collaboration object and an
+ * These run the real apply against the real collaboration object and an
  * in-memory database.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -48,7 +48,6 @@ vi.mock("~/lib/freeze-lease.server", () => ({
 
 import {
   applyFullSyncChanges,
-  applySyncChanges,
   InsertsNotAdded,
   ObjectsNotAdded,
   SyncEntriesRefused,
@@ -114,7 +113,7 @@ function serveGlossaryTerm(): void {
 /** A full sync that accepts only the glossary term `t9`. */
 function glossaryOnlyFullChanges(): FullSyncChanges {
   return {
-    objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, fieldsSeen: {}, changedDocIds: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: HEAD },
+    objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, fieldsSeen: {}, changedDocIds: {}, removedObjectIds: [], unregisteredObjectIds: [] },
     stories: { accept: [], reject: [], insertNew: [] },
     config: { accept: [], reject: [] },
     glossary: { accept: [], reject: [], insertNew: ["t9"] },
@@ -135,14 +134,12 @@ function landsWholeChanges(): SyncChanges {
     changedDocIds: { o1: 1 },
     removedObjectIds: [],
     unregisteredObjectIds: [],
-    headSha: HEAD,
-    baseSha: BASE,
   };
 }
 
 function landsWholeFullChanges(): FullSyncChanges {
   return {
-    objects: { ...landsWholeChanges(), baseSha: undefined },
+    objects: landsWholeChanges(),
     stories: { accept: [], reject: [], insertNew: [] },
     config: { accept: [], reject: [] },
     glossary: { accept: [], reject: [], insertNew: [] },
@@ -253,30 +250,9 @@ describe("an insert D1 refuses only at the flush", () => {
     expect(contentRefusal(refusal)).toMatchObject({ ok: false, intent: "apply-full-sync", error: "inserts_not_added" });
   });
 
-  it("the objects page keeps objects_read_sha and names the row as not added", async () => {
-    refuseO2AtTheFlush();
-
-    const res = await applySyncChanges(PROJECT_ID, landsWholeChanges(), "t", "o", "r", db, env, USER);
-
-    expect(res.notAdded).toEqual(["o2"]);
-    expect(landsWholeRow("o2")).toBeUndefined();
-    expect(landsWholeHeads().objects_read_sha).toBe(BASE);
-  });
 });
 
 describe("an insert over D1's row size, known before the write", () => {
-  it("holds the objects page's apply back whole and keeps its record", async () => {
-    serveHead(OVERSIZED);
-
-    const refusal = await applySyncChanges(PROJECT_ID, landsWholeChanges(), "t", "o", "r", db, env, USER)
-      .catch((err: unknown) => err);
-
-    expect(refusal).toBeInstanceOf(SyncEntriesRefused);
-    expect(landsWholeDocTitle("o1")).toBe(SEEN_TITLE);
-    expect(landsWholeDocTitle("o2")).toBeUndefined();
-    expect(landsWholeRow("o2")).toBeUndefined();
-    expect(landsWholeHeads().objects_read_sha).toBe(BASE);
-  });
 
   it("holds the full sync back whole and keeps head_sha", async () => {
     serveHead(OVERSIZED);
@@ -293,18 +269,6 @@ describe("an insert over D1's row size, known before the write", () => {
 });
 
 describe("an entry the ingest's boundary refuses as malformed", () => {
-  it("holds the objects page's apply back whole and keeps its record", async () => {
-    rewriteIngest = addMalformedInsert;
-
-    const refusal = await applySyncChanges(PROJECT_ID, landsWholeChanges(), "t", "o", "r", db, env, USER)
-      .catch((err: unknown) => err);
-
-    expect(refusal).toBeInstanceOf(SyncEntriesRefused);
-    expect(landsWholeDocTitle("o1")).toBe(SEEN_TITLE);
-    expect(landsWholeDocTitle("o2")).toBeUndefined();
-    expect(landsWholeRow("o2")).toBeUndefined();
-    expect(landsWholeHeads().objects_read_sha).toBe(BASE);
-  });
 
   it("holds the full sync back whole and keeps head_sha", async () => {
     rewriteIngest = addMalformedInsert;

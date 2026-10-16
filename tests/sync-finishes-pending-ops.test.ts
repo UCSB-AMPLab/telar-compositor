@@ -1,14 +1,14 @@
 /**
- * The objects sync and the full sync finish the project's pending object
- * operations at the head they apply, inside the `objects` lease and before
- * they compare GitHub's rows with D1's.
+ * The full sync finishes the project's pending object operations at the head
+ * it applies, inside the `objects` lease and before it compares GitHub's rows
+ * with D1's, and its check finishes them before it reads D1.
  *
  * A committed removal whose document half has not run leaves D1 holding an
  * object the sheet no longer has. Without completion the sync reads that as a
  * difference and flags the row `missing_from_repo`; with it the removal runs
  * first, the record goes, and the sync finds nothing to flag.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -41,11 +41,10 @@ vi.mock("~/lib/freeze-lease.server", () => ({
   newFreezeOperationId: vi.fn(() => "lease-1"),
 }));
 
-import { applyFullSyncChanges, applySyncChanges, finishPendingBeforeCheck, ObjectsSyncStale, SyncBaseStale, type FullSyncChanges, type SyncChanges } from "~/lib/sync.server";
+import { applyFullSyncChanges, finishPendingBeforeCheck, SyncBaseStale, type FullSyncChanges } from "~/lib/sync.server";
 import { getFileAtRef, getRepoHead } from "~/lib/github.server";
 import { markPendingObjectOpCommitted, preparePendingObjectOp } from "~/lib/pending-object-ops.server";
 import { PROJECT_ID, SECRET, seedProject } from "./helpers/collaboration-fixture";
-import { withChoicesSeen } from "./helpers/object-update-seen";
 
 const HEAD = "c".repeat(40);
 const USER = 1;
@@ -109,23 +108,7 @@ beforeEach(() => {
 
 afterEach(() => memory.close());
 
-describe("the syncs finish pending records first", () => {
-  it("applySyncChanges runs a landed removal before it compares, so the row is not read as missing", async () => {
-    await landedRemovalOfO1();
-    const changes: SyncChanges = withChoicesSeen({
-      newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: ["o1"], removedDocIds: { o1: 1 },
-      unregisteredObjectIds: [], headSha: HEAD,
-    });
-
-    await applySyncChanges(PROJECT_ID, changes, "tok", "owner", "repo", db, env(), USER);
-
-    expect(bodies[0]).toMatchObject({ objects: { remove: [{ objectId: "o1", docId: 1 }] } });
-    // The author's own removal of o1 finds the row already gone: only the
-    // record's removal is sent. Completion after the comparison sends both.
-    expect(removalsSent()).toBe(1);
-    expect(flags()).toEqual([]);
-    expect(records()).toBe(0);
-  });
+describe("the full sync finishes pending records first", () => {
 
   it("applyFullSyncChanges runs a landed removal before it compares, so the row is not read as missing", async () => {
     await landedRemovalOfO1();
@@ -173,7 +156,7 @@ describe("a record is judged at GitHub's head now", () => {
   it("refuses a check made at an older head once completion has registered an object, and flags nothing missing", async () => {
     await preparedRegistration(["o9"]);
     const changes: FullSyncChanges = {
-      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: HEAD } as never,
+      objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
       stories: { accept: [], reject: [], insertNew: [] },
       config: { accept: [], reject: [] },
       glossary: { accept: [], reject: [], insertNew: [] },
@@ -191,7 +174,7 @@ describe("a record is judged at GitHub's head now", () => {
   });
 
   const fullChangesAtH0 = (): FullSyncChanges => ({
-    objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: HEAD },
+    objects: { newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [] },
     stories: { accept: [], reject: [], insertNew: [] },
     config: { accept: [], reject: [] },
     glossary: { accept: [], reject: [], insertNew: [] },
@@ -216,20 +199,6 @@ describe("a record is judged at GitHub's head now", () => {
 
     expect(o9Flag()).toEqual({ missing_from_repo: 0 });
     expect(records()).toBe(1);
-  });
-
-  it("applySyncChanges refuses with ObjectsSyncStale when GitHub moved on after its head check", async () => {
-    await preparedRegistration(["o9"]);
-    // The head check sees the check's head; completion then finds GitHub at H1.
-    vi.mocked(getRepoHead).mockResolvedValueOnce(HEAD);
-    const changes: SyncChanges = withChoicesSeen({
-      newObjectIds: [], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: HEAD,
-    });
-
-    await expect(applySyncChanges(PROJECT_ID, changes, "tok", "owner", "repo", db, env(), USER))
-      .rejects.toBeInstanceOf(ObjectsSyncStale);
-
-    expect(o9Flag()).toEqual({ missing_from_repo: 0 });
   });
 
   it("the check finishes a pending record before it reads D1, under the objects lease", async () => {

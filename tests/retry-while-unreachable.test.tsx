@@ -6,7 +6,7 @@
  * objects route's client action answers those reads unreachable, and passes
  * its writes through.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -77,7 +77,7 @@ describe("the Objects route's clientAction", () => {
   const postedIntent = (intent: string) =>
     new Request("http://stage.test/objects", { method: "POST", body: new URLSearchParams({ intent }) });
 
-  it.each(["poll-build", "pre-commit-check", "compute-sync-diff", "fetch-iiif-preview", "probe-tiles", "enrich-external"])(
+  it.each(["poll-build", "pre-commit-check", "fetch-iiif-preview", "probe-tiles", "enrich-external"])(
     "answers %s failing in transit as unreachable, with its intent and status 503",
     async (intent) => {
       for (const failure of [new TypeError("Failed to fetch"), new UNSAFE_ErrorResponseImpl(503, "Service Unavailable", "")]) {
@@ -87,7 +87,7 @@ describe("the Objects route's clientAction", () => {
     },
   );
 
-  it.each(["commit-objects", "upload-image", "sync-apply", "insert-pending-objects", "toggle-featured"])(
+  it.each(["commit-objects", "upload-image", "insert-pending-objects", "toggle-featured"])(
     "passes %s through: a failure is thrown unchanged",
     async (intent) => {
       const failure = new TypeError("Failed to fetch");

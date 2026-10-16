@@ -6,15 +6,14 @@
  * records the last commit whose objects.csv object rows D1 accounts for,
  * `objects_read_sha`; each action compares GitHub's object rows at its head
  * with that commit's, refuses as `stale_head` when they differ, and advances
- * the record to the commit it made. The objects sync advances it too: the
- * apply to the commit it applied, and a check that finds nothing to bring in
- * to the commit it read. `complete-pending-objects` writes no file and is
- * never refused by the check.
+ * the record to the commit it made. The full sync advances it too, with the
+ * head it records (its own spec). `complete-pending-objects` writes no file
+ * and is never refused by the check.
  *
  * These run the real actions, the real serializer and the real record against
  * an in-memory database, over a GitHub that keeps each commit's objects.csv.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -59,10 +58,6 @@ vi.mock("~/lib/sync.server", () => ({
   checkRepairingLegacyIds: vi.fn(async (_env: unknown, _project: unknown, _user: unknown, run: () => Promise<unknown>) => run()),
   computeSyncDiff: vi.fn(),
   finishPendingBeforeCheck: vi.fn(async () => {}),
-  objectsBaseAt: vi.fn(async () => undefined),
-  applySyncChanges: vi.fn(),
-  refuseMovedObjectsBase: vi.fn(async () => {}),
-  ObjectsSyncStale: class ObjectsSyncStale extends Error {},
   SyncBaseStale: class SyncBaseStale extends Error {},
   SyncEntriesRefused: class SyncEntriesRefused extends Error {},
   computeFullSyncDiff: vi.fn(),
@@ -109,7 +104,6 @@ import { getFileAtRef, getRepoHead } from "~/lib/github.server";
 import { commitFilesToRepo, StaleHeadError } from "~/lib/commit.server";
 import { commitMultipleBinaryFilesWithCsv } from "~/lib/upload.server";
 import { registerCommittedObjects } from "~/lib/register-objects.server";
-import { applySyncChanges, checkRepairingLegacyIds, computeSyncDiff, finishPendingBeforeCheck, type SyncDiff } from "~/lib/sync.server";
 
 const PROJECT_ID = 42;
 const CSV_PATH = "telar-content/spreadsheets/objects.csv";
@@ -328,140 +322,6 @@ describe("no record", () => {
     expect(await commitObjects()).toEqual({ ok: false, intent: "commit-objects", error: "stale_head" });
     expect(commitMultipleBinaryFilesWithCsv).not.toHaveBeenCalled();
     expect(commitFilesToRepo).not.toHaveBeenCalled();
-  });
-});
-
-function emptyDiff(headSha: string): SyncDiff {
-  return {
-    newObjects: [], changedObjects: [], missingObjects: [], unregisteredFiles: [], reordered: null, headSha,
-  };
-}
-
-describe("the objects sync", () => {
-  // The apply registers the row it brings in, so the next objects
-  // commit, with nothing pending, writes it from D1.
-  it("apply records the commit it applied, and the next objects commit keeps its row", async () => {
-    const added = githubEdit(`${START}beta,Beta\n`);
-    expect(await commitObjects()).toMatchObject({ ok: false, error: "stale_head" });
-
-    // The apply records the commit it applied under its lease.
-    vi.mocked(applySyncChanges).mockImplementation(async () => {
-      insertObject("beta", "Beta");
-      memory.raw.prepare("UPDATE projects SET objects_read_sha = ? WHERE id = ?").run(added, PROJECT_ID);
-      return { appliedCount: 0, pendingObjects: [], updateSkipped: false, notAdded: [], readRecorded: true };
-    });
-    const changes = { newObjectIds: ["beta"], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: added };
-    expect(await run(post({ intent: "sync-apply", changes: JSON.stringify(changes) }))).toMatchObject({ ok: true, notAdded: [] });
-    expect(projectRow().objects_read_sha).toBe(added);
-
-    const res = await commitObjects();
-    expect(res).toMatchObject({ ok: true });
-    expect(commits.get(res.newHeadSha!)).toContain("beta,Beta");
-    expect(objectIds()).toEqual(["alpha", "beta"]);
-  });
-
-  // A row the apply could not add is not in D1, so the commit is not read: the
-  // record stays, and the next check offers the row again.
-  it("apply that could not add a new row records nothing, and answers it", async () => {
-    const added = githubEdit(`${START}beta,Beta\n`);
-    vi.mocked(applySyncChanges).mockResolvedValue({ appliedCount: 0, pendingObjects: [], updateSkipped: false, notAdded: ["beta"] });
-    const changes = { newObjectIds: ["beta"], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: added };
-    expect(await run(post({ intent: "sync-apply", changes: JSON.stringify(changes) }))).toMatchObject({ ok: true, pendingObjects: [], notAdded: ["beta"] });
-    expect(projectRow().objects_read_sha).toBe("gh-0");
-  });
-
-  // An object re-created under its key since the check kept its values, so
-  // GitHub's change to it is not read: the record stays, and the next commit
-  // is refused until the check offers the change again.
-  it("apply that skipped an update records nothing", async () => {
-    const edited = githubEdit(START.replace("alpha,Alpha", "alpha,Alpha (renamed)"));
-    vi.mocked(applySyncChanges).mockResolvedValue({ appliedCount: 0, pendingObjects: [], updateSkipped: true, notAdded: [] });
-    const changes = {
-      newObjectIds: [], changedObjectIds: ["alpha"], fieldChoices: { alpha: { title: "repo" } },
-      changedDocIds: { alpha: 1 }, removedObjectIds: [], unregisteredObjectIds: [], headSha: edited,
-    };
-    expect(await run(post({ intent: "sync-apply", changes: JSON.stringify(changes) }))).toMatchObject({ ok: true, appliedCount: 0 });
-    expect(projectRow().objects_read_sha).toBe("gh-0");
-    expect(await commitObjects()).toMatchObject({ ok: false, error: "stale_head" });
-  });
-
-  it("apply that fails records nothing", async () => {
-    const added = githubEdit(`${START}beta,Beta\n`);
-    vi.mocked(applySyncChanges).mockRejectedValue(new Error("lease held"));
-    const changes = { newObjectIds: ["beta"], changedObjectIds: [], fieldChoices: {}, removedObjectIds: [], unregisteredObjectIds: [], headSha: added };
-    expect(await run(post({ intent: "sync-apply", changes: JSON.stringify(changes) }))).toMatchObject({ ok: false });
-    expect(projectRow().objects_read_sha).toBe("gh-0");
-  });
-
-  it("check that finds nothing to bring in records the commit it read, and the next upload goes on", async () => {
-    // A title edited on GitHub to what the Compositor already holds.
-    memory.raw.prepare("UPDATE objects SET title = 'Alpha (renamed)' WHERE object_id = 'alpha'").run();
-    const edit = githubEdit(START.replace("alpha,Alpha", "alpha,Alpha (renamed)"));
-    expect(await upload()).toMatchObject({ ok: false, error: "stale_head" });
-
-    vi.mocked(computeSyncDiff).mockResolvedValue(emptyDiff(edit));
-    expect(await run(post({ intent: "compute-sync-diff" }))).toMatchObject({ ok: true });
-    expect(projectRow().objects_read_sha).toBe(edit);
-
-    expect(await upload()).toMatchObject({ ok: true });
-  });
-
-  // The check reads D1 after the pending object operations are finished, and
-  // fails rather than show their effect as a difference.
-  it("check finishes pending operations before it reads the diff, and fails when it cannot", async () => {
-    vi.mocked(computeSyncDiff).mockResolvedValue(emptyDiff(githubEdit(START)));
-    await run(post({ intent: "compute-sync-diff" }));
-    expect(vi.mocked(finishPendingBeforeCheck).mock.invocationCallOrder[0])
-      .toBeLessThan(vi.mocked(computeSyncDiff).mock.invocationCallOrder[0]);
-
-    vi.mocked(computeSyncDiff).mockClear();
-    vi.mocked(finishPendingBeforeCheck).mockRejectedValueOnce(new Error("lease held"));
-    expect(await run(post({ intent: "compute-sync-diff" }))).toMatchObject({ ok: false, error: "sync_failed" });
-    expect(computeSyncDiff).not.toHaveBeenCalled();
-  });
-
-  // Until the project's ids have been repaired, the check pairs ids an earlier
-  // import stored stripped, and repairs them.
-  it("check runs the legacy repair while the project's ids are unrepaired, and not after", async () => {
-    const edit = githubEdit(START);
-    vi.mocked(computeSyncDiff).mockResolvedValue(emptyDiff(edit));
-    await run(post({ intent: "compute-sync-diff" }));
-    memory.raw.prepare("UPDATE projects SET legacy_ids_repaired_at = '2026-09-30'").run();
-    await run(post({ intent: "compute-sync-diff" }));
-    expect(vi.mocked(checkRepairingLegacyIds).mock.calls.map((call) => (call[5] as { open: boolean }).open)).toEqual([true, false]);
-  });
-
-  it("check judges the ids against the commit D1's object rows are from", async () => {
-    const edit = githubEdit(START);
-    vi.mocked(computeSyncDiff).mockResolvedValue({ ...emptyDiff(edit), newObjects: [{ object_id: "x" }] } as never);
-    const readSha = projectRow().objects_read_sha;
-    expect(readSha).not.toBeNull();
-    await run(post({ intent: "compute-sync-diff" }));
-    expect((vi.mocked(checkRepairingLegacyIds).mock.calls[0][5] as { ref: string | null }).ref).toBe(readSha);
-  });
-
-  it("check that finds only unregistered image files still records the commit it read", async () => {
-    const edit = githubEdit(START);
-    vi.mocked(computeSyncDiff).mockResolvedValue({
-      ...emptyDiff(edit),
-      unregisteredFiles: [{ object_id: "loose", filename: "loose.jpg" }],
-    });
-    await run(post({ intent: "compute-sync-diff" }));
-    expect(projectRow().objects_read_sha).toBe(edit);
-  });
-
-  it.each([
-    ["a new object", { newObjects: [{ object_id: "beta" }] }],
-    ["a changed object", { changedObjects: [{ object_id: "alpha" }] }],
-    ["a missing object", { missingObjects: [{ object_id: "alpha" }] }],
-    ["a reorder", { reordered: { order: [{ objectId: "beta", docId: 2 }, { objectId: "alpha", docId: 1 }] } }],
-    // The rows the check's repair could not give GitHub's spelling.
-    ["a row still stored stripped", { respelled: [{ objectId: "alpha", docId: 1, githubId: "alpha  " }] }],
-  ])("check that finds %s records nothing", async (_label, found) => {
-    const edit = githubEdit(`${START}beta,Beta\n`);
-    vi.mocked(computeSyncDiff).mockResolvedValue({ ...emptyDiff(edit), ...(found as object) } as SyncDiff);
-    await run(post({ intent: "compute-sync-diff" }));
-    expect(projectRow().objects_read_sha).toBe("gh-0");
   });
 });
 

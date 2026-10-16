@@ -4,7 +4,7 @@
  * Compositor since the check: the list is checked again, and the
  * notice names the object, as it does for a story changed while reviewed.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -56,17 +56,16 @@ function objectChangedDiff(): FullSyncDiff {
 }
 
 function renderObjectChangedModal() {
-  const view = render(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
-  fireEvent.click(screen.getByText("sync_modal.check_changes"));
+  const view = render(<SyncConfirmModal open onClose={() => {}} />);
   objectChangedFetcher.current = { ok: true, intent: "compute-full-sync-diff", diff: objectChangedDiff() };
-  view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+  view.rerender(<SyncConfirmModal open onClose={() => {}} />);
   return view;
 }
 
 describe("an accept that left an object field edited since the check", () => {
   it("posts the value the check read, then checks again and names the object", () => {
     const view = renderObjectChangedModal();
-    fireEvent.click(screen.getByText(/^sync_modal\.apply_(sync|other_changes)$/));
+    fireEvent.click(screen.getByText("sync_modal.review.apply"));
     const call = objectChangedSubmit.mock.calls.find(([body]) => (body as { intent?: string }).intent === "apply-full-sync");
     expect(JSON.parse((call![0] as { changes: string }).changes).objects.fieldsSeen).toEqual({ o1: { title: "Map" } });
 
@@ -74,11 +73,11 @@ describe("an accept that left an object field edited since the check", () => {
     objectChangedFetcher.current = {
       ok: false, intent: "apply-full-sync", error: "object_changed_since_review", objectIds: ["o1"],
     };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(objectChangedSubmit).toHaveBeenCalledWith({ intent: "compute-full-sync-diff" }, expect.anything());
 
     objectChangedFetcher.current = { ok: true, intent: "compute-full-sync-diff", diff: objectChangedDiff() };
-    view.rerender(<SyncConfirmModal open unpublishedCount={0} onClose={() => {}} />);
+    view.rerender(<SyncConfirmModal open onClose={() => {}} />);
     expect(screen.getByText(/sync_modal\.object_changed_none_applied/).textContent).toContain("Map of the coast");
   });
 });

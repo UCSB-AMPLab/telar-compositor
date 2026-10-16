@@ -4,13 +4,13 @@
  *
  * The row stays in the document with no D1 id after the refused flush; the
  * snapshot that inserts it later reads its origin from the document. These run
- * the real applies against the real collaboration object and an in-memory
+ * the real apply against the real collaboration object and an in-memory
  * database, drop the refusal, and snapshot.
  *
- * The registration of pending repo objects from the objects tab is the third
+ * The registration of pending repo objects from the objects tab is the other
  * producer of such an insert.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -46,7 +46,7 @@ vi.mock("~/lib/freeze-lease.server", () => ({
 }));
 
 import {
-  applyFullSyncChanges, applySyncChanges, ObjectsNotAdded, type FullSyncChanges, type SyncChanges,
+  applyFullSyncChanges, ObjectsNotAdded, type FullSyncChanges, type SyncChanges,
 } from "~/lib/sync.server";
 import { getFileAtRef, getRepoHead } from "~/lib/github.server";
 import { registerCommittedObjects } from "~/lib/register-objects.server";
@@ -82,14 +82,12 @@ function laterChanges(): SyncChanges {
     changedDocIds: {},
     removedObjectIds: [],
     unregisteredObjectIds: [],
-    headSha: HEAD,
-    baseSha: BASE,
   };
 }
 
 function laterFullChanges(): FullSyncChanges {
   return {
-    objects: { ...laterChanges(), baseSha: undefined },
+    objects: laterChanges(),
     stories: { accept: [], reject: [], insertNew: [] },
     config: { accept: [], reject: [] },
     glossary: { accept: [], reject: [], insertNew: [] },
@@ -198,17 +196,6 @@ describe("a refused insert that lands at a later snapshot", () => {
     expect(laterOriginOf("o2")).toBe("repo");
   });
 
-  it("is given the repo as its origin by the objects page", async () => {
-    refuseO2();
-    const first = await applySyncChanges(PROJECT_ID, laterChanges(), "t", "o", "r", db, env, USER);
-    expect(first.notAdded).toEqual(["o2"]);
-    expectO2Pending();
-
-    await landLater();
-
-    expect(laterOriginOf("o2")).toBe("repo");
-  });
-
   it("passes an identical retry of the full sync, which lands it with the repo as origin", async () => {
     refuseO2();
     const first = await applyFullSyncChanges(PROJECT_ID, laterFullChanges(), "t", "o", "r", db, USER, env)
@@ -219,19 +206,6 @@ describe("a refused insert that lands at a later snapshot", () => {
 
     await applyFullSyncChanges(PROJECT_ID, laterFullChanges(), "t", "o", "r", db, USER, env);
 
-    expect(laterOriginOf("o2")).toBe("repo");
-  });
-
-  it("passes an identical retry of the objects page's apply, which lands it with the repo as origin", async () => {
-    refuseO2();
-    const first = await applySyncChanges(PROJECT_ID, laterChanges(), "t", "o", "r", db, env, USER);
-    expect(first.notAdded).toEqual(["o2"]);
-    expectO2Pending();
-    memory.raw.exec("DROP TRIGGER refuse_o2");
-
-    const res = await applySyncChanges(PROJECT_ID, laterChanges(), "t", "o", "r", db, env, USER);
-
-    expect(res.notAdded).toEqual([]);
     expect(laterOriginOf("o2")).toBe("repo");
   });
 
@@ -269,18 +243,6 @@ describe("a row a base version left pending, with no origin of its own", () => {
 
     await applyFullSyncChanges(PROJECT_ID, laterFullChanges(), "t", "o", "r", db, USER, env);
 
-    expect(laterOriginOf("o2")).toBe("repo");
-  });
-
-  it("is given the repo as its origin by the retry of the objects page's apply", async () => {
-    refuseO2();
-    await applySyncChanges(PROJECT_ID, laterChanges(), "t", "o", "r", db, env, USER);
-    withoutOrigin(expectO2Pending());
-    memory.raw.exec("DROP TRIGGER refuse_o2");
-
-    const res = await applySyncChanges(PROJECT_ID, laterChanges(), "t", "o", "r", db, env, USER);
-
-    expect(res.notAdded).toEqual([]);
     expect(laterOriginOf("o2")).toBe("repo");
   });
 

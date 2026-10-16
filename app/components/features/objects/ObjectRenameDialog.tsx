@@ -24,7 +24,7 @@
  * dialog then shows those facts, says the counts were updated, and posts
  * them on the next confirm.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -39,6 +39,7 @@ import {
   type RenameIdRefusal,
 } from "~/lib/object-rename-id";
 import { REPO_WRITE_REFUSAL_KEYS } from "~/lib/repo-write-refusal-keys";
+import { coordinatorLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 
 /** What the `rename-object` action answers. */
 export type RenameAnswer =
@@ -236,10 +237,16 @@ function RenameConsequences({ facts, newId }: { facts: ObjectRenameFacts; newId:
 /** The line an answer leaves in the dialog: a refusal, the Sheets offer, the updated facts, or the pending note. */
 function RenameOutcomeLine({ outcome }: { outcome: RenameOutcome }) {
   const { t } = useTranslation("objects");
+  const { canReview, coordinatorName } = useSyncReview();
   if (outcome.kind === "message") {
+    // Only the convenor can review the changes; everyone else is told who does.
+    const [key, values] =
+      outcome.key === "rename_unregistered_files" && !canReview
+        ? coordinatorLine("rename_unregistered_files_collab", "rename_unregistered_files_collab_unnamed", coordinatorName)
+        : [outcome.key, outcome.params];
     return (
       <p className="font-body text-sm text-red-600 mb-4">
-        {t(outcome.key, outcome.params)}
+        {t(key, values)}
         {outcome.key === "repo_write_upgrade_required" && (
           <>
             {" "}

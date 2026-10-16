@@ -24,7 +24,7 @@
  * a receipt for each id it has applied, so an object registered and since
  * deleted from the document is not brought back by a repeat.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { and, eq } from "drizzle-orm";
@@ -73,9 +73,9 @@ export interface RegistrationOptions {
   /**
    * GitHub's objects.csv in order, sent as the ingest's `objects.sheet`: each
    * object it names without a D1 id is placed between the rows GitHub has
-   * either side of it. Only the objects sync's registration of rows it brings
-   * in from GitHub passes one; an object uploaded or added in the Compositor
-   * sorts after every row.
+   * either side of it. Without one, an object uploaded or added in the
+   * Compositor sorts after every row; the full sync places the rows it brings
+   * in from GitHub through its own ingest.
    */
   sheet?: SheetEntry[];
 }

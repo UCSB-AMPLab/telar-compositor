@@ -1,13 +1,13 @@
 /**
  * A project imported before object ids were read as written holds a padded id
- * stripped: D1 has `o1` where GitHub's objects.csv has `o1  `. Both syncs pair
+ * stripped: D1 has `o1` where GitHub's objects.csv has `o1  `. The sync pairs
  * the two as one object when the pairing is unambiguous (one D1 row holds the
  * stripped id, one GitHub spelling strips to it, and no GitHub row claims that
  * D1 id exactly), so the check shows neither a removal nor an addition, and an
  * accepted change to the object takes GitHub's spelling. Where it is ambiguous,
  * nothing is paired but exact ids.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -35,6 +35,8 @@ vi.mock("~/lib/github.server", async (orig) => {
     getFileAtRef: vi.fn(),
     getFileContent: vi.fn(async () => null),
     getSubtreeOids: vi.fn(async () => ({ ok: true, at: () => ({ kind: "absent" }) })),
+    // The publish lists the spreadsheets folder on its own; here it holds no story sheets.
+    listDirectoryEntries: vi.fn(async () => []),
     // Every commit named here exists; a read that fails at one is a failed read.
     commitExists: vi.fn(async () => "exists"),
   };
@@ -49,8 +51,6 @@ import { buildPublishFileSet } from "~/lib/publish.server";
 import {
   applyFullSyncChanges,
   computeFullSyncDiff,
-  applyGitHubObjectOrder,
-  applySyncChanges,
   checkRepairingLegacyIds,
   computeSyncDiff,
   resolveFullSyncPayload,
@@ -59,12 +59,11 @@ import {
 } from "~/lib/sync.server";
 import { legacyStrippedIds } from "~/lib/objects.server";
 import { ObjectsSheetChanged, prepareObjectsCommit } from "~/lib/pending-object-ops.server";
-import { legacyRecordRef, markLegacyIdsRepaired } from "~/lib/legacy-object-ids.server";
+import { legacyRecordRef } from "~/lib/legacy-object-ids.server";
 import { dbObjectToCsvRow, serializeObjectsCsv } from "~/lib/csv-export.server";
 import { getFileAtRef, getRepoHead } from "~/lib/github.server";
 import { ProjectCollaborationDO } from "../workers/collaboration";
 import { signInternalMarker } from "../workers/auth";
-import { orderedMaps } from "~/lib/field-order";
 import { PROJECT_ID, SECRET, buildDoc, seedProject } from "./helpers/collaboration-fixture";
 import { readSeenFrom, withChoicesSeen } from "./helpers/object-update-seen";
 
@@ -97,7 +96,6 @@ function changes(overrides: Partial<SyncChanges> = {}): SyncChanges {
     changedDocIds: { o1: 1 },
     removedObjectIds: [],
     unregisteredObjectIds: [],
-    headSha: HEAD,
     ...overrides,
   });
 }
@@ -143,20 +141,6 @@ async function loadRealDo(): Promise<{ ydoc: Y.Doc; env: Env; doInstance: Projec
   } as unknown as Env;
   readSeenFrom((doInstance as unknown as { ydoc: Y.Doc }).ydoc);
   return { ydoc: (doInstance as unknown as { ydoc: Y.Doc }).ydoc, env, doInstance };
-}
-
-/** A second object, `o2`, after `o1` in D1 and in the document. */
-function addSecondObject(ydoc: Y.Doc): void {
-  memory.raw.exec(`INSERT INTO objects (id, project_id, object_id, order_key, title) VALUES (2, ${PROJECT_ID}, 'o2', 'a00002', 'Two')`);
-  const m = new Y.Map<unknown>();
-  ydoc.transact(() => {
-    m.set("_id", 2);
-    m.set("object_id", "o2");
-    m.set("order_key", "a00002");
-    m.set("title", new Y.Text("Two"));
-    m.set("_validation_state", "valid");
-    ydoc.getArray<Y.Map<unknown>>("objects").push([m]);
-  }, null);
 }
 
 async function postIngest(doInstance: ProjectCollaborationDO, body: unknown): Promise<Record<string, unknown>> {
@@ -311,27 +295,6 @@ describe("the objects check pairs an id stored stripped with GitHub's padded spe
 describe("an accepted change to a paired object takes GitHub's spelling", () => {
   beforeEach(() => {
     sheets[HEAD] = PADDED_EDITED;
-  });
-
-  it("the objects page's apply renames the object in the document and in D1", async () => {
-    const { ydoc, env } = await loadRealDo();
-
-    const res = await applySyncChanges(PROJECT_ID, changes(), "t", "o", "r", db, env, USER);
-
-    expect(res).toMatchObject({ appliedCount: 1, updateSkipped: false, notAdded: [] });
-    expect(docObject(ydoc)).toEqual({ objectId: "o1  ", title: "Map of the coast" });
-    expect(objectRows()).toEqual([{ id: 1, object_id: "o1  ", title: "Map of the coast" }]);
-  });
-
-  it("the objects page's apply orders the renamed row under its new spelling", async () => {
-    sheets[HEAD] = 'object_id,title\no2,Two\n"o1  ",Map of the coast\n';
-    const { ydoc, env } = await loadRealDo();
-    addSecondObject(ydoc);
-
-    const res = await applySyncChanges(PROJECT_ID, changes(), "t", "o", "r", db, env, USER);
-
-    expect(res).toMatchObject({ appliedCount: 1, updateSkipped: false });
-    expect(orderedMaps(ydoc.getArray("objects")).map((m) => String(m.get("object_id")))).toEqual(["o2", "o1  "]);
   });
 
   it("the full sync orders the renamed row under its new spelling", async () => {
@@ -508,29 +471,12 @@ describe("a row stored stripped takes GitHub's spelling with nothing offered", (
     expect(docObject(ydoc).objectId).toBe("o1");
   });
 
-  it("once the column is set, the applies pair nothing", async () => {
+  it("once the column is set, the apply pairs nothing", async () => {
     memory.raw.prepare("UPDATE projects SET legacy_ids_repaired_at = '2026-09-30' WHERE id = ?").run(PROJECT_ID);
     const { payload } = await resolveFullSyncPayload(
       PROJECT_ID, fullChanges({ changedObjectIds: [], fieldChoices: {}, changedDocIds: {} }), "t", "o", "r", db, USER, HEAD,
     );
     expect(payload.objects.update).toEqual([]);
-
-    const { env } = await loadRealDo();
-    await applySyncChanges(
-      PROJECT_ID, changes({ changedObjectIds: [], fieldChoices: {}, changedDocIds: {} }), "t", "o", "r", db, env, USER,
-    );
-    expect(objectRows()[0].object_id).toBe("o1");
-  });
-
-  it("the objects page's apply gives it GitHub's spelling though no field was accepted", async () => {
-    const { env } = await loadRealDo();
-
-    const res = await applySyncChanges(
-      PROJECT_ID, changes({ changedObjectIds: [], fieldChoices: {}, changedDocIds: {} }), "t", "o", "r", db, env, USER,
-    );
-
-    expect(res).toMatchObject({ appliedCount: 0, updateSkipped: false });
-    expect(objectRows()[0].object_id).toBe("o1  ");
   });
 
   it("the full sync gives it GitHub's spelling though no field was accepted", async () => {
@@ -548,27 +494,6 @@ describe("a row stored stripped takes GitHub's spelling with nothing offered", (
     expect(payload.objects.update).toEqual([]);
   });
 
-  it("the objects page's apply leaves the id alone with no readable recorded version", async () => {
-    const { env } = await loadRealDo();
-
-    memory.raw.prepare("UPDATE projects SET head_sha = NULL, objects_read_sha = NULL WHERE id = ?").run(PROJECT_ID);
-    await applySyncChanges(
-      PROJECT_ID, changes({ changedObjectIds: [], fieldChoices: {}, changedDocIds: {} }), "t", "o", "r", db, env, USER,
-    );
-
-    expect(objectRows()[0].object_id).toBe("o1");
-  });
-
-  it("the objects page's apply leaves the id alone where the recorded version holds it stripped", async () => {
-    const { env } = await loadRealDo();
-
-    sheets[BASE] = "object_id,title\no1,Map\n";
-    await applySyncChanges(
-      PROJECT_ID, changes({ changedObjectIds: [], fieldChoices: {}, changedDocIds: {} }), "t", "o", "r", db, env, USER,
-    );
-
-    expect(objectRows()[0].object_id).toBe("o1");
-  });
 });
 
 /** A collaboration binding that answers every object update as re-created since the check. */
@@ -580,17 +505,9 @@ function supersedingEnv(): Env {
   } as unknown as Env;
 }
 
-// A respelling that does not land leaves the row stripped, so neither apply may
-// record the commit as read: the next publish would write D1's spelling.
+// A respelling that does not land leaves the row stripped, so the apply may
+// not record the commit as read: the next publish would write D1's spelling.
 describe("an apply whose respelling does not land records nothing", () => {
-  it("the objects page's apply answers the object edited here, which keeps objects_read_sha", async () => {
-    const res = await applySyncChanges(
-      PROJECT_ID, changes({ changedObjectIds: [], fieldChoices: {}, changedDocIds: {} }), "t", "o", "r", db, supersedingEnv(), USER,
-    );
-    expect(res).toMatchObject({ updateSkipped: true, changedSinceReview: ["o1"] });
-    expect(memory.raw.prepare("SELECT objects_read_sha FROM projects WHERE id = ?").get(PROJECT_ID))
-      .toEqual({ objects_read_sha: BASE });
-  });
 
   it("the full sync refuses the object as edited here, which keeps head_sha", async () => {
     await expect(applyFullSyncChanges(
@@ -644,34 +561,5 @@ describe("a publish and a row D1 holds under a stripped id", () => {
     const { env } = await loadRealDo();
     await expect(publishAt(env)).resolves.toEqual({ path: "telar-content/spreadsheets/objects.csv", existingCsv: PADDED });
     expect(objectRows()[0].object_id).toBe("o1");
-  });
-
-  // The recorded version holds `o1`, GitHub changes the id to
-  // `o1  `, and the author keeps their version. Keep my version counts as the
-  // project's first check (the dashboard marks the ids repaired once it has
-  // recorded the head), so the check after it shows GitHub's edit as a change,
-  // and the publish writes the author's `o1`.
-  it("after Keep my version on a GitHub id edit, keeps the author's id through a check and a publish", async () => {
-    sheets[BASE] = "object_id,title\no1,Map\n";
-    const { ydoc, env } = await loadRealDo();
-
-    // Keep my version, as the dashboard runs it.
-    expect(await applyGitHubObjectOrder(PROJECT_ID, { token: "t", owner: "o", repo: "r" }, HEAD, BASE, db, env, USER))
-      .toEqual({ superseded: false });
-    memory.raw.prepare("UPDATE projects SET head_sha = ?, objects_read_sha = ? WHERE id = ?").run(HEAD, HEAD, PROJECT_ID);
-    await markLegacyIdsRepaired(db, PROJECT_ID);
-    expect(objectRows()[0].object_id).toBe("o1");
-
-    // The sync check after it, against the head it recorded.
-    const diff = await firstCheck(env, PADDED);
-    expect(diff.respelled).toBeUndefined();
-    expect(diff.newObjects.map((o) => o.object_id)).toEqual(["o1  "]);
-    expect(diff.missingObjects.map((o) => o.object_id)).toEqual(["o1"]);
-    expect(docObject(ydoc).objectId).toBe("o1");
-
-    // The publish.
-    await expect(publishAt(env)).resolves.toEqual({ path: "telar-content/spreadsheets/objects.csv", existingCsv: PADDED });
-    const row = memory.raw.prepare("SELECT * FROM objects WHERE id = 1").get();
-    expect(serializeObjectsCsv([dbObjectToCsvRow(row as never)])).toMatch(/\no1,/);
   });
 });

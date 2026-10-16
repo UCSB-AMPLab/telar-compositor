@@ -10,7 +10,13 @@
  * shown. A publish the action refuses for a page it did not name brings that
  * warning up beside Publish, and the next publish names it.
  *
- * @version v1.5.0-beta
+ * Publish waits too while the checks could not read GitHub's head, and a first
+ * publish sends the head the checks showed.
+ *
+ * A page held in two languages waits for the version to keep, with none
+ * chosen to begin with, and the publish sends the one chosen.
+ *
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent } from "@testing-library/react";
@@ -87,6 +93,7 @@ vi.mock("~/components/features/publish/ValidationChecks", async (orig) => ({
 }));
 
 let snapshotOk = true;
+let upToDate = false;
 
 function makeLoaderData() {
   const empty = { new: [], modified: [], deleted: [] };
@@ -97,7 +104,7 @@ function makeLoaderData() {
     changeSummary: { stories: empty, objects: empty, pages: empty, glossary: empty,
       settings: { changed: [] }, landing: { changed: false }, navigation: { changed: false },
       objectOrder: { changed: false },
-      backCompatBootstrap: false, isUpToDate: false },
+      backCompatBootstrap: false, isUpToDate: upToDate },
     user: { github_login: "u", github_name: "U", github_email: "u@e.co" },
     snapshotOk,
   };
@@ -152,6 +159,7 @@ const ACKNOWLEDGED_ABOUT = JSON.stringify([{ pageId: 1, fingerprint: "fingerprin
 beforeEach(() => {
   resetFetchers();
   snapshotOk = true;
+  upToDate = false;
 });
 
 describe("Publish page — Publish waits for the checks", () => {
@@ -291,5 +299,86 @@ describe("Publish page — the settings-replaced warnings a publish names", () =
 
     fireEvent.click(editorPublishButton());
     expect(publishSubmits()[1].acknowledgedReplacedPages).toBe(ACKNOWLEDGED_ABOUT);
+  });
+});
+
+describe("Publish page — what the checks read of GitHub", () => {
+  const withHead = (headState: string, shownHead: string | null) => ({ ...ANSWERED, headState, shownHead });
+
+  it("keeps Publish disabled while GitHub's head could not be read, and offers it once it is", async () => {
+    fetchers.validation.data = withHead("unchecked", null);
+    const view = await renderPublish();
+    expect(publishButton().disabled).toBe(true);
+
+    fetchers.validation.data = withHead("current", "head-sha");
+    await rerender(view);
+    expect(publishButton().disabled).toBe(false);
+  });
+
+  it("sends the head the checks showed with a first publish", async () => {
+    fetchers.validation.data = withHead("first_publish", "imported-sha");
+    await renderPublish();
+
+    fireEvent.click(publishButton());
+
+    expect(publishSubmits()[0].shownHead).toBe("imported-sha");
+  });
+
+  it("sends no head with a publish on the recorded head", async () => {
+    fetchers.validation.data = withHead("current", "head-sha");
+    await renderPublish();
+
+    fireEvent.click(publishButton());
+
+    expect(publishSubmits()[0]).not.toHaveProperty("shownHead");
+  });
+});
+
+describe("Publish page — a page held in two languages", () => {
+  const ABOUT_GROUP = {
+    page: { pageId: 5, file: "about.md", title: "About" },
+    others: [{ pageId: 6, file: "acerca.md", title: "Acerca de Telar" }],
+  };
+  const WITH_PAIR = { ...ANSWERED, languageGroups: [ABOUT_GROUP] };
+
+  it("waits for a version to be chosen, none chosen to begin with, and sends the one chosen", async () => {
+    fetchers.validation.data = WITH_PAIR;
+    await renderPublish();
+    const radios = screen.getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.checked)).toEqual([false, false]);
+    expect(publishButton().disabled).toBe(true);
+    expect(screen.getByText("publish_section.language_choice_note")).toBeTruthy();
+
+    fireEvent.click(radios[1]);
+    expect(publishButton().disabled).toBe(false);
+    fireEvent.click(publishButton());
+    expect(publishSubmits()[0].keepPageFiles).toBe(JSON.stringify(["acerca.md"]));
+  });
+
+  it("offers Publish on a site with nothing else to publish, once a version is chosen", async () => {
+    upToDate = true;
+    fetchers.validation.data = WITH_PAIR;
+    await renderPublish();
+    expect(publishButton().disabled).toBe(true);
+    fireEvent.click(screen.getAllByRole("radio")[0]);
+    expect(publishButton().disabled).toBe(false);
+  });
+
+  it("sends no choice on a site with no such page", async () => {
+    fetchers.validation.data = ANSWERED;
+    await renderPublish();
+    expect(screen.queryAllByRole("radio")).toEqual([]);
+    fireEvent.click(publishButton());
+    expect(publishSubmits()[0]).not.toHaveProperty("keepPageFiles");
+  });
+
+  it("runs the checks again when the publish was refused for a page with no version chosen", async () => {
+    fetchers.validation.data = ANSWERED;
+    const view = await renderPublish();
+    const runsBefore = validationRuns();
+    fetchers.publish.data = { ok: false, intent: "publish", error: "page_language_unchosen", projectId: 1 };
+    await rerender(view);
+    expect(validationRuns()).toBe(runsBefore + 1);
+    expect(screen.getByText("build.page_language_unchosen")).toBeTruthy();
   });
 });

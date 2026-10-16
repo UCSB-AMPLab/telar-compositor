@@ -1,11 +1,12 @@
 /**
  * A repository's story files at one or more commits, served at the network
  * as GitHub serves them to `storyFilesAt` and `readStoriesForAccept`: the
- * GraphQL subtree lookup, the recursive listing of each subtree, and the
- * Contents API with `size`, so a strict read can check it has the whole file.
- * Every Contents read is recorded as `<commit>:<path>`.
+ * GraphQL subtree lookup, the listing of each subtree, recursive or of its
+ * direct entries only, and the Contents API with `size`, so a strict read can
+ * check it has the whole file. Every Contents read is recorded as
+ * `<commit>:<path>`.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { gitBlobSha } from "~/lib/story-files.server";
@@ -73,10 +74,18 @@ export async function storyRepoAnswer(
     }
     return json({ data: { repository: answer } });
   }
-  const tree = /\/repos\/[^/]+\/[^/]+\/git\/trees\/([^?]+)\?recursive=1$/.exec(url);
+  const tree = /\/repos\/[^/]+\/[^/]+\/git\/trees\/([^?]+)(\?recursive=1)?$/.exec(url);
   if (tree) {
     const listing = repo.listings[decodeURIComponent(tree[1])];
-    return listing ? json({ sha: tree[1], ...listing }) : json({ message: "Not Found" }, 404);
+    if (!listing) return json({ message: "Not Found" }, 404);
+    if (tree[2]) return json({ sha: tree[1], ...listing });
+    // Without recursion: the entries directly in the subtree, a folder once
+    // for whatever lies below it.
+    const direct = listing.tree.filter((e) => !e.path.includes("/"));
+    const folders = [...new Set(listing.tree.filter((e) => e.path.includes("/")).map((e) => e.path.split("/")[0]))]
+      .filter((name) => !direct.some((e) => e.path === name))
+      .map((name) => ({ path: name, sha: `tree-${name}`, type: "tree", mode: "040000" }));
+    return json({ sha: tree[1], truncated: listing.truncated, tree: [...direct, ...folders] });
   }
   return null;
 }

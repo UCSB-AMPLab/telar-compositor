@@ -13,7 +13,7 @@
  * checks its live maps against. The two agree except where the publisher
  * transforms something.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -29,6 +29,8 @@ vi.mock("~/lib/github.server", async (orig) => {
     getFileAtRef: vi.fn(async () => ({ status: "absent" })),
     getFileContent: vi.fn(async () => null),
     getSubtreeOids: vi.fn(async () => ({ ok: true, at: () => ({ kind: "absent" }) })),
+    // The publish lists the spreadsheets folder on its own; here it holds no story sheets.
+    listDirectoryEntries: vi.fn(async () => []),
   };
 });
 

@@ -3,12 +3,13 @@
  * kept-columns capture: the rows as the framework renders them, and each step's
  * row with its layer file references resolved as the import resolves them.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { resolveLayerFileReferences } from "~/lib/import.server";
 import type { StoryLayerRow, StoryStepRow } from "~/lib/publish.server";
-import { layerFilesAt, readStory, rowsFromContent } from "~/lib/story-content.server";
+import { layerFilesAt } from "~/lib/story-layer-references.server";
+import { readStory, rowsFromContent } from "~/lib/story-content.server";
 import { SPREADSHEETS_DIR, readBlobText } from "~/lib/story-files.server";
 import type { CommitFiles, RepoAccess } from "~/lib/story-files.server";
 

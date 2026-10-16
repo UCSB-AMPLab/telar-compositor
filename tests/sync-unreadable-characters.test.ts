@@ -1,13 +1,13 @@
 /**
- * The syncs name each file read at the head whose bytes are not valid UTF-8, and the full sync reports those files whether or not it collects
- * warnings (`unreadableFiles`), so the status refresh counts them as
- * divergence. A file lossy only at the base is not named: the base is the
+ * The syncs name each file read at the head whose bytes are not valid UTF-8,
+ * and the full sync reports those files whether or not it collects warnings
+ * (`unreadableFiles`), so the status refresh counts them as divergence. A file lossy only at the base is not named: the base is the
  * state last reconciled, not what the author now has.
  *
  * The parse is real; GitHub and D1 are faked, and the story check stands in
  * for one that read nothing (its own reads are in sync-story-content.test.ts).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -35,6 +35,7 @@ vi.mock("~/lib/story-content.server", async (importOriginal) => {
 import * as githubServer from "~/lib/github.server";
 import type { FileAtRef } from "~/lib/github.server";
 import { computeSyncDiff, computeFullSyncDiff, hasDivergentChanges } from "~/lib/sync.server";
+import { checkStoryContent } from "~/lib/story-content.server";
 import type { SheetWarning } from "~/lib/sheet-warnings";
 
 const SHEETS = "telar-content/spreadsheets";
@@ -187,6 +188,59 @@ describe("the full sync, collecting warnings", () => {
 
     expect(unreadable(diff.warnings)).toEqual([]);
     expect(diff.unreadableFiles).toEqual([]);
+  });
+});
+
+describe("the review's items for the files read lossily", () => {
+  it("tags a new story's step CSV with the story, a choice", async () => {
+    head[`${SHEETS}/project.csv`] = "order,story_id,title\n1,story-one,First\n";
+    head[`${SHEETS}/story-one.csv`] = `step,object,question\n1,obj-001,Q${R}\n`;
+    lossyAtHead.add(`${SHEETS}/story-one.csv`);
+
+    const diff = await computeFullSyncDiff(1, "t", "o", "r", emptyDb(), null, COLLECT);
+
+    expect(diff.unreadable).toEqual([{ file: "story-one.csv", storyIds: ["story-one"], effect: "left_out", notice: false }]);
+  });
+
+  it("tags a layer file two new stories name with both", async () => {
+    head[`${SHEETS}/project.csv`] = "order,story_id,title\n1,story-one,First\n2,story-two,Second\n3,story-three,Third\n";
+    const csv = "step,object,question,layer1_button,layer1_content\n1,obj-001,Q,More,panel.md\n";
+    head[`${SHEETS}/story-one.csv`] = csv;
+    head[`${SHEETS}/story-two.csv`] = csv;
+    head[`${SHEETS}/story-three.csv`] = "step,object,question\n1,obj-001,Q\n";
+    head["telar-content/texts/stories/panel.md"] = `Panel ${R}\n`;
+    lossyAtHead.add("telar-content/texts/stories/panel.md");
+
+    const diff = await computeFullSyncDiff(1, "t", "o", "r", emptyDb(), null, COLLECT);
+
+    expect(diff.unreadable).toEqual([
+      { file: "telar-content/texts/stories/panel.md", storyIds: ["story-one", "story-two"], effect: "name_shown", notice: false },
+    ]);
+  });
+
+  it("tags a file the story check read lossily with the story it names", async () => {
+    const panel = "telar-content/texts/stories/panel.md";
+    vi.mocked(checkStoryContent).mockImplementationOnce(async (input) => {
+      input.warnings?.push({ code: "unreadable_characters", file: panel, effect: "name_shown", repair: "publish" });
+      input.lossyStories?.set(panel, new Set(["s1"]));
+      return { conclusive: true, changes: [], suppressedEditorOnly: 0 };
+    });
+    lossyAtHead.add(`${SHEETS}/objects.csv`);
+
+    const diff = await computeFullSyncDiff(1, "t", "o", "r", emptyDb(), BASE, COLLECT);
+
+    expect(diff.unreadable).toEqual([
+      { file: "objects.csv", effect: "build_stops", notice: false },
+      { file: panel, storyIds: ["s1"], effect: "name_shown", notice: false },
+    ]);
+  });
+
+  it.each([`${SHEETS}/objects.csv`, "_config.yml"])("gives %s, which no story owns, no story, without warnings too", async (path) => {
+    lossyAtHead.add(path);
+
+    const diff = await computeFullSyncDiff(1, "t", "o", "r", emptyDb(), BASE);
+
+    expect(diff.unreadable).toEqual([{ file: diff.unreadableFiles[0], effect: "build_stops", notice: false }]);
   });
 });
 
