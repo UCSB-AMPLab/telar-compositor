@@ -12,7 +12,7 @@
  * file. The diff's reading of that same response is asserted alongside it, so
  * the two modes cannot drift into one.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

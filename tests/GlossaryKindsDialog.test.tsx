@@ -5,7 +5,7 @@
  * entries, and the entries it moves to a kind's new id once a save reports
  * the change.
  *
- * @version v1.5.1-beta
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";

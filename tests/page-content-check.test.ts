@@ -8,7 +8,7 @@
  * (`fixtures/pages/telar/`), and each D1 page is the row the import stores
  * for its file (`parsePageMarkdown`).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

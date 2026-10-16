@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.5.5-beta (2026-10-16)
+
+A redesigned check against GitHub, fields that show they can be edited and protect what they change, and messages that say what actually happened.
+
+### Changes made on GitHub
+
+- **One review for changes made on GitHub** — When someone edits your site directly on GitHub, the status at the top of the page says so, and one review lists each change with its own choice: keep GitHub's version or the Compositor's. A change made only on GitHub starts on GitHub's version; a change made in both places waits for you to choose. The review opens over the page you are on, from the status, the Publish page or the Upgrade Telar page.
+- **Three states instead of one** — "Changes on GitHub" appears only when a commit since your last publish changes something the Compositor keeps. A site not yet published from the Compositor says so, and a check that could not be made, for example while GitHub is limiting requests, says that instead of claiming changes.
+- **Everything in one place** — Files the Compositor could not read, images added on GitHub with no object, and stories or terms deleted on GitHub all appear in the same review as items to decide. The Objects page no longer has a sync of its own.
+- **Collaborators and instructors** see the state and who chooses, without controls they cannot use.
+- **An imported site's first publish** reviews the edits made on GitHub since the import instead of overwriting them.
+- **An About page in two languages** — When a site holds both about.md and acerca.md, the Publish page asks which one to keep.
+
+### Editing
+
+- **Fields that look editable** — Page titles, glossary term titles, and the title, subtitle and byline on a story's title card show that they can be edited before you hover over them.
+- **IDs and addresses that ask first** — Story and term IDs, page addresses, and the Site URL and Base URL are locked until you choose Change. Typing is limited to the characters the site can use, the consequence is stated, and nothing changes until you confirm. A page address the site already uses for something else is refused.
+- **Story settings** open in a panel beside the stage.
+- **A new object's ID** is shown before you upload, and the ID you see is the one it keeps.
+- **Your About page** — While your site's About page still has the text every new Telar site starts with, the Publish page suggests making it your own, with a link that opens the page in the editor. It does not stop you publishing, and it goes away once you change the text.
+
+### Fixes
+
+- **Sites whose project sheet has no story_id column** — Importing such a site dropped its stories, and its first publish then took them off the live site. Stories are now read by their order number, as Telar reads them.
+- **Stories marked Draft** — When a publish would take stories off your live site, the Publish page now names them.
+- **The glossary definition of "telar"** — Telar shipped the definition of the term `telar` in English and Spanish, one after the other. When you upgrade Telar from the Compositor and that definition is unchanged, only the paragraph in your site's language is kept, on GitHub and in the Compositor. If someone edits it while the upgrade is running, their version is kept.
+- **Checks that missed your latest edits** — Choosing Check again on the Publish page now takes in what you last wrote in the editor. If that could not be saved first, the page says so.
+- **Messages that claimed what had not been checked** — The Publish page lists only the checks it ran; the Upgrade Telar page says what an upgrade can change and how its build ended, and no longer tells a site already on the latest release that it was just upgraded; onboarding no longer finishes when it could not check your settings; and the object delete dialog says what each choice does.
+
 ## v1.5.4-beta (2026-10-11)
 
 Faster page loads, and two fixes to upgrading Telar on a site.
