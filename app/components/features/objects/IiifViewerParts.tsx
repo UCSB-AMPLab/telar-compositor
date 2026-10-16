@@ -1,9 +1,11 @@
 /**
  * Parts of the IIIF viewer drawn beside the image: the Viewfinder toggle that
  * shows and hides the guides, and what stands in for the image while a
- * self-hosted object's tiles are checked or missing.
+ * self-hosted object's tiles are checked, missing, or could not be checked.
+ * Missing tiles come with the offer to generate them; tiles that could not be
+ * checked may exist, so they get a different message and no such offer.
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import { useTranslation } from "react-i18next";
@@ -69,12 +71,15 @@ function columnPlacement(chrome: ViewerChrome | undefined) {
  */
 export function TilesPlaceholder({
   checking,
+  unreachable,
   className,
   onGenerateTiles,
   isGenerating,
   onRetry,
 }: {
   checking: boolean;
+  /** The tile check got no usable answer; the tiles may exist. */
+  unreachable: boolean;
   className: string;
   onGenerateTiles?: () => void;
   isGenerating: boolean;
@@ -96,10 +101,10 @@ export function TilesPlaceholder({
         <>
           <ImageOff className="w-12 h-12 text-gray-300 mb-3" />
           <p className="font-body text-sm text-gray-500 text-center max-w-xs mb-3">
-            {t("viewer_tiles_unavailable")}
+            {unreachable ? t("viewer_tiles_unreachable") : t("viewer_tiles_unavailable")}
           </p>
           <div className="flex items-center gap-2">
-            {onGenerateTiles && (
+            {onGenerateTiles && !unreachable && (
               <button
                 type="button"
                 onClick={onGenerateTiles}

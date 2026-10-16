@@ -9,11 +9,16 @@
  * with case, accents, underscores, hyphens and repeated spaces folded away,
  * against a kind's id and its `values`. A site kind is accepted on the
  * framework's terms: it needs a label and a heading, and none of its id or
- * values may already belong to an earlier kind.
+ * values may already belong to an earlier kind. A save holds one rule more
+ * (`validateSiteKindsForSave`): an id that is new or changed in the list is
+ * made of lowercase letters, digits and single hyphens between them. The
+ * framework accepts other ids, so a kind already stored with one keeps it
+ * until its id is edited.
  *
- * @version v1.5.1-beta
+ * @version v1.5.5-beta
  */
 import { load } from "js-yaml";
+import { normaliseSlug } from "~/lib/slug";
 
 export interface GlossaryKindOption {
   id: string;
@@ -41,6 +46,7 @@ export interface KindProblem {
     | "kind_error_heading_required"
     | "kind_error_values_not_list"
     | "kind_error_id_taken"
+    | "kind_error_id_characters"
     | "kind_error_value_taken";
   /** The id or value another kind already has, as written. */
   value?: string;
@@ -232,6 +238,29 @@ export function validateSiteKinds(core: GlossaryKindOption[], list: unknown[]): 
     const problems = { ...takenProblems(kind, taken), ...fieldProblems(entry) };
     if (isAcceptedKind(problems)) claim(aliasesOf(kind.id, kind.values), { label: kind.label });
     return problems;
+  });
+}
+
+/**
+ * `validateSiteKinds`, and for a kind whose id is new or changed in this list
+ * (an entry's `from` is the id it had), an id that is not made of lowercase
+ * letters, digits and single hyphens. The framework accepts other ids, so a
+ * kind already stored with one keeps it until its id is edited. `replaced` is
+ * the list the save replaces: an entry's `from` exempts its id only when that
+ * list holds the same id.
+ */
+export function validateSiteKindsForSave(
+  core: GlossaryKindOption[],
+  list: unknown[],
+  replaced: unknown[],
+): SiteKindProblems[] {
+  const existing = new Set(replaced.map((entry) => toSiteKind(entry).id));
+  return validateSiteKinds(core, list).map((problems, i) => {
+    const entry = list[i];
+    const { id } = toSiteKind(entry);
+    const from = isRecord(entry) && typeof entry.from === "string" ? entry.from : undefined;
+    if (!id || (id === from && existing.has(id)) || problems.id || id === normaliseSlug(id)) return problems;
+    return { ...problems, id: { key: "kind_error_id_characters", value: id } };
   });
 }
 

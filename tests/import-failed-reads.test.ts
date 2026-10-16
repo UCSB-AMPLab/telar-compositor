@@ -7,7 +7,7 @@
  * file and listing at it strictly, and refuses on any failed read before it
  * writes anything, naming the file. A 404 keeps its old meaning at each site.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -231,13 +231,13 @@ describe("importRepo: a failed read refuses the import, naming the file, and see
 });
 
 describe("importRepo: a missing file keeps its meaning", () => {
-  it("answers empty_repo when _config.yml is absent", async () => {
+  it("answers no_site_config, not empty_repo, when _config.yml is absent", async () => {
     delete files["_config.yml"];
 
     const result = await importNow();
 
     expect(result.valid).toBe(false);
-    expect(result.validationError).toBe("empty_repo");
+    expect(result.validationError).toBe("no_site_config");
     expectNothingSeeded();
   });
 

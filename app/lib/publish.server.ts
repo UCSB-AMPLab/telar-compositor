@@ -1,6 +1,6 @@
 /**
- * This file is the server-side library powering the Publish wizard —
- * CSV serialisation, layer markdown assembly, line-based `_config.yml`
+ * This file is the server-side library powering the Publish page —
+ * CSV serialization, layer markdown assembly, line-based `_config.yml`
  * mutation, change-summary computation, validation, and full publish
  * file-set assembly.
  *
@@ -18,7 +18,7 @@
  *
  * Called by the Publish route — no UI logic lives here.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { glossarySheetOrder } from "~/lib/glossary-order.server";
@@ -45,7 +45,7 @@ import {
 import { and, eq, max } from "drizzle-orm";
 import { objectsSheetOrder } from "~/lib/objects.server";
 import { getDb } from "~/lib/db.server";
-import { getFileAtRef, getFileContent, getSubtreeOids, listSubtreeEntries } from "~/lib/github.server";
+import { getFileAtRef, getFileContent, getSubtreeOids, listDirectoryEntries, listSubtreeEntries } from "~/lib/github.server";
 import type { FileAtRef } from "~/lib/github.server";
 import { siteSheetFileAt, writtenSheetPath, type SiteSheetRole } from "~/lib/site-sheets.server";
 import { ObjectsCommitUnready } from "~/lib/pending-object-ops.server";
@@ -420,6 +420,13 @@ export interface ReplacedSettings {
 export interface ValidationResult {
   blockers: ValidationItem[];
   warnings: ValidationItem[];
+  /**
+   * Invitations, not failures: nothing here blocks a publish, asks to be
+   * acknowledged, or counts against the checks. Optional because most results
+   * carry none; `runPrePublishValidation` returns it empty, and the route fills
+   * it from `aboutPageSuggestions`, which is async where that function is not.
+   */
+  suggestions?: ValidationItem[];
 }
 
 /** Input state used for computing change summaries */
@@ -2924,12 +2931,32 @@ function glossarySharedAddressWarnings(glossary: GlossaryTermForValidation[]): V
 }
 
 /**
+ * Where GitHub's head stands for a publish. `current`: it is the recorded
+ * head. `first_publish`: no head is recorded, and GitHub is still at the
+ * commit the import read, or no such commit is recorded. `stale`: anything
+ * else, a change on GitHub the Compositor has not reviewed. `unchecked`:
+ * GitHub's head could not be read, which says nothing either way.
+ */
+export type PublishHeadState = "current" | "first_publish" | "stale" | "unchecked";
+
+export function publishHeadState(
+  recordedHead: string | null,
+  importCommit: string | null,
+  githubHead: string | null,
+): PublishHeadState {
+  if (githubHead === null) return "unchecked";
+  if (recordedHead !== null) return recordedHead === githubHead ? "current" : "stale";
+  return importCommit === null || importCommit === githubHead ? "first_publish" : "stale";
+}
+
+/**
  * Runs pre-publish validation checks.
  *
  * Blockers prevent publishing; warnings are advisory.
  *
  * Blockers:
- *   - headSha !== currentRepoHead (repo has diverged — re-sync required)
+ *   - GitHub's head is not the one a publish may land on
+ *     (`publishHeadState` is `stale`: the repo has diverged, re-sync required)
  *   - Pages missing a title (the page can't be published in this state — no
  *     usable URL or menu entry — and pageRowsToCommitFiles excludes it; gating
  *     here forces the user to either name or delete the row before any publish)
@@ -2977,8 +3004,12 @@ function glossarySharedAddressWarnings(glossary: GlossaryTermForValidation[]): V
  * private, non-draft story.
  */
 export function runPrePublishValidation(params: {
-  headSha: string;
-  currentRepoHead: string;
+  /** The recorded head, null when none is. */
+  headSha: string | null;
+  /** GitHub's head, null when it could not be read: then no head blocker is raised. */
+  currentRepoHead: string | null;
+  /** The commit the import read, while no head is recorded (`importCommitOf`). */
+  importCommit?: string | null;
   stories: StoryForValidation[];
   steps: StepForValidation[];
   objects: ObjectForValidation[];
@@ -3011,7 +3042,7 @@ export function runPrePublishValidation(params: {
   const warnings: ValidationResult["warnings"] = [];
 
   // Blocker: stale HEAD
-  if (params.headSha !== params.currentRepoHead) {
+  if (publishHeadState(params.headSha, params.importCommit ?? null, params.currentRepoHead) === "stale") {
     blockers.push({
       code: "stale_head",
       message: "stale_head",
@@ -3199,7 +3230,7 @@ export function runPrePublishValidation(params: {
   // published site that will read plainer than the editor does.
   warnings.push(...answers.warnings);
 
-  return { blockers, warnings };
+  return { blockers, warnings, suggestions: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -4076,6 +4107,36 @@ export async function deletedStoryDataCopies(
 }
 
 /**
+ * The warning that a publish takes stories off the live site: the ids GitHub's
+ * project.csv at `source.ref` lists, read as the import reads them
+ * (`projectCsvStoryRows`), that the project.csv this publish writes does not
+ * list. That file lists the stories that are not drafts, so a draft and a
+ * story D1 no longer has both leave. Each is named by its title where D1 has
+ * the story, else by its id. A project.csv that is absent, unreadable or
+ * cannot be parsed names nothing: the publish is advisory here, never blocked.
+ */
+export async function storiesLeaveSiteWarnings(
+  source: { token: string; owner: string; repo: string; ref: string },
+  stories: readonly StoryForValidation[],
+): Promise<ValidationItem[]> {
+  const { file: read } = await siteSheetAt(source, "project");
+  if (read.status !== "ok") return [];
+  let rows: ReturnType<typeof projectCsvStoryRows>;
+  try {
+    rows = projectCsvStoryRows(read.content.replace(/^\uFEFF/, ""));
+  } catch {
+    return [];
+  }
+  const written = new Set(stories.filter((s) => !s.draft).map((s) => s.story_id));
+  const known = new Map(stories.map((s) => [s.story_id, s]));
+  const leaving = [...new Set(rows.map((r) => r.story_id ?? "").filter((id) => pythonStrip(id) !== ""))]
+    .filter((id) => !written.has(id))
+    .map((id) => known.get(id)?.title?.trim() || id);
+  if (leaving.length === 0) return [];
+  return [{ code: "stories_leave_site", message: "stories_leave_site", params: { stories: leaving.join(", ") } }];
+}
+
+/**
  * Page-file hard-delete detection — the page analogue of
  * `computeStoryDeletions`. A page slug rename writes the new
  * `texts/pages/{new}.md` but never removes `texts/pages/{old}.md`, so without
@@ -4448,20 +4509,53 @@ export async function renderStoryFiles(
 const STORY_SHEETS_DIR = "telar-content/spreadsheets";
 
 /**
- * The spreadsheets subtree at the publish ref, as file name to blob SHA,
- * listed once for every story. Empty, and not listed, when there are no
- * stories, and empty when the directory is absent. A listing
- * that cannot be trusted, or a request that fails, refuses the publish, since
- * a story file it fails to show is a file the publish would overwrite unread.
+ * The regular files directly in the spreadsheets folder at the publish ref, as
+ * file name to blob SHA, listed once for every story and without recursion,
+ * since the framework reads no story sheet from a subfolder. Empty, and not
+ * listed, when there are no stories, and empty when the folder is absent. A
+ * request that fails, or a listing that comes back incomplete, refuses the
+ * publish, since a story file it fails to show is a file the publish would
+ * overwrite unread; so does a story's own CSV that is not a regular file (a
+ * symbolic link, a submodule, a folder), whose content cannot be read as the
+ * story's, and a folder that is itself not one. Anything else in the folder
+ * that is not a regular file is left out.
  */
-async function storySheetsAt(params: BuildPublishParams, storyCount: number): Promise<Map<string, string>> {
-  if (storyCount === 0) return new Map();
-  const listing = await listStorySheets(params).catch(() => null);
-  if (listing === null) throw new UnreadablePublishFileError("stories", STORY_SHEETS_DIR);
-  return listing;
+async function storySheetsAt(
+  params: BuildPublishParams,
+  storyIds: readonly string[],
+): Promise<Map<string, string>> {
+  if (storyIds.length === 0) return new Map();
+  const entries = await listDirectoryEntries(params.token, params.owner, params.repo, params.ref, STORY_SHEETS_DIR)
+    .catch(() => null);
+  if (entries === null) throw new UnreadablePublishFileError("stories", STORY_SHEETS_DIR);
+  // An empty listing is also what a path that is not a folder gives, which a
+  // publish cannot write under.
+  if (entries.length === 0 && !(await storySheetsFolderOrAbsent(params))) {
+    throw new UnreadablePublishFileError("stories", STORY_SHEETS_DIR);
+  }
+  const own = new Set(storyIds.map((id) => `${STORY_SHEETS_DIR}/${id}.csv`));
+  const sheets = new Map<string, string>();
+  for (const entry of entries) {
+    const regular = entry.type === "blob" && (entry.mode === "100644" || entry.mode === "100755");
+    if (regular) sheets.set(entry.path.slice(STORY_SHEETS_DIR.length + 1), entry.sha);
+    else if (own.has(entry.path)) throw new UnreadablePublishFileError("stories", entry.path);
+  }
+  return sheets;
 }
 
-/** The listing `storySheetsAt` takes, or null when it cannot be trusted. */
+/** Whether the publish ref has a folder or nothing at the spreadsheets path; false when that cannot be told. */
+async function storySheetsFolderOrAbsent(params: Pick<BuildPublishParams, "token" | "owner" | "repo" | "ref">): Promise<boolean> {
+  const trees = await getSubtreeOids(params.token, params.owner, params.repo, [params.ref], [STORY_SHEETS_DIR]).catch(() => null);
+  if (trees === null || !trees.ok) return false;
+  const kind = trees.at(params.ref, STORY_SHEETS_DIR).kind;
+  return kind === "absent" || kind === "tree";
+}
+
+/**
+ * The regular files in the spreadsheets subtree at a ref, at any depth, or
+ * null when the listing cannot be trusted: for a reader that must account for
+ * every file there.
+ */
 export async function listStorySheets(
   params: Pick<BuildPublishParams, "token" | "owner" | "repo" | "ref">,
 ): Promise<Map<string, string> | null> {
@@ -4689,7 +4783,7 @@ export async function buildPublishFileSet(
   });
 
   // --- Per-story CSVs and layer files ---
-  const sheets = await storySheetsAt(params, storyRows.length);
+  const sheets = await storySheetsAt(params, storyRows.map((s) => s.story_id));
   // Iterate over ALL stories (draft + non-draft). Each story
   // produces one telar-content/spreadsheets/{story_id}.csv file regardless of
   // draft flag — that's the orphans-are-drafts round-trip rule. project.csv

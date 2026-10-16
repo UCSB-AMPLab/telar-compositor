@@ -16,7 +16,7 @@
  * drawer: "canvas" renders deterministically; if the option is dropped, that
  * case fails.
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -668,6 +668,39 @@ describe("IiifViewer — tile availability", () => {
     await act(async () => { releaseHead(); });
     await settle();
     expect(states.at(-1)?.status).toBe("ready");
+  });
+
+  describe("the tile check's failure message", () => {
+    const view = () =>
+      render(
+        <IiifViewer
+          manifestUrl={MANIFEST}
+          infoJsonUrl={INFO}
+          isSelfHosted
+          onGenerateTiles={() => {}}
+        />
+      );
+
+    it("says the tiles were not generated, with the rebuild button, on a 404", async () => {
+      headResponder = () => new Response(null, { status: 404 });
+      view();
+      await screen.findByText("viewer_tiles_unavailable");
+      expect(screen.getByText("viewer_generate_tiles")).toBeTruthy();
+      expect(screen.queryByText("viewer_tiles_unreachable")).toBeNull();
+    });
+
+    it.each([
+      ["a 500", () => new Response(null, { status: 500 })],
+      ["a 403", () => new Response(null, { status: 403 })],
+      ["a thrown fetch (offline or CORS)", () => { throw new TypeError("Failed to fetch"); }],
+    ])("does not claim the tiles are missing, and offers no rebuild, on %s", async (_name, answer) => {
+      headResponder = answer;
+      view();
+      await screen.findByText("viewer_tiles_unreachable");
+      expect(screen.queryByText("viewer_tiles_unavailable")).toBeNull();
+      expect(screen.queryByText("viewer_generate_tiles")).toBeNull();
+      expect(screen.getByText("viewer_retry")).toBeTruthy();
+    });
   });
 });
 

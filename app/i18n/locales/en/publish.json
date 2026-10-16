@@ -19,18 +19,15 @@
     "nothing_changing": "Nothing has changed since your last publish."
   },
   "passed_checks": {
-    "object_metadata": "All required object metadata present",
-    "term_links": "No broken [[term]] links",
-    "iiif_tiles": "IIIF tiles built",
-    "site_url": "Site URL matches Pages config",
-    "telar_version": "telar_version up to date"
+    "object_titles": "Every object has a title"
   },
   "publish_section": {
     "commit_message_label": "Commit message",
     "edit_message": "Edit message",
     "done_editing": "Done editing",
     "publish_now": "Publish now",
-    "blocked_note": "Fix the items above before publishing."
+    "blocked_note": "Fix the items above before publishing.",
+    "language_choice_note": "Choose which version of each page to keep before you publish."
   },
   "success_card": {
     "heading": "Published. {{url}}",
@@ -62,15 +59,22 @@
   "checks": {
     "heading": "Pre-publish checks",
     "state_unavailable": "We couldn't see your site's current content, so these checks didn't run. Reload the page in a moment.",
+    "may_be_behind": "These checks may not include your latest edits. Check again in a moment.",
     "failed": "We couldn't run these checks, and you can't publish without them. Try again in a moment.",
     "run_again": "Check again",
+    "first_publish_title": "Your first publish from the Compositor",
+    "first_publish_body": "It writes your site's files in the Compositor's layout. Nothing in them is lost:",
+    "first_publish_sheets": "<0>project.csv</0> and the story sheets get a Spanish header row and the columns this release reads",
+    "first_publish_texts": "story texts move into <0>telar-content/texts/stories/</0>, one file per panel",
+    "github_unchecked": "Couldn't check GitHub just now, so the Compositor can't tell whether anyone has committed since your last publish. Publishing waits until it can.",
+    "github_unchecked_retry": "Try again",
     "workflow_repair_build_unchecked": "We couldn't check on the rebuild just now. We'll keep trying.",
-    "all_passed": "All checks passed",
-    "all_passed_description": "Your content is ready to publish.",
     "blockers_heading": "Must fix before publishing",
     "warnings_heading": "Suggestions",
-    "stale_head": "Your site's repository has changed since you last synced. Please re-sync before publishing.",
-    "stale_head_action": "Resolve sync",
+    "stale_head": "Someone committed to your repository after your last publish. Choose what to keep before you publish again.",
+    "stale_head_action": "Review changes",
+    "stale_head_collab": "Someone committed to the repository after the last publish. {{name}}, who coordinates this site, chooses which versions to keep. You can keep editing; publishing waits until then.",
+    "stale_head_collab_unnamed": "Someone committed to the repository after the last publish. The person who coordinates this site chooses which versions to keep. You can keep editing; publishing waits until then.",
     "object_no_title": "Object \"{{id}}\" has no title",
     "object_reserved_column": "Object \"{{id}}\" has a column named \"{{column}}\" that Telar reserves for itself. Remove the column before publishing, or the site's next build will fail.",
     "glossary_reserved_column": "Glossary term \"{{id}}\" has a column named \"{{column}}\" that Telar reserves for itself. Remove the column before publishing, or the site's next build will fail.",
@@ -112,6 +116,8 @@
     "answer_format_heading": "headings",
     "answer_format_blockquote": "block quotes",
     "answer_format_rule": "horizontal rules",
+    "about_page_template": "Your {{title}} page still has the text every new Telar site starts with, which describes Telar rather than your project. You might like to make it your own.",
+    "about_page_template_link": "Edit the {{title}} page",
     "page_no_title": "A page has no title — open Pages to give it a title, or delete it.",
     "page_frontmatter_unwritable": "The title of page \"{{page}}\" is written in a form the Compositor can't change without touching the rest of the settings block it sits in. To publish, keep only the title in the block, which removes the page's other settings, or edit the page's file on GitHub.",
     "page_frontmatter_reset": "Keep only the title",
@@ -123,6 +129,7 @@
     "renamed_duplicate_columns": "{{total}} columns in {{file}} were all called \"{{column}}\". All but the first are saved under new names: {{renamed}}.",
     "private_story_no_key": "These stories are private, but no story key is set: {{stories}}. The published site build will fail until you set a story key in Site settings.",
     "private_story_workflow_stale": "These stories are private, but your site's build workflow is out of date and does not include the step that protects them: {{stories}}. The published site build will fail until you replace .github/workflows/build.yml with the current one from the Telar repository. <0>The upgrade notes explain how.</0>",
+    "stories_leave_site": "When you publish, these stories leave your live site: {{stories}}. Deleted stories and stories marked Draft are not published; to keep a draft on the site, turn Draft off.",
     "workflow_repair_action": "Update the build workflow",
     "workflow_repair_running": "Updating the build workflow…",
     "workflow_repair_done": "The build workflow is up to date.",
@@ -220,7 +227,9 @@
     "failed_description": "Something went wrong while building your site.",
     "publish_failed_description": "We couldn't publish your changes to GitHub, so your site hasn't changed. Nothing you edited was lost. Try again in a moment.",
     "github_permission": "GitHub refused to save your changes, so your site hasn't changed. Nothing you edited was lost. Telar may no longer have access to the repository: ask whoever manages it on GitHub to check that the Telar Compositor GitHub App is still installed on it, then publish again.",
-    "stale_head_error": "Your repository changed while publishing. Please re-sync and try again.",
+    "stale_head_error": "Your repository changed while publishing, so nothing was published. Review the changes made on GitHub, then publish again.",
+    "stale_head_error_collab": "Your repository changed while publishing, so nothing was published. {{name}}, who coordinates this site, reviews the changes made on GitHub. Publish again once they have.",
+    "stale_head_error_collab_unnamed": "Your repository changed while publishing, so nothing was published. The person who coordinates this site reviews the changes made on GitHub. Publish again once they have.",
     "snapshot_failed": "We couldn't save your latest edits, so publishing was stopped. Try again in a moment.",
     "snapshot_unreachable": "We couldn't reach your editing session. Publishing was stopped so your recent edits aren't left out.",
     "snapshot_incomplete": "We couldn't save part of your content, so publishing was stopped — publishing now would have left it off your site. Reload the page and try again.",
@@ -234,12 +243,22 @@
     "project_unreadable": "We couldn't read your site's list of stories from GitHub. Publishing was stopped so nothing in it is lost. Try again in a moment.",
     "operation_in_progress": "A publish, upgrade or upload is already running on this site, so this one wasn't started. Try again once it has finished.",
     "stories_unreadable": "We couldn't read your site's stories from GitHub. Publishing was stopped so nothing in them is lost. Try again in a moment.",
-    "changed_during_publish": "Someone edited a story while we were preparing to publish, so publishing was stopped. Publish again to include the change."
+    "changed_during_publish": "Someone edited a story while we were preparing to publish, so publishing was stopped. Publish again to include the change.",
+    "page_language_unchosen": "Publishing was stopped: one of your pages is in two languages, and you haven't chosen which version to keep. Choose one above, then publish again.",
+    "page_language_not_applied": "We couldn't keep the version you chose, because the page changed or couldn't be saved. Publishing was stopped and nothing changed. Reload the page and try again."
   },
   "repo_unavailable": {
     "heading": "Publishing is paused",
     "lead": "Telar can't reach the repository for this project ({{repo}}).",
     "body": "It may have been deleted, renamed, made private, or the Telar app's access to it was removed. Your work here is safe — everything you've edited in the Compositor is stored separately from the repository — but you can't publish until Telar can reach it again.",
     "manage_cta": "Manage repository access on GitHub"
+  },
+  "language_choice": {
+    "heading": "Your {{page}} page is in two languages",
+    "heading_more": "Your {{page}} page is in {{number}} languages",
+    "body": "A Telar site is in one language, but this page is in two files: {{files}}. Choose the one to keep. When you publish, the other version is deleted from your site.",
+    "body_more": "A Telar site is in one language, but this page is in {{number}} files: {{files}}. Choose the one to keep. When you publish, the other versions are deleted from your site.",
+    "keep": "Keep {{file}}",
+    "keep_other_note": "Its text goes into {{page}}, so the page keeps its address and its place in your menu, and {{file}} is deleted."
   }
 }

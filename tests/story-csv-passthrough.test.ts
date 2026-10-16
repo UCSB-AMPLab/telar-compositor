@@ -9,7 +9,7 @@
  * database are stood in for. The document's part of the trip — an edit
  * reaching D1 through the snapshot — is `tests/workers/story-extra-columns`.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -763,6 +763,8 @@ describe("the page's check after a removal", () => {
     let readBeforeRemoval: string[] | null = null;
     let requested: URL | null = null;
     doFetch.mockImplementation(async (request: Request) => {
+      // The snapshot the checks take before reading D1 follows the removal.
+      if (new URL(request.url).pathname === "/snapshot") return Response.json({});
       requested = new URL(request.url);
       readBeforeRemoval = [...reads];
       seed([stepWith({ nota: "n" })]);
@@ -772,7 +774,7 @@ describe("the page's check after a removal", () => {
     const result = await runAction({ intent: "run-validation", removeStoryId: "historia", removeColumn: "_metadata" });
 
     expect(result.ok).toBe(true);
-    expect(doFetch).toHaveBeenCalledTimes(1);
+    expect(doFetch.mock.calls.map(([r]) => new URL((r as Request).url).pathname)).toEqual(["/remove-story-column", "/snapshot"]);
     expect(requested!.pathname).toBe("/remove-story-column");
     expect(requested!.searchParams.get("story")).toBe("historia");
     expect(requested!.searchParams.get("column")).toBe("_metadata");
@@ -785,7 +787,8 @@ describe("the page's check after a removal", () => {
     seed([stepWith({ nota: "n" })]);
     const requested: URL[] = [];
     doFetch.mockImplementation(async (request: Request) => {
-      requested.push(new URL(request.url));
+      const url = new URL(request.url);
+      if (url.pathname !== "/snapshot") requested.push(url);
       return Response.json({ removed: 3 });
     });
 
@@ -824,10 +827,11 @@ describe("the page's check after a removal", () => {
     expect(result.removalFailed).toEqual({ column: "_metadata" });
   });
 
-  it("removes nothing on the page's ordinary pass", async () => {
+  it("removes nothing on the page's ordinary pass, which only snapshots", async () => {
     seed([stepWith({ _metadata: "x" })]);
+    doFetch.mockImplementation(async () => Response.json({}));
     const result = await runAction({ intent: "run-validation" });
-    expect(doFetch).not.toHaveBeenCalled();
+    expect(doFetch.mock.calls.map(([r]) => new URL((r as Request).url).pathname)).toEqual(["/snapshot"]);
     expect(result.removalFailed).toBeUndefined();
     expect(result.validation?.blockers.map((b) => b.code)).toContain("story_reserved_column");
   });

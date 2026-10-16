@@ -5,13 +5,14 @@
  * Constructs manifest URLs from project config (url + baseurl) for self-hosted
  * objects, or uses source_url directly for external IIIF objects.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { eq, and } from "drizzle-orm";
 import { objectsSheetOrder } from "~/lib/objects.server";
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { DeleteCompositorEffectNote, DeleteUsedInNote } from "~/components/features/objects/DeleteEffectNotes";
 import { Link, useFetcher, useNavigate, redirect, useRouteError, isRouteErrorResponse } from "react-router";
 import { ArrowLeft, GraduationCap, Trash2, Video, Music } from "lucide-react";
 import type { Route } from "./+types/_app.objects.$objectId";
@@ -1045,13 +1046,14 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
           {/* Delete confirmation modal */}
           {showDeleteConfirm && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-              <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full mx-4">
+              <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full mx-4">
                 <h3 className="font-heading font-semibold text-lg text-charcoal mb-2">
                   {t("delete_title")}
                 </h3>
-                <p className="font-body text-sm text-gray-600 mb-5">
+                <p className="font-body text-sm text-gray-600 mb-3">
                   {t("delete_description", { title: object.title || object.object_id })}
                 </p>
+                <DeleteUsedInNote count={usedInStories.length} />
                 {deleteMessageKey && (
                   <p className="font-body text-sm text-red-600 mb-5">
                     {t(deleteMessageKey)}
@@ -1065,11 +1067,12 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                     )}
                   </p>
                 )}
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2 mt-2">
                   {/* Both forms wait for the answer, which the effect above
                       reads: the server does the whole deletion. */}
                   <>
                       {/* Remove from compositor only */}
+                      <DeleteCompositorEffectNote isExternal={isExternal} />
                       <deleteFetcher.Form
                         method="post"
                         onSubmit={() => recordDeleteRequest(false)}
@@ -1087,6 +1090,10 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                       {/* Delete from repo — self-hosted objects only, and the
                           repo cleanup behind it is convenor-only. */}
                       {!isExternal && userRole === "convenor" && (
+                        <>
+                        <p className="font-body text-xs text-gray-500 mt-2">
+                          {t("delete_remove_repo_effect")}
+                        </p>
                         <deleteFetcher.Form
                           method="post"
                           onSubmit={() => recordDeleteRequest(true)}
@@ -1102,6 +1109,7 @@ export default function ObjectDetailPage({ loaderData }: Route.ComponentProps) {
                             {t("delete_remove_repo")}
                           </button>
                         </deleteFetcher.Form>
+                        </>
                       )}
                   </>
                   <button

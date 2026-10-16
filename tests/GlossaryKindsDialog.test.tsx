@@ -96,7 +96,7 @@ describe("GlossaryKindsDialog", () => {
     open({ stored: '[{"id":"creature"}]' });
     fireEvent.click(screen.getByText("kinds_add"));
     const added = rows()[1];
-    fireEvent.change(field(added, "kind_field_id"), { target: { value: " plant " } });
+    fireEvent.change(field(added, "kind_field_id"), { target: { value: "plant" } });
     fireEvent.change(field(added, "kind_field_label"), { target: { value: "Plant" } });
     fireEvent.change(field(added, "kind_field_heading"), { target: { value: "Plants" } });
     fireEvent.change(field(added, "kind_field_values"), { target: { value: "flora, , herb " } });
@@ -186,6 +186,26 @@ describe("GlossaryKindsDialog", () => {
     fireEvent.click(screen.getByText("kinds_save"));
     expect(within(added).getByText(/^kind_error_label_required/)).toBeTruthy();
     expect(within(added).getByText(/^kind_error_heading_required/)).toBeTruthy();
+    expect(fetcher.submit).not.toHaveBeenCalled();
+  });
+
+  it("takes only lowercase letters, digits and hyphens in a kind's id as it is typed", () => {
+    open();
+    fireEvent.click(screen.getByText("kinds_add"));
+    const id = field(rows()[1], "kind_field_id");
+    fireEvent.change(id, { target: { value: "Café Nuevo_2!" } });
+    expect(id.value).toBe("cafe-nuevo2");
+  });
+
+  it("refuses to save an id that ends in a hyphen, and says why", () => {
+    open();
+    fireEvent.click(screen.getByText("kinds_add"));
+    const added = rows()[1];
+    fireEvent.change(field(added, "kind_field_id"), { target: { value: "plant-" } });
+    fireEvent.change(field(added, "kind_field_label"), { target: { value: "Plant" } });
+    fireEvent.change(field(added, "kind_field_heading"), { target: { value: "Plants" } });
+    fireEvent.click(screen.getByText("kinds_save"));
+    expect(within(added).getByText(/^kind_error_id_characters/)).toBeTruthy();
     expect(fetcher.submit).not.toHaveBeenCalled();
   });
 

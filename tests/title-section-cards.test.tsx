@@ -6,7 +6,7 @@
  * layout, and the section card's heading and plain-text body. The story's ID
  * and the section list's switch are the editor's, beside the card.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -29,7 +29,7 @@ vi.mock("~/hooks/use-collaboration", () => ({
   }),
 }));
 
-import { TitleCardSettings, TitleCardView, type TitleCardData } from "~/components/features/editor/TitleCardView";
+import { TitleCardView, type TitleCardData } from "~/components/features/editor/TitleCardView";
 import { SectionCardView } from "~/components/features/editor/SectionCardView";
 import { resetTargetSaves } from "~/components/ui/target-saves";
 
@@ -64,7 +64,7 @@ describe("the title card", () => {
     expect(intro.querySelector("h2.intro-subtitle")?.textContent).toBe("An allegorical map");
     expect(intro.querySelector(".intro-byline")?.textContent?.trim()).toBe("Start with this template");
     expect(intro.querySelector(".intro-hint small")?.textContent).toBe("stage.scroll_hint");
-    expect(screen.getByTestId("intro-edit-hint").textContent).toBe("stage.edit_hint_title");
+    expect(screen.queryByTestId("intro-edit-hint")).toBeNull();
     expect(intro.querySelector(".intro-toc")).toBeNull();
   });
 
@@ -142,24 +142,6 @@ describe("the title card", () => {
   });
 });
 
-describe("the title card's settings", () => {
-  it("keeps the sections switch, which writes the story's choice", () => {
-    const data = titleCard();
-    render(<TitleCardSettings {...data} />);
-    const toggle = screen.getByRole("switch", { name: "title_card.show_sections_label" });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(toggle);
-    expect(data.onToggleShowSections).toHaveBeenCalledWith(true);
-    expect(screen.queryByText("title_card.show_sections_empty_helper")).toBeNull();
-  });
-
-  it("says how to fill the list when the story has no section cards, and keeps the story's ID", () => {
-    render(<TitleCardSettings {...titleCard({ sectionCardCount: 0, sectionTitles: [] })} />);
-    expect(screen.getByText("title_card.show_sections_empty_helper")).toBeTruthy();
-    expect((screen.getByLabelText("title_card.story_id_label") as HTMLInputElement).value).toBe("your-story");
-  });
-});
-
 describe("a section card", () => {
   function section(over: Partial<Parameters<typeof SectionCardView>[0]> = {}) {
     return (
@@ -200,7 +182,9 @@ describe("a section card", () => {
     expect(card.querySelector(".panel-trigger, [data-testid='card-ceiling']")).toBeNull();
     expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
       "section_card.heading_label",
+      "stage.edit_section_heading",
       "section_card.subtitle_label",
+      "stage.edit_answer",
     ]);
   });
 
@@ -249,5 +233,57 @@ describe("the cards' stylesheet", () => {
     expect(host).toContain("overflow-y: auto;");
     expect(host).not.toContain("align-items: center;");
     expect(rule(".visitor-layer :is(.intro-floating-card, .title-card-inner)")).toContain("margin: auto;");
+  });
+});
+
+describe("the title card's pencils", () => {
+  it("stands one after each of the title, subtitle and byline at rest, named for what it edits", () => {
+    render(<TitleCardView {...titleCard()} layoutMode="horizontal" />);
+    const intro = screen.getByTestId("story-intro");
+    const pencils = [...intro.querySelectorAll<HTMLElement>("[data-stage-pencil]")].map((el) => el.dataset.stagePencil);
+    expect(pencils).toEqual(["stage.edit_title", "stage.edit_subtitle", "stage.edit_byline"]);
+    expect(intro.querySelector("h1.intro-title [data-stage-pencil]")).not.toBeNull();
+    expect(intro.querySelector("h2.intro-subtitle [data-stage-pencil]")).not.toBeNull();
+    expect(intro.querySelector(".intro-byline [data-stage-pencil]")).not.toBeNull();
+  });
+
+  it("places each pencil's box absolutely, out of the line flow, so the card gains no line", () => {
+    render(<TitleCardView {...titleCard()} layoutMode="horizontal" />);
+    const boxes = screen.getByTestId("story-intro").querySelectorAll<HTMLElement>("[data-stage-pencil]");
+    expect(boxes.length).toBe(3);
+    for (const box of boxes) {
+      const wrapper = box.parentElement!.closest<HTMLElement>(".contents")!;
+      expect(wrapper.className).toContain("[&_.stage-field-pencil]:absolute");
+      expect(wrapper.className).not.toContain("inline-block");
+    }
+  });
+
+  it("opens the title's field from its pencil", () => {
+    render(<TitleCardView {...titleCard()} layoutMode="horizontal" />);
+    const pencil = screen.getByTestId("story-intro").querySelector<HTMLElement>("h1 [data-stage-pencil] [data-in-place]");
+    expect(pencil).not.toBeNull();
+    fireEvent.click(pencil!);
+    expect(screen.getByTestId("story-intro").querySelector("h1 input, h1 textarea")).not.toBeNull();
+  });
+});
+
+describe("a section card's pencils", () => {
+  it("stands one after the heading and one after the answer at rest, named for what it edits", () => {
+    render(
+      <SectionCardView
+        step={{ id: 7, question: "Sound", answer: "Now we turn to sound." }}
+        target="id:7"
+        fieldKeyPrefix="step-s-7"
+        questionYText={null}
+        answerYText={null}
+        onSaveField={vi.fn(async () => undefined)}
+        glossary={{ terms: new Map(), baseUrl: "" }}
+      />,
+    );
+    const card = screen.getByTestId("section-card");
+    const pencils = [...card.querySelectorAll<HTMLElement>("[data-stage-pencil]")].map((el) => el.dataset.stagePencil);
+    expect(pencils).toEqual(["stage.edit_section_heading", "stage.edit_answer"]);
+    expect(card.querySelector("h2.title-card-heading [data-stage-pencil]")).not.toBeNull();
+    expect(card.querySelector(".title-card-body [data-stage-pencil]")).not.toBeNull();
   });
 });

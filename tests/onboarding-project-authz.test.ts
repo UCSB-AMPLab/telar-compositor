@@ -18,7 +18,7 @@
  *
  * Mocking strategy mirrors `tests/onboarding-unlink-authz.test.ts`.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -136,6 +136,7 @@ vi.mock("~/lib/onboarding-create-site.server", () => ({
 import { action } from "~/routes/onboarding";
 import { getUserRole } from "~/lib/membership.server";
 import { repairSiteConfig } from "~/lib/config-repair.server";
+import { getFileContent } from "~/lib/github.server";
 import { verifySiteUrl, disableGoogleSheetsInConfig, SheetsNotDisableableError } from "~/lib/commit.server";
 import { commitFilesToRepo, enableGitHubPages } from "~/lib/commit.server";
 
@@ -253,12 +254,7 @@ const GATED_INTENTS: Array<{
       intent: "check-site-config",
       project_id: String(EXISTING_PROJECT_ID),
     },
-    refusal: {
-      ok: true,
-      intent: "check-site-config",
-      sheetsEnabled: false,
-      urlMismatch: null,
-    },
+    refusal: { ok: false, intent: "check-site-config", error: "not_found" },
   },
 ];
 
@@ -383,6 +379,29 @@ describe("onboarding action: the convenor's flow is unbroken", () => {
     expect(result.pagesNotEnabled).toBe(false);
   });
 
+  it("check-site-config refuses, never ok, for a convenor row whose project is gone", async () => {
+    vi.mocked(getUserRole).mockResolvedValue("convenor");
+
+    const result = await post(
+      OWNER_ID,
+      { intent: "check-site-config", project_id: String(ABSENT_PROJECT_ID) },
+      { exists: false },
+    );
+
+    expect(result).toEqual({ ok: false, intent: "check-site-config", error: "not_found" });
+  });
+
+  it("check-site-config answers unreachable, never ok, when _config.yml could not be read", async () => {
+    vi.mocked(getFileContent).mockResolvedValueOnce(null);
+
+    const result = await post(OWNER_ID, {
+      intent: "check-site-config",
+      project_id: String(EXISTING_PROJECT_ID),
+    });
+
+    expect(result).toEqual({ ok: false, reason: "unreachable", intent: "check-site-config" });
+  });
+
   it("check-site-config answers unreachable, not Pages off, when the Pages read failed", async () => {
     vi.mocked(verifySiteUrl).mockResolvedValueOnce({
       pagesEnabled: false,
@@ -400,12 +419,12 @@ describe("onboarding action: the convenor's flow is unbroken", () => {
     expect(result).toEqual({ ok: false, reason: "unreachable", intent: "check-site-config" });
   });
 
-  it("check-site-config does not report Pages as off when the Pages read was refused", async () => {
+  it("check-site-config answers that the check did not run, not ok, when the Pages read was refused", async () => {
     vi.mocked(verifySiteUrl).mockResolvedValueOnce({ pagesEnabled: false, match: false, pagesUrl: "", configUrl: "x", readRefused: true });
 
     const result = await post(OWNER_ID, { intent: "check-site-config", project_id: String(EXISTING_PROJECT_ID) });
 
-    expect(result).toMatchObject({ ok: true, pagesNotEnabled: false, urlMismatch: null });
+    expect(result).toEqual({ ok: false, reason: "pages_refused", intent: "check-site-config" });
   });
 
   it("check-site-config still reports Pages as off when GitHub says it is not enabled (404)", async () => {

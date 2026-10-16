@@ -2,12 +2,14 @@
  * can-delete.ts — server-side enforcement of the `canDelete` rule for
  * collaborative Yjs operations.
  *
- * Mirrors the client-side gate at `app/hooks/use-structural-ops.ts:153-156`:
+ * Mirrors the client-side gate `canDeleteYMap` in
+ * `app/hooks/use-structural-ops.ts`:
  *
  *     const canDelete = (yMap) =>
  *       role === "convenor" || yMap.get("created_by") === currentUserId;
  *
- * Approach (b) — post-apply observe + revert:
+ * The rule is enforced after a transaction applies, by observing it and
+ * reverting:
  *   - A second `afterTransaction` handler sits alongside the contribution
  *     tracker on the same Y.Doc.
  *   - Walks `tr.deleteSet`, identifies deleted Y.Maps embedded in protected
@@ -50,8 +52,8 @@
  * without the entity map appearing in `tr.changed` at all, which is what put
  * this beyond the passes above. `extractIdentityDomainViolations` holds an
  * exact per-key allow-list of value shapes, tested positively: Yjs stores plain
- * JSON as a map value without wrapping it in an `AbstractType`, so any guard
- * phrased as "not one of these types" is the same defect in a new costume.
+ * JSON as a map value without wrapping it in an `AbstractType`, so a guard
+ * phrased as "not one of these types" lets plain JSON through.
  * A born map carrying one is removed; a pre-existing map is restored to its
  * pre-transaction value; a map whose pre-transaction value is ALSO out of
  * domain stands, because there is no in-document value to restore it to. The
@@ -65,7 +67,13 @@
  * the runtime's writes cannot be inherited by client data travelling inside
  * one.
  *
- * The convenor-only config split is a sixth pass, and the only one that reads
+ * On a page's `slug` a client-origin write meets one rule more than the domain
+ * (`isClientIdentityValueAllowed`): it may not take an address the built site
+ * already serves (`isReservedPageAddress`). A stored slug that holds such an
+ * address stands for as long as its value is untouched, so a write elsewhere
+ * on the same map is not refused.
+ *
+ * The convenor-only config split is a sixth pass, and one of the two that read
  * a root type rather than an array member. Six `project_config` fields — the
  * site's address, its build content and its data source — are the convenor's
  * alone, and `snapshotConfig` writes almost the whole row out of the shared
@@ -78,6 +86,17 @@
  * including why the root's null `_item` makes the identity pass's opening
  * guard the wrong shape to copy.
  *
+ * The address pass is the seventh, and the one config rule that holds for a
+ * convenor too. `snapshotConfig` writes `url` and `baseurl` to D1 straight
+ * from the shared document, so a socket holder reaches the published
+ * `_config.yml` without the route action; `extractConfigAddressMutations`
+ * reverts a client write of either that the Site settings rules
+ * (`site-address.ts`) refuse. A value equal to the one before the transaction
+ * stands, so a stored address that does not meet the rules does not block
+ * other writes to the config, and a delete counts as a write, since
+ * `snapshotConfig` reads an absent key as "". Where the convenor-only pass
+ * already reverts the same key, the two make one revert.
+ *
  * The mirror that rebuilds a reverted entity is default-deny about shared
  * types: it models `Y.Text`, `Y.Array` and `Y.Map` by exact class and drops
  * anything else, because a value it carried through by reference arrived at
@@ -86,16 +105,18 @@
  * can author must never reach that halt, which is why an unmodelled type costs
  * its own field and nothing more. See `mirroredKind` and `isSharedValue`.
  *
- * Pure module — extracted from collaboration.ts so the handler can be
+ * Pure module, kept apart from collaboration.ts so the handler can be
  * unit-tested with a bare Y.Doc and synthetic WebSocket origins.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import * as Y from "yjs";
 
 import { isConvenorOnlyConfigField } from "~/lib/config-fields";
 import { isSharedValue } from "~/lib/value-domains";
+import { isReservedPageAddress } from "~/lib/page-address";
+import { isBaseUrl, isSiteUrl } from "~/lib/site-address";
 import { renderedValue } from "./collaboration-helpers";
 import { collectDisplacedRanges, type ClockRange } from "./displaced-edits";
 import { markRefused } from "./refusal-marks";
@@ -315,6 +336,19 @@ export function isIdentityValueInDomain(key: string, value: unknown): boolean {
   }
   if (value === undefined) return true;
   return typeof value === "string" && value.length > 0;
+}
+
+/**
+ * What a client-origin write may leave at an identity key: a value in domain,
+ * and for the pages' `slug` an address the site does not already serve
+ * (`isReservedPageAddress`). The reserved rule is not part of
+ * `isIdentityValueInDomain` because that predicate also judges documents
+ * already stored and GitHub's ingest, where a page that holds such a slug has
+ * to stand rather than be repaired. `slug` is a human key on `pages` alone.
+ */
+export function isClientIdentityValueAllowed(key: string, value: unknown): boolean {
+  if (!isIdentityValueInDomain(key, value)) return false;
+  return !(key === "slug" && typeof value === "string" && isReservedPageAddress(value));
 }
 
 /**
@@ -1890,6 +1924,58 @@ export function extractConfigFieldMutations(
 }
 
 /**
+ * Whether `value` may stand as the config key `key` after a client-origin
+ * write: the Site URL an http(s) origin, the Base URL empty or a path, both in
+ * the settled form the Site settings field writes.
+ */
+function isClientConfigAddressAllowed(key: "url" | "baseurl", value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  return key === "url" ? isSiteUrl(value) : isBaseUrl(value);
+}
+
+/**
+ * Address pass — reverts a client write of `url` or `baseurl` that the Site
+ * settings rules refuse, whoever the writer is.
+ *
+ * The route action holds both to those rules, but `snapshotConfig` writes them
+ * to D1 straight from the shared document, so a socket holder reaches the
+ * published `_config.yml` without the action. This pass is the same rule at
+ * that boundary, and unlike the convenor-only pass it applies to a convenor
+ * too: being allowed to change the address is not being allowed to break it.
+ *
+ * A value equal to the one before the transaction is not a change and stands,
+ * so a site whose stored address predates the rules keeps it and every other
+ * write to the map is untouched. A delete counts as a write, as it does in the
+ * convenor-only pass, because `snapshotConfig` reads an absent key as "".
+ * Server-origin writes never reach this pass: it runs on client-origin
+ * transactions only.
+ */
+export function extractConfigAddressMutations(
+  ydoc: Y.Doc,
+  tr: Y.Transaction,
+): ProtectedFieldMutation[] {
+  const root = (ydoc as unknown as { share: Map<string, unknown> })
+    .share.get(CONFIG_ROOT_NAME);
+  if (!(root instanceof Y.Map)) return [];
+  const configMap = root as Y.Map<unknown>;
+
+  const mutations: ProtectedFieldMutation[] = [];
+  tr.changed.forEach((keys, type) => {
+    if ((type as unknown) !== root) return;
+    for (const key of keys) {
+      if (key !== "url" && key !== "baseurl") continue;
+      const current = configMap.get(key);
+      if (isClientConfigAddressAllowed(key, current)) continue;
+      const before = readKeyBeforeTransaction(configMap, key, tr);
+      const previous = "absent" in before ? undefined : before.value;
+      if (previous === current) continue;
+      mutations.push({ yMap: configMap, key, previous });
+    }
+  });
+  return mutations;
+}
+
+/**
  * The convenor-only config key a changed shared type sits beneath, or null when
  * it sits anywhere else in the document.
  *
@@ -2172,7 +2258,7 @@ export function extractIdentityDomainViolations(
     if (!keys) return false;
     const born = isInsertedInTransaction(yMap, tr);
     for (const key of keys) {
-      if (isIdentityValueInDomain(key, yMap.get(key))) continue;
+      if (isClientIdentityValueAllowed(key, yMap.get(key))) continue;
       if (born) {
         // One removal for the map, not one per key — the map goes whole.
         removals.push({
@@ -2186,6 +2272,9 @@ export function extractIdentityDomainViolations(
       const previous = "absent" in before ? undefined : before.value;
       // Load-time normalisation owns the pre-planted case; see above.
       if (!isIdentityValueInDomain(key, previous)) continue;
+      // A reserved address already stored stands while its value is untouched,
+      // so a write elsewhere on the map is not refused; any change to it is.
+      if (isIdentityValueInDomain(key, yMap.get(key)) && yMap.get(key) === previous) continue;
       mutations.push({ yMap, key, previous });
     }
     return false;
@@ -2886,7 +2975,14 @@ export function makeCanDeleteHandler(deps: CanDeleteDeps): (tr: Y.Transaction) =
       keys.add(key);
       covered.set(yMap, keys);
     }
-    const configMutations = extractConfigFieldMutations(deps.ydoc, tr, actor);
+    const convenorOnlyMutations = extractConfigFieldMutations(deps.ydoc, tr, actor);
+    // The address pass can name a key the convenor-only pass already reverts
+    // for a non-convenor: one (map, key), one write, one strike.
+    const configMutations = [
+      ...convenorOnlyMutations,
+      ...extractConfigAddressMutations(deps.ydoc, tr).filter(({ key }) =>
+        !convenorOnlyMutations.some((m) => m.key === key)),
+    ];
     const fieldMutations = [
       ...identityMutations,
       ...domainMutations,

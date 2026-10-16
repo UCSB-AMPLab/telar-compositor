@@ -9,8 +9,9 @@
  * The `sheetsAccessError` blocking path keeps the user on "sync"
  * until they provide a corrected Sheet URL and retry. When the
  * imported repo has configuration issues (Google Sheets enabled,
- * URL mismatch), a mandatory `configure-site` step fixes them
- * before Done.
+ * Pages not enabled, URL mismatch), a `configure-site` step offers
+ * to fix them before Done, and once a fix has failed the author
+ * may skip it.
  *
  * The create flow's two project-level answers — what is being created, and
  * the class code that joins the new site to a course — ride the repo it
@@ -27,14 +28,18 @@
  * refused submission: granting access submits that again, with its intent and
  * fields, rather than a plain import.
  *
- * @version v1.5.0-beta
+ * A site-configuration check that did not run (GitHub unreadable, a Pages read
+ * GitHub refused, or no site to check) never completes onboarding: the wizard
+ * says the check could not be made and asks again. Skipping the fixes ends on a
+ * done screen that lists what was left; onboarding is completed only when the
+ * author leaves that screen, because completing it earlier makes the loader
+ * send the author to Start, away from the list and the recheck.
+ *
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useSearchParams } from "react-router";
-import { useTranslation } from "react-i18next";
-import { forgetSite, rememberSite } from "~/lib/tab-site";
-import { isUnreachableAnswer } from "~/lib/unreachable-write";
 import { useRetryWhileUnreachable } from "~/lib/use-retry-unreachable";
 import type { ImportResult } from "~/lib/import.server";
 import type { SubmittedChoice } from "~/lib/upgrade-sheets.server";
@@ -47,9 +52,10 @@ import { StepConnect } from "./StepConnect";
 import { StepSync } from "./StepSync";
 import { StepReview } from "./StepReview";
 import { StepDone } from "./StepDone";
+import { ConfigCheckNote, configCheckNoteState } from "./ConfigCheckNote";
+import { doneScreenSite, useSkippedSettings } from "./useSkippedSettings";
 import { CourseJoinNotice } from "./CourseJoinNotice";
 import { SiteConfigConfirmation } from "./SiteConfigConfirmation";
-import { deriveSiteUrl } from "~/lib/site-identity";
 
 type Step = "connect" | "sync" | "review" | "configure-site" | "done";
 
@@ -124,6 +130,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   // tests/WizardShell.test.tsx (slot index assumptions, modulo 5).
   const scopeFetcher = useFetcher<ScopeData>();
   const isImporting = fetcher.state !== "idle";
+  const { unfixed, completion, submitCompletion, skipSettings, clearUnfixed } = useSkippedSettings(completeFetcher, projectId);
 
   // Lifted from StepConnect — `scopeBlocked` controls whether the
   // InstallationScopePrompt renders inside StepConnect's slot. Set when
@@ -313,25 +320,33 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
     setStep("review");
   };
 
-  // A refused completion leaves the session where it was, and the tab
-  // remembers the site it showed.
-  const forgottenSite = useRef<number | null>(null);
-  const completeAnswer = completeFetcher.data as { ok?: boolean } | undefined;
-  useEffect(() => {
-    if (completeAnswer?.ok === false) rememberSite(forgottenSite.current);
-  }, [completeAnswer]);
-
   const markOnboardingComplete = () => {
-    if (projectId != null) {
-      // `complete-onboarding` makes the new site the session's; a tab still
-      // remembering the old one would switch the session back in the layout.
-      forgottenSite.current = forgetSite();
-      completeFetcher.submit(
-        { intent: "complete-onboarding", project_id: String(projectId) },
-        { method: "post", action: "/onboarding" },
-      );
-    }
+    submitCompletion();
     setStep("done");
+  };
+
+  // "Skip for now" shows the done screen with the settings the check flagged
+  // still wrong. Onboarding stays open until the author continues from there.
+  const handleSkipFixes = () => {
+    skipSettings({ sheetsEnabled, pagesNotEnabled, urlMismatch });
+    setStep("done");
+  };
+
+  const submitConfigCheck = () => {
+    if (projectId == null) return;
+    configCheckFetcher.submit(
+      { intent: "check-site-config", project_id: String(projectId) },
+      { method: "post", action: "/onboarding" },
+    );
+  };
+
+  // Asks the server again and rebuilds the checklist from its answer; what the
+  // last fix attempt said no longer applies.
+  const handleRecheck = () => {
+    setConfigFixError(null);
+    setConfigFixMessage(null);
+    setInstallationId(null);
+    submitConfigCheck();
   };
 
   const handleDone = () => {
@@ -345,10 +360,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
 
     // Run config check if not yet done
     if (!skipCheck && !configChecked && projectId != null) {
-      configCheckFetcher.submit(
-        { intent: "check-site-config", project_id: String(projectId) },
-        { method: "post", action: "/onboarding" }
-      );
+      submitConfigCheck();
       return; // Wait for check result
     }
 
@@ -364,17 +376,13 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   const configCheckData = configCheckFetcher.data as
     | { ok: true; intent: "check-site-config"; sheetsEnabled: boolean; pagesNotEnabled: boolean; urlMismatch: { pagesUrl: string; configUrl: string } | null }
     | { ok: false; reason: "unreachable"; intent: "check-site-config" }
+    | { ok: false; reason: "pages_refused"; intent: "check-site-config" }
+    | { ok: false; error: "not_found"; intent: "check-site-config" }
     | null
     | undefined;
 
   // A check that could not be made is asked again; Continue asks it too.
-  useRetryWhileUnreachable(configCheckData, () => {
-    if (projectId == null) return;
-    configCheckFetcher.submit(
-      { intent: "check-site-config", project_id: String(projectId) },
-      { method: "post", action: "/onboarding" },
-    );
-  });
+  useRetryWhileUnreachable(configCheckData, submitConfigCheck);
 
   useEffect(() => {
     if (configCheckData?.ok && configCheckData.intent === "check-site-config") {
@@ -387,6 +395,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
       if (configCheckData.sheetsEnabled || configCheckData.pagesNotEnabled || configCheckData.urlMismatch) {
         setStep("configure-site");
       } else {
+        clearUnfixed();
         markOnboardingComplete();
       }
     }
@@ -395,6 +404,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   const handleFixConfig = () => {
     if (projectId == null) return;
     setConfigFixError(null);
+    setConfigFixMessage(null);
     configFixFetcher.submit(
       {
         intent: "fix-site-config",
@@ -426,6 +436,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
   useEffect(() => {
     if (!configFixData || configFixData.intent !== "fix-site-config") return;
     if (configFixData.ok) {
+      clearUnfixed();
       markOnboardingComplete();
     } else {
       setConfigFixError(configFixData.error);
@@ -463,7 +474,10 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
         <CourseJoinNotice outcome={currentResult.courseJoin} className="mb-6" />
       )}
 
-      <ConfigCheckNote failed={isUnreachableAnswer(configCheckData) && configCheckFetcher.state === "idle"} />
+      <ConfigCheckNote
+        state={configCheckNoteState(configCheckData, configCheckFetcher.state !== "idle")}
+        onRetry={submitConfigCheck}
+      />
 
       {/* Step content */}
       {step === "connect" && (
@@ -515,7 +529,7 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
           repoFullName={selectedRepo?.full_name ?? null}
           installationId={installationId}
           onConfirmed={handleFixConfig}
-          onSkip={markOnboardingComplete}
+          onSkip={handleSkipFixes}
           isSubmitting={configFixFetcher.state !== "idle"}
         />
       )}
@@ -523,25 +537,14 @@ export function WizardShell({ repos, installations, connectedProjects, user, has
       {step === "done" && (
         <StepDone
           onDone={() => {}}
-          created={selectedRepo?.createdThisRun ?? false}
-          siteUrl={
-            selectedRepo?.createdThisRun
-              ? deriveSiteUrl(selectedRepo.owner.login, selectedRepo.name)
-              : undefined
-          }
+          {...doneScreenSite(selectedRepo)}
+          unfixed={unfixed}
+          onRecheck={handleRecheck}
+          rechecking={configCheckFetcher.state !== "idle"}
+          onContinue={submitCompletion}
+          {...completion}
         />
       )}
     </div>
-  );
-}
-
-/** What the wizard says when the site-configuration check could not be made. */
-function ConfigCheckNote({ failed }: { failed: boolean }) {
-  const { t } = useTranslation("onboarding");
-  if (!failed) return null;
-  return (
-    <p role="status" className="font-body text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-6">
-      {t("site_config.check_failed")}
-    </p>
   );
 }

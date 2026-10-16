@@ -6,11 +6,13 @@
  *
  * Fields update the Yjs config map on change (preventing the
  * Durable Object snapshot from overwriting them). The Save button
- * writes directly to D1 for immediate persistence. Dirty state is
- * tracked — navigating away with unsaved changes shows a
- * confirmation modal.
+ * writes directly to D1 for immediate persistence, once the Site URL
+ * and Base URL it carries pass the rules the address fields apply; an
+ * address that fails them refuses the save and is named beside the
+ * button. Dirty state is tracked — navigating away with unsaved changes
+ * shows a confirmation modal.
  *
- * The page also carries the course surface (design §5): the second of the two
+ * The page also carries the course surface: the second of the two
  * places a class code can be entered, and the only place a site leaves a
  * course. It sits outside the configuration form and outside its dirty-state
  * tracking, because a join is not a field the Save button writes — it is a
@@ -18,7 +20,7 @@
  * child convenor's alone: a collaborator must not attach the group's site to a
  * course or pull it out of one.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,6 +40,8 @@ import { resolveProjectToken } from "~/lib/github-app.server";
 import { getRepoTree, getFileOnDefaultBranch } from "~/lib/github.server";
 import { parseYaml } from "~/lib/yaml.server";
 import { canWriteConfigField } from "~/lib/config-fields";
+import { AddressErrors } from "~/components/features/config/AddressErrors";
+import { settleConfigAddresses } from "~/lib/config-address.server";
 import { redeemForSite } from "~/lib/join-codes.server";
 import {
   applyRedemptionSideEffects,
@@ -52,6 +56,7 @@ import {
 import { ConfigSection } from "~/components/features/config/ConfigSection";
 import { ConvenorOnlyNote } from "~/components/features/config/ConvenorOnlyNote";
 import { FieldWithHelp } from "~/components/features/config/FieldWithHelp";
+import { SiteAddressField } from "~/components/features/config/SiteAddressField";
 import { ToggleField } from "~/components/features/config/ToggleField";
 import { ThemeSwatches } from "~/components/features/config/ThemeSwatches";
 // NavigationEditor removed — navigation is managed from the Pages tab
@@ -464,6 +469,12 @@ export async function action({ request, context }: Route.ActionArgs) {
   // A role the split does not recognise writes nothing at all.
   if (Object.keys(writable).length === 0) {
     return { saved: false, error: "forbidden" };
+  }
+
+  // The two addresses are held to the rules the Site settings field applies.
+  const invalidAddresses = await settleConfigAddresses(db, project.id, writable);
+  if (invalidAddresses.length > 0) {
+    return { saved: false, error: "invalid_address", invalidAddresses };
   }
 
   await db
@@ -904,18 +915,16 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
         <ConfigSection title={t("sections.hosting.title")}>
           <fieldset disabled={!isConvenor} className="m-0 min-w-0 border-0 p-0">
             {!isConvenor && <ConvenorOnlyNote />}
-            <FieldWithHelp
-              label={t("sections.hosting.field_url")}
-              name="url"
+            <SiteAddressField
+              kind="url"
               value={config?.url ?? ""}
-              help={t("sections.hosting.field_url_help")}
+              canChange={isConvenor}
               onChange={onFieldChange}
             />
-            <FieldWithHelp
-              label={t("sections.hosting.field_baseurl")}
-              name="baseurl"
+            <SiteAddressField
+              kind="baseurl"
               value={config?.baseurl ?? ""}
-              help={t("sections.hosting.field_baseurl_help")}
+              canChange={isConvenor}
               onChange={onFieldChange}
             />
           </fieldset>
@@ -1029,6 +1038,7 @@ export default function ConfigPage({ loaderData, actionData }: Route.ComponentPr
 
         {/* Save button with state animation */}
         <div className="flex items-center justify-end gap-3 pb-8">
+          <AddressErrors answer={actionData} />
           {showSaved && (
             <span className="inline-flex items-center gap-1.5 font-body text-xs text-green-600">
               <Check className="w-3.5 h-3.5" />

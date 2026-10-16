@@ -1,10 +1,12 @@
 /**
  * StepSync — import progress checklist with error handling.
  *
- * Shows a checklist of import tasks with spinner/checkmark/X state indicators.
- * Handles sheetsAccessError blocking path: shows inline URL input and retry
- * button. Does NOT offer any fallback or "skip Sheets" option — the Sheet
- * IS the source of truth when google_sheets.enabled is true.
+ * Shows a checklist of import tasks with spinner/checkmark/X state indicators,
+ * and Cancel and Continue once the import succeeds; the author moves on to
+ * Review with Continue. On `sheetsAccessError` it shows an inline input for
+ * the Sheet's URL and a retry button. It offers no fallback and no way to
+ * skip the Sheet, because the Sheet is the source of truth when
+ * `google_sheets.enabled` is true.
  *
  * A default branch other than `main` offers the change the Compositor can
  * make itself, where there is one: renaming the default to `main`, or making
@@ -13,7 +15,8 @@
  * Columns Telar reads as one field, each holding values, are offered in the
  * column picker; the choice goes back with the import.
  *
- * Auto-advances to Review after 1.5s when import succeeds.
+ * Any other refusal is named in one line with a way back; a refusal with no
+ * line of its own gets a general one.
  */
 
 import { useEffect, useState } from "react";
@@ -161,7 +164,7 @@ export function StepSync({
         <ImportColumnPicker question={importResult.sheetChoices} onChoose={onChooseColumns} onCancel={onBack} />
       )}
 
-      {/* Validation error (not_telar or empty_repo) */}
+      {/* Validation error (not_telar, empty_repo, no_site_config or any other refusal) */}
       {isValidationError && !importResult.sheetChoices && (
         <div className="mt-4 space-y-4">
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -231,6 +234,23 @@ function StateIcon({ state }: { state: ItemState }) {
 }
 
 /**
+ * The refusals whose message is one fixed line. `scope_check_failed` is the
+ * server being unable to ask GitHub whether the installation reaches the
+ * repository, so nothing was imported; the create form's copy for a failed
+ * exchange with GitHub says the same thing.
+ */
+const VALIDATION_ERROR_KEYS: Record<string, string> = {
+  not_telar: "step_sync.error_not_telar",
+  empty_repo: "step_sync.error_empty_repo",
+  no_site_config: "step_sync.error_no_site_config",
+  already_connected: "step_sync.error_already_connected",
+  main_unreadable: "step_sync.error_main_unreadable",
+  rename_pending: "step_sync.error_rename_pending",
+  branch_admin_required: "step_sync.error_branch_admin_required",
+  scope_check_failed: "create_site.errors.github_error",
+};
+
+/**
  * The message for an import that stopped before writing anything. A refused
  * sheet is named with the headers as the author typed them, because the sheet
  * on GitHub or in Google Sheets is where it has to be fixed. A file GitHub did
@@ -240,34 +260,21 @@ export function validationErrorMessage(
   result: ImportResult,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
+  const plainKey = VALIDATION_ERROR_KEYS[result.validationError ?? ""];
+  if (plainKey) return t(plainKey);
   switch (result.validationError) {
-    case "not_telar":
-      return t("step_sync.error_not_telar");
-    case "already_connected":
-      return t("step_sync.error_already_connected");
     case "colliding_columns":
       return collidingColumnsMessage(result, t);
     case "choice_not_applied":
       return t("upgrade:columnPickerNotApplied", { sheet: result.unreadableSheet ?? "" });
     case "no_main_branch":
       return noMainBranchMessage(result, t);
-    case "main_unreadable":
-      return t("step_sync.error_main_unreadable");
-    case "rename_pending":
-      return t("step_sync.error_rename_pending");
-    case "branch_admin_required":
-      return t("step_sync.error_branch_admin_required");
     case "sheet_unreadable":
     case "file_unreadable":
     case "ignore_list_unreadable":
       return unreadableFileMessage(result, t);
-    // The server could not ask GitHub whether the installation reaches the
-    // repository, so nothing was imported; the create form's copy for a failed
-    // exchange with GitHub says the same thing.
-    case "scope_check_failed":
-      return t("create_site.errors.github_error");
     default:
-      return t("step_sync.error_empty_repo");
+      return t("step_sync.error_generic");
   }
 }
 

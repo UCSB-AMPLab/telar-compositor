@@ -24,7 +24,7 @@
     "presence_color_amber": "Ochre",
     "presence_color_purple": "Lavender",
     "presence_color_pink": "Rose",
-    "create_site_lang_patch_failed_body": "Your new site was created in English. To switch its language to Spanish, edit `telar_language` in <0>Config</0>.",
+    "create_site_lang_patch_failed_body": "Your new site was created in English. To switch its language to Spanish, open <0>Site settings</0> and change the Language field.",
     "create_site_lang_patch_failed_aria_label": "New site language warning",
     "create_site_lang_patch_failed_continue": "Continue anyway"
   },

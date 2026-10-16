@@ -5,7 +5,7 @@
  * them, so both name the same answers in the same words (publish.json's
  * `checks.step_answer_*`).
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import "~/lib/html-unescape.server";
@@ -89,5 +89,5 @@ export function answerChecks(steps: readonly AnswerStep[], glossary: GlossaryCon
       });
     }
   }
-  return { blockers, warnings };
+  return { blockers, warnings, suggestions: [] };
 }

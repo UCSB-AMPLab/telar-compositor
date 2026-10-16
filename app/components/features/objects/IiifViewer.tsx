@@ -3,8 +3,10 @@
  *
  * Renders an OpenSeadragon viewer from a manifest URL or info.json URL.
  * For multi-page manifests (e.g. PDFs), shows page indicators and prev/next.
- * For self-hosted objects, probes info.json first and shows a fallback
- * message if tiles are not yet available (build in progress).
+ * For self-hosted objects, probes info.json first and shows a fallback in
+ * place of the image when the tiles are not available. A 404 means the tiles
+ * were never generated; any other failure means the check got no answer and
+ * says nothing about the tiles, and the fallback says which it is.
  *
  * Client-only — guarded with typeof window check to avoid SSR crashes.
  *
@@ -43,7 +45,7 @@
  * between a destruction and the replacement's readiness, and a viewport applied
  * in that gap reaches nothing.
  *
- * @version v1.5.2-beta
+ * @version v1.5.5-beta
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -102,11 +104,18 @@ function normalisePageProp(value: number | undefined): number {
   return value;
 }
 
+/**
+ * Why tiles are not available. `missing` is the one answer that says they were
+ * never generated: the server answered 404. Every other outcome means the
+ * check itself did not get an answer, and says nothing about the tiles.
+ */
+type TilesFailure = "missing" | "unreachable";
+
 /** What the viewer has read for one source, each answer tagged with its generation. */
 interface SourceRecord {
   key: string;
   generation: number;
-  tiles: { generation: number; available: boolean } | null;
+  tiles: { generation: number; available: boolean; failure: TilesFailure | null } | null;
   loaded: { generation: number; pages: ManifestPage[] } | null;
 }
 
@@ -340,9 +349,9 @@ export function IiifViewer({
   // neither authorise nor block the current one.
   useEffect(() => {
     const gen = generation;
-    const recordTiles = (available: boolean) =>
+    const recordTiles = (available: boolean, failure: TilesFailure | null = null) =>
       setSource((s) =>
-        s.generation === gen ? { ...s, tiles: { generation: gen, available } } : s
+        s.generation === gen ? { ...s, tiles: { generation: gen, available, failure } } : s
       );
 
     if (!isSelfHosted || !infoJsonUrl) {
@@ -353,9 +362,12 @@ export function IiifViewer({
     (async () => {
       try {
         const res = await fetch(infoJsonUrl, { method: "HEAD", mode: "cors" });
-        if (!cancelled) recordTiles(res.ok);
+        if (!cancelled) {
+          if (res.ok) recordTiles(true);
+          else recordTiles(false, res.status === 404 ? "missing" : "unreachable");
+        }
       } catch {
-        if (!cancelled) recordTiles(false);
+        if (!cancelled) recordTiles(false, "unreachable");
       }
     })();
     return () => { cancelled = true; };
@@ -672,6 +684,7 @@ export function IiifViewer({
     return (
       <TilesPlaceholder
         checking={tilesRecord === null}
+        unreachable={tilesRecord?.failure === "unreachable"}
         className={className}
         onGenerateTiles={onGenerateTiles}
         isGenerating={isGenerating}

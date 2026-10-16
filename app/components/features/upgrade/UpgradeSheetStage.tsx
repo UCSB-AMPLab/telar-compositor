@@ -4,7 +4,7 @@
  * a switch away from Google Sheets, and of the answers the upgraded site
  * publishes differently.
  *
- * @version v1.5.3-beta
+ * @version v1.5.5-beta
  */
 import { useTranslation } from "react-i18next";
 import type { SignedUpgradeChallenge } from "~/lib/upgrade-signing.server";

@@ -12,8 +12,8 @@
  * Identifier alone cannot make that separation, and the reason is the point of
  * this module. The starter story is where a new user does their first work:
  * they write over the placeholder question and answer rather than deleting the
- * story and starting again, so 78 of the 79 unattributed seeded steps in the
- * database hold text somebody wrote. A rule that reads `plantilla_en_blanco`
+ * story and starting again, so most of a site's seeded steps hold text
+ * somebody wrote. A rule that reads `plantilla_en_blanco`
  * and stops would file all of it under the template and credit a person with
  * none of their own writing.
  *
@@ -28,7 +28,7 @@
  * template shipped in May, and the live template only knows what it ships now.
  * `tests/template-coupling.live.test.ts` is where drift surfaces.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { hashNormalized, normalizeBody } from "~/lib/v130-ingest.server";
@@ -86,9 +86,9 @@ export const TEMPLATE_PAGE_SLUGS: readonly string[] = ["about", "acerca"];
 const TEMPLATE_PAGE_BODY_HASHES: ReadonlyMap<string, string> = new Map([
   ["f8c6d222658abeb6f0f1b962e3b8cd609b2ca631b3d62c6b90abdaaa7f6b5b7d", "about.md — v1.2.1 (V121_BODIES.about)"],
   ["df4d8e3ae236fb8fd20155a057ec5776a25f59b394287f206cfa4fa928ff3cb3", "about.md — v1.3.0 (V130_BODIES.about)"],
-  ["28c509e7b701b5b7d732226b290299463e9d38a4f0d67ee5093165c958ab78c5", "about.md — v1.3.1 (OpenSeadragon replaces Tify)"],
+  ["28c509e7b701b5b7d732226b290299463e9d38a4f0d67ee5093165c958ab78c5", "about.md — v1.4.0 to v1.8.1 (OpenSeadragon replaces Tify)"],
   ["1ccd4234a246e350035f5024a6bdc252c5fe65b19fb497028f3bdc6247354207", "acerca.md — v1.3.0 (ACERCA_MD_FULL)"],
-  ["33595c388075e3ca0279869f743e5f18602cde72ce47a26a66ebde6c96f9694f", "acerca.md — v1.3.1 (OpenSeadragon replaces Tify)"],
+  ["33595c388075e3ca0279869f743e5f18602cde72ce47a26a66ebde6c96f9694f", "acerca.md — v1.4.0 to v1.8.1 (OpenSeadragon replaces Tify)"],
 ]);
 
 /**

@@ -5,16 +5,19 @@
  * source; a stored list, `[]` included, replaces it. A save names the column
  * as the client read it and is written only if the column still holds that,
  * so a save over someone else's is refused rather than lost. The kinds are
- * checked against the core kinds read here, not the client's copy, and a list
- * holding any kind the framework would leave out is refused whole: a rejected
- * kind is never stored. When nothing is stored yet, the save also rests on
- * the config: it is refused unless `_config.yml` was read, and unless its
- * site kinds are still the ones the client was shown, since a sync may have
- * brought newer ones without touching the column. The list being replaced
- * is the config's, rejected kinds included, so a kind fixed and renamed in its
- * first save still reports its old id.
+ * checked against the core kinds read here, not the client's copy
+ * (`validateSiteKindsForSave`), and a list holding any kind the framework
+ * would leave out, or a kind whose new or changed id is not lowercase letters,
+ * digits and single hyphens between them, is refused whole: a rejected kind is
+ * never stored. When nothing is stored yet, the save also rests on the config:
+ * it is refused unless `_config.yml` was read, and unless its site kinds are
+ * still the ones the client was shown, since a sync may have brought newer
+ * ones without touching the column. The list being replaced is the config's,
+ * rejected kinds included, so a kind fixed and renamed in its first save
+ * still reports its old id, and a kind that keeps an id the list being
+ * replaced already holds is not held to the id rule.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { getDb } from "~/lib/db.server";
@@ -25,7 +28,7 @@ import {
   serializeSiteKinds,
   storedSiteKinds,
   toSiteKind,
-  validateSiteKinds,
+  validateSiteKindsForSave,
   type GlossaryKinds,
   type SiteKindProblems,
 } from "~/lib/glossary-kinds";
@@ -114,10 +117,10 @@ export async function saveGlossaryKinds(db: Db, request: SaveKindsRequest): Prom
   if (!repo.available) return refused("unavailable");
   const unsure = firstSaveRefusal(request, repo);
   if (unsure) return refused(unsure);
-  const problems = validateSiteKinds(repo.core, request.kinds);
+  const replaced = storedSiteKinds(request.base) ?? repo.site;
+  const problems = validateSiteKindsForSave(repo.core, request.kinds, replaced);
   if (!problems.every(isAcceptedKind)) return refused("invalid", problems);
   const stored = serializeSiteKinds(request.kinds);
   if (!(await swapKinds(db, request, stored))) return refused("conflict");
-  const replaced = storedSiteKinds(request.base) ?? repo.site;
   return { ok: true, stored, renamed: renamedIds(request.kinds, replaced) };
 }

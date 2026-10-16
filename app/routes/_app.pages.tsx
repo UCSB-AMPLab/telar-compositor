@@ -15,12 +15,12 @@
  * once the user edits it. That lets the user create a new page
  * without immediately committing to a URL.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { asc, eq, and } from "drizzle-orm";
 import { useTranslation } from "react-i18next";
-import { redirect, useFetcher, useOutletContext } from "react-router";
+import { redirect, useFetcher, useOutletContext, useSearchParams } from "react-router";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import * as Y from "yjs";
 import { decrypt } from "~/lib/crypto.server";
@@ -50,7 +50,8 @@ import { resolveActiveProjectFromRequest, resolvePageProject, siteChangedAnswer 
 import { requireProjectMember } from "~/lib/membership.server";
 import { isSiteChanged } from "~/components/features/site-status/SiteChangedNotice";
 import { useSiteFetcher } from "~/lib/page-site";
-import { normaliseSlug, makeUniqueSlug, isTemporaryPageSlug } from "~/lib/slug";
+import { normaliseSlug, isTemporaryPageSlug } from "~/lib/slug";
+import { freePageSlug } from "~/lib/page-address";
 import { InlineTextField } from "~/components/ui/InlineTextField";
 import { MarkdownEditor } from "~/components/ui/MarkdownEditor";
 import { DeleteConfirmationModal } from "~/components/ui/DeleteConfirmationModal";
@@ -64,6 +65,7 @@ import { useYjsArraySync } from "~/hooks/use-yjs-array-sync";
 import { compareByOrderKey, readOrderKey } from "~/lib/field-order";
 import { useToast } from "~/hooks/use-toast";
 import { keyFor } from "~/lib/item-key";
+import { useRequestedPage } from "~/hooks/use-requested-page";
 import { useRemoteDeleteToast } from "~/hooks/use-remote-delete-toast";
 import { menuPreviewEntries, mergeNavItemsWithPages } from "~/lib/nav-merge";
 import { removeNavEntries } from "~/lib/pages-screen";
@@ -881,6 +883,13 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayPages.length]);
 
+  // `?page=<slug>` opens that page's editor. Declared after the effects above
+  // so it wins on the render the document's rows arrive in.
+  const [searchParams] = useSearchParams();
+  useRequestedPage(searchParams.get("page"), displayPages, useYjs ? "document" : "loader", (page) =>
+    setSelectedKey(keyFor(page)),
+  );
+
   // Resolve Y.Map and Y.Text for the selected page (supports new pages with _temp_id)
   const pagesArray = ydoc?.getArray<Y.Map<unknown>>("pages") ?? null;
   const selectedPageYMap = pagesArray && selectedPage
@@ -950,10 +959,7 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
               const s = pArr.get(i).get("slug") as string;
               if (s && s !== currentSlug) allSlugs.add(s);
             }
-            const { slug: newSlug } = makeUniqueSlug(
-              normaliseSlug(currentTitle),
-              allSlugs
-            );
+            const newSlug = freePageSlug(normaliseSlug(currentTitle), allSlugs);
             ydoc.transact(() => {
               targetYMap.set("slug", newSlug);
               if (navArray instanceof Y.Array) {
@@ -1061,13 +1067,10 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
     [ydoc, selectedPage]
   );
 
-  // Build existingSlugs for the slug field (all pages except the selected one)
-  const existingSlugs = new Set(
-    displayPages
-      .filter((p) => keyFor(p) !== selectedKey)
-      .map((p) => p.slug)
-      .filter(Boolean)
-  );
+  // The slug field's collision check: every page except the selected one.
+  const otherPages = displayPages
+    .filter((p) => keyFor(p) !== selectedKey && p.slug)
+    .map((p) => ({ slug: p.slug, title: p.title ?? "" }));
 
   // ------------------------------------------------------------------
   // Nav bar: build sortable items from the Yjs navigation array
@@ -1431,7 +1434,8 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
                   initialValue={selectedPage.title}
                   yText={pageTitleYText}
                   placeholder={t("title_placeholder")}
-                  className="w-full px-4 py-2 font-heading font-semibold text-lg border border-gray-200 rounded-lg bg-surface hover:border-gray-300 focus:border-anil-deep"
+                  bordered
+                  className="w-full font-heading font-semibold text-lg"
                   fieldKey={`page-${selectedKey}-title`}
                   error={!(selectedPage.title ?? "").trim()}
                   errorMessage={t("name_required")}
@@ -1439,12 +1443,11 @@ export default function PagesPage({ loaderData }: Route.ComponentProps) {
                 {/* Slug — label + field appear once slug is generated */}
                 {selectedPage.slug ? (
                   <div className="mt-4">
-                    <label className="block font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                      {t("slug_label")}
-                    </label>
                     <SlugField
+                      key={selectedKey}
                       slug={selectedPage.slug}
-                      existingSlugs={existingSlugs}
+                      otherPages={otherPages}
+                      canChange={useYjs}
                       onSlugChange={handleSlugChange}
                     />
                   </div>

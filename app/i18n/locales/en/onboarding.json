@@ -70,7 +70,9 @@
     "back": "Choose another repo",
     "count_images": "{{count}} images",
     "count_audio": "{{count}} audio",
-    "count_videos": "{{count}} videos"
+    "count_videos": "{{count}} videos",
+    "error_no_site_config": "This repository has no Telar site: there is no _config.yml at its top level. Select a repository that has one.",
+    "error_generic": "We couldn't import this repository. Go back and choose it again, or try another one."
   },
   "step_review": {
     "heading": "Import Complete",
@@ -92,7 +94,14 @@
     "description": "Your Telar site has been imported successfully.",
     "created_description": "Your new Telar site is ready. We set everything up for you — no manual configuration needed.",
     "first_build_note": "The first build is in progress. Your site will be live in a few minutes at:",
-    "go_to_start": "Go to Start"
+    "go_to_start": "Go to Start",
+    "heading_skipped": "Your site is imported",
+    "description_skipped": "Some settings are still not right, and your site may not publish correctly until you fix them.",
+    "unfixed_sheets": "Google Sheets is still switched on. Choose Check settings again, then Fix and continue, to switch it off.",
+    "unfixed_pages": "GitHub Pages is not switched on, so your site can't be published. Choose Check settings again, then Fix and continue, to switch it on.",
+    "unfixed_url": "The Site URL or Base URL doesn't match your GitHub Pages address. Choose Check settings again, then Fix and continue, to correct them. You can also correct them under Hosting in Site settings.",
+    "recheck": "Check settings again",
+    "continue_failed": "We couldn't finish setting up your site. Please try again."
   },
   "inline_config": {
     "heading": "Essential Settings",
@@ -117,7 +126,7 @@
     "url_passed": "Site URL is configured correctly",
     "url_failed": "Site URL needs to be updated",
     "url_pending": "Site URL can't be verified yet",
-    "check_failed": "We couldn't check your site's GitHub Pages settings. We'll keep trying.",
+    "check_failed": "We couldn't check your site's settings on GitHub, so setup isn't finished. We'll try again shortly, or you can try now.",
     "url_why": "The URL in _config.yml must match your GitHub Pages deployment so IIIF image tiles load from the correct address.",
     "url_pending_why": "We'll configure the correct URL automatically when we enable GitHub Pages. If there is an issue we'll correct it.",
     "confirm": "Fix and continue",
@@ -130,7 +139,18 @@
     "error_generic": "We couldn't fix the configuration. Please try again, or check your GitHub App permissions.",
     "error_private_repo_title": "This repository is private",
     "error_private_repo": "GitHub Pages can't be switched on for a private repository on a free GitHub account. Make the repository public, or use a paid GitHub account, then try again.",
-    "error_private_repo_link": "Open repository settings"
+    "error_private_repo_link": "Open repository settings",
+    "check_retry": "Try again",
+    "check_not_found": "We couldn't find this site to check its settings. Go back and choose the repository again.",
+    "check_pages_refused": "We couldn't check whether GitHub Pages is on because GitHub refused the request, so setup isn't finished. In your GitHub App settings, allow the Compositor to read GitHub Pages, then try again.",
+    "error_pages_failed_title": "GitHub Pages wasn't switched on",
+    "error_pages_failed": "GitHub refused to switch Pages on for this repository, so nothing was changed. On GitHub, open the repository's Settings, choose Pages, and set Source to GitHub Actions. Then try again.",
+    "error_sheets_not_disableable_title": "Google Sheets wasn't switched off",
+    "error_sheets_not_disableable": "Telar couldn't switch Google Sheets off, because of how your site's _config.yml sets it, so nothing was changed. In your repository, set enabled: false under google_sheets in _config.yml, then try again.",
+    "error_config_not_found_title": "Site configuration not found",
+    "error_config_not_found": "The Compositor couldn't read _config.yml from your repository, so nothing was changed. Check that the file is on the main branch, then try again.",
+    "error_not_found_title": "Site not found",
+    "error_not_found": "The Compositor couldn't find this site, so nothing was changed. Go back and choose the repository again."
   },
   "create_site": {
     "form": {

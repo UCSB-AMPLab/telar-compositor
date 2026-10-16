@@ -5,7 +5,7 @@
  * byline edited in place.
  *
  * With the story's section list turned on, the intro takes the layer 2 panel's
- * colour (`.story-intro--toc`) and lists the section cards' titles under
+ * color (`.story-intro--toc`) and lists the section cards' titles under
  * "Sections" (`.intro-toc`), as the layout lists every step with no object
  * and a question. The list is read from the section cards, so a section's
  * title is edited on its own card, not here. The scroll hint is the one the
@@ -19,18 +19,17 @@
  * intro prints it (`bylineHtml`), and is edited as the text it is typed as.
  *
  * The story's ID and the switch for the section list are the editor's own
- * and have no place on the published intro: `TitleCardSettings` holds them,
+ * and have no place on the published intro: `StorySettingsPanel` holds them,
  * beside the stage rather than on it.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useTranslation } from "react-i18next";
 import { PencilLine } from "lucide-react";
 import type * as Y from "yjs";
-import { InPlaceText } from "~/components/ui/InPlaceText";
+import { IntroText } from "~/components/features/editor/IntroText";
 import { bylineHtml } from "~/lib/card-markdown";
-import { StoryIdField } from "~/components/features/editor/StoryIdField";
 import type { LayoutMode } from "~/lib/framing-stage";
 
 /** The title card's data and what it does, as the route holds them. */
@@ -62,7 +61,7 @@ export interface TitleCardData {
  * ShowSectionsSwitch — slimmer inline variant of ToggleField. Reuses the same
  * role="switch" / aria-checked semantics as ToggleField.
  */
-function ShowSectionsSwitch({
+export function ShowSectionsSwitch({
   checked,
   onChange,
   ariaLabel,
@@ -88,39 +87,6 @@ function ShowSectionsSwitch({
         }`}
       />
     </button>
-  );
-}
-
-/** The story's ID and the section list's switch, in a bar above the stage. */
-export function TitleCardSettings({
-  story,
-  storyId,
-  sectionCardCount,
-  onToggleShowSections,
-  storyIds,
-  canRenameId,
-  onRenameId,
-}: TitleCardData) {
-  const { t } = useTranslation("editor");
-  return (
-    <div data-testid="title-card-settings" className="shrink-0 flex flex-wrap items-start gap-x-8 gap-y-3 bg-white px-4 py-3 border-b border-gray-200">
-      <div className="min-w-48 flex-1">
-        <StoryIdField key={storyId} storyId={storyId} storyIds={storyIds} canRename={canRenameId} onRename={onRenameId} />
-      </div>
-      <div className="flex-1 min-w-48">
-        <div className="flex items-center gap-3">
-          <span className="font-body text-sm text-charcoal">{t("title_card.show_sections_label")}</span>
-          <ShowSectionsSwitch
-            checked={story.show_sections}
-            onChange={onToggleShowSections}
-            ariaLabel={t("title_card.show_sections_label")}
-          />
-        </div>
-        {sectionCardCount === 0 && (
-          <p className="font-body text-xs text-gray-400 mt-2">{t("title_card.show_sections_empty_helper")}</p>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -177,22 +143,25 @@ export function TitleCardView({
     <div data-testid="story-intro" className={`story-intro${toc ? " story-intro--toc" : ""}`}>
       <div className="intro-floating-card">
         <h1 className="intro-title">
-          <InPlaceText
+          <IntroText
             {...introField("title", t("title_card.title_placeholder"), t("title_card.title_label"))}
+            pencilLabel={t("stage.edit_title")}
             yText={titleYText}
             initialValue={story.title ?? ""}
           />
         </h1>
         <h2 className="intro-subtitle">
-          <InPlaceText
+          <IntroText
             {...introField("subtitle", t("title_card.subtitle_placeholder"), t("title_card.subtitle_label"))}
+            pencilLabel={t("stage.edit_subtitle")}
             yText={subtitleYText}
             initialValue={story.subtitle ?? ""}
           />
         </h2>
         <div className="intro-byline">
-          <InPlaceText
+          <IntroText
             {...introField("byline", t("title_card.byline_placeholder"), t("title_card.byline_label"))}
+            pencilLabel={t("stage.edit_byline")}
             yText={bylineYText}
             initialValue={story.byline ?? ""}
             renderValue={(value) => <span dangerouslySetInnerHTML={{ __html: bylineHtml(value) }} />}
@@ -202,7 +171,6 @@ export function TitleCardView({
         <div className="intro-hint">
           <small>{t(layoutMode === "vertical" ? "stage.scroll_hint_mobile" : "stage.scroll_hint")}</small>
         </div>
-        <StageIntroHint text={t("stage.edit_hint_title")} />
       </div>
     </div>
   );

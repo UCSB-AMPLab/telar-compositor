@@ -1,41 +1,47 @@
 /**
- * AddObjectDialog — unified three-tab dialog for adding objects.
+ * AddObjectDialog — one dialog, in three tabs, for adding objects.
  *
- * One dialog, three tabs:
- *   - IIIF manifest   : two-step fetch → metadata flow (folded from AddIiifDialog),
- *                       sharing the metadata block; raises an IIIF confirm payload
- *                       extended with `year`.
- *   - Upload image    : the per-file staged-queue flow preserved as-is, shown
- *                       to convenor and collaborator, hidden from instructor
- *                       and a caller with no project membership (`canUpload`,
- *                       from `~/lib/publishing-roles`, shared with the server
- *                       gate on the `upload-image` action). Raises
- *                       UploadImageConfirmPayload[].
- *   - External media  : the shared metadata block + a single URL input with
- *                       ~250 ms debounced recognition via detectMediaType.
- *                       The recognised-state pill is TEXT ONLY — the user-entered
- *                       URL never becomes a live href/src, to avoid injecting an
- *                       attacker-controlled URL into the page. No poster subsystem.
+ *   - IIIF manifest   : a two-step flow, fetch then metadata, using the shared
+ *                       metadata block; raises an IIIF confirm payload that
+ *                       carries `year`.
+ *   - Upload image    : a queue of staged files, each with its own metadata,
+ *                       shown to convenor and collaborator, hidden from
+ *                       instructor and a caller with no project membership
+ *                       (`canUpload`, from `~/lib/publishing-roles`, shared
+ *                       with the server gate on the `upload-image` action).
+ *                       Raises UploadImageConfirmPayload[].
+ *   - External media  : the shared metadata block and a single URL input,
+ *                       recognized by detectMediaType after a debounce of
+ *                       about 250 ms. The recognized-state pill is text only:
+ *                       the URL the user typed never becomes a live href or
+ *                       src, so an attacker-controlled URL is never injected
+ *                       into the page.
  *
  * The shared metadata block (Title* / Creator / Description / Year / read-only
- * derived Slug) applies to the IIIF + External tabs only — the Upload tab keeps
- * its own per-file metadata.
+ * derived Slug) applies to the IIIF and External tabs only; the Upload tab
+ * keeps its own metadata for each file.
+ *
+ * An uploaded file's object ID starts from its file name. The ID field takes
+ * only the characters an object ID holds as it is typed
+ * (`filterTypedUploadId`), and an empty or unusable ID falls back to the
+ * title's slug (`uploadIdFor`), which the field shows as its placeholder and
+ * help text. The payload carries the ID the field shows, and the collision
+ * hint compares that same ID with the existing and staged objects.
  *
  * The last-used tab persists to localStorage per project, SSR-safe (try/catch,
  * read-on-mount / write-on-change). The restored value is guarded against
  * `canUpload`, so a caller without it never lands on the Upload tab.
  *
- * Tab labels collapse to a <select> below ~520px via Tailwind prefixes.
+ * Tab labels collapse to a <select> below about 520px via Tailwind prefixes.
  *
- * This dialog RAISES payloads via callback props; it does NOT call Yjs ops
- * directly (the route's handlers do that), mirroring the existing AddIiifDialog
- * / UploadImageDialog contract.
+ * The dialog raises payloads through callback props and never calls Yjs ops
+ * itself; the route's handlers do that.
  *
  * The Upload tab previews only what `isBrowserRenderable` admits. Everything
  * else gets FilePlaceholder and no object URL at all — see that component for
  * why the narrow set is the safe one.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -44,6 +50,7 @@ import { Link } from "react-router";
 import { Upload, ChevronLeft, X } from "lucide-react";
 import { Dialog } from "~/components/ui/Dialog";
 import { slugify } from "~/lib/slugify";
+import { filterTypedUploadId, uploadIdFor } from "~/lib/object-upload-id";
 import { detectMediaType, type MediaType } from "~/lib/media-type";
 import { MAX_SIZE_BYTES } from "~/lib/upload-constants";
 import {
@@ -785,6 +792,10 @@ function UploadTabBody({
   const [year, setYear] = useState("");
   const [altText, setAltText] = useState("");
 
+  // The ID the object will start from: the typed text settled, or the title's
+  // slug while the field is empty. The field shows it and the payload carries it.
+  const effectiveObjectId = uploadIdFor(objectId, title);
+
   // Report dirty state up to the shell's dismiss guard.
   useEffect(() => {
     onDirtyChange(stagedImages.length > 0 || selectedFile !== null);
@@ -808,7 +819,7 @@ function UploadTabBody({
     setSelectedFile(file);
     setPreviewUrl(url);
     const nameWithoutExt = file.name.replace(/\.[^.]+$/, "");
-    setObjectId(slugify(nameWithoutExt, 0));
+    setObjectId(uploadIdFor(nameWithoutExt, nameWithoutExt));
     setTitle(nameWithoutExt);
     setCreator("");
     setDescription("");
@@ -918,10 +929,8 @@ function UploadTabBody({
     if (!selectedFile || !title.trim()) return;
     const payload: UploadImageConfirmPayload = {
       file: selectedFile,
-      // Normalise the user-typed id — "Mission Bell #2" must become
-      // "mission-bell-2" BEFORE it reaches the server, which rejects
-      // non-slug ids (issue #25's deterministic generic error).
-      objectId: slugify(objectId, 0),
+      // The ID shown in the field, so what is submitted is what the author saw.
+      objectId: effectiveObjectId,
       title: title.trim(),
       creator: creator.trim(),
       description: description.trim(),
@@ -959,8 +968,7 @@ function UploadTabBody({
     if (!selectedFile || !title.trim() || isUploading) return;
     const payload: UploadImageConfirmPayload = {
       file: selectedFile,
-      // Same normalisation as handleAddToBatch — see comment there.
-      objectId: slugify(objectId, 0),
+      objectId: effectiveObjectId,
       title: title.trim(),
       creator: creator.trim(),
       description: description.trim(),
@@ -979,10 +987,7 @@ function UploadTabBody({
   }
 
   const allExistingIds = [...existingObjectIds, ...stagedImages.map((s) => s.payload.objectId)];
-  // Compare the NORMALISED id — payloads carry slugified ids, so a raw
-  // comparison would miss collisions like "Vessel Front" vs "vessel-front".
-  const normalisedObjectId = slugify(objectId, 0);
-  const idCollision = normalisedObjectId !== "" && allExistingIds.includes(normalisedObjectId);
+  const idCollision = allExistingIds.includes(effectiveObjectId);
 
   return (
     <div className="space-y-4">
@@ -1073,11 +1078,15 @@ function UploadTabBody({
             <input
               type="text"
               value={objectId}
-              onChange={(e) => setObjectId(e.target.value)}
+              onChange={(e) => setObjectId(filterTypedUploadId(e.target.value))}
               disabled={isUploading}
+              aria-label={t("upload_object_id")}
+              placeholder={effectiveObjectId}
               className="w-full font-mono text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 disabled:text-gray-400"
             />
-            <p className="font-body text-xs text-gray-400 mt-0.5">{t("upload_object_id_help")}</p>
+            <p className="font-body text-xs text-gray-400 mt-0.5">
+              {t("upload_object_id_help", { id: effectiveObjectId })}
+            </p>
             {idCollision && (
               <p className="font-body text-xs text-amber-600 mt-0.5">
                 {t("upload_id_collision_hint")}

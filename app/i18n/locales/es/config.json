@@ -46,7 +46,12 @@
       "field_url": "URL del sitio",
       "field_url_help": "La URL completa donde se aloja tu sitio (por ejemplo, https://username.github.io).",
       "field_baseurl": "URL base",
-      "field_baseurl_help": "La ruta después del dominio (por ejemplo, /mi-sitio-telar). Déjalo vacío si está alojado en la raíz."
+      "field_baseurl_help": "La ruta después del dominio (por ejemplo, /mi-sitio-telar). Déjalo vacío si está alojado en la raíz.",
+      "change_address": "Cambiar",
+      "url_empty": "Escribe la dirección completa de tu sitio.",
+      "url_invalid": "La URL del sitio debe empezar con http:// o https:// y terminar en el dominio, como https://username.github.io.",
+      "baseurl_invalid": "La URL base debe estar vacía o empezar con una barra, como /mi-sitio-telar, y no puede tener espacios.",
+      "address_change_warning": "Todas las direcciones de tu sitio cambian y los enlaces a las anteriores dejan de funcionar. La nueva dirección se guarda al confirmar y llega a tu sitio la próxima vez que publiques."
     },
     "story_interface": {
       "title": "Interfaz de historias",
@@ -76,7 +81,7 @@
     "google_sheets": {
       "title": "Integración con Google Sheets",
       "disabled_notice": "Google Sheets ha sido desactivado. El Compositor gestiona tu contenido directamente.",
-      "enabled_notice": "Google Sheets es la fuente de contenido actual. Los cambios hechos aquí se sobrescribirán en la próxima sincronización."
+      "enabled_notice": "Tu sitio lee su contenido de Google Sheets. Cada vez que se construye, los objetos y las historias de tu hoja reemplazan los que publicas desde el Compositor. Para que el sitio se construya con el contenido del Compositor, guarda un objeto en la página Objetos: al guardarlo, se desactiva Google Sheets."
     }
   },
   "navigation_menu_title": "Menú de navegación",
@@ -108,7 +113,7 @@
     "leave_cancel": "Quedarse",
     "convenor_only": "Solo el coordinador/a del sitio puede unirlo a un curso o sacarlo de uno.",
     "left": "Este sitio ya no hace parte de un curso.",
-    "join_failed": "El sitio no qued\u00f3 unido al curso. Escribe el c\u00f3digo otra vez; repetirlo no duplica nada.",
+    "join_failed": "El sitio no quedó unido al curso. Escribe el código otra vez; repetirlo no duplica nada.",
     "leave_failed": "El sitio sigue en el curso. Intenta salir otra vez."
   }
 }

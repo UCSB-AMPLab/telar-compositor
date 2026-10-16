@@ -2,7 +2,7 @@
  * This file is the Publish route — one scrollable page with three stacked
  * sections (What's changing / What we checked / Publish) that the user runs to
  * push their D1-stored compositor content out to GitHub as a Telar-format
- * commit. (This single-page flow replaced the prior 3-step wizard.)
+ * commit.
  *
  * Loader fetches the active project, computes a change summary
  * against the stored publish snapshot, and returns project + user
@@ -12,11 +12,14 @@
  * `run-validation` that fails in transit as unreachable, and passes every
  * other intent through):
  *   - `run-validation` — runs pre-publish checks and returns
- *     `ValidationResult`
+ *     `ValidationResult`, with where GitHub's head stands for a publish and
+ *     the head it read (`publishHeadState`), and each page held in more than
+ *     one language (`page-language-choice.server`)
  *   - `publish` — refuses first on a site behind the latest release or a
  *     latest release that cannot be read (see `~/lib/upgrade-gate.server`),
- *     then assembles the full file set, commits, updates D1, returns the new
- *     SHA
+ *     then keeps the version the author chose of each page held in more than
+ *     one language, assembles the full file set, commits, updates D1, returns
+ *     the new SHA
  *   - `poll-build` — polls GitHub Actions and returns the build
  *     status/conclusion, named with the sha it answers for (driven headless by
  *     this page's poll loop)
@@ -28,20 +31,22 @@
  *     shown in the checks section's repair line and nowhere else
  *
  * Renders three sections with `ChangeSummary` (chips), `ValidationChecks`
- * (chilca-pale passed-checks list + blockers), and an inline terracotta
- * Publish section (mono commit card + click-to-reveal `CommitMessageEditor`).
+ * (chilca-pale passed-checks list + blockers) followed by `PageLanguageChoice`
+ * (one choice per page held in more than one language), and an inline
+ * terracotta Publish section (mono commit card + click-to-reveal
+ * `CommitMessageEditor`).
  *
- * Post-commit: the in-route BuildTracker is GONE. Build
- * chrome (the 5-row phase log) is owned by the Site Status pill via the
- * awareness broadcast. This page only shows an honest "Publishing…
- * — track progress in the status pill" inline state while a headless
- * `poll-build` loop watches the build to completion, then swaps to a single
- * success card ("Published. <url>" + primary Open + secondary View commit) on
+ * Post-commit: the route has no build tracker of its own. Build chrome (the
+ * 5-row phase log) is owned by the Site Status pill via the awareness
+ * broadcast. This page only shows a "Publishing… — track progress in the
+ * status pill" inline state while a headless `poll-build` loop watches the
+ * build to completion, then swaps to a single success card ("Published.
+ * <url>" + primary Open + secondary View commit) on
  * `buildConclusion === "success"`, or a failure/retry card otherwise. The swap
- * is NEVER keyed off `isPublishing` (which flips false on commit return, before
- * the build runs — the landmine).
+ * is NEVER keyed off `isPublishing`, which flips false on commit return,
+ * before the build runs.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -86,7 +91,7 @@ import { fetchFrameworkFilesAtVersion, healMissingFrameworkFiles } from "~/lib/u
 import { getInstallationInfo, getInstallationToken, resolveProjectToken } from "~/lib/github-app.server";
 import { capturePagesOnLoad } from "~/lib/page-capture.server";
 import { snapshotSettledOnLoad, storeWrittenPageFrontmatter } from "~/lib/page-written-frontmatter.server";
-import { bumpProjectHeadFrom, headAdvancedFrom, objectsReadAdvancedFrom } from "~/lib/github-status.server";
+import { bumpProjectHeadFrom, headAdvancedFrom, importCommitOf, objectsReadAdvancedFrom } from "~/lib/github-status.server";
 import { heldPagesRecord, pageFilesRecordAdvancedFrom, recordedPageDeletions } from "~/lib/page-files-record.server";
 import { parsePageFilesRecord, serialisePageFilesRecord } from "~/lib/page-files-record";
 import { commitOnOwnToken } from "~/lib/publish-commit-token.server";
@@ -104,7 +109,9 @@ import {
   computePageDeletions,
   carriedPageDeletions,
   clearCarriedPageSources,
+  publishHeadState,
   runPrePublishValidation,
+  storiesLeaveSiteWarnings,
   stepLayersForValidation,
   buildPublishFileSet,
   buildConfigChangeFields,
@@ -126,6 +133,7 @@ import {
   withReplacedSettings,
 } from "~/lib/publish.server";
 import type {
+  PublishHeadState,
   PublishSnapshot,
   ChangeSummary,
   ReplacedSettings,
@@ -139,6 +147,8 @@ import { settingsChangeI18nKey, SETTINGS_CHANGE_FALLBACK_KEY } from "~/lib/setti
 import { Button } from "~/components/ui/Button";
 import { DocsLink } from "~/components/ui/DocsLink";
 import { ChangeSummary as ChangeSummaryComponent } from "~/components/features/publish/ChangeSummary";
+import { aboutPageSuggestions } from "~/lib/about-page-suggestion.server";
+import { ChecksMayBeBehindNotice } from "~/components/features/publish/ChecksMayBeBehindNotice";
 import { ValidationChecks, ValidationWarnings } from "~/components/features/publish/ValidationChecks";
 import type {
   WorkflowRepair,
@@ -157,6 +167,17 @@ import { CORRECTS_HEADINGS, headingFilesOf, headingsHeadline } from "~/lib/sheet
 import { spanishSheetCounterparts } from "~/lib/site-sheets.server";
 import { wait } from "~/lib/wait";
 import { answerReadsWhenUnreachable, isUnreachableAnswer } from "~/lib/unreachable-write";
+import {
+  PageLanguageChoiceRefused,
+  applyPageLanguageChoice,
+  keptPageFiles,
+  pageLanguageGroups,
+  readLanguagePages,
+} from "~/lib/page-language-choice.server";
+import { KEEP_PAGE_FILES, everyPageLanguageChosen } from "~/lib/page-language-choice";
+import type { PageLanguageChoices, PageLanguageGroup } from "~/lib/page-language-choice";
+import { PageLanguageChoice } from "~/components/features/publish/PageLanguageChoice";
+import { coordinatorLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 
 export const handle = { i18n: ["common", "publish", "team"] };
 
@@ -250,6 +271,8 @@ const PUBLISH_ERROR_KEYS = new Map<string, string>([
   ["project_unreadable", "build.project_unreadable"],
   ["changed_during_publish", "build.changed_during_publish"],
   ["stories_unreadable", "build.stories_unreadable"],
+  ["page_language_unchosen", "build.page_language_unchosen"],
+  ["page_language_not_applied", "build.page_language_not_applied"],
 ]);
 
 /**
@@ -415,6 +438,11 @@ function publishFailure(err: unknown, projectId: number) {
   if (err instanceof KeptColumnsRefusal) {
     return { ok: false, intent: "publish", error: err.code, projectId };
   }
+  // A page held in more than one language with no version chosen, or a
+  // choice the collaboration object did not apply: nothing was committed.
+  if (err instanceof PageLanguageChoiceRefused) {
+    return { ok: false, intent: "publish", error: `page_language_${err.code}`, projectId };
+  }
   // GitHub refused the credential the commit ran on. A retry changes nothing,
   // and it is not a fault in the site.
   if (err instanceof GitHubPermissionError) {
@@ -447,9 +475,15 @@ async function healRenamedRepo(
 }
 
 function publishErrorMessage(
-  t: (key: string) => string,
+  t: (key: string, values?: { name?: string }) => string,
   error: string | undefined,
+  reviewer: { canReview: boolean; coordinatorName: string | null },
 ): string {
+  // Only the convenor can review the changes; everyone else is told who does.
+  if (error === "stale_head" && !reviewer.canReview) {
+    const [key, values] = coordinatorLine("build.stale_head_error_collab", "build.stale_head_error_collab_unnamed", reviewer.coordinatorName);
+    return t(key, values);
+  }
   return t(PUBLISH_ERROR_KEYS.get(error ?? "") ?? "build.failed_description");
 }
 
@@ -1243,6 +1277,14 @@ export async function action({ request, context }: Route.ActionArgs) {
         // one. It completes, snapshot included, before D1 is read below.
         const removal = await removeRequestedStoryColumn(formData, env, activeProject.id);
 
+        // The document's latest edits reach D1 before the checks read it,
+        // through `/snapshot`, which reports a snapshot that dropped a row. It
+        // runs after a reset or removal too: neither checks every row it wrote,
+        // and a glossary column removal writes D1 without a snapshot at all. A
+        // snapshot that fails leaves the checks running on D1, and the answer
+        // says they may be behind.
+        const snapshotOk = await forceDocSnapshot(env, activeProject.id);
+
         // Repo reads run under the installation token: a collaborator's own
         // token has no read access to a private repository they are not a
         // GitHub collaborator on (OAuth scopes grant nothing beyond what the
@@ -1255,8 +1297,16 @@ export async function action({ request, context }: Route.ActionArgs) {
           userRole,
         );
 
-        // Fetch current repo HEAD for stale check
-        const currentRepoHead = await getRepoHead(projectToken, owner, repo);
+        // GitHub's head, which the page's own check of GitHub compares with
+        // the recorded head. A read that fails is a check that could not be
+        // made, never a change on GitHub: the checks of D1 still run, nothing
+        // on GitHub is read, and the page waits to publish until it can check.
+        const currentRepoHead = await getRepoHead(projectToken, owner, repo).catch((err: unknown) => {
+          console.warn("run-validation: could not read GitHub's head", err);
+          return null;
+        });
+        const importCommit = importCommitOf(activeProject);
+        const headState = publishHeadState(activeProject.head_sha, importCommit, currentRepoHead);
 
         // Fetch objects for validation. extra_columns feeds object_reserved_column
         // (a reserved name in the custom-column passthrough).
@@ -1312,19 +1362,21 @@ export async function action({ request, context }: Route.ActionArgs) {
         // captured has its file's block carried forward at the head the
         // stale check compared against, as the publish would; a read that
         // fails leaves the page unjudged.
-        const pageRows = await withCarriedFrontmatter(
-          await db.select({
-            id: project_pages.id,
-            slug: project_pages.slug,
-            title: project_pages.title,
-            frontmatter: project_pages.frontmatter,
-            frontmatter_source: project_pages.frontmatter_source,
-          })
-            .from(project_pages)
-            .where(eq(project_pages.project_id, activeProject.id)),
-          { token: projectToken, owner, repo, ref: currentRepoHead },
-          false,
-        );
+        const storedPageRows = await db.select({
+          id: project_pages.id,
+          slug: project_pages.slug,
+          title: project_pages.title,
+          frontmatter: project_pages.frontmatter,
+          frontmatter_source: project_pages.frontmatter_source,
+        })
+          .from(project_pages)
+          .where(eq(project_pages.project_id, activeProject.id));
+        const pageBodies = await db.select({ id: project_pages.id, body: project_pages.body })
+          .from(project_pages)
+          .where(eq(project_pages.project_id, activeProject.id));
+        const pageRows = currentRepoHead === null
+          ? storedPageRows
+          : await withCarriedFrontmatter(storedPageRows, { token: projectToken, owner, repo, ref: currentRepoHead }, false);
 
         // Fetch glossary terms for validation. extra_columns feeds
         // glossary_reserved_column, the glossary counterpart of the object
@@ -1353,7 +1405,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         // this publish will land on rather than the default branch's tip.
         // getFileAtRef never throws; "error" is indeterminate and stays silent.
         let buildWorkflow: FileAtRef | undefined;
-        if (storyRows.some((s) => s.private && !s.draft)) {
+        if (currentRepoHead !== null && storyRows.some((s) => s.private && !s.draft)) {
           buildWorkflow = await getFileAtRef(
             projectToken,
             owner,
@@ -1372,14 +1424,10 @@ export async function action({ request, context }: Route.ActionArgs) {
         // told: discovering it at the write leaves the file silently alone.
         // "error" and "absent" both read as no file, and nothing is reported —
         // a check that cannot see the file has nothing to say about it.
-        const configAtHead = await getFileAtRef(
-          projectToken,
-          owner,
-          repo,
-          "_config.yml",
-          currentRepoHead,
-        );
-        if (configAtHead.status === "error") {
+        const configAtHead: FileAtRef = currentRepoHead === null
+          ? { status: "error" }
+          : await getFileAtRef(projectToken, owner, repo, "_config.yml", currentRepoHead);
+        if (currentRepoHead !== null && configAtHead.status === "error") {
           console.warn("run-validation: could not read _config.yml");
         }
 
@@ -1388,8 +1436,9 @@ export async function action({ request, context }: Route.ActionArgs) {
         const loadLayers = projectStepLayersLoader(db, activeProject.id);
 
         const validation = runPrePublishValidation({
-          headSha: activeProject.head_sha ?? "",
+          headSha: activeProject.head_sha,
           currentRepoHead,
+          importCommit,
           stories: storyRows.map((s) => ({ story_id: s.story_id, title: s.title, private: s.private, draft: s.draft })),
           steps: allSteps,
           objects: objectRows,
@@ -1401,6 +1450,36 @@ export async function action({ request, context }: Route.ActionArgs) {
           buildWorkflow,
           stepLayers: await stepLayersForValidation(allSteps, loadLayers),
         });
+        // The front matter is the carried one, as for the checks above: a page
+        // never captured holds NULL, and its file's `localized_for` decides
+        // whether the build serves it.
+        const bodyOf = new Map(pageBodies.map((row) => [row.id, row.body]));
+        validation.suggestions = await aboutPageSuggestions(
+          pageRows.map((row) => ({ ...row, body: bodyOf.get(row.id) ?? null })),
+          configRow[0]?.lang,
+        );
+        // What the page shows of GitHub: the state, and the head it read, which
+        // a first publish sends back as the head it was shown.
+        const github = { headState, shownHead: currentRepoHead };
+        // Each page held in more than one language, whose version to keep the
+        // publish waits on, read from the blocks the build reads.
+        const languageGroups = pageLanguageGroups(
+          pageRows.map((p) => ({ ...p, body: null, block: p.frontmatter })),
+          configRow[0]?.lang ?? null,
+        );
+        if (currentRepoHead === null) {
+          validation.warnings = await withReplacedSettings(validation.warnings, pageRows);
+          return { ok: true, intent: "run-validation", validation, ...github, languageGroups, snapshotOk, ...removal, ...reset };
+        }
+
+        // Stories the repository lists that this publish does not write; first,
+        // since taking stories off the live site outweighs every other suggestion.
+        validation.warnings.unshift(
+          ...(await storiesLeaveSiteWarnings(
+            { token: projectToken, owner, repo, ref: currentRepoHead },
+            storyRows,
+          )),
+        );
         // A repeated column the publish will write under `name_N`, read from
         // the sheets at the same commit. Taken after the checks above, so no
         // sheet is read while their stale-head blocker stands.
@@ -1443,7 +1522,7 @@ export async function action({ request, context }: Route.ActionArgs) {
         // about, which the publish that acknowledges it sends back.
         validation.warnings = await withReplacedSettings(validation.warnings, pageRows);
 
-        return { ok: true, intent: "run-validation", validation, ...removal, ...reset };
+        return { ok: true, intent: "run-validation", validation, ...github, languageGroups, snapshotOk, ...removal, ...reset };
       } catch (err) {
         console.error("[publish] run-validation failed", err);
         return { ok: false, intent: "run-validation", error: "validation_failed" };
@@ -1530,11 +1609,15 @@ export async function action({ request, context }: Route.ActionArgs) {
         // only when publishSha is the recorded head: recording a commit is
         // what acknowledges the GitHub edits up to it, and an edit that
         // landed since the page's own check would be overwritten unread.
-        // Refused before the objects are finished, the snapshot forced, or
-        // anything written; the finally below lets the lease go. A project
-        // with no head recorded is refused too, as the page's check already
-        // refuses it.
-        if (publishSha !== activeProject.head_sha) {
+        // With no head recorded, the first publish lands only on the head the
+        // page's check showed, and only while that head is still the commit
+        // the import read: a commit on GitHub since the check, or since the
+        // import, is refused the same way. Refused before the objects are
+        // finished, the snapshot forced, or anything written; the finally
+        // below lets the lease go.
+        const headState = publishHeadState(activeProject.head_sha, importCommitOf(activeProject), publishSha);
+        const shownHead = formData.get("shownHead");
+        if (!(headState === "current" || (headState === "first_publish" && shownHead === publishSha))) {
           return { ok: false, intent: "publish", error: "stale_head", projectId: activeProject.id };
         }
 
@@ -1639,6 +1722,23 @@ export async function action({ request, context }: Route.ActionArgs) {
         // so does any capture the object did not take, or a CSV that could
         // not be read: each throws `KeptColumnsRefusal`, answered in the catch below.
         await captureKeptColumns(db, env, activeProject.id, { token: installToken, owner, repo }, publishSha);
+
+        // Each page held in more than one language keeps the version the
+        // author chose on the page (`page-language-choice.server`). Under the
+        // lease, after the head check refused a moved head with nothing
+        // written, and after the forced snapshot, so the hashes the choice is
+        // applied by are those of the document as it stands and an edit made
+        // since refuses it whole. Before every read below, so the checks, the
+        // file set, the deletions and the snapshot recorded all describe the
+        // site with one version of each page. A page with no version chosen
+        // refuses the publish here, with nothing applied.
+        const languageSource = { token: installToken, owner, repo, ref: publishSha };
+        const languagePages = await readLanguagePages(db, activeProject.id, languageSource);
+        const languageDrops = await applyPageLanguageChoice(env, activeProject.id, {
+          ...languagePages,
+          kept: keptPageFiles(formData.get(KEEP_PAGE_FILES)),
+          recordJson: activeProject.page_files_json,
+        });
 
         // Re-run the blocker check against the rows the snapshot above just
         // wrote. Everything the page showed — the diff, the checks, the commit
@@ -2000,6 +2100,9 @@ export async function action({ request, context }: Route.ActionArgs) {
           // renamed or deleted here before any publish recorded its slug, and
           // a file GitHub added that the author chose not to take.
           ...recordedPageDeletions(parsePageFilesRecord(activeProject.page_files_json), captured.pages),
+          // The files of the versions removed for a page held in more than
+          // one language.
+          ...languageDrops,
           // A page carried from another page's file, written under its own
           // slug, leaves that file behind unless it is deleted here.
           ...carriedPageDeletions(captured.pages),
@@ -2132,15 +2235,19 @@ export async function action({ request, context }: Route.ActionArgs) {
         );
 
         const newHeadSha = result.newHeadSha;
+        const loadedHead = activeProject.head_sha;
         const landedPageFilesJson = serialisePageFilesRecord(heldPagesRecord(newHeadSha, captured.pages));
         // The commit landed: whatever the bookkeeping below meets, the site
         // changed, and collaborators are not told that it failed.
         freezeOutcome = "succeeded";
         const now = new Date().toISOString();
 
-        // head_sha advances compare-and-set from the head this publish was
-        // built on: a head another writer recorded during the publish is
-        // kept. What this publish committed is recorded either way.
+        // head_sha advances compare-and-set from the head this publish loaded,
+        // which is the head it was built on, or none before the first: a head
+        // another writer recorded during the publish is kept. objects_read_sha
+        // goes with it from the record loaded, since the commit's objects.csv
+        // is the one written from D1. What this publish committed is recorded
+        // either way.
         //
         // Each story written is recorded in the same batch, at the file it
         // was written to, which the next publish lays it out from.
@@ -2151,11 +2258,11 @@ export async function action({ request, context }: Route.ActionArgs) {
         // after it may turn a published site into a reported failure.
         await recordLandedPublish(db, activeProject.id, {
           published_sha: newHeadSha,
-          head_sha: headAdvancedFrom(publishSha, newHeadSha),
-          objects_read_sha: objectsReadAdvancedFrom(publishSha, newHeadSha),
+          head_sha: headAdvancedFrom(loadedHead, newHeadSha),
+          objects_read_sha: objectsReadAdvancedFrom(loadedHead, newHeadSha, loadedHead ?? activeProject.objects_read_sha),
           // Every captured page held by a file, written or not, at the new
           // head, with the head: a blank-title page keeps its file.
-          page_files_json: pageFilesRecordAdvancedFrom(publishSha, landedPageFilesJson),
+          page_files_json: pageFilesRecordAdvancedFrom(loadedHead, landedPageFilesJson),
           // The files it owed are deleted or named, and a snapshot now exists.
           story_files_to_delete_json: null,
           last_published_at: now,
@@ -2333,6 +2440,14 @@ type PublishActionData =
       ok: true;
       intent: "run-validation";
       validation: ValidationResult;
+      /** Where GitHub's head stands for a publish, as this check read it. */
+      headState: PublishHeadState;
+      /** The head this check read, null when it could not; a first publish sends it back. */
+      shownHead: string | null;
+      /** Each page held in more than one language, whose version to keep the publish waits on. */
+      languageGroups: PageLanguageGroup[];
+      /** False when the document could not be written to D1 first, so the checks may miss the latest edits. */
+      snapshotOk: boolean;
       /** The column this check was asked to remove and could not. */
       removalFailed?: { column: string };
       /** The page this check was asked to reset and could not. */
@@ -2462,6 +2577,7 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
   const releaseUnknown = appData?.releaseUnknown ?? false;
   const repoFullName = appData?.repoFullName ?? null;
   const { t } = useTranslation("publish");
+  const { canReview, coordinatorName } = useSyncReview();
   const { project, changeSummary, snapshotOk, summaryFingerprint } = loaderData;
 
   // Role read via the typed loader hook (replaces the ad-hoc useRouteLoaderData
@@ -2480,6 +2596,13 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
   const operationLock = useOperationLock();
 
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  // What the checks read of GitHub: where its head stands for a publish, and
+  // the head read, which a first publish sends back as the head it was shown.
+  const [githubCheck, setGithubCheck] = useState<{ headState: PublishHeadState; shownHead: string | null } | null>(null);
+  // Each page held in more than one language, as the checks read them, and
+  // the version the author chose to keep of each; none is chosen for them.
+  const [languageGroups, setLanguageGroups] = useState<PageLanguageGroup[]>([]);
+  const [languageChoices, setLanguageChoices] = useState<PageLanguageChoices>({});
   // A run of the checks that did not answer. It leaves the checks unanswered
   // rather than clean: an empty result would offer Publish over warnings the
   // author has not seen, and the action re-checks blockers only.
@@ -2633,10 +2756,14 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
     if (validationData.ok && validationData.intent === "run-validation") {
       setValidationFailed(false);
       setValidationResult(validationData.validation);
+      setGithubCheck({ headState: validationData.headState, shownHead: validationData.shownHead });
+      setLanguageGroups(validationData.languageGroups ?? []);
       // The checks' own answer now says which pages' settings are replaced.
       setRefusedReplacements([]);
     } else if (!validationData.ok && validationData.intent === "run-validation") {
       setValidationResult(null);
+      setGithubCheck(null);
+      setLanguageGroups([]);
       setValidationFailed(true);
     }
   }, [validationData]);
@@ -2659,13 +2786,18 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
         setRefusedReplacements(publishData.warnings);
         return;
       }
-      setPublishError(publishErrorMessage(t, publishData.error));
+      setPublishError(publishErrorMessage(t, publishData.error, { canReview, coordinatorName }));
+      // A page the checks on screen did not ask about: they run again, and
+      // ask.
+      if (publishData.error === "page_language_unchosen") runValidation();
       // The action names the project it acted on, which is the session's and can
       // differ from the one this page shows when another tab switched it.
       if ("projectId" in publishData && typeof publishData.projectId === "number") {
         recordPublishFailure(publishData.error ?? "unknown", publishData.projectId);
       }
     }
+    // Keyed on the answer alone: the checks run again once per refusal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publishData, t]);
 
   // Each repair is its own poll session, scoped two ways. The sha is what a
@@ -2912,10 +3044,14 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
     // generated message verbatim, so it is still stamped.
     const fields: Record<string, string> = { intent: "publish", commitMessage };
     if (commitBody) fields.commitBody = commitBody;
+    // A first publish lands only on the head the checks showed.
+    if (githubCheck?.headState === "first_publish" && githubCheck.shownHead) fields.shownHead = githubCheck.shownHead;
     // The page and block of each settings-replaced warning on screen, which
     // the action refuses to replace unnamed.
     const warned = replacedSettingsOf([...(validationResult?.warnings ?? []), ...refusedReplacements]);
     if (warned.length > 0) fields[ACKNOWLEDGED_REPLACED_PAGES] = JSON.stringify(warned);
+    // The version kept of each page held in more than one language.
+    if (languageGroups.length > 0) fields[KEEP_PAGE_FILES] = JSON.stringify(languageGroups.map((g) => languageChoices[g.page.file]));
     const isGenerated = fullMessage === autoGeneratedMessage;
     if (isGenerated && typeof summaryFingerprint === "string" && summaryFingerprint.length > 0) {
       fields.summaryFingerprint = summaryFingerprint;
@@ -2940,6 +3076,9 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
     setPublishError(null);
     setIsPublishing(false);
     setValidationResult(null);
+    setGithubCheck(null);
+    setLanguageGroups([]);
+    setLanguageChoices({});
     setRefusedReplacements([]);
     setIsEditingMessage(false);
     setEditedMessage(null);
@@ -2968,11 +3107,19 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
   // warning the author has not seen yet would otherwise go out unread. A page
   // that cannot read the state never runs the checks and does not wait.
   const checksUnanswered = !stateUnreadable && (validationResult === null || validationFetcher.state !== "idle");
+  // The checks could not read GitHub's head, so whether anyone has committed
+  // since is unknown, and the publish waits until they can.
+  const githubUnchecked = githubCheck?.headState === "unchecked";
+  // A page held in more than one language waits for the version to keep.
+  const languageUnchosen = !everyPageLanguageChosen(languageGroups, languageChoices);
   const publishDisabled =
     isPublishing ||
     hasBlockers ||
     checksUnanswered ||
-    nothingToPublish(isUpToDate, headingFiles) ||
+    githubUnchecked ||
+    languageUnchosen ||
+    // A page held in more than one language is a change the publish makes.
+    nothingToPublish(isUpToDate && languageGroups.length === 0, headingFiles) ||
     operationLock !== null ||
     releaseUnknown;
 
@@ -3127,11 +3274,24 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
             ) : (
               <ValidationChecks
                 validation={validationResult}
+                headState={githubCheck?.headState}
+                onRecheckGithub={runValidation}
+                recheckingGithub={validationFetcher.state !== "idle"}
                 workflowRepair={workflowRepair}
                 onResetPageFrontmatter={handleResetPageFrontmatter}
                 onRemoveColumn={handleRemoveColumn}
                 removalFailed={removalFailureOf(validationData)}
                 resetFailed={resetFailureOf(validationData)}
+              />
+            )}
+            <ChecksMayBeBehindNotice result={validationData} stateUnreadable={stateUnreadable} validationFailed={validationFailed} />
+            {!stateUnreadable && !validationFailed && (
+              <PageLanguageChoice
+                groups={languageGroups}
+                choices={languageChoices}
+                onChoose={(pageFile, keptFile) => setLanguageChoices((prev) => ({ ...prev, [pageFile]: keptFile }))}
+                disabled={isPublishing}
+                className="mt-4"
               />
             )}
           </section>
@@ -3200,6 +3360,11 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
             {hasBlockers && (
               <p className="font-body text-sm text-cream/90 mt-3">
                 {t("publish_section.blocked_note")}
+              </p>
+            )}
+            {!hasBlockers && languageUnchosen && (
+              <p className="font-body text-sm text-cream/90 mt-3">
+                {t("publish_section.language_choice_note")}
               </p>
             )}
             {releaseUnknown && !isPublishing && !publishError && (

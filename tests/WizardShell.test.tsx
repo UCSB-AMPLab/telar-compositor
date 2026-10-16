@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 /**
- * This file pins orchestration tests for the onboarding `WizardShell` —
- * specifically the scope pre-check wiring that decides whether a user
- * needs to re-grant the GitHub App access to a newly-selected repo before
- * the import action can fire.
+ * Orchestration tests for the onboarding `WizardShell`: the scope pre-check
+ * that decides whether a user must re-grant the GitHub App access to a
+ * newly selected repo before the import action can fire, the resume of an
+ * unfinished project, the site the tab remembers, and the site-configuration
+ * check that runs before onboarding completes.
  *
  * Cases:
  *  A. In-scope happy path → `fetcher.submit` fires with `intent=import`.
@@ -13,10 +14,19 @@
  *  C. Non-scope error (fail-open) → `console.error` logged once
  *     and `intent=import` fires anyway.
  *  D. Resume flow (`?resume=N`) bypasses `handleSelectRepo` entirely.
+ *  D2-D4. An unfinished project resumes only when `?resume=` names it, or
+ *     when Resume is chosen after the wizard opened.
  *  E. Stale-prompt guard: a second `handleSelectRepo` clears
  *     `scopeBlocked` BEFORE the second submit fires.
  *  F. The sync step's default-branch fix submits `intent=fix_default_branch`
  *     for the selected repo on the import fetcher.
+ *  G-I. Completing onboarding forgets the site the tab remembered; a refused
+ *     completion leaves it remembered.
+ *  J-N. A configuration check that did not run (unreadable, no site to check,
+ *     or a refused Pages read) completes nothing; all but the no-site case
+ *     offer Try again. Skipping the fixes shows what was left and completes
+ *     nothing until the author continues. Check settings again rebuilds the
+ *     list from the server's answer and shows as pending until it answers.
  *
  * Copy note: the connect-existing-repo path uses its own
  * `step_connect.installation_scope.*` key set (the create-site copy
@@ -36,7 +46,7 @@
  * `onSelect(testRepo)` synchronously; this isolates WizardShell orchestration
  * from the (separately tested) StepConnect surface.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -159,10 +169,30 @@ vi.mock("~/components/features/onboarding/StepReview", () => ({
   StepReview: () => <div data-testid="step-review">review</div>,
 }));
 vi.mock("~/components/features/onboarding/StepDone", () => ({
-  StepDone: () => <div data-testid="step-done">done</div>,
+  StepDone: (props: {
+    unfixed?: string[];
+    onRecheck?: () => void;
+    onContinue?: () => void;
+    rechecking?: boolean;
+    buildStarted?: boolean;
+    completed?: boolean;
+  }) => (
+    <div data-testid="step-done">
+      {(props.unfixed ?? []).join(",")}
+      <span data-testid="rechecking">{String(props.rechecking)}</span>
+      <span data-testid="build-started">{String(props.buildStarted)}</span>
+      <span data-testid="completed">{String(props.completed)}</span>
+      <button type="button" data-testid="recheck" onClick={props.onRecheck}>recheck</button>
+      <button type="button" data-testid="continue" onClick={props.onContinue}>continue</button>
+    </div>
+  ),
 }));
 vi.mock("~/components/features/onboarding/SiteConfigConfirmation", () => ({
-  SiteConfigConfirmation: () => <div data-testid="site-config">site-config</div>,
+  SiteConfigConfirmation: (props: { onSkip: () => void }) => (
+    <div data-testid="site-config">
+      <button type="button" data-testid="skip-fixes" onClick={props.onSkip}>skip</button>
+    </div>
+  ),
 }));
 vi.mock("~/components/features/onboarding/ProgressBar", () => ({
   ProgressBar: () => <div data-testid="progress-bar">progress</div>,
@@ -467,5 +497,144 @@ describe("WizardShell — scope pre-check orchestration", () => {
     });
     rerender(<WizardShell {...props} />);
     expect(window.sessionStorage.getItem("telar.tab-site")).toBeNull();
+  });
+
+  describe("a configuration check that did not run", () => {
+    const resumed = {
+      ...baseProps,
+      connectedProjects: [
+        { id: 99, github_repo_full_name: "tester/old-repo", onboarding_completed: null },
+      ],
+    };
+
+    it("Case J — an unreadable check completes nothing, says so, and Try again asks it again", () => {
+      searchParamsMock = new URLSearchParams("resume=99");
+      const { rerender } = render(<WizardShell {...resumed} />);
+      const configCheck = fetcherRegistry[1];
+      expect(configCheck.submit).toHaveBeenCalledTimes(1);
+      act(() => {
+        configCheck.data = { ok: false, reason: "unreachable", intent: "check-site-config" };
+      });
+      rerender(<WizardShell {...resumed} />);
+
+      expect(fetcherRegistry[3].submit).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("step-done")).toBeNull();
+      expect(screen.getByText("site_config.check_failed")).toBeDefined();
+
+      fireEvent.click(screen.getByText("site_config.check_retry"));
+      expect(configCheck.submit).toHaveBeenCalledTimes(2);
+      expect((configCheck.submit.mock.calls[1][0] as Record<string, string>)).toEqual({
+        intent: "check-site-config",
+        project_id: "99",
+      });
+    });
+
+    it("Case K — a check with no site to check completes nothing and offers no retry", () => {
+      searchParamsMock = new URLSearchParams("resume=99");
+      const { rerender } = render(<WizardShell {...resumed} />);
+      act(() => {
+        fetcherRegistry[1].data = { ok: false, intent: "check-site-config", error: "not_found" };
+      });
+      rerender(<WizardShell {...resumed} />);
+
+      expect(fetcherRegistry[3].submit).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("step-done")).toBeNull();
+      expect(screen.getByText("site_config.check_not_found")).toBeDefined();
+      expect(screen.queryByText("site_config.check_retry")).toBeNull();
+    });
+
+    const flagged = {
+      ok: true,
+      intent: "check-site-config",
+      sheetsEnabled: true,
+      pagesNotEnabled: false,
+      urlMismatch: { pagesUrl: "https://a.github.io/r", configUrl: "https://b.github.io" },
+    };
+
+    it("Case L — skipping the fixes shows what was left and completes nothing until the author continues", () => {
+      searchParamsMock = new URLSearchParams("resume=99");
+      const { rerender } = render(<WizardShell {...resumed} />);
+      act(() => {
+        fetcherRegistry[1].data = flagged;
+      });
+      rerender(<WizardShell {...resumed} />);
+      expect(screen.getByTestId("site-config")).toBeDefined();
+      expect(fetcherRegistry[3].submit).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("skip-fixes"));
+      rerender(<WizardShell {...resumed} />);
+
+      expect(screen.getByTestId("step-done").textContent).toContain("sheets,url");
+      expect(fetcherRegistry[3].submit).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("continue"));
+      expect(fetcherRegistry[3].submit).toHaveBeenCalledTimes(1);
+      expect(fetcherRegistry[3].submit.mock.calls[0][0]).toEqual({ intent: "complete-onboarding", project_id: "99" });
+    });
+
+    it("Case M — Check settings again asks the server and rebuilds the list from its answer", () => {
+      searchParamsMock = new URLSearchParams("resume=99");
+      const { rerender } = render(<WizardShell {...resumed} />);
+      act(() => {
+        fetcherRegistry[1].data = flagged;
+      });
+      rerender(<WizardShell {...resumed} />);
+      fireEvent.click(screen.getByTestId("skip-fixes"));
+      rerender(<WizardShell {...resumed} />);
+      expect(screen.getByTestId("step-done")).toBeDefined();
+
+      const importSubmits = fetcherRegistry[0].submit.mock.calls.length;
+      const checks = fetcherRegistry[1].submit.mock.calls.length;
+      fireEvent.click(screen.getByTestId("recheck"));
+      rerender(<WizardShell {...resumed} />);
+
+      expect(fetcherRegistry[1].submit.mock.calls.length).toBe(checks + 1);
+      expect(fetcherRegistry[1].submit.mock.calls[checks][0]).toEqual({ intent: "check-site-config", project_id: "99" });
+      expect(fetcherRegistry[0].submit.mock.calls.length).toBe(importSubmits);
+      // Nothing has been answered yet, so the screen has not moved.
+      expect(screen.getByTestId("step-done")).toBeDefined();
+
+      act(() => {
+        fetcherRegistry[1].data = { ...flagged, sheetsEnabled: false, urlMismatch: null, pagesNotEnabled: true };
+      });
+      rerender(<WizardShell {...resumed} />);
+      expect(screen.getByTestId("site-config")).toBeDefined();
+      fireEvent.click(screen.getByTestId("skip-fixes"));
+      rerender(<WizardShell {...resumed} />);
+      expect(screen.getByTestId("step-done").textContent).toContain("pages");
+      expect(screen.getByTestId("step-done").textContent).not.toContain("sheets");
+    });
+
+    it("Case M2 — the recheck is shown as pending while the server has not answered", () => {
+      searchParamsMock = new URLSearchParams("resume=99");
+      const { rerender } = render(<WizardShell {...resumed} />);
+      act(() => {
+        fetcherRegistry[1].data = flagged;
+      });
+      rerender(<WizardShell {...resumed} />);
+      fireEvent.click(screen.getByTestId("skip-fixes"));
+      act(() => {
+        fetcherRegistry[1].state = "submitting";
+      });
+      rerender(<WizardShell {...resumed} />);
+      expect(screen.getByTestId("rechecking").textContent).toBe("true");
+    });
+
+    it("Case N — a refused Pages read completes nothing, names the permission, and Try again asks it again", () => {
+      searchParamsMock = new URLSearchParams("resume=99");
+      const { rerender } = render(<WizardShell {...resumed} />);
+      const configCheck = fetcherRegistry[1];
+      act(() => {
+        configCheck.data = { ok: false, reason: "pages_refused", intent: "check-site-config" };
+      });
+      rerender(<WizardShell {...resumed} />);
+
+      expect(fetcherRegistry[3].submit).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("step-done")).toBeNull();
+      expect(screen.getByText("site_config.check_pages_refused")).toBeDefined();
+
+      fireEvent.click(screen.getByText("site_config.check_retry"));
+      expect(configCheck.submit).toHaveBeenCalledTimes(2);
+    });
   });
 });

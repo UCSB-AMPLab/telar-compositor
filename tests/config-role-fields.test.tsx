@@ -2,9 +2,9 @@
 /**
  * The config page's per-field standing, as rendered and as written to Yjs.
  *
- * Ruling 6 keeps six fields with the convenor and leaves the rest with any
- * member, so the page cannot be one disabled fieldset: a collaborator has to
- * see their own fields live and the six as read-only, with the reason stated.
+ * Six fields stay with the convenor and the rest are open to any member, so
+ * the page cannot be one disabled fieldset: a collaborator has to see their
+ * own fields live and the six as read-only, with the reason stated.
  *
  * The Yjs half matters independently of the form. The Durable Object snapshots
  * the shared `config` map straight back into `project_config`, so a field
@@ -18,7 +18,7 @@
  * the route imports are stubbed. Yjs is real — the assertions are about what
  * lands in the document.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -246,17 +246,20 @@ describe("the Yjs writes are gated per field, not per page", () => {
     expect(currentYDoc.getMap<unknown>("config").get("collection_mode")).toBe(true);
   });
 
-  it.each(["url", "baseurl", "story_key"])(
-    "refuses a collaborator's %s even when the DOM gate is removed",
-    (name) => {
-      const { container } = renderAs("collaborator");
-      const input = field(container, name) as HTMLInputElement;
-      input.closest("fieldset[disabled]")!.removeAttribute("disabled");
-      fireEvent.blur(input, { target: { value: "tampered" } });
+  it("refuses a collaborator's story_key even when the DOM gate is removed", () => {
+    const { container } = renderAs("collaborator");
+    const input = field(container, "story_key") as HTMLInputElement;
+    input.closest("fieldset[disabled]")!.removeAttribute("disabled");
+    fireEvent.blur(input, { target: { value: "tampered" } });
 
-      expect(currentYDoc.getMap<unknown>("config").get(name)).toBeUndefined();
-    },
-  );
+    expect(currentYDoc.getMap<unknown>("config").get("story_key")).toBeUndefined();
+  });
+
+  it.each(["url", "baseurl"])("offers a collaborator no way to change the %s", (name) => {
+    const { container } = renderAs("collaborator");
+    const holder = field(container, name)!.parentElement!;
+    expect(holder.querySelector("button")).toBeNull();
+  });
 
   it("refuses a collaborator's include_demo_content even when the DOM gate is removed", () => {
     const { container } = renderAs("collaborator");
@@ -271,15 +274,19 @@ describe("the Yjs writes are gated per field, not per page", () => {
 
   it("lets the convenor write the six", () => {
     const { container } = renderAs("convenor");
-    for (const name of ["url", "baseurl", "story_key"]) {
-      fireEvent.blur(field(container, name) as HTMLInputElement, {
-        target: { value: `set-${name}` },
-      });
+    fireEvent.blur(field(container, "story_key") as HTMLInputElement, {
+      target: { value: "set-story_key" },
+    });
+    for (const [name, value] of [["url", "https://new.example.org"], ["baseurl", "/new"]]) {
+      const holder = field(container, name)!.parentElement!;
+      fireEvent.click(holder.querySelector("button")!);
+      fireEvent.change(holder.querySelector('input[type="text"]')!, { target: { value } });
+      fireEvent.click(holder.querySelector('[role="group"] button')!);
     }
     const yConfig = currentYDoc.getMap<unknown>("config");
-    for (const name of ["url", "baseurl", "story_key"]) {
-      expect(yConfig.get(name)).toBe(`set-${name}`);
-    }
+    expect(yConfig.get("story_key")).toBe("set-story_key");
+    expect(yConfig.get("url")).toBe("https://new.example.org");
+    expect(yConfig.get("baseurl")).toBe("/new");
   });
 
   it("names every convenor-only field the form renders", () => {

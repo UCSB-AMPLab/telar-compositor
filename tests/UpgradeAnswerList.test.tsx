@@ -5,7 +5,7 @@
  * identifiable place opens the story alone, and a story the project does not
  * hold has no link.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -48,5 +48,16 @@ describe("UpgradeAnswerList", () => {
   it("has no link for a story the project does not hold", () => {
     expect(linkOf(answer({ position: null, storyHeld: false }))).toBeNull();
     expect(screen.queryAllByRole("link")).toHaveLength(0);
+  });
+
+  it("says nothing of whether the sheets keep the full text", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <UpgradeAnswerList answers={[answer({})]} />
+      </MemoryRouter>,
+    );
+    const out = container.textContent ?? "";
+    expect(out).toContain("answersIntro");
+    expect(out).not.toContain("answersSheetsUnchanged");
   });
 });
