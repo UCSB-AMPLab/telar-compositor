@@ -2576,7 +2576,7 @@ export default function UpgradePage({ loaderData: routedData }: Route.ComponentP
       <h1 className="font-heading font-bold text-2xl text-charcoal mb-2">{t("title")}</h1>
       <SiteLine repo={project.github_repo_full_name} />
       <GateReason reasonKey={reasonKey} />
-      {latestRelease && needsUpgrade && (
+      {latestRelease && needsUpgrade && stage !== "done" && (
         <p className="font-body text-sm text-gray-500 mb-6">{t("subtitle")}</p>
       )}
 

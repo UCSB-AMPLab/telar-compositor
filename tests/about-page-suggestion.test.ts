@@ -90,4 +90,14 @@ describe("aboutPageSuggestions", () => {
     expect(found.map((s) => s.entityId)).toEqual(["acerca"]);
     expect(await aboutPageSuggestions([about({ body: shippedBody("about.md") })], "en")).toHaveLength(1);
   });
+
+  it.each(["v0.6.0-beta", "v0.9.0-beta", "v0.9.1-beta"])(
+    "recognises the about body the template shipped in %s",
+    async (tag) => {
+      const body = splitFrontmatter(
+        readFileSync(resolve(__dirname, `fixtures/pages/telar-pre-1.0/about-${tag}.md`), "utf8"),
+      ).body;
+      expect(await aboutPageSuggestions([about({ body })], "en")).toHaveLength(1);
+    },
+  );
 });

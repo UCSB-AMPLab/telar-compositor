@@ -307,6 +307,22 @@ describe("Upgrade page — sheet screens", () => {
     expect(screen.queryAllByText("sheetsCheckedAsTheyStood")).toHaveLength(count);
   });
 
+  it("stops saying a newer Telar is available once the upgrade is done", async () => {
+    await renderSheetFlowPage({ latestRelease: { tagName: "v1.8.1" } as never });
+    expect(screen.getByText("subtitle")).toBeTruthy();
+    pushSheetFlow(() => {
+      fetchers.upgrade.data = preparedWith([], []);
+    });
+    pushSheetFlow(() => {
+      fetchers.upgrade.data = committedWithReport(true);
+    });
+    pushSheetFlow(() => {
+      fetchers.poll.data = RUN("success");
+    });
+    expect(screen.getByText("upgradeSuccess")).toBeTruthy();
+    expect(screen.queryByText("subtitle")).toBeNull();
+  });
+
   it("shows a question in the picker and sends the answer back through prepare with its challenge", async () => {
     await renderSheetFlowPage();
     pushSheetFlow(() => {
