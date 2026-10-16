@@ -6,6 +6,8 @@
  * an empty list means the objects have not loaded, so a loading line takes
  * the place of the invitation to add; `ObjectsLoadingNote` says why the
  * loader's list is read-only until then.
+ *
+ * @version v1.5.5-beta
  */
 
 import { Package } from "lucide-react";
