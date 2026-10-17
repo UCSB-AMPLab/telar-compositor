@@ -542,8 +542,8 @@ describe("csv column steps and the sheet's final newline", () => {
     expect(run(addOp, "a,b\n1,A")).toBe("a,b,c\n1,A,");
   });
 
-  it("add: writes LF for a CRLF sheet and keeps the final newline", () => {
-    expect(run(addOp, "a,b\r\n1,A\r\n")).toBe("a,b,c\n1,A,\n");
+  it("add: keeps a CRLF sheet's line endings and final newline", () => {
+    expect(run(addOp, "a,b\r\n1,A\r\n")).toBe("a,b,c\r\n1,A,\r\n");
   });
 
   it("add: keeps a last real row of empty cells as a row", () => {
@@ -558,8 +558,8 @@ describe("csv column steps and the sheet's final newline", () => {
     expect(run(renameOp, "a,b\n1,A")).toBe("a,x\n1,A");
   });
 
-  it("rename: writes LF for a CRLF sheet and keeps the final newline", () => {
-    expect(run(renameOp, "a,b\r\n1,A\r\n")).toBe("a,x\n1,A\n");
+  it("rename: keeps a CRLF sheet's line endings and final newline", () => {
+    expect(run(renameOp, "a,b\r\n1,A\r\n")).toBe("a,x\r\n1,A\r\n");
   });
 
   it("rename: keeps a last real row of empty cells as a row", () => {
@@ -583,11 +583,11 @@ describe("csv column steps and the sheet's final newline", () => {
   };
 
   it("add: keeps a quoted empty last record as a row", () => {
-    expect(run(addYesOp, 'field\n""')).toBe("field,added\n,yes");
+    expect(run(addYesOp, 'field\n""')).toBe('field,added\n"",yes');
   });
 
   it("add: keeps a quoted empty last record before a final newline as one row", () => {
-    expect(run(addYesOp, 'field\n""\n')).toBe("field,added\n,yes\n");
+    expect(run(addYesOp, 'field\n""\n')).toBe('field,added\n"",yes\n');
   });
 
   it("rename: keeps a quoted empty last record as a row", () => {

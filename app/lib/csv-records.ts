@@ -345,3 +345,66 @@ export function unifiedRecordTerminators(source: string, delimiter: string): Uni
   };
   return { text, newline: "\n", sourceOffset };
 }
+
+/** One field of a record: [start, end) in the record's own text, quotes included. */
+export interface RecordFieldSpan {
+  start: number;
+  end: number;
+}
+
+/**
+ * The fields of one record's text (its terminator already removed), on the
+ * comma, as Papa cuts them: a field opening with a quote ends where
+ * `quotedFieldEnd` says, any other at the next comma.
+ */
+export function recordFieldSpans(record: string): RecordFieldSpan[] {
+  const spans: RecordFieldSpan[] = [];
+  let at = 0;
+  for (;;) {
+    let end: number;
+    let more: boolean;
+    if (record[at] === '"') {
+      const closed = quotedFieldEnd(record, at, ",", "\n");
+      if (closed.next === undefined) {
+        end = closed.recordEnd as number;
+        more = false;
+      } else if (closed.next === record.length && record[closed.next - 1] !== ",") {
+        end = record.length;
+        more = false;
+      } else {
+        end = closed.next - 1;
+        more = true;
+      }
+    } else {
+      const comma = record.indexOf(",", at);
+      end = comma < 0 ? record.length : comma;
+      more = comma >= 0;
+    }
+    spans.push({ start: at, end });
+    if (!more) return spans;
+    at = end + 1;
+  }
+}
+
+/**
+ * The value a field's text reads as, or null when the text is not a field as
+ * written: a quoted field must close on its last character and hold no lone
+ * quote inside.
+ */
+export function recordFieldValue(text: string): string | null {
+  if (!text.startsWith('"')) return text;
+  if (text.length < 2 || !text.endsWith('"')) return null;
+  const inner = text.slice(1, -1);
+  if (inner.replace(/""/g, "").includes('"')) return null;
+  return inner.replace(/""/g, '"');
+}
+
+/**
+ * `value` as one CSV field: quoted when it holds a comma, a quote or a line
+ * break, or opens or ends in whitespace (as Papa.unparse writes it), or when
+ * `keepQuotes` asks for the quotes the field already had.
+ */
+export function csvField(value: string, keepQuotes: boolean): string {
+  const needs = /[",\r\n]/.test(value) || /^\s|\s$/.test(value);
+  return keepQuotes || needs ? `"${value.replace(/"/g, '""')}"` : value;
+}

@@ -17,7 +17,11 @@
  *     the column name. Every read pins the comma, because the framework's
  *     `pd.read_csv` splits on nothing else and `Papa.unparse` writes nothing
  *     else: a guessed delimiter reads a file the site is not built from and
- *     rewrites it under a dialect it never had.
+ *     rewrites it under a dialect it never had. csv_add_column and
+ *     csv_rename_column write by offset: only the bytes of the fields they
+ *     insert or rename change, and line endings, quoting, the byte order mark
+ *     and the final newline stay. A sheet whose records do not read back to
+ *     the cells papaparse gave is rewritten whole (`unparseRows`).
  *   - Bilingual fields ({ en, es }) resolve via resolveBilingual using the
  *     site's `telar_language` — passed in as `lang` on applyManifestChain.
  *   - Unknown operation type throws — exhaustive switch is enforced at compile
@@ -39,7 +43,7 @@
  */
 
 import Papa from "papaparse";
-import { unifiedRecordTerminators } from "~/lib/csv-records";
+import { BOM, csvField, recordFieldSpans, recordFieldValue, unifiedRecordTerminators } from "~/lib/csv-records";
 import { classifyManualSteps } from "~/lib/manual-step-kinds.server";
 import {
   type Manifest,
@@ -48,6 +52,7 @@ import {
   type ManualStep,
   type ConfigAddFieldOp,
   type ConfigUpdateValueOp,
+  type Bilingual,
   type ConfigRenameFieldOp,
   type CsvAddColumnOp,
   type CsvRenameColumnOp,
@@ -226,6 +231,85 @@ function opConfigRenameField(
 // CSV mutation ops
 // ---------------------------------------------------------------------------
 
+/** A column name in both languages, and the one this site writes. */
+interface BilingualName {
+  en: string;
+  es: string;
+  site: string;
+}
+
+function bilingualName(value: Bilingual<string> | string, lang: Language): BilingualName {
+  const en = resolveBilingual(value, "en");
+  const es = resolveBilingual(value, "es");
+  return { en, es, site: lang === "es" ? es : en };
+}
+
+/** Where `name` sits in `header`, English first, and which language matched. */
+interface HeaderMatch {
+  idx: number;
+  isEn: boolean;
+}
+
+function findEitherLanguage(header: string[], name: { en: string; es: string }): HeaderMatch | null {
+  const en = header.indexOf(name.en);
+  if (en >= 0) return { idx: en, isEn: true };
+  const es = header.indexOf(name.es);
+  return es >= 0 ? { idx: es, isEn: false } : null;
+}
+
+/**
+ * The names a column gets in the header rows. Telar sheets may carry a second,
+ * other-language header row: it is one when it has the header's length and
+ * holds the other language's `counterpart` where the header holds `match`.
+ * Then each row gets its own language's name; otherwise only the header is
+ * named, in the site's language.
+ */
+function headerNames(
+  { rows, headerRow, secondRow }: ParsedSheet,
+  match: HeaderMatch | null,
+  counterpart: { en: string; es: string },
+  name: BilingualName,
+): { first: string; second: string | null } {
+  const second = secondRow >= 0 ? rows[secondRow] : null;
+  const bilingual =
+    match !== null &&
+    second !== null &&
+    second.length === rows[headerRow].length &&
+    second[match.idx] === (match.isEn ? counterpart.es : counterpart.en);
+  if (!bilingual) return { first: name.site, second: null };
+  return match.isEn ? { first: name.en, second: name.es } : { first: name.es, second: name.en };
+}
+
+/**
+ * A held sheet parsed. Papa drops a leading byte order mark, so its cursors
+ * count from the character after it; the mark is set aside, to be written back
+ * in front.
+ */
+function readSheet(held: string): { bom: string; content: string; sheet: ParsedSheet } {
+  const bom = held.startsWith(BOM) ? BOM : "";
+  const content = held.slice(bom.length);
+  return { bom, content, sheet: parseSheet(content) };
+}
+
+/**
+ * Stores `next`, the sheet edited in place; when that was not possible (null),
+ * applies `edit` to the sheet's rows and stores them written whole.
+ */
+function storeSheet(
+  files: Map<string, string>,
+  path: string,
+  bom: string,
+  sheet: ParsedSheet,
+  next: string | null,
+  edit: () => void,
+): void {
+  if (next === null) {
+    edit();
+    next = unparseRows(sheet.rows, sheet.blank, sheet.endsWithNewline);
+  }
+  files.set(path, bom + next);
+}
+
 /**
  * Inserts one cell at `insertIdx` in every row. pd.read_csv fills the missing
  * trailing cells of a short row, so the row is padded to the insertion point
@@ -267,54 +351,61 @@ function opCsvAddColumn(
   op: CsvAddColumnOp,
   lang: Language,
 ): void {
-  const newEn = resolveBilingual(op.column, "en");
-  const newEs = resolveBilingual(op.column, "es");
-  const newCol = lang === "es" ? newEs : newEn;
-  const anchorEn = resolveBilingual(op.after, "en");
-  const anchorEs = resolveBilingual(op.after, "es");
+  const name = bilingualName(op.column, lang);
+  const anchor = { en: resolveBilingual(op.after, "en"), es: resolveBilingual(op.after, "es") };
 
   for (const path of filesMatchingGlob(files, op.file_glob)) {
-    const content = files.get(path)!;
-    const { rows, blank, endsWithNewline, headerRow, secondRow } = parseSheet(content);
-    if (headerRow < 0) continue;
-    const header = rows[headerRow];
+    const { bom, content, sheet } = readSheet(files.get(path)!);
+    if (sheet.headerRow < 0) continue;
+    const header = sheet.rows[sheet.headerRow];
     // Skip if column already present in either language in the header
-    if (header.includes(newEn) || header.includes(newEs)) continue;
+    if (header.includes(name.en) || header.includes(name.es)) continue;
 
-    // Find anchor in row 0 using either language variant
-    let row0IsEn: boolean | null = null;
-    let anchorIdx = header.indexOf(anchorEn);
-    if (anchorIdx >= 0) {
-      row0IsEn = true;
-    } else {
-      anchorIdx = header.indexOf(anchorEs);
-      if (anchorIdx >= 0) row0IsEn = false;
-    }
-    const insertIdx = anchorIdx >= 0 ? anchorIdx + 1 : header.length;
-
-    // Detect bilingual two-row header: row 1 has the same column count as
-    // row 0 AND its cell at the anchor index matches the OTHER-language
-    // anchor variant (rows 0 and 1 are sibling headers in different
-    // languages). Requires the anchor to be present in both rows.
-    let row1Value: string | null = null;
-    if (secondRow >= 0 && anchorIdx >= 0 && row0IsEn !== null) {
-      const row1 = rows[secondRow];
-      const expectedRow1Anchor = row0IsEn ? anchorEs : anchorEn;
-      if (row1.length === header.length && row1[anchorIdx] === expectedRow1Anchor) {
-        row1Value = row0IsEn ? newEs : newEn;
-      }
-    }
-    const row0Value = row1Value !== null
-      ? (row0IsEn ? newEn : newEs)
-      : newCol;
-
-    insertColumnCells(rows, insertIdx, (r) => {
-      if (r === headerRow) return row0Value;
-      if (r === secondRow && row1Value !== null) return row1Value;
+    const match = findEitherLanguage(header, anchor);
+    const insertIdx = match ? match.idx + 1 : header.length;
+    const names = headerNames(sheet, match, anchor, name);
+    const cellFor = (r: number): string => {
+      if (r === sheet.headerRow) return names.first;
+      if (r === sheet.secondRow && names.second !== null) return names.second;
       return op.default;
-    });
-    files.set(path, unparseRows(rows, blank, endsWithNewline));
+    };
+
+    // Only the inserted fields' bytes are new. A sheet whose records do not
+    // read back to the cells Papa gave is rewritten whole.
+    storeSheet(files, path, bom, sheet, insertFields(content, sheet, insertIdx, cellFor), () =>
+      insertColumnCells(sheet.rows, insertIdx, cellFor),
+    );
   }
+}
+
+/**
+ * `content` with `cellFor(row)` inserted as the field at `index` of every
+ * non-blank record, a record with fewer fields padded with empty ones first;
+ * null when any record's fields do not read back to its cells.
+ */
+function insertFields(
+  content: string,
+  { rows, blank, spans }: ParsedSheet,
+  index: number,
+  cellFor: (row: number) => string,
+): string | null {
+  const inserts: Array<[at: number, text: string]> = [];
+  for (let r = 0; r < rows.length; r++) {
+    if (blank.has(r)) continue;
+    const raw = content.slice(spans[r].start, spans[r].end);
+    const fields = recordFieldSpans(raw);
+    if (fields.length !== rows[r].length) return null;
+    if (fields.some((f, i) => recordFieldValue(raw.slice(f.start, f.end)) !== rows[r][i])) return null;
+    const cell = csvField(cellFor(r), false);
+    if (index < fields.length) {
+      inserts.push([spans[r].start + fields[index].start, cell + ","]);
+    } else {
+      inserts.push([spans[r].end, ",".repeat(index - fields.length) + "," + cell]);
+    }
+  }
+  let next = content;
+  for (const [at, text] of inserts.reverse()) next = next.slice(0, at) + text + next.slice(at);
+  return next;
 }
 
 /**
@@ -342,10 +433,13 @@ interface ParsedSheet {
   endsWithNewline: boolean;
   headerRow: number;
   secondRow: number;
+  /** Each row's text in the content read, line terminator excluded: [start, end). */
+  spans: Array<{ start: number; end: number }>;
 }
 
 function parseSheet(content: string): ParsedSheet {
   const rows: string[][] = [];
+  const spans: Array<{ start: number; end: number }> = [];
   const blank = new Map<number, string>();
   const { text, newline, sourceOffset } = unifiedRecordTerminators(content, ",");
   let start = 0;
@@ -360,6 +454,7 @@ function parseSheet(content: string): ParsedSheet {
       if (raw === "" && end === content.length && rows.length > 0) return;
       const line = raw.replace(/\r?\n$|\r$/, "");
       if (/^[ \t]*$/.test(line)) blank.set(rows.length, line);
+      spans.push({ start: end - raw.length, end: end - raw.length + line.length });
       rows.push(result.data);
     },
   });
@@ -370,11 +465,15 @@ function parseSheet(content: string): ParsedSheet {
     endsWithNewline: /[\r\n]$/.test(content),
     headerRow: nonBlank[0] ?? -1,
     secondRow: nonBlank[1] ?? -1,
+    spans,
   };
 }
 
 /**
- * Writes rows with LF line endings. A blank line is written back as it was. A
+ * Writes a whole sheet from its rows, for a sheet the offset writers cannot
+ * edit in place. Every line ends in LF and every field is quoted as
+ * `Papa.unparse` quotes it, so the sheet's own line endings and quoting are
+ * not kept. A blank line is written back as it was. A
  * row holding one empty cell is written as `""`, because papaparse writes it
  * as an empty line, which the framework's `pd.read_csv` skips.
  */
@@ -409,44 +508,57 @@ function opCsvRenameColumn(
   op: CsvRenameColumnOp,
   lang: Language,
 ): void {
-  const newEn = resolveBilingual(op.new_name, "en");
-  const newEs = resolveBilingual(op.new_name, "es");
-  const newName = lang === "es" ? newEs : newEn;
-  const oldEn = resolveBilingual(op.old_name, "en");
-  const oldEs = resolveBilingual(op.old_name, "es");
+  const name = bilingualName(op.new_name, lang);
+  const old = { en: resolveBilingual(op.old_name, "en"), es: resolveBilingual(op.old_name, "es") };
 
   for (const path of filesMatchingGlob(files, op.file_glob)) {
-    const content = files.get(path)!;
-    const { rows, blank, endsWithNewline, headerRow, secondRow } = parseSheet(content);
-    if (headerRow < 0) continue;
-    const header = rows[headerRow];
+    const { bom, content, sheet } = readSheet(files.get(path)!);
+    if (sheet.headerRow < 0) continue;
+    const match = findEitherLanguage(sheet.rows[sheet.headerRow], old);
+    if (match === null) continue;
 
-    let idx = header.indexOf(oldEn);
-    let row0IsEn: boolean | null = null;
-    if (idx >= 0) {
-      row0IsEn = true;
-    } else {
-      idx = header.indexOf(oldEs);
-      if (idx >= 0) row0IsEn = false;
+    const names = headerNames(sheet, match, old, name);
+    const edits: Array<[row: number, name: string]> = [[sheet.headerRow, names.first]];
+    if (names.second !== null) edits.push([sheet.secondRow, names.second]);
+
+    // Only the renamed fields' bytes change. A header whose fields do not read
+    // back to the cells Papa gave is rewritten whole.
+    let next: string | null = content;
+    for (const [row, value] of edits.sort((x, y) => y[0] - x[0])) {
+      next = next === null ? null : replaceField(next, sheet.spans[row], sheet.rows[row], match.idx, value);
     }
-    if (idx < 0 || row0IsEn === null) continue;
-
-    // Detect bilingual second header row: same column count AND carries the
-    // other-language variant of the old name at the same index.
-    const expectedRow1 = row0IsEn ? oldEs : oldEn;
-    const isBilingualHeader =
-      secondRow >= 0 &&
-      rows[secondRow].length === header.length &&
-      rows[secondRow][idx] === expectedRow1;
-
-    if (isBilingualHeader) {
-      header[idx] = row0IsEn ? newEn : newEs;
-      rows[secondRow][idx] = row0IsEn ? newEs : newEn;
-    } else {
-      header[idx] = newName;
-    }
-    files.set(path, unparseRows(rows, blank, endsWithNewline));
+    storeSheet(files, path, bom, sheet, next, () => {
+      for (const [row, value] of edits) sheet.rows[row][match.idx] = value;
+    });
   }
+}
+
+/**
+ * `content` with the field at `column` of the record spanning `span` written
+ * as `name`, keeping the quotes the field had; null when the record's fields
+ * do not read back to `cells`.
+ */
+function replaceField(
+  content: string,
+  span: { start: number; end: number },
+  cells: string[],
+  column: number,
+  name: string,
+): string | null {
+  const raw = content.slice(span.start, span.end);
+  const fields = recordFieldSpans(raw);
+  if (fields.length !== cells.length) return null;
+  const field = fields[column];
+  const text = raw.slice(field.start, field.end);
+  // An empty name in a one-field record would leave a blank line, which the
+  // framework skips, so the next record would become the header.
+  const quoted = text.startsWith('"') || (fields.length === 1 && name === "");
+  if (recordFieldValue(text) !== cells[column]) return null;
+  return (
+    content.slice(0, span.start + field.start) +
+    csvField(name, quoted) +
+    content.slice(span.start + field.end)
+  );
 }
 
 // ---------------------------------------------------------------------------

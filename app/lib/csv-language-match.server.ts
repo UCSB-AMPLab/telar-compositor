@@ -31,7 +31,7 @@
 import Papa from "papaparse";
 import { load } from "js-yaml";
 import { COLUMN_NAME_MAPPING, foldHeader } from "~/lib/column-mapping";
-import { unifiedRecordTerminators } from "~/lib/csv-records";
+import { csvField, recordFieldSpans, recordFieldValue, unifiedRecordTerminators } from "~/lib/csv-records";
 import type { CsvLanguageMatchOp, Language } from "~/lib/manifest-schema.server";
 
 /** One record as parsed, with where its text starts and ends in the file, its line terminator excluded. */
@@ -74,82 +74,17 @@ export function columnIdentity(header: string): string {
   return COLUMN_NAME_MAPPING[folded] ?? folded;
 }
 
-/** A field as Telar writes one that needs quoting. */
-function quotedField(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
-}
-
-/** Whether papaparse would quote `value` to write it. */
-function needsQuotes(value: string): boolean {
-  return /[",\r\n]/.test(value) || /^\s|\s$/.test(value);
-}
-
-/** One field's text in a record: [start, end) relative to the record's start, and the value it reads as. */
-interface FieldSpan {
-  start: number;
-  end: number;
-  value: string;
-}
-
-/**
- * The fields of one record's text, as papaparse reads them with the comma
- * pinned: a field that opens with a quote runs to the quote that closes it,
- * a doubled quote inside reading as one and a line break inside kept; any
- * other field runs to the next comma.
- */
-function fieldSpans(raw: string): FieldSpan[] {
-  const spans: FieldSpan[] = [];
-  let at = 0;
-  for (;;) {
-    const field = raw[at] === '"' ? readQuotedField(raw, at) : readPlainField(raw, at);
-    if (field === null) return [];
-    spans.push({ start: at, end: field.next, value: field.value });
-    if (field.next >= raw.length) return spans;
-    at = field.next + 1;
-  }
-}
-
-/** A field read from `raw` and where its text ends. */
-interface FieldRead {
-  value: string;
-  next: number;
-}
-
-/** The field that opens with a quote at `from`, or null when it never closes or is not followed by a comma. */
-function readQuotedField(raw: string, from: number): FieldRead | null {
-  let text = "";
-  let at = from + 1;
-  for (;;) {
-    const close = raw.indexOf('"', at);
-    if (close < 0) return null;
-    text += raw.slice(at, close);
-    if (raw[close + 1] !== '"') {
-      const next = close + 1;
-      return next < raw.length && raw[next] !== "," ? null : { value: text, next };
-    }
-    text += '"';
-    at = close + 2;
-  }
-}
-
-/** The field that runs from `from` to the next comma, or to the end of `raw`. */
-function readPlainField(raw: string, from: number): FieldRead {
-  const comma = raw.indexOf(",", from);
-  const next = comma < 0 ? raw.length : comma;
-  return { value: raw.slice(from, next), next };
-}
-
 /**
  * `content` with `record`'s field at `column` written as `value`, or null
  * when the record's fields do not read back to its cells.
  */
 function withCell(content: string, record: SourceRecord, column: number, value: string): string | null {
   const raw = content.slice(record.start, record.end);
-  const spans = fieldSpans(raw);
-  if (spans.length !== record.cells.length || spans.some((span, i) => span.value !== record.cells[i])) return null;
+  const spans = recordFieldSpans(raw);
+  if (spans.length !== record.cells.length) return null;
+  if (spans.some((span, i) => recordFieldValue(raw.slice(span.start, span.end)) !== record.cells[i])) return null;
   const span = spans[column];
-  const wasQuoted = raw[span.start] === '"';
-  const field = wasQuoted || needsQuotes(value) ? quotedField(value) : value;
+  const field = csvField(value, raw[span.start] === '"');
   const at = record.start + span.start;
   return content.slice(0, at) + field + content.slice(record.start + span.end);
 }
