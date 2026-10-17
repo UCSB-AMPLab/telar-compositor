@@ -39,6 +39,7 @@
  */
 
 import Papa from "papaparse";
+import { unifiedRecordTerminators } from "~/lib/csv-records";
 import { classifyManualSteps } from "~/lib/manual-step-kinds.server";
 import {
   type Manifest,
@@ -321,7 +322,9 @@ function opCsvAddColumn(
  * do not carry. papaparse gives a blank line, a quoted empty record (`""`) and
  * the end of the text after a final line terminator the same `[""]`; only the
  * quoted empty record is a row to the framework's `pd.read_csv`, so each
- * record's raw source, sliced by the parser's cursor, decides.
+ * record's raw source, sliced by the parser's cursor, decides. A sheet whose
+ * records end in both CRLF and LF is read as `pd.read_csv` reads it, ending
+ * each record at either (`unifiedRecordTerminators`).
  *   - rows: every record except the one after a final line terminator.
  *   - blank: the text, without its line terminator, of each record that
  *     `pd.read_csv` skips as a blank line, by index: a line holding nothing
@@ -344,12 +347,14 @@ interface ParsedSheet {
 function parseSheet(content: string): ParsedSheet {
   const rows: string[][] = [];
   const blank = new Map<number, string>();
+  const { text, newline, sourceOffset } = unifiedRecordTerminators(content, ",");
   let start = 0;
-  Papa.parse<string[]>(content, {
+  Papa.parse<string[]>(text, {
     skipEmptyLines: false,
     delimiter: ",",
+    ...(newline ? { newline } : {}),
     step: (result) => {
-      const end = result.meta.cursor;
+      const end = sourceOffset(result.meta.cursor);
       const raw = content.slice(start, end);
       start = end;
       if (raw === "" && end === content.length && rows.length > 0) return;

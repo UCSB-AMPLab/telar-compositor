@@ -35,7 +35,7 @@
  * second transcription of that set here would be the very duplication this
  * module exists to prevent.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { pythonStrip } from "~/lib/column-mapping";
@@ -251,4 +251,97 @@ export function splitCsvRecords(text: string, delimiter: string, newline: string
   }
 
   return records;
+}
+
+/** A CSV's text as a single-terminator reader is to be given it. */
+export interface UnifiedCsvText {
+  /** The text to read. */
+  text: string;
+  /**
+   * The terminator `text` has to be read on, present when the source's record
+   * terminators were made one; absent when `text` is the source, unchanged.
+   */
+  newline?: "\n";
+  /** The offset in the source of an offset into `text`. */
+  sourceOffset: (offset: number) => number;
+}
+
+/**
+ * Whether a CR outside a quoted field has no LF after it. Quotes toggle on
+ * each `"`, so a doubled quote inside a field toggles twice and leaves the
+ * field open, as CSV reads it.
+ */
+function hasLoneCrOutsideQuotes(source: string): boolean {
+  let quoted = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '"') quoted = !quoted;
+    else if (ch === "\r" && !quoted && source[i + 1] !== "\n") return true;
+  }
+  return false;
+}
+
+/**
+ * `source` with a record that ends in CRLF ending in LF instead, when its
+ * records end in both; otherwise `source` itself.
+ *
+ * The framework reads every CSV with `pd.read_csv`, which ends a record at
+ * CRLF and at LF alike, line by line. Papa ends records at one terminator per
+ * file, guessed from the first line outside quotes (`guessLineEndings`,
+ * papaparse.js:1164-1188): in a file whose header ends in CRLF and whose last
+ * quoted field ends in LF, that field's closing quote meets no CRLF, so Papa
+ * reads it as content and the field runs to the end of the file. Handed the
+ * unified text and LF, Papa ends every record where pandas does.
+ *
+ * Only the CR of a record terminator is dropped. Records are walked on LF as
+ * Papa would walk them (`recordFieldsEnd`), so a CRLF inside a quoted field is
+ * field content and stays, as pandas keeps it; a CR just before a field's
+ * closing quote belongs to the field. A record's own text is the same in
+ * `text` as in the source, and only the offsets after a dropped CR move:
+ * `sourceOffset` gives them back, so a range read from `text` cuts the source
+ * at the same record boundary. A file whose records all end alike is returned
+ * as it is, read exactly as it always has been.
+ *
+ * A lone CR is a terminator to pandas as well, and is not unified here: such a
+ * file is read on whichever terminator Papa guesses for it.
+ */
+export function unifiedRecordTerminators(source: string, delimiter: string): UnifiedCsvText {
+  // A CR with no LF after it may be a record terminator of its own, which a
+  // walk on LF cannot see past: such a file is read on the one terminator Papa
+  // guesses, as every file was before mixed endings were unified.
+  if (hasLoneCrOutsideQuotes(source)) return { text: source, sourceOffset: (offset) => offset };
+  const droppedCr: number[] = [];
+  let endsInLf = false;
+  let start = 0;
+  while (start < source.length) {
+    const end = recordFieldsEnd(source, start, delimiter, "\n");
+    if (end >= source.length) break;
+    if (end > start && source[end - 1] === "\r") droppedCr.push(end - 1);
+    else endsInLf = true;
+    start = end + 1;
+  }
+  if (droppedCr.length === 0 || !endsInLf) return { text: source, sourceOffset: (offset) => offset };
+
+  let text = "";
+  let kept = 0;
+  for (const cr of droppedCr) {
+    text += source.slice(kept, cr);
+    kept = cr + 1;
+  }
+  text += source.slice(kept);
+
+  // The k-th dropped CR sat just before what is now `text[droppedCr[k] - k]`,
+  // its LF; an offset past that LF's position is one more in the source.
+  const lfAt = droppedCr.map((cr, k) => cr - k);
+  const sourceOffset = (offset: number): number => {
+    let low = 0;
+    let high = lfAt.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (lfAt[mid] < offset) low = mid + 1;
+      else high = mid;
+    }
+    return offset + low;
+  };
+  return { text, newline: "\n", sourceOffset };
 }
