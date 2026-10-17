@@ -12,7 +12,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import Papa from "papaparse";
 import { parseTelarCsv, GLOSSARY_CANONICAL_SCOPE, OBJECTS_CANONICAL_SCOPE } from "~/lib/import.server";
 import { unifiedRecordTerminators } from "~/lib/csv-records";
 import { readCsvSourceRows, removeObjectRecord, rewriteGlossaryCsv } from "~/lib/csv-record-scan.server";
@@ -156,11 +155,8 @@ describe("each reader on a minimal mixed-ending file", () => {
       new_name: { en: "author", es: "autor" },
     };
     applyOperation(files, op, "en", []);
-    const written = files.get("_data/project.csv")!;
-    expect(Papa.parse<string[]>(written, { delimiter: ",", skipEmptyLines: true }).data).toEqual([
-      ["order", "author"],
-      ["1", "A\nB"],
-    ]);
+    // The record is kept as it was written, closing quote included.
+    expect(files.get("_data/project.csv")).toBe('order,author\r\n1,"A\nB"\n');
   });
 });
 
