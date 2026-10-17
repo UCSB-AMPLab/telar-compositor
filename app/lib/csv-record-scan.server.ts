@@ -10,7 +10,8 @@
  * string rather than a re-serialisation.
  *
  * ONE READING decides everything else. Papa reads the whole file exactly as
- * `parseTelarCsv` reads it — the same string under `TELAR_CSV_PARSE_CONFIG` —
+ * `parseTelarCsv` reads it — the same text under the same configuration, both
+ * from `telarCsvReading` —
  * and that reading settles which rows exist, which the importer skips, which
  * row carries the id, which delimiter and terminator the file is written in,
  * and whether Papa could read it at all. This module supplies only the RANGES,
@@ -68,7 +69,7 @@
  * those cells changed. That holds for objects.csv's id cells, a story's
  * `object` cells and inline layer text, and glossary definitions alike.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import Papa from "papaparse";
@@ -80,6 +81,7 @@ import {
   STORY_CANONICAL_SCOPE,
   TELAR_CSV_PARSE_CONFIG,
   createCsvRecordSkipDetector,
+  telarCsvReading,
   importedHeader,
   instructionHeaderOf,
   parseTelarCsv,
@@ -163,6 +165,10 @@ function asLineBreak(reported: string): LineBreak | null {
 
 /** How Papa read one file: its rows, the pair it read them with, its verdict. */
 interface FileParse {
+  /** The text Papa read: the source, or the source with its record terminators made one. */
+  text: string;
+  /** The source offset of an offset into `text`. */
+  sourceOffset: (offset: number) => number;
   rows: ParsedRow[];
   /** The delimiter Papa guessed for this file. */
   delimiter: string;
@@ -176,7 +182,7 @@ interface FileParse {
 interface ParsedRow {
   /** The row's cells, decoded, exactly as `parseTelarCsv` receives them. */
   cells: string[];
-  /** Papa's cursor for the row, in the source's own offsets. */
+  /** Papa's cursor for the row, in the offsets of the text Papa read. */
   boundary: number;
   /** True when Papa refused the record this row was read from. */
   rejected: boolean;
@@ -238,20 +244,26 @@ export interface CsvSourceRow {
  * the terminator is not one the parser accepts, which is a file with no
  * reading to report.
  *
+ * Both parses read the text `telarCsvReading` gives, as `parseTelarCsv` does,
+ * so a file whose records end in both CRLF and LF is read as the unified text
+ * on LF. Cursors are offsets into that text; `sourceOffset` takes them back to
+ * the source.
+ *
  * Every error either parse reports is a damaged record. The configuration pins
  * the delimiter, so Papa takes neither the guess nor the flag it sets when the
  * guess fails (:1093-1103), and `UndetectableDelimiter` — the one code that
  * names an advisory rather than a record (:1206-1210) — cannot be raised.
  */
 function parseWholeFile(source: string): FileParse | null {
-  const plain = Papa.parse<string[]>(source, TELAR_CSV_PARSE_CONFIG);
+  const { text, config, sourceOffset } = telarCsvReading(source);
+  const plain = Papa.parse<string[]>(text, config);
   const newline = asLineBreak(plain.meta.linebreak);
   if (newline === null) return null;
 
-  const bomShift = source.startsWith(BOM) ? BOM.length : 0;
+  const bomShift = text.startsWith(BOM) ? BOM.length : 0;
   const rows: ParsedRow[] = [];
-  Papa.parse<string[]>(source, {
-    ...TELAR_CSV_PARSE_CONFIG,
+  Papa.parse<string[]>(text, {
+    ...config,
     step: (result) => {
       rows.push({
         cells: result.data,
@@ -262,6 +274,8 @@ function parseWholeFile(source: string): FileParse | null {
   });
 
   return {
+    text,
+    sourceOffset,
     rows,
     delimiter: plain.meta.delimiter,
     newline,
@@ -344,6 +358,11 @@ function sameCells(a: string[], b: string[]): boolean {
  * the right place and reads as something else is a range whose text a caller
  * would carry through a republish as a row the file does not have.
  *
+ * The walk runs over the text Papa read. Where that is the source with its
+ * record terminators made one, each range is then moved to the source's own
+ * offsets; a record's characters are the same in both, so only its start and
+ * end move, and its end still falls one past its own terminator, CRLF or LF.
+ *
  * This is the one reading of a Telar CSV that both a delete and a republish
  * are built on, so that neither can hold a rule about which rows exist that
  * the other does not.
@@ -351,8 +370,8 @@ function sameCells(a: string[], b: string[]): boolean {
 export function readCsvSourceRows(source: string): CsvSourceReading | null {
   const parsed = parseWholeFile(source);
   if (parsed === null) return null;
-  const { delimiter, newline } = parsed;
-  const records = scanCsvRecords(source, delimiter, newline);
+  const { text, sourceOffset, delimiter, newline } = parsed;
+  const records = scanCsvRecords(text, delimiter, newline);
   const aligned: CsvSourceRow[] = [];
   let next = 0;
   let previousEnd = 0;
@@ -367,10 +386,11 @@ export function readCsvSourceRows(source: string): CsvSourceReading | null {
     const range = records[chosen];
     if (range.end !== row.boundary) return null;
     if (range.start < previousEnd || range.end <= range.start) return null;
-    const reread = cellsOfRange(source, range, delimiter, newline);
+    const reread = cellsOfRange(text, range, delimiter, newline);
     if (reread === null || !sameCells(reread, row.cells)) return null;
     previousEnd = range.end;
-    aligned.push({ cells: row.cells, range, rejected: row.rejected });
+    const inSource = { start: sourceOffset(range.start), end: sourceOffset(range.end), text: range.text };
+    aligned.push({ cells: row.cells, range: inSource, rejected: row.rejected });
   }
 
   return { rows: aligned, refused: parsed.refused };

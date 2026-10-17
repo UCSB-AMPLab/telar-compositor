@@ -31,6 +31,7 @@
 import Papa from "papaparse";
 import { load } from "js-yaml";
 import { COLUMN_NAME_MAPPING, foldHeader } from "~/lib/column-mapping";
+import { unifiedRecordTerminators } from "~/lib/csv-records";
 import type { CsvLanguageMatchOp, Language } from "~/lib/manifest-schema.server";
 
 /** One record as parsed, with where its text starts and ends in the file, its line terminator excluded. */
@@ -41,15 +42,21 @@ interface SourceRecord {
   blank: boolean;
 }
 
-/** Every record of `content`, read with the comma pinned as the other CSV operations read it. */
+/**
+ * Every record of `content`, read with the comma pinned as the other CSV
+ * operations read it, and ending at CRLF and LF alike where the file uses both
+ * (`unifiedRecordTerminators`); offsets are the file's own.
+ */
 function readRecords(content: string): SourceRecord[] {
   const records: SourceRecord[] = [];
+  const { text, newline, sourceOffset } = unifiedRecordTerminators(content, ",");
   let start = 0;
-  Papa.parse<string[]>(content, {
+  Papa.parse<string[]>(text, {
     skipEmptyLines: false,
     delimiter: ",",
+    ...(newline ? { newline } : {}),
     step: (result) => {
-      const cursor = result.meta.cursor;
+      const cursor = sourceOffset(result.meta.cursor);
       const raw = content.slice(start, cursor);
       const line = raw.replace(/\r?\n$|\r$/, "");
       if (!(raw === "" && cursor === content.length && records.length > 0)) {

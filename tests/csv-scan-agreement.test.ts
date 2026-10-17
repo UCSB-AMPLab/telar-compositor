@@ -12,13 +12,15 @@
  * byte-order-mark, quote and blank-line mixes, over the files whose size puts
  * Papa's line-ending guess on a 1 MiB sample, and over every CSV committed
  * under tests/fixtures, and asserts a reading comes back whose rows hold the
- * cells Papa read and whose ranges tile the source in order. A change to the
+ * cells Papa read and whose ranges tile the source in order. Papa is handed
+ * what the importer hands it (`telarCsvReading`), so a file whose records end
+ * in both CRLF and LF is compared with the reading the importer takes of it. A change to the
  * scanner or to papaparse that makes the refusal reachable fails here.
  *
  * Short strings cannot show a disagreement that needs a long quoted field or
  * the 1 MiB sample; the three large cases below are the ones that can.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -26,7 +28,7 @@ import { join } from "node:path";
 import Papa from "papaparse";
 import { describe, expect, it } from "vitest";
 import { readCsvSourceRows } from "~/lib/csv-record-scan.server";
-import { TELAR_CSV_PARSE_CONFIG } from "~/lib/import.server";
+import { telarCsvReading } from "~/lib/import.server";
 
 const BOM = "﻿";
 
@@ -34,7 +36,8 @@ const BOM = "﻿";
 function disagreement(source: string): string | null {
   const reading = readCsvSourceRows(source);
   if (reading === null) return "readCsvSourceRows returned null";
-  const papa = Papa.parse<string[]>(source, TELAR_CSV_PARSE_CONFIG).data;
+  const { text, config } = telarCsvReading(source);
+  const papa = Papa.parse<string[]>(text, config).data;
   if (reading.rows.length !== papa.length) {
     return `${reading.rows.length} rows against Papa's ${papa.length}`;
   }

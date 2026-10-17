@@ -78,7 +78,7 @@ import {
 import { readCsvSourceRows } from "~/lib/csv-record-scan.server";
 import type { CsvSheet } from "~/lib/sheet-csv-layout.server";
 import { PYTHON_WHITESPACE } from "~/lib/python-whitespace";
-import { isCommentCell, isHeldTermId, publishedRowPerTermId } from "~/lib/csv-records";
+import { isCommentCell, isHeldTermId, publishedRowPerTermId, unifiedRecordTerminators } from "~/lib/csv-records";
 import { AUDIO_EXTENSIONS } from "~/lib/file-types";
 import { isTilerObjectId, repeatedIdIssues, sharedSiteIdIssues, siteObjectId, tileableExtensions } from "~/lib/object-id";
 import { siteVersionFromParsed, telarVersionOf } from "~/lib/site-version.server";
@@ -2543,6 +2543,32 @@ export const TELAR_CSV_PARSE_CONFIG: Papa.ParseConfig<string[]> = {
   delimiter: ",",
 };
 
+/** A Telar CSV's text as Papa reads it, and the configuration Papa reads it under. */
+export interface TelarCsvReading {
+  /** The text handed to Papa: the source, with its record terminators made one where they differ. */
+  text: string;
+  /** `TELAR_CSV_PARSE_CONFIG`, with the terminator pinned whenever `text` is not the source. */
+  config: Papa.ParseConfig<string[]>;
+  /** The offset in the source of an offset into `text`, such as a cursor Papa reports. */
+  sourceOffset: (offset: number) => number;
+}
+
+/**
+ * What Papa is handed for every reading of a Telar CSV, so that each reading
+ * ends records where the framework's `pd.read_csv` does: at CRLF and at LF
+ * alike, in a file that uses both (see `unifiedRecordTerminators`). Every
+ * caller parses `text` under `config`; a caller that cuts or rewrites the
+ * source maps Papa's offsets back through `sourceOffset`.
+ */
+export function telarCsvReading(source: string): TelarCsvReading {
+  const unified = unifiedRecordTerminators(source, TELAR_CSV_PARSE_CONFIG.delimiter as string);
+  return {
+    text: unified.text,
+    config: unified.newline ? { ...TELAR_CSV_PARSE_CONFIG, newline: unified.newline } : TELAR_CSV_PARSE_CONFIG,
+    sourceOffset: unified.sourceOffset,
+  };
+}
+
 /**
  * Parses a Telar CSV string, skipping bilingual header rows and comment rows.
  *
@@ -2610,7 +2636,8 @@ export function parseTelarCsv(
   canonicalScope?: ReadonlySet<string>,
   options: ParseTelarCsvOptions = {},
 ): Record<string, string>[] {
-  const parsed = Papa.parse<string[]>(csvText, TELAR_CSV_PARSE_CONFIG);
+  const reading = telarCsvReading(csvText);
+  const parsed = Papa.parse<string[]>(reading.text, reading.config);
   const table = parsed.data;
   if (table.length === 0) return [];
 
