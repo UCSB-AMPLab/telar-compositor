@@ -152,15 +152,9 @@ function ConfigRewriteReviewButton({
 }) {
   if (blocker.code !== "config_needs_rewrite" || !onReview) return null;
   return (
-    <div className="mt-2">
-      <button
-        type="button"
-        onClick={onReview}
-        className="inline-flex items-center font-heading font-semibold text-xs bg-terracotta hover:opacity-90 text-cream rounded-full px-4 py-1.5 transition-opacity"
-      >
-        {label}
-      </button>
-    </div>
+    <Button variant="secondary" type="button" onClick={onReview} className="mt-2">
+      {label}
+    </Button>
   );
 }
 
@@ -857,9 +851,10 @@ export function ValidationChecks({
       )}
 
       {rewriteReady && (
-        <p role="status" className="mt-4 font-body text-sm text-chilca-deep">
-          {t("checks.config_rewrite_ready")}
-        </p>
+        <div role="status" className="mt-4 flex items-start gap-3 bg-cream-dark border border-charcoal/10 rounded-lg p-3">
+          <Info className="w-4 h-4 text-charcoal/60 flex-shrink-0 mt-0.5" />
+          <p className="font-body text-sm text-charcoal">{t("checks.config_rewrite_ready")}</p>
+        </div>
       )}
 
       {hasBlockers && (
