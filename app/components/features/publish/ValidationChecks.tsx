@@ -42,6 +42,11 @@
  * With an `onResetPageFrontmatter` prop, a page front-matter blocker carries
  * a button that keeps only that page's title in its block.
  *
+ * With a `configRewrite` prop, the `config_needs_rewrite` blocker carries the
+ * button that opens the review of the rewrite, for a role that may accept it;
+ * once accepted, the blocker gives way to a line saying the publish will
+ * rewrite the file.
+ *
  * With a `headState` prop, the list is followed by what the checks read of
  * GitHub: the first publish's notice, or a note that GitHub could not be
  * checked, with a button that runs the checks again (`GithubHeadNotice`).
@@ -59,6 +64,7 @@ import type { PublishHeadState, RemovableColumns, ValidationItem, ValidationResu
 import { sheetWarningText } from "~/components/ui/SheetWarnings";
 import { Button } from "~/components/ui/Button";
 import { coordinatorLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
+import { blockersBesideRewrite } from "~/components/features/publish/ConfigRewriteDialog";
 
 /**
  * Where the repair stands. `running` belongs to the button's label; the other
@@ -126,7 +132,30 @@ interface ValidationChecksProps {
   removalFailed?: { column: string } | null;
   /** The page the last front-matter reset could not clear, said above the blockers. */
   resetFailed?: { page: string } | null;
+  /**
+   * The `_config.yml` rewrite the page offers. `onReview` is absent for a
+   * role that may not accept it; `accepted` once the author has.
+   */
+  configRewrite?: { accepted: boolean; onReview?: () => void };
   className?: string;
+}
+
+/** The review of the rewrite a `config_needs_rewrite` blocker offers, or nothing. */
+function ConfigRewriteReviewButton({
+  blocker,
+  onReview,
+  label,
+}: {
+  blocker: ValidationItem;
+  onReview?: () => void;
+  label: string;
+}) {
+  if (blocker.code !== "config_needs_rewrite" || !onReview) return null;
+  return (
+    <Button variant="secondary" type="button" onClick={onReview} className="mt-2">
+      {label}
+    </Button>
+  );
 }
 
 /**
@@ -744,6 +773,7 @@ export function ValidationChecks({
   onRemoveColumn,
   removalFailed,
   resetFailed,
+  configRewrite,
   className = "",
 }: ValidationChecksProps) {
   const { t } = useTranslation("publish");
@@ -758,7 +788,9 @@ export function ValidationChecks({
     );
   }
 
-  const hasBlockers = validation.blockers.length > 0;
+  // An accepted rewrite answers its blocker: the publish carries it.
+  const { blockers, rewriteReady } = blockersBesideRewrite(validation.blockers, configRewrite?.accepted === true);
+  const hasBlockers = blockers.length > 0;
   const hasWarnings = validation.warnings.length > 0;
   const suggestions = validation.suggestions ?? [];
 
@@ -818,6 +850,13 @@ export function ValidationChecks({
         </div>
       )}
 
+      {rewriteReady && (
+        <div role="status" className="mt-4 flex items-start gap-3 bg-cream-dark border border-charcoal/10 rounded-lg p-3">
+          <Info className="w-4 h-4 text-charcoal/60 flex-shrink-0 mt-0.5" />
+          <p className="font-body text-sm text-charcoal">{t("checks.config_rewrite_ready")}</p>
+        </div>
+      )}
+
       {hasBlockers && (
         <div className="mt-4">
           <h3 className="font-heading font-semibold text-sm text-terracotta mb-2">
@@ -826,7 +865,7 @@ export function ValidationChecks({
           <ResetFailedLine t={t} failure={resetFailed} />
           <RemovalFailedLine t={t} failure={removalFailed} />
           <div className="space-y-2">
-            {validation.blockers.map((blocker, idx) => (
+            {blockers.map((blocker, idx) => (
               <div
                 key={`${blocker.code}-${blocker.entityId ?? idx}`}
                 className="flex items-start gap-3 bg-terracotta-pale border border-terracotta/20 rounded-lg p-3"
@@ -844,6 +883,11 @@ export function ValidationChecks({
                     blocker={blocker}
                     onReset={onResetPageFrontmatter}
                     label={t("checks.page_frontmatter_reset")}
+                  />
+                  <ConfigRewriteReviewButton
+                    blocker={blocker}
+                    onReview={configRewrite?.onReview}
+                    label={t("checks.config_rewrite_review")}
                   />
                   {blocker.removable && onRemoveColumn && (
                     <ColumnRemoval t={t} removable={blocker.removable} onRemove={onRemoveColumn} />

@@ -17,7 +17,7 @@
  * it, and a clean site is never held back — the re-check refuses only on the
  * blockers the page already refuses on.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { readFileSync } from "node:fs";
@@ -557,7 +557,7 @@ describe("publish action — a clean site still publishes", () => {
 // ---------------------------------------------------------------------------
 
 describe("runPrePublishValidation — the blockers a content re-check must cover", () => {
-  it("emits exactly stale_head, page_no_title, story_no_title, step_answer_over_limit, object_reserved_column, glossary_reserved_column, glossary_colliding_columns, story_reserved_column, story_colliding_columns and config_unparseable as blockers", () => {
+  it("emits exactly stale_head, page_no_title, story_no_title, step_answer_over_limit, object_reserved_column, glossary_reserved_column, glossary_colliding_columns, story_reserved_column, story_colliding_columns and config_needs_rewrite as blockers", () => {
     // The action re-check fetches page rows, story rows, object rows, glossary
     // rows, step rows, the repository's _config.yml and the project's config
     // row, because those are the inputs that can produce a blocker;
@@ -565,9 +565,8 @@ describe("runPrePublishValidation — the blockers a content re-check must cover
     // appearing here means the re-check needs that code's input fetched too, or
     // it will ship content the page would have refused.
     //
-    // `config_block_unwritable` cannot join this set: it and
-    // `config_unparseable` are answers to one write, and a file the writer
-    // refuses outright never reaches the parse. Its own file pins it.
+    // `config_needs_rewrite` is the one blocker the file raises, whatever the
+    // cause; an unwritable block raises it too, pinned in its own file.
     const codes = new Set<string>();
 
     const worst = runPrePublishValidation({
@@ -616,7 +615,7 @@ describe("runPrePublishValidation — the blockers a content re-check must cover
     for (const b of worst.blockers) codes.add(b.code);
 
     expect([...codes].sort()).toEqual([
-      "config_unparseable",
+      "config_needs_rewrite",
       "glossary_colliding_columns",
       "glossary_reserved_column",
       "object_reserved_column",

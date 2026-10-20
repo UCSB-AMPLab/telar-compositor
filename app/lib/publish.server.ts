@@ -1277,6 +1277,86 @@ function exactlyReadableConfig(yaml: string): YamlMapping | null {
 }
 
 /**
+ * Raised by `updateConfigFields` for a managed value, in a file that parses,
+ * that runs on below its key line where `valueEnd` cannot read its end. The
+ * unclosed-quote sweep repairs files that do not parse, and in one that does
+ * it can remove an unrelated entry along with the value, so the write is
+ * refused and the publish check offers the rewrite instead.
+ */
+export class UnreadableConfigValueError extends Error {
+  constructor(readonly key: string) {
+    super(`_config.yml value "${key}" runs on below its key in a form whose end cannot be read`);
+    this.name = "UnreadableConfigValueError";
+  }
+}
+
+/** True when a quoted scalar opening `value` closes on the same line, with nothing but a comment after it. */
+function quoteClosesOnLine(value: string): boolean {
+  const quote = value[0];
+  let i = 1;
+  while (i < value.length) {
+    if (quote === '"' && value[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (value[i] === quote) {
+      if (quote === "'" && value[i + 1] === "'") {
+        i += 2;
+        continue;
+      }
+      return /^([ \t]+#.*)?[ \t]*$/.test(value.slice(i + 1));
+    }
+    i++;
+  }
+  return false;
+}
+
+/**
+ * True when the value on the top-level `key: value` line `lines[start]` is
+ * all on that line: not empty, not a block scalar, anchor, tag or flow
+ * collection, not a quote left open, and not continued by an indented line
+ * or a `- ` item below it. Blank lines and comments are stepped over, since a
+ * plain scalar can fold across a blank line. Read only in a file that parses.
+ */
+function completeOnKeyLine(lines: string[], start: number): boolean {
+  const line = lines[start].replace(/\r$/, "");
+  const value = line.slice(line.indexOf(":") + 1).trim();
+  if (value === "" || value.startsWith("#") || /^[|>&![{]/.test(value)) return false;
+  if ((value[0] === '"' || value[0] === "'") && !quoteClosesOnLine(value)) return false;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^[ \t]*(#.*)?\r?$/.test(lines[i])) continue;
+    return !/^[ \t]/.test(lines[i]) && !/^-([ \t\r]|$)/.test(lines[i]);
+  }
+  return true;
+}
+
+/** What `updateConfigFields` knows of the file it is writing into. */
+interface ConfigFileReading {
+  /** The file parses as YAML. */
+  parses: boolean;
+  /** The mapping `valueEnd` reads against, or null (`exactlyReadableConfig`). */
+  doc: YamlMapping | null;
+}
+
+/**
+ * The index of the first line after the value that starts on `lines[start]`,
+ * or "sweep" for the unclosed-quote sweep.
+ *
+ * In a file that parses, a value complete on its key line ends there; any
+ * other ends where `valueEnd` reads it, and one it cannot read throws
+ * `UnreadableConfigValueError`. In a file that does not parse, a line opening
+ * an unclosed quote is swept to the next structural line, which repairs the
+ * corruption an older serializer left, and any other line is replaced alone.
+ */
+function replacedValueEnd(lines: string[], start: number, file: ConfigFileReading): number | "sweep" {
+  if (file.parses && completeOnKeyLine(lines, start)) return start + 1;
+  const end = file.doc && valueEnd(lines, start, file.doc);
+  if (end) return end;
+  if (file.parses) throw new UnreadableConfigValueError(lines[start].slice(0, lines[start].indexOf(":")));
+  return opensUnterminatedQuotedScalar(lines[start]) ? "sweep" : start + 1;
+}
+
+/**
  * Updates managed fields in a _config.yml string using line-based regex mutation.
  *
  * Preserves all comments, indentation, quotes, and unmanaged fields.
@@ -1291,9 +1371,12 @@ function exactlyReadableConfig(yaml: string): YamlMapping | null {
  * `v1.2.0`; the canonical form (matching D1's import-side strip) is unprefixed.
  * Idempotent — once healed, subsequent publishes are a no-op for the line.
  *
- * Self-heals multi-line scalar corruption: replacing a field whose existing
- * value opens an unterminated quote sweeps the orphaned continuation lines,
- * repairing _config.yml files broken by the pre-fix bare-newline serializer.
+ * Self-heals multi-line scalar corruption: in a file that does not parse,
+ * replacing a field whose existing value opens an unterminated quote sweeps
+ * the orphaned continuation lines, repairing _config.yml files broken by the
+ * pre-fix bare-newline serializer. In a file that parses, a value that runs on
+ * below its key is replaced whole where its end can be read, and throws
+ * `UnreadableConfigValueError` where it cannot (`replacedValueEnd`).
  */
 export function updateConfigFields(yaml: string, fields: Record<string, string>): string {
   // Heal the legacy v-prefix on telar.version up front, via the shared config
@@ -1316,9 +1399,7 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
   const lines = yaml.split("\n");
   const result: string[] = [];
   const fieldsToAppend = new Set(Object.keys(fields));
-  // A file that parses, with no key repeated, has values whose ends can be
-  // read exactly; any other is healed by the continuation sweep below instead.
-  const doc = exactlyReadableConfig(yaml);
+  const file: ConfigFileReading = { parses: isParseableYaml(yaml), doc: exactlyReadableConfig(yaml) };
 
   const storyKeyValue = fields["story_key"];
   let storyKeyUpdated = false;
@@ -1349,8 +1430,8 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
         storyKeyUpdated = true;
       }
       // else: drop duplicate (don't push)
-      const end = doc && valueEnd(lines, i, doc);
-      if (end) i = end - 1;
+      const end = replacedValueEnd(lines, i, file);
+      if (end !== "sweep") i = end - 1;
       continue;
     }
 
@@ -1362,11 +1443,9 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
         result.push(`${key}: ${value}`);
         fieldsToAppend.delete(key);
         pushed = true;
-        // If the old line opened a multi-line scalar, sweep its now-orphaned
-        // continuation lines (including duplicate-paragraph corruption).
-        const end = doc && valueEnd(lines, i, doc);
-        if (end) i = end - 1;
-        else if (opensUnterminatedQuotedScalar(line)) sweepingContinuation = true;
+        const end = replacedValueEnd(lines, i, file);
+        if (end === "sweep") sweepingContinuation = true;
+        else i = end - 1;
         break;
       }
     }
@@ -1693,7 +1772,7 @@ export class UnwritableConfigBlockError extends Error {
  * A block this writer cannot edit throws rather than being skipped. Skipping
  * it silently commits every other file beside a _config.yml whose managed
  * settings disagree with the Compositor's, and says so to nobody; the publish
- * check raises `config_block_unwritable` for the same shape — through this
+ * check raises `config_needs_rewrite` for the same shape — through this
  * same reader — before a publish starts, so a publish that still reaches here
  * is one whose file changed under it, and failing is the honest answer.
  *
@@ -1817,7 +1896,7 @@ function stripManagedStringScalars(yaml: string): string {
   const lines = yaml.split("\n");
   const kept: string[] = [];
   let sweeping = false;
-  const doc = exactlyReadableConfig(yaml);
+  const file: ConfigFileReading = { parses: isParseableYaml(yaml), doc: exactlyReadableConfig(yaml) };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (sweeping) {
@@ -1829,13 +1908,11 @@ function stripManagedStringScalars(yaml: string): string {
     }
     const keyMatch = line.match(/^([a-z][a-z0-9_-]*):/);
     if (keyMatch && MANAGED_STRING_FIELD_KEYS.has(keyMatch[1])) {
-      // Drop this managed string line and the rest of its value, read exactly
-      // in a file that parses; in one that does not, sweep to the next
-      // structural line if it opened an unterminated quote (the corruption
-      // shape).
-      const end = doc && valueEnd(lines, i, doc);
-      if (end) i = end - 1;
-      else if (opensUnterminatedQuotedScalar(line)) sweeping = true;
+      // Drop this managed string line and the rest of its value, as the
+      // field writer bounds it (`replacedValueEnd`).
+      const end = replacedValueEnd(lines, i, file);
+      if (end === "sweep") sweeping = true;
+      else i = end - 1;
       continue;
     }
     kept.push(line);
@@ -1903,9 +1980,11 @@ export function healConfigYaml(
  * it would break the site's build and overwriting it would discard settings
  * nobody chose to lose, so the publish writes no config at all.
  *
- * A managed block the writer cannot edit throws out of here, as it does out of
- * `healConfigYaml`: that is a different refusal, with `config_block_unwritable`
- * of its own, and a publish reaching it fails rather than skipping the write.
+ * A managed block the writer cannot edit, and a managed value whose end cannot
+ * be read in a file that parses, throw out of here, as they do out of
+ * `healConfigYaml`. All three answers raise `config_needs_rewrite`
+ * (`configNeedsRewrite`), and a publish reaching a throw fails rather than
+ * skipping the write.
  */
 export function publishableConfigYaml(
   existingYaml: string,
@@ -1937,55 +2016,56 @@ function withGlossaryKinds(yaml: string, json: string | null | undefined): strin
   return written;
 }
 
-/** The blocker naming a managed block the writer cannot edit. */
-function blockUnwritableBlocker(block: string): ValidationResult["blockers"][number] {
-  return {
-    code: "config_block_unwritable",
-    message: "config_block_unwritable",
-    entityId: block,
-    params: { block },
-  };
+/**
+ * Whether the repository's `_config.yml` is one the writer cannot update with
+ * the Site settings in `config`: a managed block in a shape its writer cannot
+ * edit, read from the file as it stands or thrown by the heal; a managed value
+ * whose end cannot be read in a file that parses; or a healed file that still
+ * does not parse. Each is answered by rewriting the file (`config-rewrite.server`).
+ *
+ * The block check reads the file without the row, so it runs whenever the
+ * file was read. Nothing is said about a file the caller did not read.
+ */
+export function configNeedsRewrite(
+  configYml: string | null | undefined,
+  config: typeof project_config.$inferSelect | null | undefined,
+): boolean {
+  if (!configYml) return false;
+  if (unwritableConfigBlocks(configYml, MANAGED_CONFIG_BLOCKS).length > 0) return true;
+  if (!config) return false;
+  try {
+    return publishableConfigYaml(configYml, config) === null;
+  } catch (err) {
+    if (err instanceof UnwritableConfigBlockError || err instanceof UnreadableConfigValueError) return true;
+    throw err;
+  }
 }
 
 /**
- * What the repository's `_config.yml` stops a publish for: a managed block the
- * writer cannot edit, or a file whose publish would write no config at all.
- *
- * Both answers come from here because they come from one write. The block
- * check reads the file as it stands, which is where an author can see and fix
- * the shape; the parse check runs the write itself through
- * `publishableConfigYaml`, not a likeness of it, since the orphaned multi-line
- * scalars an older serializer left behind do not parse and heal perfectly, and
- * refusing those would refuse every publish that exists to repair them.
- *
- * Running the write means the write's refusals surface here too. The rescue
- * pass can strip a corrupt line and orphan the one below it inside a block,
- * which the block writer then cannot read whole — a shape the file did not have
- * before the heal touched it, so the block check cannot see it coming. That
- * throw names its block, and the author is told about that block: the publish
- * it would reach fails, and a refusal nothing explains is the defect this check
- * exists to end. Named twice it would say the same sentence twice, so a block
- * the file check already named is not named again.
- *
- * Nothing is said about a file or a config row the caller did not read.
+ * The rewrite of `_config.yml` the author accepted on the publish page, by the
+ * fingerprint the preview showed, and the fingerprint of the rewrite rebuilt
+ * for this check (null when none could be built).
+ */
+export interface AcknowledgedConfigRewrite {
+  acknowledged: string;
+  fingerprint: string | null;
+}
+
+/**
+ * What the repository's `_config.yml` stops a publish for: one
+ * `config_needs_rewrite`, whatever the cause (`configNeedsRewrite`), unless the
+ * rewrite the author accepted is the one rebuilt now. A fingerprint is a hash
+ * of the rebuilt text, so a file, a setting or a template that changed since
+ * the review gives a different one and the blocker stands.
  */
 function configBlockers(
   configYml: string | null | undefined,
   config: typeof project_config.$inferSelect | null | undefined,
+  rewrite?: AcknowledgedConfigRewrite,
 ): ValidationResult["blockers"] {
-  const named = unwritableConfigBlocks(configYml ?? "", MANAGED_CONFIG_BLOCKS);
-  const blockers = named.map(blockUnwritableBlocker);
-
-  if (!configYml || !config) return blockers;
-  try {
-    if (publishableConfigYaml(configYml, config) !== null) return blockers;
-  } catch (err) {
-    if (!(err instanceof UnwritableConfigBlockError)) throw err;
-    if (!named.includes(err.block)) blockers.push(blockUnwritableBlocker(err.block));
-    return blockers;
-  }
-  blockers.push({ code: "config_unparseable", message: "config_unparseable" });
-  return blockers;
+  if (!configNeedsRewrite(configYml, config)) return [];
+  if (rewrite && rewrite.fingerprint !== null && rewrite.fingerprint === rewrite.acknowledged) return [];
+  return [{ code: "config_needs_rewrite", message: "config_needs_rewrite" }];
 }
 
 // ---------------------------------------------------------------------------
@@ -3120,6 +3200,13 @@ export function runPrePublishValidation(params: {
    * the story column blockers judge every step.
    */
   stepLayers?: readonly StepLayerForValidation[];
+  /**
+   * The `_config.yml` rewrite the publish request says the author accepted,
+   * with the fingerprint of the one rebuilt for this check. Absent on the
+   * page's own checks, which raise `config_needs_rewrite` until a publish
+   * carries the acknowledgement.
+   */
+  configRewrite?: AcknowledgedConfigRewrite;
 }): ValidationResult {
   const blockers: ValidationResult["blockers"] = [];
   const warnings: ValidationResult["warnings"] = [];
@@ -3283,13 +3370,11 @@ export function runPrePublishValidation(params: {
     }
   }
 
-  // Blockers: a managed config block the writer cannot edit, and a _config.yml
-  // the publish would heal into something that still is not valid YAML. Both
-  // are raised here rather than at the write, because an author who is not told
-  // either watches a publish report success while the setting they changed
-  // never reaches the site, or watches one fail with nothing on screen saying
-  // why.
-  blockers.push(...configBlockers(params.configYml, params.config));
+  // Blocker: a _config.yml the writer cannot update with the Site settings.
+  // Raised here rather than at the write, because an author who is not told
+  // watches a publish report success while the setting they changed never
+  // reaches the site, or watches one fail with nothing on screen saying why.
+  blockers.push(...configBlockers(params.configYml, params.config, params.configRewrite));
 
   // The answer's own checks: its length against the site's limit, the kinds a
   // build removes outright, and the kinds it flattens. Layers and the question
@@ -3349,6 +3434,12 @@ export interface BuildPublishParams {
    * config is written at all. Omitted, the assembly reads the row itself.
    */
   config?: typeof project_config.$inferSelect | null;
+  /**
+   * The rewritten `_config.yml` the publish check matched against the rewrite
+   * the author accepted (`config-rewrite.server`), committed as given in place
+   * of the heal. Absent for every publish that rewrites nothing.
+   */
+  rewrittenConfigYml?: string;
   /**
    * The page rows the caller has already read, if it has. The publish records
    * which pages it committed, and deletes the files of pages no longer there,
@@ -4740,6 +4831,42 @@ function refuseBlockedStoryColumns(
 }
 
 /**
+ * The `_config.yml` a publish commits, as a list of none or one.
+ *
+ * healConfigYaml escapes managed fields and self-heals orphaned multi-line
+ * scalars left by the pre-fix serializer, so a user's next publish repairs a
+ * previously-broken site through the normal build pipeline. Hygiene gate: the
+ * result is parsed before committing — if it somehow still isn't valid YAML
+ * (a corruption shape beyond the line-based heal), the config write is skipped
+ * rather than committing broken YAML or overwriting the user's settings. The
+ * repo's current _config.yml is left untouched and the rest of the publish
+ * still proceeds; `config_needs_rewrite` is what tells the author, raised by
+ * `runPrePublishValidation` off this same function before a publish starts.
+ * The log line is for a publish that reached here anyway.
+ *
+ * A rewrite the author accepted is written as the text the publish check
+ * matched against their review, with nothing fetched or rebuilt between, and
+ * verbatim: the rebuild already cleaned it as a commit does, and the text
+ * committed is the text the author's fingerprint was taken of.
+ */
+function configCommitFiles(
+  rewritten: string | undefined,
+  existing: string | null,
+  config: typeof project_config.$inferSelect | undefined,
+  projectId: number,
+): CommitFile[] {
+  if (rewritten !== undefined) return [{ path: "_config.yml", content: rewritten, verbatim: true }];
+  if (!existing || !config) return [];
+  const updated = publishableConfigYaml(existing, config);
+  if (updated !== null) return [{ path: "_config.yml", content: updated }];
+  console.warn(
+    `[publish] _config.yml for project ${projectId} could not be healed to valid YAML; ` +
+      `skipping config write to avoid committing broken YAML or resetting settings`,
+  );
+  return [];
+}
+
+/**
  * Assembles the full set of CommitFile objects for a publish commit.
  *
  * Reads all stories, steps, layers, objects, project_config, and project_landing
@@ -4795,27 +4922,7 @@ export async function buildPublishFileSet(
   noteHeadings(params, "glossary", existingGlossaryCsv.path, existingGlossaryCsv.content);
 
   // --- _config.yml ---
-  // healConfigYaml escapes managed fields and self-heals orphaned multi-line
-  // scalars left by the pre-fix serializer, so a user's next publish repairs a
-  // previously-broken site through the normal build pipeline. Hygiene gate: the
-  // result is parsed before committing — if it somehow still isn't valid YAML
-  // (a corruption shape beyond the line-based heal), the config write is skipped
-  // rather than committing broken YAML or overwriting the user's settings. The
-  // repo's current _config.yml is left untouched and the rest of the publish
-  // still proceeds; `config_unparseable` is what tells the author, raised by
-  // `runPrePublishValidation` off this same function before a publish starts.
-  // The log line is for a publish that reached here anyway.
-  if (existingConfigYml && config) {
-    const updatedConfig = publishableConfigYaml(existingConfigYml, config);
-    if (updatedConfig !== null) {
-      files.push({ path: "_config.yml", content: updatedConfig });
-    } else {
-      console.warn(
-        `[publish] _config.yml for project ${projectId} could not be healed to valid YAML; ` +
-          `skipping config write to avoid committing broken YAML or resetting settings`,
-      );
-    }
-  }
+  files.push(...configCommitFiles(params.rewrittenConfigYml, existingConfigYml, config, projectId));
 
   // --- project.csv ---
   const projectCsvContent = serializeProjectCsv(

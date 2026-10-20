@@ -209,6 +209,7 @@ const TABLE: Record<string, Record<string, Binding>> = {
     "poll-build": "site",
     "dismiss-intro": "site",
     "repair-build-workflow": "site",
+    "preview-config-rewrite": "site",
   },
   "_app.stories.tsx": {
     "toggle-draft": "row",

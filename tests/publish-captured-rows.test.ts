@@ -2,7 +2,7 @@
  * The file set and the hashes a publish records take the rows the action
  * captured once, and read their own only when none was handed down.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -109,6 +109,14 @@ describe("the rows a publish captured", () => {
     const files = await build({ ...captured, pages: [] });
     expect(files.some((f) => f.path.startsWith("telar-content/texts/pages/"))).toBe(false);
     expect(tablesRead).not.toContain("project_pages");
+  });
+
+  it("writes a rewrite the check matched as the _config.yml, as given, in place of the heal", async () => {
+    const rewritten = '# rebuilt\ntitle: "Rewritten"\n';
+    const files = await build({ ...captured, rewrittenConfigYml: rewritten });
+    expect(files.filter((f) => f.path === "_config.yml")).toEqual([
+      { path: "_config.yml", content: rewritten, verbatim: true },
+    ]);
   });
 
   it("are read from D1 when none was handed down", async () => {
