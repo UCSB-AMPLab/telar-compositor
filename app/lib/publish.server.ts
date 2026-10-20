@@ -49,7 +49,7 @@ import { getFileAtRef, getFileContent, getSubtreeOids, listDirectoryEntries, lis
 import type { FileAtRef } from "~/lib/github.server";
 import { siteSheetFileAt, writtenSheetPath, type SiteSheetRole } from "~/lib/site-sheets.server";
 import { ObjectsCommitUnready } from "~/lib/pending-object-ops.server";
-import { parseYaml } from "~/lib/yaml.server";
+import { parseYaml, sameYamlValue, yamlMappingWithoutMerges, type YamlMapping } from "~/lib/yaml.server";
 import {
   capturedFrontmatter,
   fenceFrontmatter,
@@ -1208,6 +1208,75 @@ function opensUnterminatedQuotedScalar(line: string): boolean {
 }
 
 /**
+ * Index of the first line after the value that starts on `lines[start]`, a
+ * top-level `key: value` line in a file that parses, with no key repeated, to
+ * `doc`. A value can run on below its key (a folded or quoted scalar, a block
+ * scalar, a nested mapping or list), and a writer that replaces the key's line
+ * replaces those lines too, or they are left under the new value and the
+ * result does not parse.
+ *
+ * The parser decides where the value ends: it is the first end, at the key's
+ * next line or at a later line starting at column 0, without which the file
+ * still parses and every other top-level key holds the value it held. Blank
+ * and comment lines just before that end stay in the file whenever the file
+ * still holds without them, so an author's comment is never taken with the
+ * value; a block scalar's last line that reads as a comment stays as one.
+ *
+ * The search stops at the next line that could open a top-level entry, so a
+ * value holding such a line (key-shaped text in a quoted scalar or a flow
+ * mapping over several lines) has no end found here. Null then, and the caller
+ * writes as it does for a file that does not parse.
+ */
+function valueEnd(lines: string[], start: number, doc: YamlMapping): number | null {
+  const key = lines[start].slice(0, lines[start].indexOf(":"));
+  const others = Object.keys(doc).filter((k) => k !== key);
+  const holds = (end: number) => {
+    const trial = yamlMappingWithoutMerges([...lines.slice(0, start), `${key}: ""`, ...lines.slice(end)].join("\n"));
+    return (
+      trial !== null &&
+      Object.keys(trial).length === others.length + 1 &&
+      others.every((k) => Object.hasOwn(trial, k) && sameYamlValue(doc[k], trial[k]))
+    );
+  };
+  let limit = start + 1;
+  while (limit < lines.length && !opensTopLevelKey(lines[limit])) limit++;
+  for (let end = start + 1; end <= limit; end++) {
+    if (end > start + 1 && end < lines.length && !/^\S/.test(lines[end])) continue;
+    if (!holds(end)) continue;
+    while (end > start + 1 && /^[ \t]*(#.*)?\r?$/.test(lines[end - 1]) && holds(end - 1)) end--;
+    return end;
+  }
+  return null;
+}
+
+/**
+ * True for a line at column 0 that could open a top-level entry: `key:`,
+ * `"key":`, `key :`, a merge `<<:`, or an explicit `? key` and its `: value`.
+ * A value's end is never sought past one, since an entry removed there could
+ * leave a file that still compares equal, through a merge or a repeated value,
+ * with a line of the author's gone.
+ */
+function opensTopLevelKey(line: string): boolean {
+  return /^[?:]([ \t\r]|$)/.test(line) || (!/^-([ \t\r]|$)/.test(line) && /^[^ \t#\r].*?:([ \t\r]|$)/.test(line));
+}
+
+/**
+ * The mapping `valueEnd` reads `yaml` against, or null when the exact reading
+ * does not apply: a file that does not parse without merges or repeated keys
+ * (`yamlMappingWithoutMerges`), or one with an entry at column 0 written as
+ * anything but a plain `key:` (a quoted, spaced, explicit `?` or flow key).
+ * Those are the forms the boundary search and the comparison cannot follow,
+ * and no Telar config uses them.
+ */
+function exactlyReadableConfig(yaml: string): YamlMapping | null {
+  const plain = yaml
+    .split("\n")
+    .filter(opensTopLevelKey)
+    .every((line) => /^[A-Za-z0-9_][\w-]*:([ \t\r]|$)/.test(line));
+  return plain ? yamlMappingWithoutMerges(yaml) : null;
+}
+
+/**
  * Updates managed fields in a _config.yml string using line-based regex mutation.
  *
  * Preserves all comments, indentation, quotes, and unmanaged fields.
@@ -1247,6 +1316,9 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
   const lines = yaml.split("\n");
   const result: string[] = [];
   const fieldsToAppend = new Set(Object.keys(fields));
+  // A file that parses, with no key repeated, has values whose ends can be
+  // read exactly; any other is healed by the continuation sweep below instead.
+  const doc = exactlyReadableConfig(yaml);
 
   const storyKeyValue = fields["story_key"];
   let storyKeyUpdated = false;
@@ -1255,7 +1327,8 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
   // _config.yml files corrupted by the pre-fix bare-newline serializer.
   let sweepingContinuation = false;
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     // Sweep orphaned continuation lines of a just-replaced multi-line scalar.
     // Stop (and fall through to normal processing) at the next structural line.
     if (sweepingContinuation) {
@@ -1276,6 +1349,8 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
         storyKeyUpdated = true;
       }
       // else: drop duplicate (don't push)
+      const end = doc && valueEnd(lines, i, doc);
+      if (end) i = end - 1;
       continue;
     }
 
@@ -1289,7 +1364,9 @@ export function updateConfigFields(yaml: string, fields: Record<string, string>)
         pushed = true;
         // If the old line opened a multi-line scalar, sweep its now-orphaned
         // continuation lines (including duplicate-paragraph corruption).
-        if (opensUnterminatedQuotedScalar(line)) sweepingContinuation = true;
+        const end = doc && valueEnd(lines, i, doc);
+        if (end) i = end - 1;
+        else if (opensUnterminatedQuotedScalar(line)) sweepingContinuation = true;
         break;
       }
     }
@@ -1740,7 +1817,9 @@ function stripManagedStringScalars(yaml: string): string {
   const lines = yaml.split("\n");
   const kept: string[] = [];
   let sweeping = false;
-  for (const line of lines) {
+  const doc = exactlyReadableConfig(yaml);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (sweeping) {
       if (isStructuralConfigLine(line)) {
         sweeping = false;
@@ -1750,9 +1829,13 @@ function stripManagedStringScalars(yaml: string): string {
     }
     const keyMatch = line.match(/^([a-z][a-z0-9_-]*):/);
     if (keyMatch && MANAGED_STRING_FIELD_KEYS.has(keyMatch[1])) {
-      // Drop this managed string line; sweep its continuation if it opened a
-      // multi-line scalar (the corruption shape).
-      if (opensUnterminatedQuotedScalar(line)) sweeping = true;
+      // Drop this managed string line and the rest of its value, read exactly
+      // in a file that parses; in one that does not, sweep to the next
+      // structural line if it opened an unterminated quote (the corruption
+      // shape).
+      const end = doc && valueEnd(lines, i, doc);
+      if (end) i = end - 1;
+      else if (opensUnterminatedQuotedScalar(line)) sweeping = true;
       continue;
     }
     kept.push(line);
