@@ -64,7 +64,7 @@ import {
 } from "~/lib/publish.server";
 import { fetchFrameworkFile, fetchLatestRelease } from "~/lib/upgrade.server";
 import { normalizeVersionTag } from "~/lib/version";
-import { isYamlMapping, sameYamlValue, yamlMappingWithoutMerges, type YamlMapping } from "~/lib/yaml.server";
+import { isYamlMapping, parseYaml, sameYamlValue, yamlMappingWithoutMerges, type YamlMapping } from "~/lib/yaml.server";
 
 type ConfigRow = typeof project_config.$inferSelect;
 
@@ -100,8 +100,8 @@ export type ConfigRewritePreparation =
   | { kind: "template_unavailable" }
   | { kind: "failed" };
 
-/** A column-0 plain `key:` line, which opens a top-level entry. */
-const PLAIN_KEY = /^([A-Za-z0-9_][\w-]*):([ \t]|$)/;
+/** A column-0 plain `key:` line, the key optionally spaced from its colon, which opens a top-level entry. */
+const PLAIN_KEY = /^([A-Za-z0-9_][\w-]*)[ \t]*:([ \t]|$)/;
 
 /** A line that ends a YAML document. */
 const DOCUMENT_MARKER = /^(---|\.\.\.)([ \t].*)?$/;
@@ -170,14 +170,27 @@ function entryValue(entry: Entry): { value: unknown } | undefined {
 interface ReadEntry {
   entry: Entry;
   value: unknown;
+  /** Read from the whole document, where the entry alone does not parse: written from its value. */
+  resolved?: true;
+}
+
+/**
+ * An entry's value read alone, or, where it does not parse alone (an alias to
+ * another entry, say) and the whole document gives its key a value, that value.
+ */
+function readEntryValue(entry: Entry, whole: YamlMapping | null): Omit<ReadEntry, "entry"> | undefined {
+  const parsed = entryValue(entry);
+  if (parsed !== undefined) return parsed;
+  return whole !== null && Object.hasOwn(whole, entry.key) ? { value: whole[entry.key], resolved: true } : undefined;
 }
 
 /** The entries of a split file each key reads from, and the lines nothing reads. */
 function readConfig(split: SplitConfig): { read: Map<string, ReadEntry>; removed: string[] } {
   const read = new Map<string, ReadEntry>();
   const removed = contentLines(split.header);
+  const whole = yamlMappingWithoutMerges(split.document.join("\n"));
   for (const entry of split.entries) {
-    const parsed = entryValue(entry);
+    const parsed = readEntryValue(entry, whole);
     if (parsed === undefined) {
       removed.push(...contentLines(entry.lines));
       continue;
@@ -185,7 +198,7 @@ function readConfig(split: SplitConfig): { read: Map<string, ReadEntry>; removed
     const earlier = read.get(entry.key);
     if (earlier) removed.push(...contentLines(earlier.entry.lines));
     read.delete(entry.key);
-    read.set(entry.key, { entry, value: parsed.value });
+    read.set(entry.key, { entry, ...parsed });
   }
   removed.push(...contentLines(split.after));
   return { read, removed };
@@ -219,59 +232,173 @@ function flowValue(value: unknown): string {
   return flowCollection(value) ?? escapeYamlString(String(value));
 }
 
-/** Whether the writer of a managed block, or of the glossary kinds, cannot edit this entry. */
+/**
+ * Whether the writer of a managed block, or of the glossary kinds, cannot edit
+ * this entry. The writers find a block by its `key:` header, so a key spaced
+ * from its colon is one they cannot edit.
+ */
 function blockUnwritable(entry: Entry): boolean {
+  if (!entry.lines.some((line) => line.startsWith(`${entry.key}:`))) return true;
   const text = entry.lines.join("\n");
   if (entry.key === "glossary") return writeGlossaryKinds(text, []) === null;
   return unwritableConfigBlocks(text, [entry.key]).length > 0;
 }
 
 /**
- * A site entry as the rebuilt file carries it. A managed field the Site
- * settings write is written as the writer writes it, so the writer never has
- * to find where the file's value ends. A managed block its writer cannot edit
- * is written as an indented block from its value, with the managed children
- * the Site settings write already holding the values written; the block's
- * other children come through, its comments excepted. Every other entry is
- * verbatim.
+ * A managed block written as an indented block from its value, with the
+ * managed children the Site settings write already holding the values
+ * written; the block's other children come through, its comments excepted.
  */
-function writableEntry(
-  site: ReadEntry,
-  fields: Record<string, string>,
-  written: Record<string, Record<string, string>>,
-): string[] {
-  const { entry, value } = site;
-  const leading = entry.lines.slice(0, entry.lines.findIndex((line) => PLAIN_KEY.test(line)));
-  if (Object.hasOwn(fields, entry.key)) return [...leading, `${entry.key}: ${fields[entry.key]}`];
-  if (!isBlockKey(entry.key) || !blockUnwritable(entry)) return entry.lines;
-  const writes = written[entry.key] ?? {};
+function blockLines(key: string, value: unknown, writes: Record<string, string>): string[] {
   if (isYamlMapping(value) && Object.keys(value).length === 0 && Object.keys(writes).length === 0) {
-    return [...leading, `${entry.key}: {}`];
+    return [`${key}: {}`];
   }
   const children: Record<string, string> = {};
   if (isYamlMapping(value)) {
     for (const [child, childValue] of Object.entries(value)) children[child] = flowValue(childValue);
   }
   Object.assign(children, writes);
-  return [...leading, `${entry.key}:`, ...Object.entries(children).map(([k, v]) => `  ${childKey(k)}: ${v}`)];
+  return [`${key}:`, ...Object.entries(children).map(([k, v]) => `  ${childKey(k)}: ${v}`)];
 }
 
-/** The template and site entries put together, before the Site settings are written. */
-function assemble(template: SplitConfig, read: Map<string, ReadEntry>, config: ConfigRow): string {
-  const fields = buildConfigManagedFields(config);
-  const written = buildConfigManagedBlocks(config);
-  const out = [...template.header];
+/** Any value written from what it parses to: a mapping or list as an indented block, anything else on its key line. */
+function valueLines(key: string, value: unknown): string[] {
+  if (isYamlMapping(value) && Object.keys(value).length > 0) {
+    return [`${key}:`, ...Object.entries(value).map(([k, v]) => `  ${childKey(k)}: ${flowValue(v)}`)];
+  }
+  if (Array.isArray(value) && value.length > 0) return [`${key}:`, ...value.map((item) => `  - ${flowValue(item)}`)];
+  return [`${key}: ${flowValue(value)}`];
+}
+
+/**
+ * A site entry's lines from its key line on, written from its value, or null
+ * to copy the entry verbatim: a managed block its writer cannot edit, and an
+ * entry read from the whole document, are written from their values.
+ */
+function linesFromValue(site: ReadEntry, written: Record<string, Record<string, string>>): string[] | null {
+  const { entry, value } = site;
+  if (isBlockKey(entry.key) && (site.resolved || blockUnwritable(entry))) {
+    return blockLines(entry.key, value, written[entry.key] ?? {});
+  }
+  return site.resolved ? valueLines(entry.key, value) : null;
+}
+
+/**
+ * Whether `line` may hold a comment, whole or trailing: a `#` at its start or
+ * after whitespace, wherever it falls. Quotes are not read, so a `#` inside a
+ * quoted value counts too: an apostrophe in plain text would otherwise pair
+ * with one in the comment and hide it, and over-reporting is the safe error.
+ */
+function holdsComment(line: string): boolean {
+  return /(^|[ \t])#/.test(line);
+}
+
+/**
+ * A site entry as the rebuilt file carries it, and whether an entry written
+ * from its value dropped a comment of its own, whole-line or trailing. A
+ * managed field the Site settings write is written as the writer writes it,
+ * so the writer never has to find where the file's value ends; its trailing
+ * comment goes as it does on every publish. Every other entry is verbatim.
+ */
+function writableEntry(
+  site: ReadEntry,
+  fields: Record<string, string>,
+  written: Record<string, Record<string, string>>,
+): { lines: string[]; commentDropped: boolean; ambiguous?: boolean } {
+  const { entry } = site;
+  const keyLine = entry.lines.findIndex((line) => PLAIN_KEY.test(line));
+  const leading = entry.lines.slice(0, keyLine);
+  if (Object.hasOwn(fields, entry.key)) {
+    return { lines: [...leading, `${entry.key}: ${fields[entry.key]}`], commentDropped: false };
+  }
+  const fromValue = linesFromValue(site, written);
+  if (fromValue === null) return { lines: entry.lines, commentDropped: false };
+  return {
+    lines: [...leading, ...fromValue],
+    commentDropped: entry.lines.slice(keyLine).some(holdsComment),
+    ambiguous: holdsUnfaithfulValue(valueWithoutWrites(site.value, written[entry.key])),
+  };
+}
+
+/** The plain scalars YAML 1.1 reads as booleans. */
+const YAML11_BOOLEAN = /^(?:y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)$/;
+
+/** The plain scalars YAML 1.1 reads as numbers where YAML 1.2 reads strings: base 60, a leading-zero octal, `0b` binary, digits with underscores. */
+const YAML11_NUMBER = [
+  /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+(?:\.[0-9_]*)?$/,
+  /^[-+]?0[0-7_]+$/,
+  /^[-+]?0b[01_]+$/,
+  /^[-+]?(?=[0-9._]*_)[0-9_]*\.?[0-9_]+$/,
+];
+
+/** Whether YAML 1.1 reads `text`, written plain, as something other than a string. */
+function yaml11ReadsAsOther(text: string): boolean {
+  return YAML11_BOOLEAN.test(text) || YAML11_NUMBER.some((form) => form.test(text));
+}
+
+/** Whether a key, written plain, reads as a number under the core schema or as another type under YAML 1.1. */
+function keyReadsAsOther(key: string): boolean {
+  return yaml11ReadsAsOther(key) || typeof writtenScalarValue(key) === "number";
+}
+
+/**
+ * Whether a parsed value cannot be written back to read the same under
+ * Jekyll's Psych (YAML 1.1) as under the core schema it was read with. Only
+ * strings, booleans and nulls are written back faithfully: a number may have
+ * been an octal or base-60 form Psych reads differently (`04000`), and a
+ * string may be one YAML 1.1 reads as a boolean or a number. Keys as well as
+ * values.
+ */
+function holdsUnfaithfulValue(value: unknown): boolean {
+  if (typeof value === "number") return true;
+  if (typeof value === "string") return yaml11ReadsAsOther(value);
+  if (Array.isArray(value)) return value.some(holdsUnfaithfulValue);
+  if (!isYamlMapping(value)) return false;
+  return Object.entries(value).some(([key, child]) => keyReadsAsOther(key) || holdsUnfaithfulValue(child));
+}
+
+/** A regenerated value without the managed children the Site settings write over it. */
+function valueWithoutWrites(value: unknown, writes: Record<string, string> | undefined): unknown {
+  if (!writes || !isYamlMapping(value)) return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !Object.hasOwn(writes, key)));
+}
+
+/** The site entries in the order the rebuilt file carries them, each after the template entry it replaces. */
+function placedEntries(template: SplitConfig, read: Map<string, ReadEntry>): Array<ReadEntry | Entry> {
   const placed = new Set<string>();
+  const order: Array<ReadEntry | Entry> = [];
   for (const entry of template.entries) {
     if (placed.has(entry.key)) continue;
     placed.add(entry.key);
-    const site = read.get(entry.key);
-    out.push(...(site ? writableEntry(site, fields, written) : entry.lines));
+    order.push(read.get(entry.key) ?? entry);
   }
   const rest = [...read.values()].filter((site) => !placed.has(site.entry.key));
   rest.sort((a, b) => a.entry.at - b.entry.at);
-  for (const site of rest) out.push(...writableEntry(site, fields, written));
-  return `${out.join("\n")}\n`;
+  return [...order, ...rest];
+}
+
+/**
+ * The template and site entries put together, before the Site settings are
+ * written; whether a site entry written from its value dropped a comment; and
+ * whether one holds a value Psych may read otherwise (`holdsUnfaithfulValue`).
+ */
+function assemble(
+  template: SplitConfig,
+  read: Map<string, ReadEntry>,
+  config: ConfigRow,
+): { text: string; commentDropped: boolean; ambiguous: boolean } {
+  const fields = buildConfigManagedFields(config);
+  const written = buildConfigManagedBlocks(config);
+  const out = [...template.header];
+  let commentDropped = false;
+  let ambiguous = false;
+  for (const placed of placedEntries(template, read)) {
+    const site = "entry" in placed ? writableEntry(placed, fields, written) : { lines: placed.lines, commentDropped: false };
+    out.push(...site.lines);
+    commentDropped ||= site.commentDropped;
+    ambiguous ||= site.ambiguous === true;
+  }
+  return { text: `${out.join("\n")}\n`, commentDropped, ambiguous };
 }
 
 /** The value one written scalar reads as. */
@@ -319,6 +446,17 @@ function siteValues(split: SplitConfig, read: Map<string, ReadEntry>): Map<strin
   return values;
 }
 
+/**
+ * Every value the self-check holds the result to: each top-level key of the
+ * site's first document read whole, where it parses, whether or not the split
+ * found an entry for it, so a key the split lost is a key the result lacks;
+ * otherwise each key the entries read.
+ */
+function checkedSiteValues(split: SplitConfig): Array<[string, unknown]> {
+  const whole = yamlMappingWithoutMerges(split.document.join("\n"));
+  return whole !== null ? Object.entries(whole) : [...siteValues(split, readConfig(split).read)];
+}
+
 /** Whether `result` holds `value`, read from the site under `key`, as the rewrite must. */
 function holdsSiteValue(key: string, value: unknown, result: YamlMapping, config: ConfigRow, kinds: string | null): boolean {
   if (key === "glossary" && kinds !== null) return sameYamlValue(glossaryRest(value), glossaryRest(result.glossary));
@@ -343,11 +481,45 @@ function holdsWrittenBlocks(result: YamlMapping, config: ConfigRow): boolean {
   });
 }
 
+/** `text` read as the framework's Jekyll reads it, merges resolved; null when it does not parse to a mapping. */
+function mergedReading(text: string): YamlMapping | null {
+  try {
+    const doc = parseYaml(text);
+    return doc === null || doc === undefined ? {} : isYamlMapping(doc) ? doc : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The top-level keys whose value the Site settings write or the writer heals, which the merged comparison leaves to the core one. */
+function writtenKeys(config: ConfigRow, kinds: string | null): Set<string> {
+  const keys = [...Object.keys(buildConfigManagedFields(config)), ...Object.keys(buildConfigManagedBlocks(config)), "telar"];
+  if (kinds !== null) keys.push("glossary");
+  return new Set(keys);
+}
+
+/**
+ * Whether `text` gives every other top-level key of the site's first document
+ * the value it has with merges resolved, as Jekyll reads the file. The core
+ * reading takes `<<` for an ordinary key, so a merge written back as a quoted
+ * key reads the same there and differs only here. A site document that does
+ * not parse this way has nothing to compare.
+ */
+function holdsMergedValues(split: SplitConfig, text: string, config: ConfigRow, kinds: string | null): boolean {
+  const site = mergedReading(split.document.join("\n"));
+  if (site === null) return true;
+  const result = mergedReading(text);
+  if (result === null) return false;
+  const written = writtenKeys(config, kinds);
+  return Object.entries(site).every(([key, value]) => written.has(key) || (Object.hasOwn(result, key) && sameYamlValue(value, result[key])));
+}
+
 /**
  * Whether `text`, rebuilt from `site`, holds every value read from the site's
  * file and every value the Site settings write, compared as YAML under the
- * core schema, each site value as `siteValues` reads it. The glossary kinds
- * are compared as the framework reads them.
+ * core schema, over every key `checkedSiteValues` gives, and with merges
+ * resolved (`holdsMergedValues`). The glossary kinds are compared as the
+ * framework reads them.
  */
 export function rewriteKeepsSite(site: string, text: string, config: ConfigRow): boolean {
   const result = yamlMappingWithoutMerges(text);
@@ -355,20 +527,26 @@ export function rewriteKeepsSite(site: string, text: string, config: ConfigRow):
   const kinds = canonicalKindsJson(config.glossary_kinds_json);
   if (kinds !== null && repoGlossaryKindsJson(text) !== kinds) return false;
   const split = splitConfig(site);
-  const values = [...siteValues(split, readConfig(split).read)];
+  const values = checkedSiteValues(split);
   return (
     values.every(([key, value]) => holdsSiteValue(key, value, result, config, kinds)) &&
+    holdsMergedValues(split, text, config, kinds) &&
     holdsWrittenFields(result, config) &&
     holdsWrittenBlocks(result, config)
   );
 }
 
-/** The names a changed setting is listed under: its children that changed, for a block, else itself. */
+/**
+ * The names a changed setting is listed under: its children that changed, for
+ * a block, a block the rewrite removes reading as one with no children; else
+ * itself.
+ */
 function changedNames(key: string, before: unknown, after: unknown): string[] {
-  if (!isBlockKey(key) || !isYamlMapping(after)) return [key];
+  if (!isBlockKey(key) || !(isYamlMapping(before) || isYamlMapping(after))) return [key];
   const was: YamlMapping = isYamlMapping(before) ? before : {};
-  const children = new Set([...Object.keys(was), ...Object.keys(after)]);
-  const changed = [...children].filter((child) => !sameYamlValue(was[child], after[child]));
+  const now: YamlMapping = isYamlMapping(after) ? after : {};
+  const children = new Set([...Object.keys(was), ...Object.keys(now)]);
+  const changed = [...children].filter((child) => !sameYamlValue(was[child], now[child]));
   return changed.length > 0 ? changed.map((child) => `${key}.${child}`) : [key];
 }
 
@@ -393,7 +571,9 @@ function reportOf(
   const kept: string[] = [];
   const fromSettings: string[] = [];
   const templateValues: string[] = [];
-  for (const [key, value] of Object.entries(result)) {
+  // The site's keys too: one the Site settings clear is absent from the result.
+  for (const key of new Set([...Object.keys(result), ...read.keys()])) {
+    const value = Object.hasOwn(result, key) ? result[key] : undefined;
     if (read.has(key)) {
       const before = key === "telar" ? healedTelar(read.get(key)) : read.get(key);
       if (sameYamlValue(before, value)) kept.push(key);
@@ -414,17 +594,23 @@ function reportOf(
 /**
  * `site` rebuilt from `template` with the Site settings in `config` written
  * in, and the report of what the rewrite does; null when the Site settings
- * cannot be written into the rebuilt file or the result loses a value the
- * site's file held (`rewriteKeepsSite`), which is logged.
+ * cannot be written into the rebuilt file, a value written from its parsed
+ * form holds a value Psych may read otherwise (`holdsUnfaithfulValue`), or
+ * the result loses a value the site's file held (`rewriteKeepsSite`), each of
+ * which is logged.
  */
 export function rebuildConfigYaml(site: string, template: ConfigTemplate, config: ConfigRow): RebuiltConfig | null {
   const siteSplit = splitConfig(site);
   const { read, removed } = readConfig(siteSplit);
   const templateSplit = splitConfig(template.text);
   const assembled = assemble(templateSplit, read, config);
+  if (assembled.ambiguous) {
+    console.error("[config-rewrite] a value written from its parsed form may read differently under Jekyll's YAML");
+    return null;
+  }
   let text: string | null;
   try {
-    const written = publishableConfigYaml(assembled, config);
+    const written = publishableConfigYaml(assembled.text, config);
     text = written === null ? null : cleanCommitContent("_config.yml", written);
   } catch (err) {
     console.error("[config-rewrite] the Site settings could not be written into the rebuilt file", err);
@@ -435,7 +621,8 @@ export function rebuildConfigYaml(site: string, template: ConfigTemplate, config
     return null;
   }
   const report = reportOf(text, siteValues(siteSplit, read), readConfig(templateSplit).read, site);
-  return { text, report: { templateTag: template.tag, removed, ...report } };
+  const commentsDropped = report.commentsDropped || assembled.commentDropped;
+  return { text, report: { templateTag: template.tag, removed, ...report, commentsDropped } };
 }
 
 /**

@@ -179,12 +179,22 @@ title: "Mine"
   });
 
   it("reports a header line that is not a comment as removed", () => {
+    const site = `%YAML 1.2
+---
+title: "Mine"
+`;
+    const { report } = rebuild(site);
+    expect(report.removed).toEqual(["%YAML 1.2", "---"]);
+  });
+
+  // A quoted key above the first plain one is a header line the rebuild
+  // removes, and the file read whole holds it, so the rewrite would lose a
+  // setting: none is offered.
+  it("offers no rewrite that would remove a setting the file read whole holds", () => {
     const site = `"quoted": 1
 title: "Mine"
 `;
-    const { text, report } = rebuild(site);
-    expect(report.removed).toEqual(['"quoted": 1']);
-    expect(doc(text)).not.toHaveProperty("quoted");
+    expect(rebuildConfigYaml(site, TEMPLATE, makeConfig())).toBeNull();
   });
 });
 
@@ -405,6 +415,184 @@ story_interface: {show_on_homepage: true}
     expect(doc(text).description).toBe("text\n");
     expect(report.fromSettings).toContain("description");
     expect(report.kept).not.toContain("description");
+  });
+});
+
+describe("rebuildConfigYaml — entries that read only through the whole document", () => {
+  // `defaults` is an alias to another entry, so it does not parse alone; the
+  // whole document gives it the expanded list, which the rebuilt file keeps.
+  const site = `page_defaults: &page_defaults
+  - scope: {path: ""}
+    values: {layout: page}
+defaults: *page_defaults
+story_interface: {show_on_homepage: true}
+`;
+  const expanded = [{ scope: { path: "" }, values: { layout: "page" } }];
+
+  it("keeps the value an alias resolves to, written from that value", () => {
+    expect(doc(site).defaults).toEqual(expanded);
+    const { text, report } = rebuild(site);
+    expect(doc(text).defaults).toEqual(expanded);
+    expect(report.removed).toEqual([]);
+    expect(report.kept).toContain("defaults");
+    expect(rewriteKeepsSite(site, text, makeConfig())).toBe(true);
+  });
+
+  it("still removes an entry the whole document does not read either", () => {
+    const broken = `title: "Mine"\ndefaults:\n\tscope: all\n`;
+    expect(rebuild(broken).report.removed).toEqual(["defaults:", "\tscope: all"]);
+  });
+});
+
+describe("rebuildConfigYaml — every key the file read whole holds", () => {
+  it("keeps a key spaced from its colon as its own entry, verbatim", () => {
+    const site = `title: "Mine"
+timezone : America/Bogota
+story_interface: {show_on_homepage: true}
+`;
+    const { text, report } = rebuild(site);
+    expect(text).toContain("\ntimezone : America/Bogota\n");
+    expect(doc(text).timezone).toBe("America/Bogota");
+    expect(report.kept).toContain("timezone");
+    expect(report.removed).toEqual([]);
+  });
+
+  // A quoted key at column 0 is not a line the split starts an entry at, so
+  // it joins the entry above, which then parses to two keys and is written
+  // from the one it is named for. The second key is not in the result.
+  it("offers no rewrite when an entry read alone holds a key the result loses", () => {
+    const site = `title: "Mine"
+"custom": keep
+story_interface: {show_on_homepage: true}
+`;
+    expect(doc(site).custom).toBe("keep");
+    expect(rebuildConfigYaml(site, TEMPLATE, makeConfig())).toBeNull();
+    const withoutCustom = rebuild(site.replace('"custom": keep\n', "")).text;
+    expect(rewriteKeepsSite(site, withoutCustom, makeConfig())).toBe(false);
+  });
+});
+
+describe("rebuildConfigYaml — merges, as Jekyll reads them", () => {
+  // `defaults` reads only through the whole file and is written from its
+  // value, where the core reading holds `<<` as an ordinary key: written back
+  // quoted, it is no longer a merge, and Jekyll would lose `layout: page`.
+  it("offers no rewrite that would turn a merge into an ordinary key", () => {
+    const site = `common: &common
+  layout: page
+defaults:
+  - scope: {path: ""}
+    values: {<<: *common}
+story_interface: {show_on_homepage: true}
+`;
+    expect(loadYaml(site)).toMatchObject({ defaults: [{ values: { layout: "page" } }] });
+    expect(rebuildConfigYaml(site, TEMPLATE, makeConfig())).toBeNull();
+  });
+});
+
+describe("rebuildConfigYaml — values Jekyll reads as YAML 1.1", () => {
+  // `show_drafts` reads only through the whole file and is written from its
+  // value. The core reading gives the plain `no` as the string "no", written
+  // back quoted; Psych reads the site's `no` as false, so the site would
+  // change. No rewrite is offered.
+  it("offers no rewrite that writes back a string YAML 1.1 reads as a boolean", () => {
+    const site = `title: "Archive"
+future: &preview no
+show_drafts: *preview
+story_interface: {show_on_homepage: true}
+`;
+    expect(rebuildConfigYaml(site, TEMPLATE, makeConfig())).toBeNull();
+  });
+
+  it.each([["1:20"], ["0755"], ["0b101"], ["1_000"], ["On"]])(
+    "refuses a regenerated block holding %s, as a value or a key",
+    (scalar) => {
+      const asValue = `title: "Mine"\nstory_interface: {show_on_homepage: true, note: "${scalar}"}\n`;
+      const asKey = `title: "Mine"\nstory_interface: {show_on_homepage: true, "${scalar}": x}\n`;
+      expect(rebuildConfigYaml(asValue, TEMPLATE, makeConfig())).toBeNull();
+      expect(rebuildConfigYaml(asKey, TEMPLATE, makeConfig())).toBeNull();
+    },
+  );
+
+  // Psych reads `04000` as an octal; the core reading gives 4000, which
+  // written back is a different number to Jekyll. No number is written back.
+  it("offers no rewrite that writes back a number read through an alias", () => {
+    const site = `title: "Mine"
+port: &port 04000
+livereload_port: *port
+story_interface: {show_on_homepage: true}
+`;
+    expect(rebuildConfigYaml(site, TEMPLATE, makeConfig())).toBeNull();
+  });
+
+  it("refuses a regenerated block holding a plain number, as a value or a key", () => {
+    const asValue = `title: "Mine"\nstory_interface: {show_on_homepage: true, per_page: 10}\n`;
+    const asKey = `title: "Mine"\nstory_interface: {show_on_homepage: true, "10": x}\n`;
+    expect(rebuildConfigYaml(asValue, TEMPLATE, makeConfig())).toBeNull();
+    expect(rebuildConfigYaml(asKey, TEMPLATE, makeConfig())).toBeNull();
+  });
+
+  it("still rewrites a flow block of booleans, and one whose number the Site settings write", () => {
+    const flow = `title: "Mine"\nstory_interface: {show_on_homepage: true}\n`;
+    expect(rebuild(flow).text).toContain("story_interface:\n  show_on_homepage: true");
+    const counted = `title: "Mine"\ncollection_interface: {featured_count: 2}\n`;
+    expect(doc(rebuild(counted, makeConfig({ featured_count: 6 })).text).collection_interface).toEqual({ featured_count: 6 });
+  });
+
+  it("still rewrites a regenerated block holding only unambiguous strings", () => {
+    const site = `title: "Mine"
+story_interface: {show_on_homepage: true, note: "nobody", code: "0x1", time: "1:75"}
+`;
+    expect(doc(rebuild(site).text).story_interface).toMatchObject({ note: "nobody", code: "0x1" });
+  });
+});
+
+describe("rebuildConfigYaml — a block the Site settings clear", () => {
+  it("lists the block's cleared child under from_settings", () => {
+    const site = `title: "Mine"
+glossary:
+  kinds:
+    - {id: place, label: Place, heading: Places}
+story_interface: {show_on_homepage: true}
+`;
+    const { text, report } = rebuild(site, makeConfig({ glossary_kinds_json: "[]" }));
+    expect(doc(text)).not.toHaveProperty("glossary");
+    expect(report.fromSettings).toContain("glossary.kinds");
+    expect(report.kept).not.toContain("glossary");
+  });
+});
+
+describe("rebuildConfigYaml — comments on entries written from their values", () => {
+  it("reports a trailing comment dropped from a regenerated block", () => {
+    const site = `title: "Mine"
+story_interface: {show_on_homepage: true} # Keep hidden until launch
+`;
+    const { text, report } = rebuild(site);
+    expect(text).not.toContain("Keep hidden until launch");
+    expect(report.commentsDropped).toBe(true);
+  });
+
+  // Quotes are not read: a # after whitespace inside one reports too.
+  it("reports a # after whitespace inside a quoted value", () => {
+    const site = `title: "Mine"
+story_interface: {show_on_homepage: true, note: "top #1 priority"}
+`;
+    expect(rebuild(site).report.commentsDropped).toBe(true);
+  });
+
+  it("reports a trailing comment after a value holding an apostrophe", () => {
+    const site = `title: "Mine"
+story_interface: {show_on_homepage: true, note: author's choice} # Don't show before launch
+`;
+    const { text, report } = rebuild(site);
+    expect(text).not.toContain("show before launch");
+    expect(report.commentsDropped).toBe(true);
+  });
+
+  it("does not report a regenerated block with no # in it", () => {
+    const site = `title: "Mine"
+story_interface: {show_on_homepage: true, note: "plain"}
+`;
+    expect(rebuild(site).report.commentsDropped).toBe(false);
   });
 });
 

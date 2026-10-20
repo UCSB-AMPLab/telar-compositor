@@ -116,7 +116,7 @@ story_interface:
 
 /** A managed block in a shape its writer cannot edit: the file needs the rewrite. */
 const SITE = `title: "A site"
-story_interface: {show_on_homepage: false, custom_child: 1}
+story_interface: {show_on_homepage: false, custom_child: "kept"}
 custom: keep
 `;
 
