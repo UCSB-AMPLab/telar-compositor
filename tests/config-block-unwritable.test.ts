@@ -18,10 +18,11 @@
  *
  * So the writer does not try. It refuses, loudly — a publish that cannot write
  * a managed block must fail rather than ship a file whose settings silently
- * disagree with the Compositor's — and the publish check reports a blocker
- * naming the block before a publish is ever started.
+ * disagree with the Compositor's — and the publish check raises
+ * `config_needs_rewrite` before a publish is ever started, offering the
+ * rewrite of the whole file.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -268,28 +269,25 @@ describe("what the publish check says about one", () => {
       configYml,
     });
 
-  it.each(UNWRITABLE)("blocks the publish for %s, naming the block", (_name, yaml) => {
-    const blockers = validate(yaml).blockers.filter((b) => b.code === "config_block_unwritable");
+  it.each(UNWRITABLE)("blocks the publish for %s, offering the rewrite", (_name, yaml) => {
+    const blockers = validate(yaml).blockers.filter((b) => b.code === "config_needs_rewrite");
 
-    expect(blockers).toHaveLength(1);
-    expect(blockers[0].params).toEqual({ block: "story_interface" });
-    expect(blockers[0].entityId).toBe("story_interface");
+    expect(blockers).toEqual([{ code: "config_needs_rewrite", message: "config_needs_rewrite" }]);
   });
 
   it("blocks nothing for an ordinary block-style file", () => {
     const yaml = "story_interface:\n  show_on_homepage: false\n";
 
-    expect(validate(yaml).blockers.map((b) => b.code)).not.toContain("config_block_unwritable");
+    expect(validate(yaml).blockers.map((b) => b.code)).not.toContain("config_needs_rewrite");
   });
 
-  it("names one blocker per unwritable block", () => {
+  // One rewrite answers every unwritable block, so one blocker says so.
+  it("raises one blocker however many blocks are unwritable", () => {
     const yaml = "story_interface: {a: 1}\ncollection_interface: *d\n";
 
-    const blocks = validate(yaml)
-      .blockers.filter((b) => b.code === "config_block_unwritable")
-      .map((b) => b.params?.block);
+    const blockers = validate(yaml).blockers.filter((b) => b.code === "config_needs_rewrite");
 
-    expect(blocks).toEqual(["story_interface", "collection_interface"]);
+    expect(blockers).toHaveLength(1);
   });
 
   // `story_content:` is nobody's managed block now. The publish leaves it
@@ -298,7 +296,7 @@ describe("what the publish check says about one", () => {
   it("says nothing about a story_content block in any shape", () => {
     const yaml = "story_content: {answer_word_limit: 50}\n";
 
-    expect(validate(yaml).blockers.map((b) => b.code)).not.toContain("config_block_unwritable");
+    expect(validate(yaml).blockers.map((b) => b.code)).not.toContain("config_needs_rewrite");
   });
 
   // The check runs before a publish has a config row in hand, so it reads the
@@ -336,6 +334,6 @@ describe("what the publish check says about one", () => {
   // A publish that cannot read the file has nothing to report about it, and
   // must not block on a file it never saw.
   it("blocks nothing when the caller could not read the file", () => {
-    expect(validate(null).blockers.map((b) => b.code)).not.toContain("config_block_unwritable");
+    expect(validate(null).blockers.map((b) => b.code)).not.toContain("config_needs_rewrite");
   });
 });

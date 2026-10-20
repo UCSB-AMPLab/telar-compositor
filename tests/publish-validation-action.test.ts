@@ -349,7 +349,7 @@ describe("run-validation — what the read produces", () => {
 
     const res = await runValidationAction();
 
-    expect(blockerCodes(res)).not.toContain("config_block_unwritable");
+    expect(blockerCodes(res)).not.toContain("config_needs_rewrite");
   });
 
   it("blocks a publish when a managed block is written in a shape it cannot edit", async () => {
@@ -361,9 +361,9 @@ describe("run-validation — what the read produces", () => {
     const res = await runValidationAction();
 
     const blocker = (res.validation?.blockers ?? []).find(
-      (b) => b.code === "config_block_unwritable",
+      (b) => b.code === "config_needs_rewrite",
     );
-    expect(blocker?.params).toEqual({ block: "story_interface" });
+    expect(blocker).toEqual({ code: "config_needs_rewrite", message: "config_needs_rewrite" });
   });
 });
 

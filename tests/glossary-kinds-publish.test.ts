@@ -7,7 +7,7 @@
  * `config.glossary_kinds_json` (tests/field-registry-hash-probes.test.ts),
  * since that hash is the JSON of `buildConfigChangeFields`.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect } from "vitest";
@@ -64,7 +64,8 @@ const WITHOUT_KINDS = makeConfig();
 /** A file whose `kinds:` is written in a shape the writer would rewrite. */
 const REPO = 'title: "A site"\nglossary:\n  kinds: [{id: old, label: Old, heading: Olds}]\n  other_setting: true\n';
 
-function unwritableBlocks(configYml: string, config: ProjectConfigRow): unknown[] {
+/** The rewrite blockers the check raises; a `glossary:` the writer cannot edit raises one. */
+function rewriteBlockers(configYml: string, config: ProjectConfigRow): unknown[] {
   return runPrePublishValidation({
     headSha: "same",
     currentRepoHead: "same",
@@ -77,8 +78,8 @@ function unwritableBlocks(configYml: string, config: ProjectConfigRow): unknown[
     configYml,
     config,
   })
-    .blockers.filter((b) => b.code === "config_block_unwritable")
-    .map((b) => b.entityId);
+    .blockers.filter((b) => b.code === "config_needs_rewrite")
+    .map((b) => b.code);
 }
 
 describe("publishableConfigYaml — glossary kinds", () => {
@@ -106,12 +107,12 @@ describe("publishableConfigYaml — glossary kinds", () => {
 describe("pre-publish check — a glossary: the writer cannot edit", () => {
   const FLOW = 'title: "A site"\nglossary: {kinds: []}\n';
 
-  it("raises config_block_unwritable naming glossary when the column is set", () => {
-    expect(unwritableBlocks(FLOW, WITH_KINDS)).toEqual(["glossary"]);
+  it("raises config_needs_rewrite when the column is set", () => {
+    expect(rewriteBlockers(FLOW, WITH_KINDS)).toEqual(["config_needs_rewrite"]);
   });
 
   it("says nothing about it when the column is null, since nothing is written there", () => {
-    expect(unwritableBlocks(FLOW, WITHOUT_KINDS)).toEqual([]);
+    expect(rewriteBlockers(FLOW, WITHOUT_KINDS)).toEqual([]);
   });
 });
 
@@ -129,8 +130,8 @@ describe("pre-publish check — shapes the line edit cannot see, judged by the p
     ],
   ];
   for (const [name, yaml, config] of CASES) {
-    it(`refuses ${name}: the blocker names glossary and no file is written`, () => {
-      expect(unwritableBlocks(yaml, config)).toEqual(["glossary"]);
+    it(`refuses ${name}: the rewrite blocker is raised and no file is written`, () => {
+      expect(rewriteBlockers(yaml, config)).toEqual(["config_needs_rewrite"]);
       expect(() => publishableConfigYaml(yaml, config)).toThrow(UnwritableConfigBlockError);
     });
   }

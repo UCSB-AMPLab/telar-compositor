@@ -8,9 +8,9 @@
  * against the stored publish snapshot, and returns project + user
  * info for rendering.
  *
- * Action handles five intents (a `clientAction` answers a `poll-build` or a
- * `run-validation` that fails in transit as unreachable, and passes every
- * other intent through):
+ * Action handles six intents (a `clientAction` answers a `poll-build`, a
+ * `run-validation` or a `preview-config-rewrite` that fails in transit as
+ * unreachable, and passes every other intent through):
  *   - `run-validation` — runs pre-publish checks and returns
  *     `ValidationResult`, with where GitHub's head stands for a publish and
  *     the head it read (`publishHeadState`), and each page held in more than
@@ -29,6 +29,9 @@
  *     workflow that cannot protect the site's private stories; the rebuild that
  *     commit starts is followed by a `poll-build` poll of the repair's own,
  *     shown in the checks section's repair line and nowhere else
+ *   - `preview-config-rewrite` — rebuilds a `_config.yml` the writer cannot
+ *     update (`~/lib/config-rewrite.server`) and returns what the rewrite does
+ *     and its fingerprint, which a publish sends back to have it written
  *
  * Renders three sections with `ChangeSummary` (chips), `ValidationChecks`
  * (chilca-pale passed-checks list + blockers) followed by `PageLanguageChoice`
@@ -61,7 +64,7 @@ import { storyColumnDetail, tableColumnDetail } from "~/lib/story-columns";
 import { deletedStoryLayerFiles, renamedStorySheets, sheetsOfStoriesWritten } from "~/lib/story-left-files.server";
 import { keptChangedWarnings, owedStoryDeletions, parseOwedStoryFiles } from "~/lib/story-files-to-delete.server";
 import { publishedStorySheetWrites } from "~/lib/story-source-path.server";
-import { useIsPublisher } from "~/hooks/use-role";
+import { useIsPublisher, useRole } from "~/hooks/use-role";
 import type { Route } from "./+types/_app.publish";
 import { userContext } from "~/middleware/auth.server";
 import { getDb } from "~/lib/db.server";
@@ -122,6 +125,7 @@ import {
   findEntityMaxUpdatedAt,
   ENTITY_HASHES_VERSION,
   UnwritableConfigBlockError,
+  UnreadableConfigValueError,
   UnreadablePageError,
   UnreadablePublishFileError,
   UnreadableProjectCsvError,
@@ -177,6 +181,18 @@ import {
 import { KEEP_PAGE_FILES, everyPageLanguageChosen } from "~/lib/page-language-choice";
 import type { PageLanguageChoices, PageLanguageGroup } from "~/lib/page-language-choice";
 import { PageLanguageChoice } from "~/components/features/publish/PageLanguageChoice";
+import {
+  ACKNOWLEDGED_CONFIG_REWRITE,
+  ConfigRewriteReview,
+  blockersBesideRewrite,
+  canReviewConfigRewrite,
+  fingerprintAfterChecks,
+  fingerprintAfterRefusal,
+  rewriteAcknowledgementFields,
+  rewriteReviewOpener,
+} from "~/components/features/publish/ConfigRewriteDialog";
+import { blockedPublishError, configRewriteForPublish, configRewritePreviewAnswer } from "~/lib/config-rewrite.server";
+import type { ConfigRewriteReport } from "~/lib/config-rewrite.server";
 import { coordinatorLine, useSyncReview } from "~/components/features/dashboard/SyncReviewProvider";
 
 export const handle = { i18n: ["common", "publish", "team"] };
@@ -273,6 +289,7 @@ const PUBLISH_ERROR_KEYS = new Map<string, string>([
   ["stories_unreadable", "build.stories_unreadable"],
   ["page_language_unchosen", "build.page_language_unchosen"],
   ["page_language_not_applied", "build.page_language_not_applied"],
+  ["config_rewrite_stale", "config_rewrite.stale"],
 ]);
 
 /**
@@ -294,6 +311,9 @@ function publishGateRedirect(gate: RepoWriteGate): string | null {
  */
 const ACKNOWLEDGED_REPLACED_PAGES = "acknowledgedReplacedPages";
 
+/** The refusals after which the page runs its checks again, for what they will now ask. */
+const CHECKS_RUN_AGAIN_AFTER = new Set(["page_language_unchosen", "config_rewrite_stale"]);
+
 /** The refusal of a publish that would replace settings the author was not warned of. */
 const REPLACED_PAGES_UNACKNOWLEDGED = "page_frontmatter_unacknowledged";
 
@@ -311,6 +331,13 @@ function acknowledgedReplacedPages(formData: FormData): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+/** The rewrite fingerprint a publish request carries, or null for none or a role that may not accept one. */
+function acknowledgedConfigRewrite(formData: FormData, role: string): string | null {
+  const raw = formData.get(ACKNOWLEDGED_CONFIG_REWRITE);
+  if (typeof raw !== "string" || raw.trim() === "" || !canReviewConfigRewrite(role)) return null;
+  return raw.trim();
 }
 
 function isReplacedSettings(entry: unknown): entry is ReplacedSettings {
@@ -405,15 +432,17 @@ function unreadableFileError(err: unknown): string | null {
   return null;
 }
 
+/** Whether a writer threw for a file its check would refuse: answered as a blocked validation. */
+function isValidationRefusal(err: unknown): boolean {
+  const refusals = [UnwritableConfigBlockError, UnreadableConfigValueError, UnwritablePageFrontmatterError, StoryColumnsBlockedError];
+  return refusals.some((refusal) => err instanceof refusal);
+}
+
 function publishFailure(err: unknown, projectId: number) {
   if (err instanceof StaleHeadError) {
     return { ok: false, intent: "publish", error: "stale_head", projectId };
   }
-  if (
-    err instanceof UnwritableConfigBlockError ||
-    err instanceof UnwritablePageFrontmatterError ||
-    err instanceof StoryColumnsBlockedError
-  ) {
+  if (isValidationRefusal(err)) {
     return { ok: false, intent: "publish", error: "validation_blocked", projectId };
   }
   if (err instanceof UnreadablePageError) {
@@ -1192,14 +1221,15 @@ async function privateRepoIfBuildFailed(
  * undecodable answer) is answered as unreachable, with its intent and status
  * 503 (`answerReadsWhenUnreachable`), so the page stays open: the publishing
  * popover keeps its last poll, and the checks say they could not be run and
- * offer to run again. A `run-validation` that carries a reset or a removal may
+ * offer to run again. A `preview-config-rewrite` writes nothing, and its
+ * dialog says to try again. A `run-validation` that carries a reset or a removal may
  * have made it before the answer was lost, so an unreachable answer claims
  * neither, and the next run shows what the site holds. Every other intent
  * reaches the server action unchanged: those write, and what their failure
  * means to the author is not a read's answer.
  */
 export async function clientAction({ request, serverAction }: Route.ClientActionArgs) {
-  return answerReadsWhenUnreachable(request, serverAction, ["poll-build", "run-validation"]);
+  return answerReadsWhenUnreachable(request, serverAction, ["poll-build", "run-validation", "preview-config-rewrite"]);
 }
 
 /** Every layer of the project's steps, in one query. */
@@ -1764,8 +1794,8 @@ export async function action({ request, context }: Route.ActionArgs) {
         //     `glossary_reserved_column`, the story column blockers and the
         //     answer checks — and the
         //     repository's _config.yml with the project's config row for the
-        //     two the file itself raises, `config_block_unwritable` and
-        //     `config_unparseable`. `stale_head` is the
+        //     one the file itself raises, `config_needs_rewrite`, which an
+        //     accepted rewrite rebuilt here answers. `stale_head` is the
         //     other blocker and is deliberately excluded: it compares a live
         //     GitHub read against the project row, so HEAD moving between the
         //     author reading the page and pressing publish would cost them a
@@ -1867,6 +1897,16 @@ export async function action({ request, context }: Route.ActionArgs) {
         const configYmlAtPublish =
           configForValidation.status === "ok" ? configForValidation.content.replace(/^\uFEFF/, "") : null;
 
+        // The rewrite the author accepted, rebuilt once from the file and the
+        // row judged here (`configRewriteForPublish`).
+        const configRewrite = await configRewriteForPublish({
+          acknowledged: acknowledgedConfigRewrite(formData, userRole),
+          site: configYmlAtPublish,
+          config: configRowForValidation[0],
+          frameworkToken: token,
+          pinnedTag: env.TELAR_RELEASE_TAG,
+        });
+
         const postSnapshotValidation = runPrePublishValidation({
           headSha: "",
           currentRepoHead: "",
@@ -1878,6 +1918,7 @@ export async function action({ request, context }: Route.ActionArgs) {
           storyKey: null,
           configYml: configYmlAtPublish,
           config: configRowForValidation[0],
+          configRewrite: configRewrite.check,
           stepLayers: await stepLayersForValidation(
             stepRowsForValidation,
             projectStepLayersLoader(db, activeProject.id),
@@ -1887,8 +1928,11 @@ export async function action({ request, context }: Route.ActionArgs) {
         // driven by the loader's pass, and reloading re-runs both against the
         // rows this snapshot just wrote, which is where the author sees exactly
         // what to fix.
+        // An accepted rewrite that no longer matches is said as such, so the
+        // page can clear it and ask for a new review.
         if (postSnapshotValidation.blockers.length > 0) {
-          return { ok: false, intent: "publish", error: "validation_blocked", projectId: activeProject.id };
+          const error = blockedPublishError(postSnapshotValidation.blockers, configRewrite);
+          return { ok: false, intent: "publish", error, projectId: activeProject.id };
         }
 
         // Same guard as the loader — a corrupt persisted snapshot would
@@ -1998,6 +2042,8 @@ export async function action({ request, context }: Route.ActionArgs) {
             // second answer: a settings save landing between the two turns a
             // check that passed into a config write silently dropped.
             config: captured.config,
+            // The rewrite the check above matched, only for a file that needs one.
+            rewrittenConfigYml: configRewrite.text,
             pages: captured.pages,
             landing: captured.landing,
             // The objects.csv completion read, for the same reason.
@@ -2394,6 +2440,22 @@ export async function action({ request, context }: Route.ActionArgs) {
       }
     }
 
+    case "preview-config-rewrite":
+      return configRewritePreviewAnswer({
+        role: userRole,
+        snapshot: () => forceDocSnapshot(env, activeProject.id),
+        projectToken: () =>
+          resolveProjectToken(env.GITHUB_APP_ID, env.GITHUB_PRIVATE_KEY, activeProject.installation_id, token, userRole),
+        db,
+        projectId: activeProject.id,
+        // The framework repository is public and outside the installation, so
+        // the template is read on the user's token.
+        frameworkToken: token,
+        owner,
+        repo,
+        pinnedTag: env.TELAR_RELEASE_TAG,
+      });
+
     case "dismiss-intro": {
       // Dismissal is handled client-side via localStorage — no D1 write needed.
       return { ok: true, intent: "dismiss-intro" };
@@ -2468,6 +2530,7 @@ type PublishActionData =
   | { ok: false; intent: "poll-build"; error: string; sha?: string }
   | { ok: false; intent: "poll-build"; reason: "unreachable"; error?: undefined; sha?: undefined }
   | { ok: true; intent: "dismiss-intro" }
+  | { ok: true; intent: "preview-config-rewrite"; report: ConfigRewriteReport; fingerprint: string }
   | { ok: true; intent: "repair-build-workflow"; outcome: "repaired" | "already_current" | "not_needed"; newHeadSha?: string; recorded?: boolean }
   | { ok: false; intent: "repair-build-workflow"; error: string; reauthUrl?: string | null }
   | { ok: false; intent: string; error: string }
@@ -2594,6 +2657,7 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
   // notice. Render-gating is a UX layer only — the server side enforces the
   // same convenor-or-collaborator gate independently.
   const isPublisher = useIsPublisher();
+  const role = useRole();
   if (!isPublisher) return null;
 
   const { provider } = useCollaborationContext();
@@ -2626,6 +2690,11 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
   // it.
   const [isEditingMessage, setIsEditingMessage] = useState(false);
   const [editedMessage, setEditedMessage] = useState<string | null>(null);
+  // The fingerprint of the `_config.yml` rewrite the author accepted, sent
+  // with the publish. Cleared when the checks no longer ask for a rewrite, when
+  // the publish finds it stale, and with the page.
+  const [rewriteFingerprint, setRewriteFingerprint] = useState<string | null>(null);
+  const [rewriteReviewOpen, setRewriteReviewOpen] = useState(false);
 
   // Clear the publish awareness fields on TRUE unmount. Without this, a user who
   // navigates away from /publish mid-build leaves this client's awareness
@@ -2732,7 +2801,9 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
       return `https://${owner.toLowerCase()}.github.io/${repo}`;
     })();
 
-  const hasBlockers = validationResult !== null && validationResult.blockers.length > 0;
+  const hasBlockers =
+    validationResult !== null &&
+    blockersBesideRewrite(validationResult.blockers, rewriteFingerprint !== null).blockers.length > 0;
   const headingFiles = headingFilesOf(validationResult);
 
   // Everything below that reads `changeSummary` is a claim about the site's
@@ -2766,6 +2837,8 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
       setLanguageGroups(validationData.languageGroups ?? []);
       // The checks' own answer now says which pages' settings are replaced.
       setRefusedReplacements([]);
+      const checked = validationData.validation;
+      setRewriteFingerprint((fingerprint) => fingerprintAfterChecks(checked, fingerprint));
     } else if (!validationData.ok && validationData.intent === "run-validation") {
       setValidationResult(null);
       setGithubCheck(null);
@@ -2793,9 +2866,12 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
         return;
       }
       setPublishError(publishErrorMessage(t, publishData.error, { canReview, coordinatorName }));
-      // A page the checks on screen did not ask about: they run again, and
-      // ask.
-      if (publishData.error === "page_language_unchosen") runValidation();
+      // A page the checks on screen did not ask about, or a rewrite reviewed
+      // that is not the one the file and settings give now: the checks run
+      // again, and ask.
+      const refusal = publishData.error;
+      setRewriteFingerprint((fingerprint) => fingerprintAfterRefusal(refusal, fingerprint));
+      if (CHECKS_RUN_AGAIN_AFTER.has(refusal ?? "")) runValidation();
       // The action names the project it acted on, which is the session's and can
       // differ from the one this page shows when another tab switched it.
       if ("projectId" in publishData && typeof publishData.projectId === "number") {
@@ -3058,6 +3134,7 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
     if (warned.length > 0) fields[ACKNOWLEDGED_REPLACED_PAGES] = JSON.stringify(warned);
     // The version kept of each page held in more than one language.
     if (languageGroups.length > 0) fields[KEEP_PAGE_FILES] = JSON.stringify(languageGroups.map((g) => languageChoices[g.page.file]));
+    Object.assign(fields, rewriteAcknowledgementFields(rewriteFingerprint));
     const isGenerated = fullMessage === autoGeneratedMessage;
     if (isGenerated && typeof summaryFingerprint === "string" && summaryFingerprint.length > 0) {
       fields.summaryFingerprint = summaryFingerprint;
@@ -3086,6 +3163,7 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
     setLanguageGroups([]);
     setLanguageChoices({});
     setRefusedReplacements([]);
+    setRewriteFingerprint(null);
     setIsEditingMessage(false);
     setEditedMessage(null);
     // Reset the headless build-poll state so a re-publish starts a fresh poll.
@@ -3288,8 +3366,20 @@ export default function PublishPage({ loaderData }: Route.ComponentProps) {
                 onRemoveColumn={handleRemoveColumn}
                 removalFailed={removalFailureOf(validationData)}
                 resetFailed={resetFailureOf(validationData)}
+                configRewrite={{
+                  accepted: rewriteFingerprint !== null,
+                  onReview: rewriteReviewOpener(role, () => setRewriteReviewOpen(true)),
+                }}
               />
             )}
+            <ConfigRewriteReview
+              open={rewriteReviewOpen}
+              onClose={() => setRewriteReviewOpen(false)}
+              onAccept={(fingerprint) => {
+                setRewriteFingerprint(fingerprint);
+                setRewriteReviewOpen(false);
+              }}
+            />
             <ChecksMayBeBehindNotice result={validationData} stateUnreadable={stateUnreadable} validationFailed={validationFailed} />
             {!stateUnreadable && !validationFailed && (
               <PageLanguageChoice

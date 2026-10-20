@@ -18,7 +18,10 @@
  * both sides run the same heal through `publishableConfigYaml`, and the last
  * case in this file holds them to the same answer over every fixture.
  *
- * @version v1.5.0-beta
+ * The blocker is `config_needs_rewrite`, which a heal that throws for a block
+ * raises too, and whose remedy is the rewrite the publish page offers.
+ *
+ * @version v1.5.5-beta
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -158,7 +161,7 @@ function blockerCodes(yaml: string | null, config: ProjectConfigRow | null = CON
   }).blockers.map((b) => b.code);
 }
 
-describe("config_unparseable — what the fixtures actually are", () => {
+describe("config_needs_rewrite — what the fixtures actually are", () => {
   it("the orphaned-scalar fixture does not parse and the heal repairs it", () => {
     expect(parses(ORPHANED_SCALAR)).toBe(false);
     expect(publishableConfigYaml(ORPHANED_SCALAR, CONFIG)).not.toBeNull();
@@ -174,22 +177,22 @@ describe("config_unparseable — what the fixtures actually are", () => {
   });
 });
 
-describe("config_unparseable — the blocker", () => {
+describe("config_needs_rewrite — the blocker", () => {
   it("raises when the healed config would not parse, so the publish is refused", () => {
-    expect(blockerCodes(UNHEALABLE_TAB)).toContain("config_unparseable");
+    expect(blockerCodes(UNHEALABLE_TAB)).toContain("config_needs_rewrite");
   });
 
   it("raises nothing for a file that does not parse but that the heal repairs", () => {
-    expect(blockerCodes(ORPHANED_SCALAR)).not.toContain("config_unparseable");
+    expect(blockerCodes(ORPHANED_SCALAR)).not.toContain("config_needs_rewrite");
   });
 
   it("raises nothing for a valid config", () => {
-    expect(blockerCodes(VALID)).not.toContain("config_unparseable");
+    expect(blockerCodes(VALID)).not.toContain("config_needs_rewrite");
   });
 
   it("says nothing about a file it was not given", () => {
-    expect(blockerCodes(null)).not.toContain("config_unparseable");
-    expect(blockerCodes(UNHEALABLE_TAB, null)).not.toContain("config_unparseable");
+    expect(blockerCodes(null)).not.toContain("config_needs_rewrite");
+    expect(blockerCodes(UNHEALABLE_TAB, null)).not.toContain("config_needs_rewrite");
   });
 
   it("carries no params, because it names no line", () => {
@@ -204,13 +207,13 @@ describe("config_unparseable — the blocker", () => {
       storyKey: null,
       configYml: UNHEALABLE_TAB,
       config: CONFIG,
-    }).blockers.filter((b) => b.code === "config_unparseable");
+    }).blockers.filter((b) => b.code === "config_needs_rewrite");
 
-    expect(blockers).toEqual([{ code: "config_unparseable", message: "config_unparseable" }]);
+    expect(blockers).toEqual([{ code: "config_needs_rewrite", message: "config_needs_rewrite" }]);
   });
 });
 
-describe("config_unparseable — what the author reads", () => {
+describe("config_needs_rewrite — what the author reads", () => {
   let en: i18n;
   let es: i18n;
 
@@ -244,7 +247,7 @@ describe("config_unparseable — what the author reads", () => {
       storyKey: null,
       configYml: UNHEALABLE_TAB,
       config: CONFIG,
-    }).blockers.find((b) => b.code === "config_unparseable");
+    }).blockers.find((b) => b.code === "config_needs_rewrite");
 
     expect(blocker).toBeDefined();
     return checkMessage(
@@ -253,20 +256,19 @@ describe("config_unparseable — what the author reads", () => {
     );
   };
 
-  it("says what is wrong and what it costs, in English", () => {
+  it("says what is wrong, what it costs and that the Compositor can rewrite it, in English", () => {
     expect(sentence(en)).toBe(
-      "Your site's _config.yml is not valid YAML, so the Compositor cannot save your " +
-        "settings to it. Fix the file in your repository before publishing: until you " +
-        "do, what you change in Site settings will not reach the published site.",
+      "Your site's _config.yml is written in a way that doesn't let us save your Site " +
+        "settings in it, so they would not reach the published site. We can rewrite the " +
+        "file for you.",
     );
   });
 
-  it("says what is wrong and what it costs, in Spanish", () => {
+  it("says what is wrong, what it costs and that the Compositor can rewrite it, in Spanish", () => {
     expect(sentence(es)).toBe(
-      "El archivo _config.yml de tu sitio no es YAML válido, así que el Compositor no " +
-        "puede guardar ahí tu configuración. Corrige el archivo en el repositorio antes " +
-        "de publicar: mientras no lo hagas, lo que cambies en Configuración del sitio " +
-        "no llega al sitio publicado.",
+      "El archivo _config.yml está escrito de una forma que no nos deja guardar en él lo " +
+        "que tienes en Configuración del sitio, así que esos ajustes no llegarían al sitio " +
+        "publicado. Podemos reescribir el archivo por ti.",
     );
   });
 
@@ -280,6 +282,7 @@ describe("config_unparseable — what the author reads", () => {
     }
     for (const catalogue of [enPublish, esPublish]) {
       expect(Object.keys(catalogue.checks)).not.toContain("config_unparseable_at_line");
+      expect(Object.keys(catalogue.checks)).not.toContain("config_unparseable");
     }
   });
 });
@@ -298,8 +301,8 @@ title: [broken
   dangling
 `;
 
-describe("config_unparseable — a heal that cannot write a block", () => {
-  it("names the block the writer could not edit, rather than nothing at all", () => {
+describe("config_needs_rewrite — a heal that cannot write a block", () => {
+  it("raises the rewrite blocker, rather than nothing at all", () => {
     const blockers = runPrePublishValidation({
       headSha: "same",
       currentRepoHead: "same",
@@ -313,20 +316,13 @@ describe("config_unparseable — a heal that cannot write a block", () => {
       config: CONFIG,
     }).blockers;
 
-    expect(blockers).toEqual([
-      {
-        code: "config_block_unwritable",
-        message: "config_block_unwritable",
-        entityId: "story_interface",
-        params: { block: "story_interface" },
-      },
-    ]);
+    expect(blockers).toEqual([{ code: "config_needs_rewrite", message: "config_needs_rewrite" }]);
   });
 
-  // The raw-file check already names a block written in a shape the writer
+  // The raw-file check already refuses a block written in a shape the writer
   // cannot edit. A heal that then throws for that same block must not put a
   // second copy of the same sentence on the author's screen.
-  it("names a block once when both the file and the heal refuse it", () => {
+  it("raises one blocker when both the file and the heal refuse a block", () => {
     const flow = `story_interface: {show_on_homepage: true}
 title: "A site"
 `;
@@ -342,16 +338,16 @@ title: "A site"
       storyKey: null,
       configYml: flow,
       config: CONFIG,
-    }).blockers.filter((b) => b.code === "config_block_unwritable");
+    }).blockers.filter((b) => b.code === "config_needs_rewrite");
 
-    expect(named.map((b) => b.entityId)).toEqual(["story_interface"]);
+    expect(named).toEqual([{ code: "config_needs_rewrite", message: "config_needs_rewrite" }]);
   });
 });
 
-describe("config_unparseable — the check and the write cannot drift", () => {
+describe("config_needs_rewrite — the check and the write cannot drift", () => {
   it("raises the blocker for exactly the files the publish would not write", () => {
     for (const [name, yaml, writes] of FIXTURES) {
-      expect({ name, blocked: blockerCodes(yaml).includes("config_unparseable") }).toEqual({
+      expect({ name, blocked: blockerCodes(yaml).includes("config_needs_rewrite") }).toEqual({
         name,
         blocked: !writes,
       });

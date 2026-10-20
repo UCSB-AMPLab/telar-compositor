@@ -16,6 +16,7 @@ import { load as loadYaml } from "js-yaml";
 import {
   publishableConfigYaml,
   runPrePublishValidation,
+  UnreadableConfigValueError,
   updateConfigFields,
 } from "~/lib/publish.server";
 import { project_config } from "~/db/schema";
@@ -136,8 +137,8 @@ describe("a value that runs on below its key", () => {
     expect(out).toContain("# Site Settings");
   });
 
-  it("raises no config_unparseable for a valid file with folded values", () => {
-    expect(blockerCodes(FOLDED_PLAIN)).not.toContain("config_unparseable");
+  it("raises no config_needs_rewrite for a valid file with folded values", () => {
+    expect(blockerCodes(FOLDED_PLAIN)).not.toContain("config_needs_rewrite");
   });
 
   it("replaces a folded single-quoted value whole", () => {
@@ -274,10 +275,13 @@ describe("where a value ends", () => {
     expect(updateConfigFields(input, { story_key: '"New"' })).toBe('story_key: "New"\nurl: keep\n');
   });
 
-  it("sweeps a quoted value holding a key-shaped line as an unclosed quote, keeping the key it repeats", () => {
+  // A file that parses is never swept: the sweep would take the key-shaped
+  // line with the value, so the write is refused and the rewrite offered.
+  it("refuses a quoted value holding a key-shaped line rather than sweeping it", () => {
     const input = 'custom: .nan\ndescription: "first\ncustom: null # last"\n';
     expect(() => loadYaml(input)).not.toThrow();
-    expect(updateConfigFields(input, { description: '"New"' })).toBe('custom: .nan\ndescription: "New"');
+    expect(() => updateConfigFields(input, { description: '"New"' })).toThrow(UnreadableConfigValueError);
+    expect(blockerCodes(input)).toContain("config_needs_rewrite");
   });
 
   it("replaces a quoted value that runs on when it is the file's only key", () => {
@@ -285,11 +289,11 @@ describe("where a value ends", () => {
     expect(updateConfigFields(input, { description: '"New"' })).toBe('description: "New"\n');
   });
 
-  it("removes no other line from a file that repeats a key", () => {
+  // An anchored value is not complete on its key line, and a file that repeats
+  // a key has no exact reading, so its end is unknown and nothing is removed.
+  it("removes no other line from a file that repeats a key: it refuses the anchored value", () => {
     const input = "description: &d old\ncustom: *d\ncustom: keep\n";
-    expect(updateConfigFields(input, { description: '"New"' })).toBe(
-      'description: "New"\ncustom: *d\ncustom: keep\n',
-    );
+    expect(() => updateConfigFields(input, { description: '"New"' })).toThrow(UnreadableConfigValueError);
   });
 
   it("compares a value that holds itself through an alias", () => {
@@ -297,7 +301,7 @@ describe("where a value ends", () => {
     expect(updateConfigFields(input, { description: '"New"' })).toBe('description: "New"\ncustom: &c [*c]\n');
   });
 
-  it("removes no line that could open a top-level entry, and lets the parse gate refuse instead", () => {
+  it("removes no line that could open a top-level entry, and refuses the write instead", () => {
     const cases = [
       'description: "first\nurl: inside\nlast"\nbaseurl: keep\n',
       "description: {\ncustom: old\n}\nurl: keep\n",
@@ -310,12 +314,53 @@ describe("where a value ends", () => {
     ];
     for (const input of cases) {
       expect(() => loadYaml(input)).not.toThrow();
-      const out = updateConfigFields(input, { description: '"New"' });
+      let out: string;
+      try {
+        out = updateConfigFields(input, { description: '"New"' });
+      } catch (err) {
+        expect(err).toBeInstanceOf(UnreadableConfigValueError);
+        expect(blockerCodes(input)).toContain("config_needs_rewrite");
+        continue;
+      }
       const kept = input
         .split("\n")
         .filter((l) => !l.startsWith("description:") && /^([?:]|[^ \t#].*?:)([ \t\r]|$)|^"custom":keep$/.test(l));
       for (const line of kept) expect({ input, has: out.split("\n").includes(line) }).toEqual({ input, has: true });
       expect(publishableConfigYaml(input, CONFIG)).toBeNull();
+      expect(blockerCodes(input)).toContain("config_needs_rewrite");
     }
+  });
+});
+
+/**
+ * In a file that parses, the unclosed-quote sweep never runs: a value whose
+ * end cannot be read is refused, and the publish check offers the rewrite.
+ * The sweep is kept for files that do not parse, where it repairs what an
+ * older serializer left.
+ */
+describe("updateConfigFields — refusing instead of sweeping", () => {
+  it("throws on bug report #68's eleventh-round input instead of sweeping an unrelated entry", () => {
+    const input = 'description: "first\nnote: inside\nlast"\ncustom: keep\nurl: keep\n';
+    expect(() => loadYaml(input)).not.toThrow();
+    expect(() => updateConfigFields(input, { description: '"New"' })).toThrow(UnreadableConfigValueError);
+  });
+
+  it("throws on a folded quoted value in a file that repeats a key", () => {
+    const input = 'description: "first\n  second"\ncustom: a\ncustom: b\n';
+    expect(() => loadYaml(input, { json: true })).not.toThrow();
+    expect(() => updateConfigFields(input, { description: '"New"' })).toThrow(UnreadableConfigValueError);
+  });
+
+  it("still replaces a single-line value in a file that repeats a key", () => {
+    const input = "description: old # note\ncustom: a\ncustom: b\n";
+    expect(updateConfigFields(input, { description: '"New"' })).toBe('description: "New"\ncustom: a\ncustom: b\n');
+  });
+
+  it("still sweeps an unclosed quote in a file that does not parse", () => {
+    const input = 'title: "A site"\ndescription: "A description\nthat ran on\n\npast its quote\nurl: https://example.org\n';
+    expect(() => loadYaml(input)).toThrow();
+    expect(updateConfigFields(input, { description: '"New"' })).toBe(
+      'title: "A site"\ndescription: "New"\nurl: https://example.org\n',
+    );
   });
 });
