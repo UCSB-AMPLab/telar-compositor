@@ -93,7 +93,7 @@ import {
 import {
   findInYamlBlock,
   parseYamlScalar,
-  topLevelKeyRemainder,
+  readTopLevelScalar,
 } from "~/lib/config-yaml-block.server";
 import { pythonStrip } from "~/lib/python-whitespace";
 import { isHeldTermId, publishedRowPerTermId } from "~/lib/csv-records";
@@ -125,6 +125,7 @@ import { SheetUnreadableError } from "~/lib/unreadable-file.server";
 import { recordStorySheetReads, storySheetPath } from "~/lib/story-source-path.server";
 import { recordStoryFileReads, storyFileRead, type OwedStoryFile } from "~/lib/story-files-to-delete.server";
 import { canonicalKindsJson, repoGlossaryKindsJson } from "~/lib/glossary-kinds-yaml.server";
+import { yamlMappingWithoutMerges } from "~/lib/yaml.server";
 import { readSiteSheet, siteSheetFileAt } from "~/lib/site-sheets.server";
 
 // ---------------------------------------------------------------------------
@@ -2627,28 +2628,21 @@ function extractStoryKey(yamlContent: string): string | null {
 }
 
 /**
- * Extracts managed config field values from a raw _config.yml string using
- * line-based parsing — same approach as disableGoogleSheetsInConfig, to
- * preserve multi-line config files with comments (a full js-yaml parse+
- * rewrite of the whole document is what this line walk exists to avoid;
- * `parseYamlScalar`'s quoted branch does use js-yaml, but only on the single
- * captured scalar, not the document).
+ * Extracts managed config field values from a raw _config.yml string, in the
+ * string form `comparableConfigValue` compares D1's with.
  *
- * Only extracts top-level scalar keys (the managed set), plus story_key via the
- * block-aware reader above. Complex YAML sub-keys (e.g. telar.version) are not
- * touched. Handles double-quoted, single-quoted, and bare scalar values
- * correctly, including values containing a quote (e.g. HTML descriptions) —
- * but only when the scalar is a single line. A value spanning multiple
- * lines (e.g. `description: "a\n  b"`) is not reassembled by this line
- * walk: only the first line reaches `parseYamlScalar`, which then sees an
- * unterminated quote, falls back to `decodeQuotedScalarFallback`, and
- * returns just that first line's content (verified: `"a\n  b"` comes back
- * as `"a"`, not `"a b"`). Pre-existing behaviour, not fixed here — fixing
- * it means changing the file walk itself, which exists to keep comments
- * and unmanaged keys intact.
+ * Top-level scalars are read through `readTopLevelScalar`: from the parsed
+ * document where the file parses under the core schema, so a value folded or
+ * quoted over several lines, or a block scalar, reads whole, as the publish
+ * writer reads it; from each key's line where the file does not parse, where
+ * only a value's first line is read. story_key (`extractStoryKey`) and the
+ * `story_interface`-style block children are read from their lines in every
+ * file, so a value of theirs over several lines reads as its first line; the
+ * glossary kinds are read from the parsed document.
  */
 export function extractConfigFields(yamlContent: string): Record<ManagedConfigField, string | null> {
   const result: Record<string, string | null> = {};
+  const doc = yamlMappingWithoutMerges(yamlContent);
   for (const key of MANAGED_CONFIG_FIELDS) {
     if (key === "story_key") {
       // story_key is nested under `protected:` — needs the block-aware reader
@@ -2675,10 +2669,8 @@ export function extractConfigFields(yamlContent: string): Record<ManagedConfigFi
       result[key] = found ?? null;
       continue;
     }
-    // The whole remainder of the key's line, through the shared matcher that
-    // readConfigScalar also uses, so both readers of this file agree.
-    const raw = topLevelKeyRemainder(yamlContent, yamlKey);
-    result[key] = raw !== undefined ? parseYamlScalar(raw) : null;
+    // The reader readConfigScalar also uses, so both readers of this file agree.
+    result[key] = readTopLevelScalar(yamlContent, yamlKey, doc) ?? null;
   }
   return result as Record<ManagedConfigField, string | null>;
 }
