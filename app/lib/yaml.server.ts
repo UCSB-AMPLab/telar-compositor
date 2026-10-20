@@ -8,10 +8,10 @@
  * vs the full js-yaml package). Call this from server-only modules (.server.ts)
  * — never import into client bundles.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
-import { load, FAILSAFE_SCHEMA, Type } from "js-yaml";
+import { load, CORE_SCHEMA, FAILSAFE_SCHEMA, Type } from "js-yaml";
 import { composePyYaml, constructionFails, mappingValue, STR_TAG } from "~/lib/pyyaml";
 
 /**
@@ -41,6 +41,24 @@ export function yamlMappingOf(text: string): YamlMapping | null {
   let doc: unknown;
   try {
     doc = parseYaml(text);
+  } catch {
+    return null;
+  }
+  if (doc === null || doc === undefined) return {};
+  return isYamlMapping(doc) ? doc : null;
+}
+
+/**
+ * YAML text as a mapping read with no merge keys and no repeated keys, or null
+ * when it will not parse that way or is not a mapping. `parseYaml` lets a
+ * repeated key's last occurrence stand and a `<<` merge fill keys from
+ * elsewhere, either of which can supply a value a line removed from the text
+ * held, so a comparison meant to show that no line was lost reads this way.
+ */
+export function yamlMappingWithoutMerges(text: string): YamlMapping | null {
+  let doc: unknown;
+  try {
+    doc = load(text, { schema: CORE_SCHEMA });
   } catch {
     return null;
   }
