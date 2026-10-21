@@ -30,6 +30,11 @@ A redesigned check against GitHub, fields that show they can be edited and prote
 - **Messages that claimed what had not been checked** — The Publish page lists only the checks it ran; the Upgrade Telar page says what an upgrade can change and how its build ended, and no longer tells a site already on the latest release that it was just upgraded; onboarding no longer finishes when it could not check your settings; and the object delete dialog says what each choice does.
 - **Sites never published from the Compositor** — The unpublished-changes window, opened from the status at the top of the page, now says the site hasn't been published from the Compositor yet, instead of showing a dash where the date would be.
 - **Checking an object's IIIF manifest** — On the Objects page, the line under a newly added IIIF object says whether its manifest loaded. If it couldn't be loaded, or what loaded isn't a manifest, it tells you to open the object and check its Source URL.
+- **Site settings in a `_config.yml` with values over several lines** — When a setting such as the site description ran over several lines in `_config.yml`, the Publish page refused to publish and said the file couldn't be read. Site settings are now saved into such files.
+- **A `_config.yml` the Compositor can't edit** — The Publish page no longer sends you to fix `_config.yml` on GitHub. It offers to rewrite the file from the Telar template, and shows what the rewrite keeps, changes and removes before you accept it.
+- **Changes on GitHub to a setting over several lines** — The review of changes made on GitHub read such a setting as its first line only, and offered to replace yours with it. It now reads the whole setting.
+- **Addresses with no page** — An address that matches no page, such as an old link, now shows "Page not found" with a link to Start instead of the crash screen.
+- **"Nothing to sync"** — When the check against GitHub finds nothing to apply, the message no longer says the commits only touched README, /docs or LICENSE.
 
 ## v1.5.4-beta (2026-10-11)
 
