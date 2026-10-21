@@ -24,16 +24,18 @@
  * `stripManagedStringScalars` (its sweep state is unterminated-quoted-scalar
  * line classification, not block traversal).
  *
- * Alongside the block walkers this module also owns `configLineRegex` /
- * `readConfigScalar`, the single top-level `key: value` line matcher that
- * create-site (`buildBornCleanConfig`, `rewriteConfigUrl`), commit
- * (`verifySiteUrl`), and onboarding (`fix-site-config`) share so a rewrite
- * and a read of the same line never disagree about its shape.
+ * Alongside the block walkers this module also owns `configLineRegex`, the
+ * top-level `key: value` line matcher create-site (`buildBornCleanConfig`,
+ * `rewriteConfigUrl`) and onboarding (`fix-site-config`) rewrite through, and
+ * `readTopLevelScalar` / `readConfigScalar`, the readers commit
+ * (`verifySiteUrl`) and sync (`extractConfigFields`) share, which read a
+ * value from the parsed document where the file parses and from its line
+ * where it does not.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
-import { parseYaml } from "~/lib/yaml.server";
+import { parseYaml, sameYamlValue, yamlMappingWithoutMerges, type YamlMapping } from "~/lib/yaml.server";
 
 /**
  * Escape a config key for literal interpolation into a RegExp. Every caller
@@ -316,8 +318,9 @@ export function parseYamlScalar(raw: string): string | null {
  * before the `#`, and never reads one inside quotes — so the remainder goes
  * to `parseYamlScalar` whole.
  *
- * The single reader both `readConfigScalar` and sync's `extractConfigFields`
- * use, so the two readers of a `_config.yml` line cannot disagree about it.
+ * The line half of `readTopLevelScalar`, which both `readConfigScalar` and
+ * sync's `extractConfigFields` read through, so the two readers of a
+ * `_config.yml` value cannot disagree about it.
  */
 export function topLevelKeyRemainder(content: string, key: string): string | undefined {
   const m = content.match(new RegExp(`^${escapeRegex(key)}:[ \\t]*(.*)$`, "m"));
@@ -325,18 +328,59 @@ export function topLevelKeyRemainder(content: string, key: string): string | und
 }
 
 /**
- * Reads a top-level `key:` scalar from a `_config.yml` string via
- * `configLineRegex`, returning the value with any surrounding matched quotes
- * removed and surrounding whitespace trimmed, or `undefined` when the key's
- * line is absent. This is the read counterpart to create-site's rewrite path:
- * it understands the same double-quoted / single-quoted / bare shapes and
- * never folds an inline comment into the returned value (the exact failure
- * mode of the anchored `^url:\s*"?([^"\n]+)"?\s*$` regex this replaces).
+ * A top-level scalar's value in a `_config.yml`: null for an empty value,
+ * undefined for a key the file does not hold.
+ *
+ * In a file that parses under the core schema (`yamlMappingWithoutMerges`,
+ * the reading the publish writer judges values by), a string comes from the
+ * parsed document, so a value folded or quoted over several lines, or written
+ * as a block scalar, reads whole; the line walk sees only its first line. A
+ * number or boolean reads as its text on the key's line (`parseYamlScalar`),
+ * as written, so `004` stays `004`, when that text reads as the parsed value,
+ * and as the parsed value otherwise; null, a list or a mapping reads as the
+ * line does. A key only the line walk finds is not a top-level key of the
+ * document, and reads as absent.
+ *
+ * In a file that does not parse, or that repeats a key, the line walk alone
+ * answers. `doc` is the parsed document when the caller already holds it.
+ */
+export function readTopLevelScalar(
+  content: string,
+  key: string,
+  doc: YamlMapping | null = yamlMappingWithoutMerges(content),
+): string | null | undefined {
+  const raw = topLevelKeyRemainder(content, key);
+  const onLine = raw === undefined ? undefined : parseYamlScalar(raw);
+  if (doc === null) return onLine;
+  if (!Object.hasOwn(doc, key)) return undefined;
+  const value = doc[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return lineHolds(onLine, value) ? onLine : String(value);
+  return onLine === undefined ? null : onLine;
+}
+
+/**
+ * Whether the text on a key's line reads as the value the parsed document
+ * gives the key. It does not when the line is an alias, or when the first
+ * line matching the key sits inside another key's quoted value.
+ */
+function lineHolds(onLine: string | null | undefined, value: number | boolean): onLine is string {
+  if (typeof onLine !== "string") return false;
+  const read = yamlMappingWithoutMerges(`v: ${onLine}`);
+  return read !== null && sameYamlValue(read.v, value);
+}
+
+/**
+ * Reads a top-level `key:` scalar from a `_config.yml` string
+ * (`readTopLevelScalar`), with any quotes removed and surrounding whitespace
+ * trimmed, or `undefined` when the file holds no such key. It never folds an
+ * inline comment into the returned value (the exact failure mode of the
+ * anchored `^url:\s*"?([^"\n]+)"?\s*$` regex this replaces).
  */
 export function readConfigScalar(content: string, key: string): string | undefined {
-  const raw = topLevelKeyRemainder(content, key);
-  if (raw === undefined) return undefined;
-  // An absent value is the empty string here, rather than the parser's null:
-  // the key line exists, so the caller is being told what is on it.
-  return parseYamlScalar(raw) ?? "";
+  const value = readTopLevelScalar(content, key);
+  if (value === undefined) return undefined;
+  // An absent value is the empty string here, rather than null: the key
+  // exists, so the caller is being told what it holds.
+  return value ?? "";
 }
