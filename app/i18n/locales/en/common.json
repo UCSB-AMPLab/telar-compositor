@@ -128,5 +128,10 @@
     "body_stale": "In another tab you opened the site {{other}} while this tab was showing the site {{site}}. Reload this tab before you make more changes.",
     "next": "Reload this tab to work on {{other}}. To go back to {{site}}, reload, click the site name (top left, next to the Telar logo) and choose {{site}} from the list.",
     "reload": "Reload"
+  },
+  "not_found": {
+    "title": "Page not found",
+    "body": "There's no page at this address. The link may be out of date, or what it pointed to may have been deleted.",
+    "start": "Go to Start"
   }
 }

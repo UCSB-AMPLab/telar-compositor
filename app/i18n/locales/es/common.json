@@ -128,5 +128,10 @@
     "body_stale": "En otra pestaña abriste el sitio {{other}} mientras esta mostraba el sitio {{site}}. Recarga esta pestaña antes de seguir haciendo cambios.",
     "next": "Recarga esta pestaña para trabajar en el sitio {{other}}. Para volver al sitio {{site}}, recarga, haz clic en el nombre del sitio (arriba a la izquierda, junto al logo de Telar) y elige {{site}} en la lista.",
     "reload": "Recargar"
+  },
+  "not_found": {
+    "title": "No encontramos esta página",
+    "body": "No hay ninguna página en esta dirección. Puede que el enlace sea viejo o que se haya borrado lo que había aquí.",
+    "start": "Ir a Inicio"
   }
 }
