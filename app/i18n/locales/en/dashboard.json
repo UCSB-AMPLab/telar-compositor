@@ -58,7 +58,7 @@
     "title": "Repository has changed",
     "computing": "Comparing changes...",
     "no_changes": "Nothing to sync",
-    "no_changes_body": "GitHub has commits to files the Compositor doesn't manage (README, /docs, LICENSE). Your sync baseline has been updated — no action needed.",
+    "no_changes_body": "GitHub has new commits, but they bring no changes to apply in the Compositor. You don't need to do anything.",
     "applying": "Applying changes...",
     "success": "Sync complete",
     "retry": "Try again",
