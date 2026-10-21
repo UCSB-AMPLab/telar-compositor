@@ -4,9 +4,11 @@
  * crash UI, surface a Reload action that calls `window.location.reload`,
  * surface a Report-this-crash action that opens the post-crash bug-report
  * panel, record the crash exactly once via `recordError`, and pin the
- * post-crash toast that fires after the user submits.
+ * post-crash toast that fires after the user submits. A 404 (an address
+ * with no route, or a route's 404 response) renders the not-found screen
+ * instead, with no report action and nothing recorded.
  *
- * @version v1.2.0-beta
+ * @version v1.5.5-beta
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -164,6 +166,58 @@ describe("Route ErrorBoundary", () => {
     expect(openSpy).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("submit_toast")).not.toBeNull();
     openSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
+  it("an address with no route renders the not-found screen, records nothing and offers no report", async () => {
+    const Stub = createRoutesStub([
+      { path: "/", ErrorBoundary, children: [{ path: "config", Component: () => null }] },
+    ]);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<Stub initialEntries={["/settings"]} />);
+    expect(await screen.findByText("not_found.title")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "not_found.start" }).getAttribute("href")).toBe("/");
+    expect(screen.queryByText("crash_title")).toBeNull();
+    expect(screen.queryByRole("button", { name: "crash_report" })).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(recordErrorSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("a route's 404 response renders the not-found screen and records nothing", async () => {
+    const Stub = createRoutesStub([
+      {
+        path: "/",
+        loader: () => {
+          throw new Response("Not found", { status: 404 });
+        },
+        Component: () => null,
+        ErrorBoundary,
+      },
+    ]);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<Stub initialEntries={["/"]} />);
+    expect(await screen.findByText("not_found.title")).not.toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(recordErrorSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("a route's non-404 response still renders the crash screen and records it", async () => {
+    const Stub = createRoutesStub([
+      {
+        path: "/",
+        loader: () => {
+          throw new Response("Server error", { status: 500 });
+        },
+        Component: () => null,
+        ErrorBoundary,
+      },
+    ]);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<Stub initialEntries={["/"]} />);
+    expect(await screen.findByText("crash_title")).not.toBeNull();
+    await waitFor(() => expect(recordErrorSpy).toHaveBeenCalledTimes(1));
     errSpy.mockRestore();
   });
 });

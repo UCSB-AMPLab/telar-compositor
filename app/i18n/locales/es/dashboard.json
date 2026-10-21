@@ -58,7 +58,7 @@
     "title": "El repositorio ha cambiado",
     "computing": "Comparando cambios...",
     "no_changes": "Nada para sincronizar",
-    "no_changes_body": "GitHub tiene cambios en archivos que el Compositor no gestiona (README, /docs, LICENSE). Tu punto de partida ya está al día — no hace falta hacer nada.",
+    "no_changes_body": "Hay commits nuevos en GitHub, pero no traen cambios que haya que aplicar en el Compositor. No tienes que hacer nada.",
     "applying": "Aplicando cambios...",
     "success": "Sincronización completa",
     "retry": "Intentar de nuevo",

@@ -8,15 +8,15 @@
  * to prevent hydration mismatches between server and client. The
  * `Layout` component wraps every authenticated and unauthenticated
  * route alike, and exports an `ErrorBoundary` (below) that catches
- * any uncaught throw from a route and renders a recoverable crash
- * screen with a Report-this-crash button wired into the bug-report
- * pipeline.
+ * any uncaught throw from a route: a 404 renders a not-found screen,
+ * anything else a recoverable crash screen with a Report-this-crash
+ * button wired into the bug-report pipeline.
  *
  * `Layout` also installs the document-level paste cleaning
  * (`~/lib/paste-cleaning`) once on the client, so every plain text field on
  * every route, onboarding included, drops the characters a Telar build rejects.
  *
- * @version v1.5.0-beta
+ * @version v1.5.5-beta
  */
 
 import { useEffect, useState } from "react";
@@ -51,8 +51,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  // useLoaderData is undefined during error boundary renders — fall back.
-  let locale = "en";
+  // useLoaderData is undefined during error boundary renders (an address with
+  // no route never runs the root loader), so the language falls back to the
+  // request's i18next instance. The browser's i18next reads `<html lang>`, so
+  // an `en` fallback would switch a Spanish error screen to English on hydration.
+  const { i18n } = useTranslation();
+  let locale = i18n.language || "en";
   let env = "dev";
   try {
     // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -96,7 +100,8 @@ export default function App() {
 
 /**
  * Route ErrorBoundary — wraps every route at the root of the
- * authenticated app. When a route throws, this component:
+ * authenticated app. A 404 route response renders `NotFound`. For any
+ * other throw, `Crash`:
  *
  *   1. Calls `recordError(err, "boundary")` inside a `useEffect`
  *      (the SSR guard: `useEffect` does NOT run during SSR render,
@@ -113,6 +118,35 @@ export default function App() {
  */
 export function ErrorBoundary() {
   const error = useRouteError();
+  if (isRouteErrorResponse(error) && error.status === 404) return <NotFound />;
+  return <Crash error={error} />;
+}
+
+/**
+ * An address with no route, or a 404 thrown by a route without its own
+ * boundary. Not a crash, so nothing is recorded and no report is offered.
+ */
+function NotFound() {
+  const { t } = useTranslation("common");
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-cream p-6">
+      <div className="max-w-md w-full bg-white rounded-lg shadow-xl p-6 text-center">
+        <h1 className="font-heading text-xl font-semibold text-charcoal">{t("not_found.title")}</h1>
+        <p className="font-body text-sm text-gray-600 mt-3">{t("not_found.body")}</p>
+        <div className="flex justify-center mt-6">
+          <a
+            href="/"
+            className="font-heading text-sm uppercase tracking-wider px-4 py-2 rounded text-white bg-terracotta hover:bg-terracotta/90 transition-colors"
+          >
+            {t("not_found.start")}
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Crash({ error }: { error: unknown }) {
   const { t } = useTranslation("bug-report");
   const [panelOpen, setPanelOpen] = useState(false);
   const [captured, setCaptured] = useState<CapturedError | null>(null);

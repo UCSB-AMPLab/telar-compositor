@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import React from "react";
 import * as Y from "yjs";
 
@@ -113,7 +113,13 @@ afterEach(() => cleanup());
 describe("a term's ID and its title", () => {
   it("follows the title while the term is the one just created, and stops once another term is selected", async () => {
     await mount();
-    fireEvent.click(screen.getByRole("button", { name: "new_term_button" }));
+    // The route selects the new term in an animation frame, and the observer
+    // that moves the ID with the title is attached in an effect after that
+    // render; editing before the effect runs goes unobserved.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "new_term_button" }));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
     await waitFor(() => expect((screen.getByTestId("title-editor") as HTMLInputElement).value).toBe("untitled_term"));
 
     editTitle("Nueva palabra");
