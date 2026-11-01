@@ -34,7 +34,7 @@
  * It hits the public template unauthenticated; set `GITHUB_TOKEN` to dodge the
  * unauthenticated rate limit if needed.
  *
- * @version v1.5.0-beta
+ * @version v1.5.6-beta
  */
 
 import { BUILT_IN_PAGES } from "~/lib/framework-page-frontmatter.server";

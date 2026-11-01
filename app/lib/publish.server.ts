@@ -11,14 +11,15 @@
  *     assembly)
  *   - Line-based `_config.yml` mutation preserving comments and
  *     formatting
- *   - Change-summary computation against a stored publish snapshot
+ *   - Change-summary computation against a stored publish snapshot or,
+ *     for a site's first publish, against what its import read
  *   - Pre-publish validation (stale HEAD, missing titles, missing
  *     positions)
  *   - Full publish file-set assembly (`buildPublishFileSet`)
  *
  * Called by the Publish route — no UI logic lives here.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { glossarySheetOrder } from "~/lib/glossary-order.server";

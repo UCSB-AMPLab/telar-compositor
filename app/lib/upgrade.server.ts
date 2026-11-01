@@ -21,6 +21,9 @@
  *   - healMissingFrameworkFiles fails open too: any failure (bad tag, tree
  *     read, content fetch) degrades to an empty result so publish is never
  *     blocked; the missing file retries on the next publish.
+ *   - computeUpgradeDiff deletes only framework files the site's own release
+ *     shipped, so an author's files in the same folders stay; with no release
+ *     to compare against, it deletes nothing.
  *
  * Framework repo: UCSB-AMPLab/telar (public — user OAuth token is sufficient).
  * Truncation note: the framework repo has no IIIF tiles, so its tree stays

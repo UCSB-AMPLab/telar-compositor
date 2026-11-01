@@ -19,7 +19,7 @@
  * With the state read and nothing changed, Publish stays on where the checks
  * found headings the site misreads, since a publish is what corrects them.
  *
- * @version v1.5.0-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

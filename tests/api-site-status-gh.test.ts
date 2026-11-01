@@ -15,7 +15,7 @@
  *       row; force=1 (Try again) refreshes through a claim of zero TTL and
  *       still gives way to another caller's claim.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

@@ -13,7 +13,7 @@
  * publish deletes, and that a publish strips frontmatter literals carried over
  * from older sites.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi } from "vitest";

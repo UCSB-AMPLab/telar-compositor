@@ -11,7 +11,7 @@
  * page block a publish wrote whose move did not land
  * (`snapshotSettledOnLoad`).
  *
- * @version v1.5.0-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

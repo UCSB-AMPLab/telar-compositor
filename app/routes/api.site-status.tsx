@@ -23,7 +23,7 @@
  * fails open: it returns the stored timestamps without the commit message
  * rather than erroring (mirrors the `_app` loader's fail-open posture).
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import type { Route } from "./+types/api.site-status";

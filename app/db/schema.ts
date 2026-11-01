@@ -11,7 +11,7 @@
  * snapshot does not write (a story's `source_path`, `extra_columns`, the
  * config's `telar_version`) are written to D1 directly.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { sql } from "drizzle-orm";

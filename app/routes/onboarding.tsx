@@ -27,7 +27,7 @@
  * course outright when it has not — the loader flag is what the browser is
  * shown, never what the decision rests on.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { redirect } from "react-router";

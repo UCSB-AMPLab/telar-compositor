@@ -26,7 +26,7 @@
  * defaults are written to D1 alone and reach `_config.yml` at the next
  * publish, so creating a course cannot fail on a GitHub error.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { KNOWN_STORY_KEYS, isStoryStepRow } from "~/lib/story-step-rows";
