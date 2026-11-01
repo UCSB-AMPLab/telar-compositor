@@ -1,14 +1,14 @@
 # Changelog
 
-## v1.5.6-beta (2026-10-31)
+## v1.5.6-beta (2026-11-01)
 
 Fixes to upgrades from the Compositor, to the first publish of an imported site, and to the site menu.
 
 ### Fixes
 
-- **Your own files deleted in an upgrade** — When you upgraded Telar from the Compositor, files you had added inside folders Telar also uses were deleted, such as your images in `assets/images/` or a theme in `_data/themes/`. Now only files that came with your site's previous Telar release are deleted. If that release can't be identified, nothing is deleted.
-- **The first publish of an imported site** — In its commit message, every story, object, page and glossary term appeared as added, although they were already in your repository. Now only what you changed in the Compositor since the import appears there. This applies to sites imported from this release on.
-- **Home in the site menu** — With Home switched on in the menu editor, it was still left out of the published menu. It is now published as the editor shows it. On a site published before this release, the menu appears once as a change on the Publish page, so you can publish the Home item.
+- **Your own files deleted in an upgrade** — When you upgraded Telar from the Compositor, files you had added inside folders that also contain Telar's files were deleted, such as your images in `assets/images/` or a theme in `_data/themes/`. Now only files that were part of your site's previous Telar release are deleted. If that release can't be identified, nothing is deleted.
+- **The first publish of an imported site** — In its commit message, every story, object, page and glossary term appeared as added, although they were already in your repository. Now only what you changed in the Compositor since the import appears there. For sites imported before this release, everything still appears as added in the first publish's commit message.
+- **Home in the site menu** — With Home shown in the navigation bar on Home and Pages, it was still left out of the published menu. The menu is now published as you see it in the Compositor. On a site published before this release, the menu appears once as a change on the Publish page, so you can publish the Home item.
 
 ### Data layer
 
