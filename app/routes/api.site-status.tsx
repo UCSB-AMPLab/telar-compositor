@@ -58,6 +58,7 @@ import { compareTelarVersion } from "~/lib/telar-version";
 import { getInstallationInfo, resolveProjectToken } from "~/lib/github-app.server";
 import {
   computeChangeSummary,
+  importBaselineOf,
   buildEntityHashes,
 } from "~/lib/publish.server";
 import type { PublishSnapshot } from "~/lib/publish.server";
@@ -104,7 +105,7 @@ async function loadChangeSummary(
     ? (JSON.parse(activeProject.publish_snapshot) as PublishSnapshot)
     : null;
 
-  return computeChangeSummary(currentState, snapshot);
+  return computeChangeSummary(currentState, snapshot, importBaselineOf(activeProject.import_baseline));
 }
 
 /** Counts changed entities across the ChangeSummary spectrum (0 when up to date). */

@@ -93,6 +93,7 @@ vi.mock("~/lib/github.server", () => ({ githubHeaders: vi.fn(() => ({})) }));
 vi.mock("~/lib/publish.server", () => ({
   computeChangeSummary: mocks.computeChangeSummary,
   buildEntityHashes: mocks.buildEntityHashes,
+  importBaselineOf: () => null,
 }));
 vi.mock("~/lib/sync.server", () => ({
   computeFullSyncDiff: vi.fn(),

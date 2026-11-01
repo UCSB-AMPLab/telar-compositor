@@ -2219,9 +2219,42 @@ function objectIdSequence(hash: string): string[] {
   }
 }
 
+/**
+ * The four entity buckets of a first publish. With no baseline every entity is
+ * added. An imported site's entities were in the repository before this
+ * publish, so with the import's hashes they are compared as a later publish
+ * compares them with its snapshot, and only the author's own changes are
+ * named. A baseline in another hash format is not compared, since every entity
+ * would read as changed.
+ */
+function firstPublishEntities(
+  currentState: CurrentPublishState,
+  baseline: EntityHashes | null,
+): Pick<ChangeSummary, "stories" | "objects" | "pages" | "glossary"> {
+  if (baseline === null || (baseline.version ?? 1) !== ENTITY_HASHES_VERSION) {
+    const added = <T>(items: T[]) => ({ new: items, modified: [] as T[], deleted: [] as T[] });
+    return {
+      stories: added(currentState.stories),
+      objects: added(currentState.objects),
+      pages: added(currentState.pages),
+      glossary: added(currentState.glossary),
+    };
+  }
+  const since = <T>(current: T[], idOf: (item: T) => string, toDeleted: (id: string) => T, currentHashes: Record<string, string>, baselineHashes: Record<string, string> | undefined) =>
+    diffEntities({ current, idOf, toDeleted, currentHashes, snapshotHashes: baselineHashes ?? {}, legacyIds: [], backCompat: false });
+  const hashes = currentState.entityHashes;
+  return {
+    stories: since(currentState.stories, (s) => s.story_id, (story_id) => ({ story_id, title: null }), hashes.stories, baseline.stories),
+    objects: since(currentState.objects, (o) => o.object_id, (object_id) => ({ object_id, title: null }), hashes.objects, baseline.objects),
+    pages: since(currentState.pages, (p) => p.slug, (slug) => ({ slug, title: null }), hashes.pages, baseline.pages),
+    glossary: since(currentState.glossary, (g) => g.term_id, (term_id) => ({ term_id, title: null }), hashes.glossary, baseline.glossary),
+  };
+}
+
 export function computeChangeSummary(
   currentState: CurrentPublishState,
   snapshot: PublishSnapshot | null,
+  importBaseline: EntityHashes | null = null,
 ): ChangeSummary {
   if (snapshot === null) {
     // First publish: every D1 file will be created. Drafts are absent from
@@ -2232,10 +2265,7 @@ export function computeChangeSummary(
     return {
       isUpToDate: false,
       backCompatBootstrap: false,
-      stories: { new: currentState.stories, modified: [], deleted: [] },
-      objects: { new: currentState.objects, modified: [], deleted: [] },
-      pages: { new: currentState.pages, modified: [], deleted: [] },
-      glossary: { new: currentState.glossary, modified: [], deleted: [] },
+      ...firstPublishEntities(currentState, importBaseline),
       settings: { changed: [{ key: "all", label: "All settings (first publish)" }] },
       landing: { changed: currentState.entityHashes.landing.length > 0 },
       navigation: { changed: currentState.entityHashes.navigation.length > 0 },
@@ -3954,6 +3984,34 @@ function servedAddressesUnlikeSlugs(entries: readonly NavItem[]): string[] {
   return entries
     .filter((e) => e.type === "page" && e.visible !== false && typeof e.slug === "string" && siteAddressOfPage(e.slug) !== e.slug)
     .map((e) => siteAddressOfPage(e.slug as string));
+}
+
+/** A project's `import_baseline` read back: null for none, and for text that is not the JSON of an object. */
+export function importBaselineOf(text: string | null | undefined): EntityHashes | null {
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed !== null && typeof parsed === "object" ? (parsed as EntityHashes) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Records what an import read as the baseline a site's first publish compares
+ * with (`computeChangeSummary`). Taken from D1 as the import left it, with the
+ * function the publish hashes with, so an entity the author has not touched
+ * since hashes the same. The import has already landed when this runs: a
+ * failure here leaves the column NULL, and the first publish then names
+ * everything it writes as added, rather than failing the import.
+ */
+export async function recordImportBaseline(db: ReturnType<typeof getDb>, projectId: number): Promise<void> {
+  try {
+    const hashes = await buildEntityHashes(db, projectId);
+    await db.update(projects).set({ import_baseline: JSON.stringify(hashes) }).where(eq(projects.id, projectId));
+  } catch (err) {
+    console.error("recordImportBaseline: the baseline was not recorded", err);
+  }
 }
 
 export async function buildEntityHashes(
