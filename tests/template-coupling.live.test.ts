@@ -796,7 +796,6 @@ const NOT_DELIVERED: Array<{ path: string; why: string }> = [
   { path: ".gitignore", why: "a user may add their own ignores; overwriting would discard them" },
   { path: "CITATION.cff", why: "names the framework's authors, not the site's; delivering it would misattribute the user's site" },
   { path: "_config.yml", why: "site settings the compositor owns field-by-field through KNOWN_CONFIG_KEYS; a whole-file delivery would overwrite every one" },
-  { path: "migration.json", why: "the framework's own migration ledger, read by scripts/upgrade.py, which the compositor does not run" },
   { path: "objects.json", why: "generated at build from objects.csv" },
   // The three built-in pages. Not delivered here because each is author-editable
   // and index.md is managed content besides — see the frontmatter check below
