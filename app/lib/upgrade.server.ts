@@ -30,7 +30,7 @@
  * alphabetically, so they will be present even in a truncated tree. Revisit
  * if truncation is ever detected in practice.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { githubHeaders, getRepoTree, getFileContent, getFileBytesAtRef } from "~/lib/github.server";
@@ -744,18 +744,27 @@ export async function fetchAllReleases(token: string): Promise<TelarRelease[]> {
  * tree that cannot be read, or comes back truncated, throws
  * ReleaseTreeUnreadableError naming the release: a partial tree would read
  * the paths it leaves out as files the release does not ship, and delete
- * them.
+ * them. With `missingAsNull`, a tag GitHub does not have (404) answers null
+ * rather than throwing.
  */
+async function getFrameworkTreeAtTag(token: string, tagName: string): Promise<TreeEntry[]>;
 async function getFrameworkTreeAtTag(
   token: string,
   tagName: string,
-): Promise<TreeEntry[]> {
+  options: { missingAsNull: true },
+): Promise<TreeEntry[] | null>;
+async function getFrameworkTreeAtTag(
+  token: string,
+  tagName: string,
+  options: { missingAsNull?: boolean } = {},
+): Promise<TreeEntry[] | null> {
   let data: { tree: TreeEntry[]; truncated: boolean };
   try {
     const res = await fetch(
       `${GITHUB_API}/repos/${FRAMEWORK_OWNER}/${FRAMEWORK_REPO}/git/trees/${encodeURIComponent(tagName)}?recursive=1`,
       { headers: githubHeaders(token) },
     );
+    if (res.status === 404 && options.missingAsNull) return null;
     if (!res.ok) throw new Error(`GitHub API error fetching framework tree at ${tagName}: ${res.status}`);
     data = (await res.json()) as { tree: TreeEntry[]; truncated: boolean };
   } catch (err) {
@@ -854,11 +863,24 @@ function upgradeDelivers(
 }
 
 /**
- * Whether an upgrade deletes a framework path the release no longer ships,
- * never a DELIVERED_WHEN_ABSENT one.
+ * Whether an upgrade deletes a framework path: one the site's current release
+ * shipped and the target release does not, never a DELIVERED_WHEN_ABSENT one.
+ * A framework prefix also holds the author's own files (images in
+ * assets/images/, a custom theme in _data/themes/), and no release lists
+ * those, so only the release the site is on can say a path was the
+ * framework's. With no such release (`fromPaths` null) nothing is deleted.
  */
-function upgradeDeletes(path: string, releaseMap: Map<string, string>): boolean {
-  return !releaseMap.has(path) && !DELIVERED_WHEN_ABSENT.includes(path);
+function upgradeDeletes(
+  path: string,
+  releaseMap: Map<string, string>,
+  fromPaths: Set<string> | null,
+): boolean {
+  return (
+    fromPaths !== null &&
+    fromPaths.has(path) &&
+    !releaseMap.has(path) &&
+    !DELIVERED_WHEN_ABSENT.includes(path)
+  );
 }
 
 /**
@@ -899,26 +921,42 @@ function isDiffedFrameworkPath(path: string, devOnly: readonly string[]): boolea
  *      - If absent from user tree OR SHA differs: fetch content and add to additions,
  *        except a DELIVERED_WHEN_ABSENT path the user tree already has.
  *   4. For each framework path in the user tree:
- *      - If absent from release tree: add to deletions, except a
- *        DELIVERED_WHEN_ABSENT path.
+ *      - If the site's current release (`fromReleaseTag`) shipped it and the
+ *        target release does not: add to deletions, except a
+ *        DELIVERED_WHEN_ABSENT path. With no current release, nothing.
  *   5. Build summary counts.
  *
- * A release tree that cannot be read whole throws ReleaseTreeUnreadableError;
- * a developer-only list or release file that cannot be read throws
- * ReleaseFileUnreadableError. Nothing is left out of the diff.
+ * A release tree that cannot be read whole, the site's current release
+ * included, throws ReleaseTreeUnreadableError; a developer-only list or
+ * release file that cannot be read throws ReleaseFileUnreadableError.
+ * Nothing is left out of the diff.
  */
 export async function computeUpgradeDiff(
   token: string,
   userTree: TreeEntry[],
   releaseTag: string,
-  options: { fetchContent?: boolean; userTreeTruncated?: boolean } = {},
+  options: {
+    fetchContent?: boolean;
+    userTreeTruncated?: boolean;
+    fromReleaseTag?: string | null;
+  } = {},
 ): Promise<UpgradeDiff> {
   const fetchContent = options.fetchContent ?? true;
   const userTreeTruncated = options.userTreeTruncated ?? false;
+  const fromReleaseTag = options.fromReleaseTag ?? null;
 
-  // 1. Fetch framework tree at the release tag
+  // 1. Fetch framework tree at the release tag, and at the site's current
+  // release when it has one. A recorded version with no tag of that name (a
+  // stamp taken from a candidate tag, say) says nothing about which files are
+  // the framework's, so it deletes nothing, as no version does.
   const releaseTree = await getFrameworkTreeAtTag(token, releaseTag);
   const devOnly = await releaseTreeDevOnlyEntries(token, releaseTree, releaseTag);
+  const fromTree = fromReleaseTag
+    ? await getFrameworkTreeAtTag(token, fromReleaseTag, { missingAsNull: true })
+    : null;
+  const fromPaths = fromTree
+    ? new Set(fromTree.filter((entry) => entry.type === "blob").map((entry) => entry.path))
+    : null;
 
   // 2. Build SHA maps filtered to framework paths (blobs only)
   const releaseMap = new Map<string, string>();
@@ -951,10 +989,11 @@ export async function computeUpgradeDiff(
     }
   }
 
-  // 4. Compute deletions (framework files in user repo absent from release)
+  // 4. Compute deletions (framework files the site's release shipped and the
+  // target release does not)
   const deletions: string[] = [];
   for (const path of userMap.keys()) {
-    if (upgradeDeletes(path, releaseMap)) {
+    if (upgradeDeletes(path, releaseMap, fromPaths)) {
       deletions.push(path);
     }
   }

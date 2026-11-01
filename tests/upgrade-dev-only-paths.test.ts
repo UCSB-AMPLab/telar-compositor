@@ -5,7 +5,7 @@
  * The 1.7.0 to 1.8.0 case runs on recorded trees and the generated test
  * manifest in `fixtures/upgrade-1.8.0/` (see NOTES.md there).
  *
- * @version v1.5.3-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -196,9 +196,14 @@ describe("computeUpgradeDiff and the release's developer-only paths", () => {
     blob("scripts/dev-tool.py", "sha-dev-tool"),
   ];
 
+  // The release the site is on, which shipped the tool the newer release dropped.
+  const FROM_TAG = "v1.7.0";
+  const FROM_TREE = [blob("_layouts/default.html", "sha-old"), blob("scripts/dev-tool.py", "sha-dev-tool")];
+
   function releaseFetch(list: () => unknown, tree = RELEASE_TREE) {
     return vi.fn().mockImplementation(async (url: string) => {
       if (url.includes(`/git/trees/${TAG}`)) return { ok: true, json: async () => ({ tree, truncated: false }) };
+      if (url.includes(`/git/trees/${FROM_TAG}`)) return { ok: true, json: async () => ({ tree: FROM_TREE, truncated: false }) };
       if (url.includes(`/contents/${DEV_ONLY_FILES_PATH}`)) return list();
       return content(`content of ${url}`);
     });
@@ -219,7 +224,7 @@ describe("computeUpgradeDiff and the release's developer-only paths", () => {
       RELEASE_TREE.filter((e) => e.path !== DEV_ONLY_FILES_PATH),
     );
     globalThis.fetch = fetchMock;
-    const diff = await computeUpgradeDiff("tok", USER_TREE, TAG);
+    const diff = await computeUpgradeDiff("tok", USER_TREE, TAG, { fromReleaseTag: FROM_TAG });
     expect(diff.additions.map((a) => a.path).sort()).toEqual([
       ".github/workflows/telar-tests.yml",
       "_layouts/default.html",

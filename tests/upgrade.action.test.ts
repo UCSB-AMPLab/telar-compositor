@@ -16,7 +16,7 @@
  * The workflow commit's single retry on a GitHub server error is exercised here
  * too, and so is the `rebuild` intent the failed-build screen submits.
  *
- * @version v1.5.4-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
@@ -2174,9 +2174,12 @@ describe("upgrade action: prepare's reads", () => {
   }
 
   /** GitHub as the framework's release reads reach it, by URL; a URL no route names is a 404. */
+  // The release the site is on (v0.9.2-beta) answers with an empty tree unless
+  // a route says otherwise.
   function releaseGitHub(routes: Array<[RegExp, () => unknown]>) {
     const fetchMock = vi.fn(async (url: string) => {
       for (const [pattern, answer] of routes) if (pattern.test(url)) return answer();
+      if (/\/git\/trees\/v0\.9\.2-beta/.test(url)) return ok({ tree: [], truncated: false });
       return { ok: false, status: 404, json: async () => ({}) };
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -2345,6 +2348,16 @@ describe("upgrade action: prepare's reads", () => {
       releaseGitHub([[/\/git\/trees\/v1\.2\.0/, serverError]]);
       const res = await prepare();
       expect(res).toMatchObject({ ok: false, error: "release_tree_unreadable", detail: { version: "1.2.0" } });
+    });
+
+    it("stops on the site's own release tree answering 500, naming that release", async () => {
+      vi.mocked(computeUpgradeDiff).mockImplementation(actual.computeUpgradeDiff);
+      releaseGitHub([
+        [/\/git\/trees\/v1\.2\.0/, () => ok({ tree: [], truncated: false })],
+        [/\/git\/trees\/v0\.9\.2-beta/, serverError],
+      ]);
+      const res = await prepare();
+      expect(res).toMatchObject({ ok: false, error: "release_tree_unreadable", detail: { version: "0.9.2-beta" } });
     });
 
     it("stops on a release file download answering 500, naming the file", async () => {
