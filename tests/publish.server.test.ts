@@ -2244,15 +2244,23 @@ describe("buildNavigationYml", () => {
     expect(result).not.toContain('titulo_es: "Objects"');
   });
 
-  it("does not emit a Home builtin (navbar-brand links home)", () => {
+  it("writes a visible Home builtin first, as the template's menu does", () => {
     const result = buildNavigationYml([
       { type: "builtin", key: "home", label: "Home", visible: true },
       { type: "builtin", key: "glossary", label: "Glossary", visible: true },
     ]);
-    // Home produces no menu entry; only glossary remains
-    expect(result).not.toContain('url: "/"\n');
+    expect(result).toBe(
+      'menu:\n  - title_en: "Home"\n    titulo_es: "Inicio"\n    url: "/"\n' +
+        '  - title_en: "Glossary"\n    titulo_es: "Glosario"\n    url: "/glossary/"\n',
+    );
+  });
+
+  it("leaves out a Home builtin the author has hidden", () => {
+    const result = buildNavigationYml([
+      { type: "builtin", key: "home", label: "Home", visible: false },
+      { type: "builtin", key: "glossary", label: "Glossary", visible: true },
+    ]);
     expect(result).not.toContain('title_en: "Home"');
-    expect(result).not.toContain('titulo_es: "Inicio"');
     expect(result).toContain('url: "/glossary/"');
   });
 

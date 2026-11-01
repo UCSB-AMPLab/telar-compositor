@@ -5067,10 +5067,12 @@ interface NavItem {
  * English label was copied into both fields, so Spanish sites published
  * `titulo_es: "Objects"` and the header rendered the English label.)
  *
- * `home` is deliberately absent: the navbar-brand already links home, so no
- * redundant Home menu item is emitted.
+ * `home` is written like the others when the author leaves it visible: the
+ * editor lists it, and the template's own menu starts with it, so leaving it
+ * out would publish a menu the editor does not show.
  */
 const BUILTIN_NAV: Record<string, { en: string; es: string; url: string }> = {
+  home: { en: "Home", es: "Inicio", url: "/" },
   collection: { en: "Objects", es: "Objetos", url: "/objects/" },
   glossary: { en: "Glossary", es: "Glosario", url: "/glossary/" },
 };
@@ -5078,8 +5080,8 @@ const BUILTIN_NAV: Record<string, { en: string; es: string; url: string }> = {
 /**
  * Serialises a navigation items array to a Telar-compatible navigation.yml string.
  *
- * Built-in items emit their canonical bilingual labels (see `BUILTIN_NAV`); a
- * `home` built-in (or any unknown key) is skipped. Custom page items are
+ * Built-in items emit their canonical bilingual labels (see `BUILTIN_NAV`); an
+ * unknown built-in key is skipped. Custom page items are
  * genuinely monolingual, so the user's single label is written into both
  * `title_en` and `titulo_es`; external links emit only `title_en` (plus the URL
  * and the `external` flag). Hidden items (visible: false) are excluded.
@@ -5110,7 +5112,7 @@ export function buildNavigationYml(navItems: NavItem[]): string {
       // Own-property lookup so inherited keys (e.g. "__proto__") can't resolve to
       // a truthy non-entry and crash on the undefined label below.
       const builtin = Object.hasOwn(BUILTIN_NAV, key) ? BUILTIN_NAV[key] : undefined;
-      if (!builtin) continue; // home / unknown builtins are intentionally not emitted
+      if (!builtin) continue; // an unknown built-in has no label or address to write
       lines.push(`  - title_en: ${yamlQuote(builtin.en)}`);
       lines.push(`    titulo_es: ${yamlQuote(builtin.es)}`);
       // A built-in URL is a module constant and needs no quoting; quoted
