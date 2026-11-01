@@ -3963,9 +3963,12 @@ function pageHashInput(page: PageContentRow, slug: string): Record<string, strin
  *
  * A page served at an address other than its slug (`Credits.md` at
  * `/credits/`) adds the addresses written, so a menu last published with the
- * raw slug lists as changed once and the corrected link can be published.
+ * raw slug lists as changed once and the corrected link can be published. A
+ * visible Home adds a mark the same way: the menu writer once left Home out,
+ * so a menu published then lists as changed once and the Home item can be
+ * published.
  */
-function navigationHashInput(navigationJson: string | null): string {
+export function navigationHashInput(navigationJson: string | null): string {
   if (!navigationJson) return "";
   let saved: unknown;
   try {
@@ -3976,7 +3979,9 @@ function navigationHashInput(navigationJson: string | null): string {
   const savedText = JSON.stringify(saved);
   if (!Array.isArray(saved)) return savedText;
   const moved = servedAddressesUnlikeSlugs(saved as NavItem[]);
-  return moved.length === 0 ? savedText : JSON.stringify({ menu: savedText, addresses: moved });
+  const writesHome = (saved as NavItem[]).some((e) => e.type === "builtin" && e.key === "home" && e.visible !== false);
+  if (moved.length === 0 && !writesHome) return savedText;
+  return JSON.stringify({ menu: savedText, ...(moved.length > 0 ? { addresses: moved } : {}), ...(writesHome ? { home: true } : {}) });
 }
 
 /** Each page entry's served address where it is not its slug: the URL the publish writes for it. */
