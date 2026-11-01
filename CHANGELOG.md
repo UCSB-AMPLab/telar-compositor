@@ -12,7 +12,7 @@ Fixes to upgrades from the Compositor, to the first publish of an imported site,
 
 ### Data layer
 
-- A new column on projects holds what was read at import, for comparison at a site's first publish. The change is backwards-compatible.
+- Projects have a new column for what was read at import, which is compared with the site at its first publish. The change is backwards-compatible.
 
 ## v1.5.5-beta (2026-10-16)
 
