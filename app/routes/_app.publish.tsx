@@ -49,7 +49,7 @@
  * is NEVER keyed off `isPublishing`, which flips false on commit return,
  * before the build runs.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { eq } from "drizzle-orm";
@@ -106,6 +106,7 @@ import { resolvePublishSteps } from "~/components/features/site-status/build-pha
 import { PublishingStepper } from "~/components/features/site-status/PublishingStepper";
 import {
   computeChangeSummary,
+  importBaselineOf,
   computeStoryDeletions,
   olderStoryCopies,
   deletedStoryDataCopies,
@@ -1005,7 +1006,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     }
   }
 
-  const changeSummary = computeChangeSummary(currentState, effectiveSnapshot);
+  const changeSummary = computeChangeSummary(currentState, effectiveSnapshot, importBaselineOf(activeProject.import_baseline));
 
   // Stamp the state this summary was built from. The page's generated commit
   // message is an inventory of the summary and travels to the action, which

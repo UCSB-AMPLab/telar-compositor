@@ -11,7 +11,7 @@
  * page block a publish wrote whose move did not land
  * (`snapshotSettledOnLoad`).
  *
- * @version v1.5.0-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -85,7 +85,7 @@ const { computeChangeSummary, buildEntityHashes, findEntityMaxUpdatedAt } = vi.h
   findEntityMaxUpdatedAt: vi.fn(async () => null),
 }));
 vi.mock("~/lib/publish.server", () => ({
-  computeChangeSummary, buildEntityHashes, findEntityMaxUpdatedAt,
+  computeChangeSummary, buildEntityHashes, findEntityMaxUpdatedAt, importBaselineOf: () => null,
   computeStoryDeletions: vi.fn(), runPrePublishValidation: vi.fn(),
   buildPublishFileSet: vi.fn(), buildConfigManagedFields: vi.fn(),
   buildPageContentHashes: vi.fn(), ENTITY_HASHES_VERSION: 4,

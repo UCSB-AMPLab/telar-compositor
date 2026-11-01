@@ -18,7 +18,7 @@
  * Renders a state machine — review | upgrading | choices | sheets |
  * building | done.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { data, redirect } from "react-router";
@@ -329,6 +329,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
       computeUpgradeDiff(token, userTree, latestRelease.tagName, {
         fetchContent: false,
         userTreeTruncated,
+        fromReleaseTag: chainFromVersion,
       }),
     ]);
 
@@ -905,8 +906,15 @@ export async function action({ request, context }: Route.ActionArgs) {
         repo,
         expectedHeadOid,
       );
+      const configRows = await db
+        .select({ telar_version: project_config.telar_version })
+        .from(project_config)
+        .where(eq(project_config.project_id, activeProject.id))
+        .limit(1);
+      const oldVersion = configRows[0]?.telar_version ?? "unknown";
       const diff = await computeUpgradeDiff(token, userTree, latestRelease.tagName, {
         userTreeTruncated,
+        fromReleaseTag: oldVersion === "unknown" ? null : normalizeVersionTag(oldVersion),
       });
 
       // Every site read is at the head the tree was listed at, so a push
@@ -925,13 +933,6 @@ export async function action({ request, context }: Route.ActionArgs) {
             "_config.yml not found — upgrade requires a valid site configuration.",
         };
       }
-
-      const configRows = await db
-        .select({ telar_version: project_config.telar_version })
-        .from(project_config)
-        .where(eq(project_config.project_id, activeProject.id))
-        .limit(1);
-      const oldVersion = configRows[0]?.telar_version ?? "unknown";
 
       // Exact-string-equality chain discovery — normalise both sides.
       const fromVersion = (oldVersion ?? "").replace(/^v/, "");
@@ -1619,8 +1620,15 @@ export async function action({ request, context }: Route.ActionArgs) {
           repo,
           head,
         );
+        const versionRows = await db
+          .select({ telar_version: project_config.telar_version })
+          .from(project_config)
+          .where(eq(project_config.project_id, activeProject.id))
+          .limit(1);
+        const siteVersion = versionRows[0]?.telar_version ?? null;
         const diff = await computeUpgradeDiff(token, userTree, latestRelease.tagName, {
           userTreeTruncated,
+          fromReleaseTag: siteVersion ? normalizeVersionTag(siteVersion) : null,
         });
         return { ok: true, intent: "compute-diff", diff, latestRelease };
       } catch (err) {

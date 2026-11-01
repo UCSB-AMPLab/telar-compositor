@@ -27,7 +27,7 @@
  * course outright when it has not — the loader flag is what the browser is
  * shown, never what the decision rests on.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { redirect } from "react-router";
@@ -48,6 +48,7 @@ import {
   refusedImportResult,
 } from "~/lib/import.server";
 import { SheetUnreadableError } from "~/lib/unreadable-file.server";
+import { recordImportBaseline } from "~/lib/publish.server";
 import { importOnMain } from "~/lib/default-branch.server";
 import { unreadableFailure } from "~/lib/sync-failure.server";
 import type { CourseJoinOutcome, ImportResult, ProjectKind } from "~/lib/import.server";
@@ -357,7 +358,9 @@ async function importOrRefusal(params: Parameters<typeof importRepo>[0], formDat
   const settled = await settleImportChoices(formData, site);
   if (!settled.proceed) return settled.result;
   try {
-    return await importRepo({ ...params, readTab: settled.readTab, checkTabs: settled.checkTabs });
+    const result = await importRepo({ ...params, readTab: settled.readTab, checkTabs: settled.checkTabs });
+    if (result.valid && result.projectId) await recordImportBaseline(getDb(params.env.DB), result.projectId);
+    return result;
   } catch (err) {
     if (err instanceof CollidingColumnsRefusal) return (await importChoicesResult(err, site)) ?? collidingColumnsImportResult(err);
     // A tab changed after the author chose: asked again, or, with nothing left to choose, imported as it now is.

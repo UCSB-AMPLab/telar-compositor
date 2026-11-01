@@ -26,7 +26,7 @@
  * defaults are written to D1 alone and reach `_config.yml` at the next
  * publish, so creating a course cannot fail on a GitHub error.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { KNOWN_STORY_KEYS, isStoryStepRow } from "~/lib/story-step-rows";
@@ -4418,6 +4418,19 @@ function objectsReadAtImport(googleSheetsEnabled: boolean, head: string): string
  * first write, so a failed read seeds nothing: the seeded project is what the
  * next publish writes back, and a file taken as missing would be deleted there.
  */
+/**
+ * Stories with `order` as the 0-based rank the editor stores, rather than
+ * project.csv's own number. The editor ranks a project's stories by `order`,
+ * then by row id (the insert order below), and writes that rank back when it
+ * first loads them; a stored value it would rewrite makes every story read as
+ * changed against what the import read, with no edit made.
+ */
+export function withDenseStoryOrder<T extends { order?: number | null }>(rows: T[]): T[] {
+  const ranked = rows.map((row, at) => ({ row, at })).sort((a, b) => (a.row.order ?? 0) - (b.row.order ?? 0) || a.at - b.at);
+  const rank = new Map(ranked.map(({ at }, i) => [at, i]));
+  return rows.map((row, at) => ({ ...row, order: rank.get(at)! }));
+}
+
 export async function importRepo({
   token,
   installationId,
@@ -4933,13 +4946,13 @@ export async function importRepo({
     project_id: projectId,
     created_by_actor: actorForImportedObject(r),
   }));
-  const storiesWithProjectId = storyRows
+  const storiesWithProjectId = withDenseStoryOrder(storyRows
     .filter((r) => r.story_id && pythonStrip(String(r.story_id)) !== "")
     .map((r) => ({
       ...r,
       project_id: projectId,
       created_by_actor: actorForImportedStory(r),
-    }));
+    })));
   const glossaryWithProjectId = glossaryRows.map((r) => ({
     ...r,
     project_id: projectId,

@@ -15,7 +15,7 @@
  *       row; force=1 (Try again) refreshes through a claim of zero TTL and
  *       still gives way to another caller's claim.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -93,6 +93,7 @@ vi.mock("~/lib/github.server", () => ({ githubHeaders: vi.fn(() => ({})) }));
 vi.mock("~/lib/publish.server", () => ({
   computeChangeSummary: mocks.computeChangeSummary,
   buildEntityHashes: mocks.buildEntityHashes,
+  importBaselineOf: () => null,
 }));
 vi.mock("~/lib/sync.server", () => ({
   computeFullSyncDiff: vi.fn(),

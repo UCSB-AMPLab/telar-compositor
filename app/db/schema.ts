@@ -11,7 +11,7 @@
  * snapshot does not write (a story's `source_path`, `extra_columns`, the
  * config's `telar_version`) are written to D1 directly.
  *
- * @version v1.5.5-beta
+ * @version v1.5.6-beta
  */
 
 import { sql } from "drizzle-orm";
@@ -73,6 +73,9 @@ export const projects = sqliteTable("projects", {
   last_synced_at: text("last_synced_at"),
   last_published_at: text("last_published_at"),
   publish_snapshot: text("publish_snapshot"),  // JSON: PublishSnapshot from publish.server.ts
+  // JSON: the EntityHashes of what the import read (migration 0075), which a
+  // first publish compares with; NULL for a project imported before it.
+  import_baseline: text("import_baseline"),
   yjs_state: blob("yjs_state"),  // Stores Y.encodeStateAsUpdate() binary output
   // The generation and sequence the blob above was current under when
   // written; NULL on both means the blob predates either column (migration

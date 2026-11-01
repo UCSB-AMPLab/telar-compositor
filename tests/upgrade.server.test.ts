@@ -9,7 +9,7 @@
  * (parseTelarVersion, compareVersions, frameworkVersionForTag) live in
  * telar-version.ts.
  *
- * @version v1.5.0-beta
+ * @version v1.5.6-beta
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -482,8 +482,11 @@ describe("computeUpgradeDiff", () => {
     expect(changedPaths).toContain("_layouts/default.html");
   });
 
-  it("Test 45: file present in user repo but absent in release tree is in deletions", async () => {
+  it("Test 45: a file the site's release shipped and the new release does not is in deletions", async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/v0.9.0")) {
+        return { ok: true, json: async () => ({ tree: [...RELEASE_TREE, USER_TREE[4]], truncated: false }) };
+      }
       if (url.includes("/git/trees/")) {
         return { ok: true, json: async () => ({ tree: RELEASE_TREE, truncated: false }) };
       }
@@ -497,9 +500,9 @@ describe("computeUpgradeDiff", () => {
       };
     });
 
-    const diff = await computeUpgradeDiff(TOKEN, USER_TREE, RELEASE_TAG);
+    const diff = await computeUpgradeDiff(TOKEN, USER_TREE, RELEASE_TAG, { fromReleaseTag: "v0.9.0" });
 
-    expect(diff.deletions).toContain("_layouts/deprecated.html");
+    expect(diff.deletions).toEqual(["_layouts/deprecated.html"]);
   });
 
   it("Test 46: new file in release tree absent from user repo is in additions", async () => {
@@ -617,6 +620,74 @@ describe("computeUpgradeDiff", () => {
 // ---------------------------------------------------------------------------
 // computeUpgradeDiff: release reads that cannot be completed
 // ---------------------------------------------------------------------------
+
+describe("computeUpgradeDiff: the author's files under a framework folder", () => {
+  // The case that deleted 26 images from two sites: a 1.8.0 site upgraded to
+  // 1.8.2, with its own images in assets/images/ and its own theme.
+  const FROM = "v1.8.0";
+  const TO = "v1.8.2";
+  const blob = (path: string, sha: string): TreeEntry => ({ path, mode: "100644", type: "blob", sha });
+  const FROM_TREE = [
+    blob("assets/js/telar-story.js", "sha-story-180"),
+    blob("assets/js/retired.js", "sha-retired"),
+    blob("_data/themes/paisajes.yml", "sha-theme"),
+  ];
+  const TO_TREE = [blob("assets/js/telar-story.js", "sha-story-182"), blob("_data/themes/paisajes.yml", "sha-theme")];
+  const SITE_TREE = [
+    blob("assets/js/telar-story.js", "sha-story-180"),
+    blob("assets/js/retired.js", "sha-retired"),
+    blob("_data/themes/paisajes.yml", "sha-theme"),
+    blob("assets/images/historia/1.2.2.jpg", "sha-author-image"),
+    blob("assets/images/historia/mapa-ubicacion.jpg", "sha-author-map"),
+    blob("_data/themes/custom.yml", "sha-author-theme"),
+  ];
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes(`/git/trees/${FROM}`)) return { ok: true, json: async () => ({ tree: FROM_TREE, truncated: false }) };
+      if (url.includes(`/git/trees/${TO}`)) return { ok: true, json: async () => ({ tree: TO_TREE, truncated: false }) };
+      return { ok: true, json: async () => ({ encoding: "base64", content: btoa("release file"), size: 12 }) };
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("deletes only the framework file the site's release shipped and the new one dropped", async () => {
+    const diff = await computeUpgradeDiff("tok", SITE_TREE, TO, { fromReleaseTag: FROM });
+    expect(diff.deletions).toEqual(["assets/js/retired.js"]);
+    expect(diff.additions.map((a) => a.path)).toEqual(["assets/js/telar-story.js"]);
+  });
+
+  it("deletes nothing when the site's release is not known", async () => {
+    const diff = await computeUpgradeDiff("tok", SITE_TREE, TO, { fromReleaseTag: null });
+    expect(diff.deletions).toEqual([]);
+    expect(diff.additions.map((a) => a.path)).toEqual(["assets/js/telar-story.js"]);
+  });
+
+  it("deletes nothing when the site's recorded release has no tag", async () => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes(`/git/trees/${TO}`)) return { ok: true, json: async () => ({ tree: TO_TREE, truncated: false }) };
+      if (url.includes("/git/trees/")) return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, json: async () => ({ encoding: "base64", content: btoa("release file"), size: 12 }) };
+    }) as unknown as typeof fetch;
+    const diff = await computeUpgradeDiff("tok", SITE_TREE, TO, { fromReleaseTag: FROM });
+    expect(diff.deletions).toEqual([]);
+    expect(diff.additions.map((a) => a.path)).toEqual(["assets/js/telar-story.js"]);
+  });
+
+  it("stops when the site's release tree cannot be read", async () => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes(`/git/trees/${TO}`)) return { ok: true, json: async () => ({ tree: TO_TREE, truncated: false }) };
+      return { ok: false, status: 500, json: async () => ({}) };
+    }) as unknown as typeof fetch;
+    await expect(computeUpgradeDiff("tok", SITE_TREE, TO, { fromReleaseTag: FROM })).rejects.toBeInstanceOf(
+      ReleaseTreeUnreadableError,
+    );
+  });
+});
 
 describe("computeUpgradeDiff: a release read that fails stops the diff", () => {
   const TAG = "v1.8.0";
